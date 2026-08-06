@@ -8,6 +8,8 @@ System jobs run automatically at configured intervals and handle core operations
 - Cleanup tasks
 """
 
+from typing import Optional, List, Dict, Any
+
 import base64
 from collections import defaultdict
 
@@ -106,7 +108,7 @@ def register_database_update_job(interval_seconds: int = 21600, enabled: bool = 
         interval_seconds: How often to run database updates (default 6 hours = 21600s)
         enabled: Whether the job should be enabled by default.
     """
-    def run_database_update():
+    def run_database_update(full_refresh: bool = False, identifiers_only: bool = False, **kwargs):
         """Execute a database update, prioritizing Local Server first."""
         try:
             logger.info("Starting scheduled database update job")
@@ -244,7 +246,7 @@ def register_external_identifier_sync_job(interval_seconds: int = 21600, enabled
     Register a standalone job that only fetches external identifiers from media servers.
     This runs as a follow-up to the main database update.
     """
-    def run_external_identifier_sync():
+    def run_external_identifier_sync(plugin_source: Optional[str] = None, **kwargs):
         try:
             logger.info("Starting external identifier sync job")
             from core.nexus_framework.plugin_loader import PluginRegistry
@@ -350,7 +352,7 @@ def register_media_server_scan_job(interval_seconds: int = 10800, enabled: bool 
     before incremental DB sync jobs run.
     """
 
-    def run_media_server_scan():
+    def run_media_server_scan(section: Optional[str] = None, **kwargs):
         try:
             logger.info("Starting scheduled media server scan job")
 
@@ -414,7 +416,7 @@ def register_media_server_scan_job(interval_seconds: int = 10800, enabled: bool 
 def register_suggestion_engine_playlist_job(interval_seconds: int = 86400, enabled: bool = True):
     """Register daily suggestion playlist generation job (Phase 5)."""
 
-    def run_suggestion_playlist_generation():
+    def run_suggestion_playlist_generation(max_mixes: int = 4, **kwargs):
         try:
             logger.info("Starting daily suggestion playlist generation job")
 
@@ -472,7 +474,7 @@ def register_suggestion_engine_playlist_job(interval_seconds: int = 86400, enabl
 def register_duplicate_scan_job(interval_seconds: int = 86400, enabled: bool = True):
     """Register daily duplicate scan job for library hygiene."""
 
-    def run_duplicate_scan():
+    def run_duplicate_scan(auto_resolve: bool = False, **kwargs):
         try:
             logger.info("Starting duplicate scan job")
             service = DuplicateHygieneService()
@@ -540,7 +542,7 @@ def register_duplicate_scan_job(interval_seconds: int = 86400, enabled: bool = T
 def register_stale_track_scan_job(interval_seconds: int = 604800, enabled: bool = True):
     """Register weekly stale track scan job for library hygiene."""
 
-    def run_stale_track_scan():
+    def run_stale_track_scan(inactive_days: int = 90, **kwargs):
         try:
             logger.info("Starting stale track scan job")
             service = DuplicateHygieneService()
@@ -567,7 +569,7 @@ def register_stale_track_scan_job(interval_seconds: int = 604800, enabled: bool 
 def register_process_lifecycle_actions_job(interval_seconds: int = 86400, enabled: bool = True):
     """Register daily lifecycle queue processing job."""
 
-    def run_process_lifecycle_actions():
+    def run_process_lifecycle_actions(dry_run: bool = False, **kwargs):
         try:
             logger.info("Starting lifecycle action processing job")
             summary = process_lifecycle_actions()
@@ -606,7 +608,7 @@ def register_download_manager_queue_job(interval_seconds: int = 21600, enabled: 
 def register_user_history_sync_job(interval_seconds: int = 43200, enabled: bool = True):
     """Register periodic user history sync job (every 12 hours)."""
 
-    def run_user_history_sync():
+    def run_user_history_sync(force_full: bool = False, **kwargs):
         try:
             logger.info("Starting scheduled user history sync job")
             from services.user_history_service import UserHistoryService
@@ -634,7 +636,7 @@ def register_user_history_sync_job(interval_seconds: int = 43200, enabled: bool 
 def register_retroactive_metadata_enhancement_job(interval_seconds: int = 86400, enabled: bool = True, batch_size: int = 100):
     """Register a daily job to fill in missing MusicBrainz IDs for library tracks."""
 
-    def run_metadata_enhancement():
+    def run_metadata_enhancement(batch_size: int = 100, **kwargs):
         try:
             logger.info("Starting scheduled retroactive metadata enhancement job")
             from services.metadata_enhancer import get_metadata_enhancer, RetroactiveEnhancer
@@ -661,7 +663,7 @@ def register_retroactive_metadata_enhancement_job(interval_seconds: int = 86400,
 
 def register_plugin_update_check_job(interval_seconds: int = 43200, enabled: bool = True):
     """Register a 12-hour job to check for plugin updates and emit UI notifications."""
-    def run_plugin_update_check():
+    def run_plugin_update_check(force: bool = False, **kwargs):
         try:
             logger.info("Starting scheduled plugin update check")
             from core.nexus_framework.plugin_store import plugin_store

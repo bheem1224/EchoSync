@@ -78,11 +78,13 @@ class TrackRepository:
                 "added_at": now,
             })
 
+        from core.database.utils import calculate_safe_batch_size
+        
         # --- SQLAlchemy 2.0 UPSERT Statement for Tracks ---
         affected_rows = 0
-        CHUNK_SIZE = 500
-        for i in range(0, len(track_values), CHUNK_SIZE):
-            chunk = track_values[i:i + CHUNK_SIZE]
+        track_chunk_size = calculate_safe_batch_size(column_count=10)
+        for i in range(0, len(track_values), track_chunk_size):
+            chunk = track_values[i:i + track_chunk_size]
             stmt = sqlite_insert(Track).values(chunk)
     
             # Conflict resolution targeting sync_id unique index
@@ -141,9 +143,9 @@ class TrackRepository:
                     })
 
         if media_values:
-            CHUNK_SIZE = 500
-            for i in range(0, len(media_values), CHUNK_SIZE):
-                m_chunk = media_values[i:i + CHUNK_SIZE]
+            media_chunk_size = calculate_safe_batch_size(column_count=8)
+            for i in range(0, len(media_values), media_chunk_size):
+                m_chunk = media_values[i:i + media_chunk_size]
                 media_stmt = sqlite_insert(LocalMedia).values(m_chunk)
                 media_upsert = media_stmt.on_conflict_do_update(
                     index_elements=["file_path"],

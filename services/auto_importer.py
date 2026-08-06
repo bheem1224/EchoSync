@@ -148,8 +148,11 @@ class AutoImportService:
             max_retries=3
         )
 
-    def scan_and_process(self, params: Optional[Dict[str, Any]] = None):
+    def scan_and_process(self, force_scan: bool = False, params: Optional[Dict[str, Any]] = None, **kwargs):
         """Scan download directory for audio files and process them."""
+        params = params or {}
+        if force_scan:
+            params["force_scan"] = True
         if not self._scan_lock.acquire(blocking=False):
             logger.info("Auto-import scan skipped: Another scan/process is already running.")
             return

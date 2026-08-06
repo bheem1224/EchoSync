@@ -1759,7 +1759,7 @@ def register_download_manager_job(interval_seconds: int = 21600):
     """
     from core.job_queue import job_queue, unregister_job
     
-    def process_downloads():
+    def process_downloads(force_run: bool = False, **kwargs):
         """Run one full download processing cycle driven by the job queue."""
         dm = get_download_manager()
         dm.process_downloads_now()

@@ -8,17 +8,18 @@ from sqlalchemy.orm import Session
 from database.music_database import get_database
 from core.models import EchoSyncTrack
 from core.database.repositories.track_repo import bulk_upsert_tracks
+from core.database.utils import calculate_safe_batch_size
 
 logger = logging.getLogger("ingestion_orchestrator")
 
 
 class IngestionOrchestrator:
     """
-    Orchestrates high-throughput telemetry ingestion with 1,000-row chunking to prevent database locking.
+    Orchestrates high-throughput telemetry ingestion with dynamic chunking to prevent database locking and parameter limits.
     """
 
-    def __init__(self, batch_size: int = 1000, session_factory: Optional[Callable[[], Session]] = None):
-        self.batch_size = batch_size
+    def __init__(self, batch_size: Optional[int] = None, session_factory: Optional[Callable[[], Session]] = None):
+        self.batch_size = batch_size if batch_size is not None else calculate_safe_batch_size(column_count=10)
         self.session_factory = session_factory or (lambda: get_database().get_session())
 
     def ingest_telemetry_batch(self, pydict_batch: List[Dict[str, Any]]) -> int:

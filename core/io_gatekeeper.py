@@ -104,26 +104,31 @@ class Gatekeeper:
 
         return resolved_target
 
-    def authorize_and_execute(self, manifest: Dict[str, Any]) -> Dict[str, Any]:
+    def authorize_and_execute(self_or_manifest, manifest: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
         Parse, validate, and execute an I/O manifest via echosync_core.
-
-        Manifest format:
-        {
-            "operation": "batch_process" | "scan_directory",
-            "target_uris": ["echosync://library/path", ...] OR "target_uri": "...",
-            "callback": optional_callable,
-            "batch_interval_ms": 50,
-            "batch_size": 100
-        }
+        Supports both Gatekeeper().authorize_and_execute(manifest) and
+        Gatekeeper.authorize_and_execute(manifest).
         """
+        if manifest is None and isinstance(self_or_manifest, dict):
+            manifest = self_or_manifest
+            self = Gatekeeper()
+        else:
+            self = self_or_manifest
+
+        return self._authorize_and_execute(manifest)
+
+    def _authorize_and_execute(self, manifest: Dict[str, Any]) -> Dict[str, Any]:
         operation = manifest.get("operation")
         if not operation:
             raise ValueError("Manifest missing required 'operation' key")
 
         uris = manifest.get("target_uris") or []
-        if not uris and "target_uri" in manifest:
-            uris = [manifest["target_uri"]]
+        if not uris:
+            for k in ("target_uri", "src", "target"):
+                if k in manifest and manifest[k]:
+                    uris = [manifest[k]]
+                    break
 
         if not uris:
             raise ValueError("Manifest missing required 'target_uris' or 'target_uri'")
@@ -164,7 +169,7 @@ class Gatekeeper:
                 execution_results.append({"path": posix_path, "metadata": meta, "status": "extracted"})
 
             elif operation == "safe_move":
-                dst_uri = manifest.get("destination_uri") or manifest.get("dst_uri")
+                dst_uri = manifest.get("destination_uri") or manifest.get("dst_uri") or manifest.get("dst")
                 if not dst_uri:
                     raise ValueError("Operation 'safe_move' requires 'destination_uri'")
                 resolved_dst = self.resolve_uri(str(dst_uri))
@@ -173,7 +178,7 @@ class Gatekeeper:
                 execution_results.append({"src": posix_path, "dst": validated_dst, "status": "moved"})
 
             elif operation == "copy_file":
-                dst_uri = manifest.get("destination_uri") or manifest.get("dst_uri")
+                dst_uri = manifest.get("destination_uri") or manifest.get("dst_uri") or manifest.get("dst")
                 if not dst_uri:
                     raise ValueError("Operation 'copy_file' requires 'destination_uri'")
                 resolved_dst = self.resolve_uri(str(dst_uri))
