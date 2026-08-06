@@ -162,15 +162,38 @@ class RetroactiveEnhancer:
         confidence = 0.0
 
         try:
-            # Priority 1: Native file tags (parsed via core.file_handling.tagging_io)
-            from core.nexus_framework.plugin_loader import PluginRegistry
-            local_metadata_plugin = PluginRegistry.get_plugin("EchoSync.local_metadata")
+            # Priority 1: Native file tags (parsed via echosync_core)
             track_obj = None
-            if local_metadata_plugin:
-                try:
-                    track_obj = local_metadata_plugin.get_track_from_file(str(file_path))
-                except Exception as e:
-                    logger.warning(f"Failed to read native tags for {file_path.name}: {e}")
+            try:
+                import echosync_core
+                raw_tags = echosync_core.extract_metadata(str(file_path))
+                track_obj = EchosyncTrack(
+                    raw_title=raw_tags.get("title") or "",
+                    artist_name=raw_tags.get("artist") or "",
+                    album_title=raw_tags.get("album") or ""
+                )
+                if raw_tags.get("duration"):
+                    try:
+                        track_obj.duration = int(raw_tags["duration"])
+                    except: pass
+                if raw_tags.get("track_number"):
+                    try:
+                        track_obj.track_number = int(str(raw_tags["track_number"]).split("/")[0])
+                    except: pass
+                if raw_tags.get("disc_number"):
+                    try:
+                        track_obj.disc_number = int(str(raw_tags["disc_number"]).split("/")[0])
+                    except: pass
+                if raw_tags.get("date"):
+                    try:
+                        track_obj.release_year = int(str(raw_tags["date"])[:4])
+                    except: pass
+                if raw_tags.get("musicbrainz_id"):
+                    track_obj.musicbrainz_id = raw_tags["musicbrainz_id"]
+                if raw_tags.get("isrc"):
+                    track_obj.isrc = raw_tags["isrc"]
+            except Exception as e:
+                logger.warning(f"Failed to read native tags via echosync_core for {file_path.name}: {e}")
 
             if track_obj:
                 # Fast path: Check if tags contain an embedded MBID
@@ -355,12 +378,37 @@ class RetroactiveEnhancer:
                 from core.matching_engine.fingerprinting import FingerprintGenerator
                 
                 track = None
-                local_metadata_plugin = PluginRegistry.get_plugin("EchoSync.local_metadata")
-                if local_metadata_plugin:
-                    try:
-                        track = local_metadata_plugin.get_track_from_file(file_path_str)
-                    except Exception as parse_err:
-                        logger.warning(f"Failed to get track from file via local_metadata: {parse_err}")
+                track = None
+                try:
+                    import echosync_core
+                    raw_tags = echosync_core.extract_metadata(file_path_str)
+                    track = EchosyncTrack(
+                        raw_title=raw_tags.get("title") or "",
+                        artist_name=raw_tags.get("artist") or "",
+                        album_title=raw_tags.get("album") or ""
+                    )
+                    if raw_tags.get("duration"):
+                        try:
+                            track.duration = int(raw_tags["duration"])
+                        except: pass
+                    if raw_tags.get("track_number"):
+                        try:
+                            track.track_number = int(str(raw_tags["track_number"]).split("/")[0])
+                        except: pass
+                    if raw_tags.get("disc_number"):
+                        try:
+                            track.disc_number = int(str(raw_tags["disc_number"]).split("/")[0])
+                        except: pass
+                    if raw_tags.get("date"):
+                        try:
+                            track.release_year = int(str(raw_tags["date"])[:4])
+                        except: pass
+                    if raw_tags.get("musicbrainz_id"):
+                        track.musicbrainz_id = raw_tags["musicbrainz_id"]
+                    if raw_tags.get("isrc"):
+                        track.isrc = raw_tags["isrc"]
+                except Exception as parse_err:
+                    logger.warning(f"Failed to get track from file via echosync_core: {parse_err}")
                 
                 if not track:
                     track = EchosyncTrack(

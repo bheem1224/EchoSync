@@ -114,14 +114,8 @@ def _read_current_metadata(task: ReviewTask) -> Dict[str, Any]:
         return {}
 
     try:
-        # Direct class check to avoid instance caching issues if they exist
-        enhancer = MetadataEnhancerService.get_instance()
-        if not hasattr(enhancer, 'read_tags'):
-             # Critical fallback: if the instance is stale or class was redefined
-             from core.file_handling.tagging_io import read_tags
-             metadata = read_tags(resolved_file)
-        else:
-             metadata = enhancer.read_tags(resolved_file)
+        import echosync_core
+        metadata = echosync_core.extract_metadata(str(resolved_file))
              
         # Remove raw cover data from the general metadata dict to keep JSON response light
         clean_metadata = {str(key): value for key, value in metadata.items() if not str(key).startswith("_cover_")}
