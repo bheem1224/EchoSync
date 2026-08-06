@@ -49,6 +49,7 @@ from web.routes.webhooks import bp as webhooks_bp
 from web.routes.local_server import bp as local_server_bp
 from web.routes.local_metadata import bp as local_metadata_bp
 from web.routes.system_tasks import bp as system_tasks_bp
+from web.routes.media import bp as media_bp
 
 from core.nexus_framework.plugin_loader import PluginLoader
 from core.settings import config_manager
@@ -182,6 +183,7 @@ def create_app(testing: bool = False) -> Flask:
     app.register_blueprint(local_server_bp)
     app.register_blueprint(local_metadata_bp)
     app.register_blueprint(system_tasks_bp)
+    app.register_blueprint(media_bp)
     from web.routes.plugins import bp as core_plugins_bp
     app.register_blueprint(core_plugins_bp)
     from web.routes.ui_registry import ui_registry_bp

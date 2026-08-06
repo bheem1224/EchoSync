@@ -3,7 +3,7 @@ from types import SimpleNamespace
 import pytest
 
 from plugins.EchoSync.slskd.client import SlskdProvider
-from core.matching_engine.echo_sync_track import EchosyncTrack
+from core.db.echo_sync_track import EchosyncTrack
 from services.download_manager import DownloadManager
 
 

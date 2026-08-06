@@ -5,7 +5,7 @@ Simplified implementation using EchosyncTrack and new core features.
 
 from core.nexus_framework.plugin_SDK import PluginBase, MediaServerProvider
 from core.nexus_framework.plugin_SDK import ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
-from core.matching_engine.echo_sync_track import EchosyncTrack
+from core.db.echo_sync_track import EchosyncTrack
 
 from core.utils import PathMapper
 from core.health_check import HealthCheckResult
@@ -1168,7 +1168,7 @@ class PlexClient(MediaServerProvider):
                     'raw_data': None # Avoid storing heavy object
                 })
 
-            from core.matching_engine.echo_sync_track import EchosyncMedia
+            from core.db.echo_sync_track import EchosyncMedia
             media = []
             if file_path or file_format or bitrate or file_size_bytes or added_at:
                 media.append(EchosyncMedia(

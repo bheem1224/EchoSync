@@ -22,7 +22,7 @@ import re
 import threading
 from typing import Any, Dict, List, Optional, Tuple
 
-from core.matching_engine.echo_sync_track import EchosyncTrack
+from core.db.echo_sync_track import EchosyncTrack
 from core.matching_engine.matching_engine import WeightedMatchingEngine
 from core.matching_engine.scoring_profile import PROFILE_DOWNLOAD_SEARCH
 from core.matching_engine.text_utils import normalize_artist, normalize_title

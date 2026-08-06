@@ -23,7 +23,7 @@ from unittest.mock import patch
 
 from time_utils import utc_now
 from database.working_database import DownloadQueue
-from core.matching_engine.echo_sync_track import EchosyncTrack
+from core.db.echo_sync_track import EchosyncTrack
 from services.download_manager import DownloadManager
 
 

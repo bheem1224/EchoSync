@@ -62,8 +62,8 @@ class QualityTag(Enum):
 @dataclass
 class EchosyncMedia:
     """Represents a specific physical audio file on a local or remote server."""
-    file_path: str
-    media_id: Optional[str] = None  # NanoID
+    file_path: Optional[str] = None  # Optional: may be None for remote/streaming media
+    media_id: Optional[str] = None   # NanoID — assigned on DB insert if not provided
     file_format: Optional[str] = None
     bitrate: Optional[int] = None
     sample_rate: Optional[int] = None
@@ -340,7 +340,9 @@ class EchosyncTrack:
         return self.release_year
 
     def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary for storage."""
+        """Convert to dictionary for storage or API transport."""
+        media_list = [m.to_dict() for m in self.media]
+        media_ids = [m.media_id for m in self.media if m.media_id]
         return {
             'sync_id': self.sync_id,
             'title': self.title,
@@ -361,7 +363,9 @@ class EchosyncTrack:
             'release_year': self.release_year,
             'version': self.version,
             'added_at': self.added_at.isoformat() if self.added_at else None,
-            'media': [m.to_dict() for m in self.media],
+            # 2-Model: media_ids for UUID-based API lookups; media for full telemetry
+            'media_ids': media_ids,
+            'media': media_list,
             'mbid': self.musicbrainz_id,
             'isrc': self.isrc,
             'acoustid': self.acoustid_id,

@@ -14,7 +14,7 @@ import re
 from typing import Optional, List, Dict, Set
 from dataclasses import dataclass
 from pathlib import Path
-from .echo_sync_track import EchosyncTrack, QualityTag
+from ..db.echo_sync_track import EchosyncTrack, QualityTag
 from .fingerprinting import FingerprintGenerator, FingerprintCache
 
 

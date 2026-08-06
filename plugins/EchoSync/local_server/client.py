@@ -6,7 +6,7 @@ from datetime import datetime
 from core.nexus_framework.plugin_SDK import PluginBase
 from core.nexus_framework.plugin_SDK import ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
 from core.enums import Capability
-from core.matching_engine.echo_sync_track import EchosyncTrack
+from core.db.echo_sync_track import EchosyncTrack
 SUPPORTED_AUDIO_EXTENSIONS = {
     '.mp3', '.flac', '.ogg', '.m4a', '.aac', '.alac', '.ape',
     '.wav', '.dsd', '.dsf', '.dff',

@@ -23,7 +23,7 @@ from core.matching_engine.fingerprinting import FingerprintGenerator
 from core.matching_engine.matching_engine import WeightedMatchingEngine
 from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
 from core.matching_engine.scoring_profile import PROFILE_EXACT_SYNC
-from core.matching_engine.echo_sync_track import EchosyncTrack
+from core.db.echo_sync_track import EchosyncTrack
 from database.working_database import get_working_database, ReviewTask
 import echosync_core
 
@@ -373,7 +373,7 @@ class RetroactiveEnhancer:
                 existing = session.query(ReviewTask).filter(ReviewTask.file_path == file_path_str).first()
                 
                 # 2. Get/Create EchosyncTrack
-                from core.matching_engine.echo_sync_track import EchosyncTrack
+                from core.db.echo_sync_track import EchosyncTrack
                 from core.nexus_framework.plugin_loader import PluginRegistry
                 from core.matching_engine.fingerprinting import FingerprintGenerator
                 
@@ -538,7 +538,7 @@ class RetroactiveEnhancer:
         from core.utils import PathMapper
         from core.matching_engine.scoring_profile import ExactSyncProfile
         from core.matching_engine.fingerprinting import FingerprintGenerator
-        from core.matching_engine.echo_sync_track import EchosyncTrack
+        from core.db.echo_sync_track import EchosyncTrack
         from core.matching_engine.matching_engine import WeightedMatchingEngine
         from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
         from pathlib import Path

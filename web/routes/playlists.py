@@ -9,7 +9,7 @@ from database.music_database import MusicDatabase
 from core.tiered_logger import get_logger
 from core.matching_engine.matching_engine import WeightedMatchingEngine
 from core.matching_engine.scoring_profile import ScoringProfile
-from core.matching_engine.echo_sync_track import EchosyncTrack
+from core.db.echo_sync_track import EchosyncTrack
 from core.matching_engine.text_utils import normalize_title as _normalize_candidate_title
 from core.job_queue import job_queue
 from core.event_bus import event_bus
@@ -1716,7 +1716,7 @@ def download_missing_tracks():
     
     try:
         from services.download_manager import get_download_manager
-        from core.matching_engine.echo_sync_track import EchosyncTrack
+        from core.db.echo_sync_track import EchosyncTrack
         
         download_manager = get_download_manager()
         success_count = 0

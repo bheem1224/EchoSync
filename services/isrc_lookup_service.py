@@ -17,7 +17,7 @@ import re
 from typing import Any, Dict, List, Optional, Tuple
 
 from core.caching.plugin_cache import plugin_cache
-from core.matching_engine.echo_sync_track import EchosyncTrack
+from core.db.echo_sync_track import EchosyncTrack
 from core.tiered_logger import get_logger
 
 logger = get_logger("isrc_lookup")

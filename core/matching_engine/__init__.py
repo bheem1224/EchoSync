@@ -10,7 +10,7 @@ Main components:
 - FingerprintMatcher: Audio fingerprinting for acoustic matching
 """
 
-from .echo_sync_track import EchosyncTrack, QualityTag
+from ..db.echo_sync_track import EchosyncTrack, QualityTag
 from .track_parser import TrackParser, ParseConfig, parse_file
 from .matching_engine import WeightedMatchingEngine, MatchResult
 from .scoring_profile import (

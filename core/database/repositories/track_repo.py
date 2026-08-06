@@ -1,21 +1,30 @@
 """
 SQLAlchemy 2.0 High-Performance UPSERT Repository for Track & LocalMedia ingestion.
-"""
-from typing import List, Dict, Any, Optional
-from datetime import datetime, timezone
-from sqlalchemy import func
-from sqlalchemy.orm import Session
-from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
-from database.music_database import Track, LocalMedia, Artist
-from database import _canonicalize_path
-from core.models import EchoSyncTrack
-from sqlalchemy.orm import joinedload
+2-Model Architecture:
+- EchosyncTrack: logical music metadata -> tracks table (keyed by sync_id)
+- EchosyncMedia: physical file telemetry -> local_media table (keyed by media_id)
+"""
+from typing import List, Optional
+from datetime import datetime, timezone
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy import or_, and_, Integer
+
+from database.music_database import Track, LocalMedia, Artist, generate_nanoid
+from database import _canonicalize_path
+# Canonical model: EchosyncTrack + EchosyncMedia from core.db
+from core.db.echo_sync_track import EchosyncTrack, EchosyncMedia
+
+from core.database.utils import calculate_safe_batch_size
+
 
 class TrackRepository:
     """
     Repository providing batched SQLite UPSERT queries using SQLAlchemy 2.0 Core expressions.
+    Enforces strict 2-Model separation: Track rows hold metadata only, LocalMedia rows hold
+    physical file telemetry.
     """
 
     @staticmethod
@@ -27,6 +36,26 @@ class TrackRepository:
             session.add(artist)
             session.flush()
         return artist.id
+
+    # --- UUID Lookup Helpers ---
+
+    @staticmethod
+    def get_track_by_sync_id(session: Session, sync_id: str) -> Optional[Track]:
+        """Fetch a Track by its canonical sync_id. Strips query params from sync_id."""
+        clean_sync_id = sync_id.split("?")[0]
+        return session.query(Track).filter_by(sync_id=clean_sync_id).first()
+
+    @staticmethod
+    def get_media_by_media_id(session: Session, media_id: str) -> Optional[LocalMedia]:
+        """Fetch a LocalMedia record by its canonical media_id (NanoID)."""
+        return session.query(LocalMedia).filter_by(media_id=media_id).first()
+
+    @staticmethod
+    def get_media_for_track(session: Session, track_id: int) -> List[LocalMedia]:
+        """Fetch all LocalMedia records associated with a Track by its internal PK."""
+        return session.query(LocalMedia).filter_by(track_id=track_id).all()
+
+    # --- Enhancement Query ---
 
     @classmethod
     def get_tracks_for_enhancement(
@@ -77,15 +106,21 @@ class TrackRepository:
 
         return query.limit(batch_size).all()
 
+    # --- Core Upsert ---
+
     @classmethod
-    def bulk_upsert_tracks(cls, session: Session, tracks: List[EchoSyncTrack]) -> int:
+    def bulk_upsert_tracks(cls, session: Session, tracks: List[EchosyncTrack]) -> int:
         """
         Batched SQLite UPSERT using sqlalchemy.dialects.sqlite.insert.
-        
-        Strictly satisfies Phase 4 mandates:
-        - Uses sqlite.insert() with on_conflict_do_update on unique sync_id.
-        - Overwrites technical stream telemetry.
-        - Preserves user metadata using COALESCE conditional updates.
+
+        2-Model contract:
+        - Phase 1: Batch UPSERT all tracks into the `tracks` table using sync_id.
+        - Phase 2: For each EchosyncMedia in track.media, UPSERT into `local_media`
+                   using file_path as conflict key. Resolves track_id via a single
+                   WHERE sync_id IN (...) bulk query (no N+1).
+
+        Metadata preservation: COALESCE ensures existing non-null values are never
+        overwritten by incoming None/empty values.
         """
         if not tracks:
             return 0
@@ -93,25 +128,21 @@ class TrackRepository:
         default_artist_id = cls.get_or_create_default_artist(session)
         now = datetime.now(timezone.utc)
 
+        # Build sync_id for each track (strips query params)
+        def _build_sync_id(t: EchosyncTrack) -> str:
+            raw_sid = getattr(t, "sync_id", None)
+            if raw_sid:
+                return raw_sid.split("?")[0]
+            title_val = getattr(t, "title", None) or getattr(t, "raw_title", "") or ""
+            artist_val = getattr(t, "artist_name", None) or getattr(t, "artist", "") or ""
+            return f"ss:track:meta:{title_val.lower()}:{artist_val.lower()}"
+
+        # --- Phase 1: Batch UPSERT tracks ---
         track_values = []
+        sync_ids_in_batch = []
         for t in tracks:
-            f_path = getattr(t, "file_path", None)
-            if not f_path and getattr(t, "media", None):
-                m_list = getattr(t, "media")
-                if m_list and hasattr(m_list[0], "file_path"):
-                    f_path = m_list[0].file_path
-
-            if hasattr(t, "compute_sync_id"):
-                sync_id = t.compute_sync_id()
-            elif getattr(t, "sync_id", None):
-                sync_id = t.sync_id
-            elif f_path:
-                sync_id = f"ss:track:file:{_canonicalize_path(f_path)}"
-            else:
-                title_val = getattr(t, "title", None) or getattr(t, "raw_title", "")
-                artist_val = getattr(t, "artist_name", None) or getattr(t, "artist", "")
-                sync_id = f"ss:track:meta:{title_val.lower()}:{artist_val.lower()}"
-
+            sync_id = _build_sync_id(t)
+            sync_ids_in_batch.append(sync_id)
             duration = getattr(t, "duration_ms", None) or getattr(t, "duration", None)
             mbid = getattr(t, "mbid", None) or getattr(t, "musicbrainz_id", None)
             track_title = getattr(t, "title", None) or getattr(t, "raw_title", None) or "Unknown Title"
@@ -128,23 +159,15 @@ class TrackRepository:
                 "added_at": now,
             })
 
-        from core.database.utils import calculate_safe_batch_size
-        
-        # --- SQLAlchemy 2.0 UPSERT Statement for Tracks ---
         affected_rows = 0
         track_chunk_size = calculate_safe_batch_size(column_count=10)
         for i in range(0, len(track_values), track_chunk_size):
             chunk = track_values[i:i + track_chunk_size]
             stmt = sqlite_insert(Track).values(chunk)
-    
-            # Conflict resolution targeting sync_id unique index
             upsert_stmt = stmt.on_conflict_do_update(
                 index_elements=["sync_id"],
                 set_={
-                    # Technical / Stream telemetry - ALWAYS OVERWRITE
                     "duration": stmt.excluded.duration,
-    
-                    # Metadata fields - CONDITIONAL UPDATE (COALESCE preserves non-null existing data)
                     "title": func.coalesce(stmt.excluded.title, Track.title),
                     "track_number": func.coalesce(stmt.excluded.track_number, Track.track_number),
                     "disc_number": func.coalesce(stmt.excluded.disc_number, Track.disc_number),
@@ -152,59 +175,65 @@ class TrackRepository:
                     "isrc": func.coalesce(stmt.excluded.isrc, Track.isrc),
                 }
             )
-    
             result = session.execute(upsert_stmt)
             affected_rows += result.rowcount
 
-        # Also upsert LocalMedia technical records if file_path is present
+        # Flush to ensure track rows are committed before FK resolution
+        session.flush()
+
+        # --- Phase 2: Batch UPSERT LocalMedia (2-Model split) ---
+        # Resolve sync_id -> Track.id with a single bulk SELECT (no N+1)
+        sync_id_to_track_id = {}
+        if sync_ids_in_batch:
+            rows = session.execute(
+                select(Track.sync_id, Track.id).where(Track.sync_id.in_(sync_ids_in_batch))
+            ).all()
+            sync_id_to_track_id = {row.sync_id: row.id for row in rows}
+
         media_values = []
         for t in tracks:
-            f_path = getattr(t, "file_path", None)
-            first_media = None
-            if not f_path and getattr(t, "media", None):
-                m_list = getattr(t, "media")
-                if m_list and hasattr(m_list[0], "file_path"):
-                    first_media = m_list[0]
-                    f_path = first_media.file_path
-            if f_path:
-                canon_path = _canonicalize_path(f_path)
-                if hasattr(t, "compute_sync_id"):
-                    s_id = t.compute_sync_id()
-                elif getattr(t, "sync_id", None):
-                    s_id = t.sync_id
-                elif f_path:
-                    s_id = f"ss:track:file:{canon_path}"
-                else:
-                    title_val = getattr(t, "title", None) or getattr(t, "raw_title", "")
-                    artist_val = getattr(t, "artist_name", None) or getattr(t, "artist", "")
-                    s_id = f"ss:track:meta:{title_val.lower()}:{artist_val.lower()}"
-                track_obj = session.query(Track).filter_by(sync_id=s_id).first()
-                if track_obj:
-                    m_obj = first_media if first_media is not None else t
-                    media_values.append({
-                        "track_id": track_obj.id,
-                        "file_path": canon_path,
-                        "file_format": getattr(m_obj, "file_format", None) or getattr(m_obj, "codec", None),
-                        "bitrate": getattr(m_obj, "bitrate", None) or getattr(m_obj, "bitrate_kbps", None),
-                        "sample_rate": getattr(m_obj, "sample_rate", None) or getattr(m_obj, "sample_rate_hz", None),
-                        "bit_depth": getattr(m_obj, "bit_depth", None),
-                        "file_size_bytes": getattr(m_obj, "file_size_bytes", None),
-                        "added_at": now,
-                    })
+            sync_id = _build_sync_id(t)
+            track_id = sync_id_to_track_id.get(sync_id)
+            if not track_id:
+                continue  # Track insert failed or was filtered — skip media
+
+            media_list: List[EchosyncMedia] = getattr(t, "media", []) or []
+            for m in media_list:
+                raw_path = getattr(m, "file_path", None)
+                if not raw_path:
+                    continue  # No physical file — skip (streaming-only media)
+
+                canon_path = _canonicalize_path(raw_path)
+                media_values.append({
+                    "media_id": m.media_id if m.media_id else generate_nanoid(),
+                    "track_id": track_id,
+                    "file_path": canon_path,
+                    "file_format": getattr(m, "file_format", None),
+                    "bitrate": getattr(m, "bitrate", None),
+                    "sample_rate": getattr(m, "sample_rate", None),
+                    "bit_depth": getattr(m, "bit_depth", None),
+                    "file_size_bytes": getattr(m, "file_size_bytes", None),
+                    "inode": getattr(m, "inode", None),
+                    "mtime": getattr(m, "mtime", None),
+                    "added_at": now,
+                })
 
         if media_values:
-            media_chunk_size = calculate_safe_batch_size(column_count=8)
+            media_chunk_size = calculate_safe_batch_size(column_count=10)
             for i in range(0, len(media_values), media_chunk_size):
                 m_chunk = media_values[i:i + media_chunk_size]
                 media_stmt = sqlite_insert(LocalMedia).values(m_chunk)
                 media_upsert = media_stmt.on_conflict_do_update(
                     index_elements=["file_path"],
                     set_={
+                        # Always refresh physical telemetry on conflict
                         "file_format": media_stmt.excluded.file_format,
                         "bitrate": media_stmt.excluded.bitrate,
                         "sample_rate": media_stmt.excluded.sample_rate,
                         "bit_depth": media_stmt.excluded.bit_depth,
                         "file_size_bytes": media_stmt.excluded.file_size_bytes,
+                        "inode": media_stmt.excluded.inode,
+                        "mtime": media_stmt.excluded.mtime,
                     }
                 )
                 session.execute(media_upsert)
@@ -212,6 +241,6 @@ class TrackRepository:
         return affected_rows
 
 
-def bulk_upsert_tracks(session: Session, tracks: List[EchoSyncTrack]) -> int:
+def bulk_upsert_tracks(session: Session, tracks: List[EchosyncTrack]) -> int:
     """Standalone wrapper function for TrackRepository.bulk_upsert_tracks."""
     return TrackRepository.bulk_upsert_tracks(session, tracks)

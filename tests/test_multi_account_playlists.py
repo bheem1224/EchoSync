@@ -2,7 +2,7 @@ import pytest
 import zlib
 from unittest.mock import MagicMock, patch
 from flask import Flask
-from core.matching_engine.echo_sync_track import EchosyncTrack
+from core.db.echo_sync_track import EchosyncTrack
 
 # reuse client fixture from other tests
 

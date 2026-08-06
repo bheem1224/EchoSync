@@ -1,7 +1,7 @@
 import pytest
 from core.enums import Capability
 from core.nexus_framework.plugin_loader import get_plugin_by_capability, PluginRegistry
-from core.matching_engine.echo_sync_track import EchosyncTrack
+from core.db.echo_sync_track import EchosyncTrack
 from plugins.EchoSync.musicbrainz.client import MusicBrainzClient
 
 def test_musicbrainz_isrc_plugin_resolution():

@@ -217,6 +217,7 @@ class JobQueue:
         backoff_factor: float = 2.0,
         tags: Optional[List[str]] = None,
         plugin: Optional[str] = None,
+        params: Optional[Dict[str, Any]] = None,
     ) -> None:
         _MAX_RETRIES_CAP = 10
         max_retries = max(0, min(max_retries, _MAX_RETRIES_CAP))
@@ -241,6 +242,7 @@ class JobQueue:
                 backoff_factor=backoff_factor,
                 tags=tags or [],
                 plugin=plugin,
+                params=params,
             )
 
             if name in self._jobs:

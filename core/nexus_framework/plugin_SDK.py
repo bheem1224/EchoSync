@@ -7,7 +7,7 @@ import inspect
 from datetime import datetime
 
 from core.enums import Capability
-from core.matching_engine.echo_sync_track import EchosyncTrack
+from core.db.echo_sync_track import EchosyncTrack, EchosyncMedia
 from core.matching_engine import text_utils
 from core.request_manager import RequestManager
 
@@ -1172,8 +1172,14 @@ class PluginBase(ABC):
         )
 
         media_list = extra_fields.pop('media', [])
-        if file_path or file_format or bitrate or file_size_bytes or added_at:
-            from core.matching_engine.echo_sync_track import EchosyncMedia
+        # Route ALL physical file telemetry through EchosyncMedia — never flat on EchosyncTrack.
+        # If any physical file params were supplied, build an EchosyncMedia and append it.
+        has_media_params = any([
+            file_path, file_format, bitrate, sample_rate,
+            bit_depth, file_size_bytes, added_at
+        ])
+        if has_media_params:
+            from core.db.echo_sync_track import EchosyncMedia
             media = EchosyncMedia(
                 file_path=file_path,
                 file_format=file_format,
@@ -1181,10 +1187,10 @@ class PluginBase(ABC):
                 sample_rate=sample_rate,
                 bit_depth=bit_depth,
                 file_size_bytes=file_size_bytes,
-                added_at=added_at
+                added_at=added_at,
             )
             media_list.append(media)
-        
+
         if media_list:
             track_kwargs['media'] = media_list
         

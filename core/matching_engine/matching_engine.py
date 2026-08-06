@@ -36,7 +36,7 @@ from difflib import SequenceMatcher
 import logging
 import os
 
-from .echo_sync_track import EchosyncTrack
+from ..db.echo_sync_track import EchosyncTrack
 from .scoring_profile import ScoringProfile, ScoringWeights, ProfileType
 from .fingerprinting import FingerprintMatcher
 

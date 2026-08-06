@@ -5,7 +5,7 @@ from pathlib import Path
 import asyncio
 
 from services.download_manager import DownloadManager
-from core.matching_engine.echo_sync_track import EchosyncTrack
+from core.db.echo_sync_track import EchosyncTrack
 import string
 import random
 

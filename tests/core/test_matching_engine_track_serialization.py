@@ -1,4 +1,4 @@
-from core.matching_engine.echo_sync_track import EchosyncTrack
+from core.db.echo_sync_track import EchosyncTrack
 
 
 def test_matching_engine_from_dict_hydrates_duration_ms_and_isrc_from_identifiers():

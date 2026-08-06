@@ -540,7 +540,7 @@ class MusicDatabase:
                 query = query.filter(Artist.name.ilike(f"%{artist}%"))
             tracks = query.limit(limit).all()
             for t in tracks:
-                from core.matching_engine.echo_sync_track import EchosyncTrack
+                from core.db.echo_sync_track import EchosyncTrack
                 results.append(EchosyncTrack(
                     raw_title=t.title,
                     artist_name=t.artist.name,
@@ -589,7 +589,7 @@ class MusicDatabase:
                 .all()
             )
             for t in tracks:
-                from core.matching_engine.echo_sync_track import EchosyncTrack
+                from core.db.echo_sync_track import EchosyncTrack
                 results.append(EchosyncTrack(
                     raw_title=t.title,
                     artist_name=t.artist.name,

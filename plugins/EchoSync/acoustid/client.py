@@ -5,7 +5,7 @@ from core.nexus_framework.plugin_SDK import ProviderCapabilities, PlaylistSuppor
 from core.enums import Capability
 
 from core.nexus_framework.plugin_SDK import sdk
-from core.matching_engine.echo_sync_track import EchosyncTrack
+from core.db.echo_sync_track import EchosyncTrack
 from core.tiered_logger import get_logger
 
 logger = get_logger("provider.acoustid")

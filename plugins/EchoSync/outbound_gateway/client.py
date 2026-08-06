@@ -1,7 +1,7 @@
 from typing import Any, Dict, List, Optional
 from core.nexus_framework.plugin_SDK import PluginBase
 from core.enums import Capability
-from core.matching_engine.echo_sync_track import EchosyncTrack
+from core.db.echo_sync_track import EchosyncTrack
 
 class OutboundGatewayProvider(PluginBase):
     """

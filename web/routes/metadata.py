@@ -261,7 +261,7 @@ def lookup_isrc(isrc: str):
             return jsonify({"isrc": canonical, "result": None, "tried": [getattr(provider, "name", repr(provider))]}), 404
 
         from services.isrc_lookup_service import _track_to_dict
-        from core.matching_engine.echo_sync_track import EchosyncTrack
+        from core.db.echo_sync_track import EchosyncTrack
         if isinstance(track, EchosyncTrack):
             result = _track_to_dict(track, getattr(provider, "name", "plugin"))
         else:

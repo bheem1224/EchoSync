@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional, cast
 
 from flask import Blueprint, jsonify, request, send_file
 
-from core.matching_engine.echo_sync_track import EchosyncTrack
+from core.db.echo_sync_track import EchosyncTrack
 from core.enums import Capability
 from core.nexus_framework.plugin_loader import get_plugin_by_capability
 from core.nexus_framework import plugin_loader
@@ -266,7 +266,7 @@ def _build_track_from_metadata(file_path: Path, metadata: Dict[str, Any]):
         if len(date_value) >= 4 and date_value[:4].isdigit():
             release_year = int(date_value[:4])
 
-    from core.matching_engine.echo_sync_track import EchosyncMedia
+    from core.db.echo_sync_track import EchosyncMedia
     media_item = EchosyncMedia(
         file_path=str(file_path),
         file_format=file_path.suffix.lower().lstrip("."),
@@ -456,7 +456,7 @@ def approve_review_queue_item(task_id: int):
                     import shutil
                     from database import _canonicalize_path
                     from database.music_database import LocalMedia
-                    from core.matching_engine.echo_sync_track import EchosyncTrack
+                    from core.db.echo_sync_track import EchosyncTrack
 
                     # 1. Resolve task details in fresh working DB session
                     working_db = get_working_database()

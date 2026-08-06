@@ -13,7 +13,7 @@ from core.models import Track
 from core.nexus_framework.plugin_SDK import sdk
 # (removed get_music_database import)
 from core.nexus_framework.plugin_SDK import PluginBase
-from core.matching_engine.echo_sync_track import EchosyncTrack
+from core.db.echo_sync_track import EchosyncTrack
 
 
 def _safe_getattr(obj: Any, attr: str, default: Any = None) -> Any:

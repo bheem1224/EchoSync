@@ -19,7 +19,7 @@ from typing import List, Optional, Dict, Tuple
 from enum import Enum
 from dataclasses import dataclass
 
-from core.matching_engine.echo_sync_track import EchosyncTrack
+from core.db.echo_sync_track import EchosyncTrack
 from core.matching_engine.track_parser import TrackParser
 from core.matching_engine.matching_engine import WeightedMatchingEngine, MatchResult
 from core.matching_engine.scoring_profile import ProfileFactory, ProfileType, ScoringProfile

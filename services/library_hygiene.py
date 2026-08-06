@@ -2,7 +2,7 @@ from typing import List, Dict, Optional, Tuple, Any
 from sqlalchemy import func
 from database.music_database import get_database, Track, AudioFingerprint, Artist
 from core.tiered_logger import get_logger
-from core.matching_engine.echo_sync_track import EchosyncTrack
+from core.db.echo_sync_track import EchosyncTrack
 from core.settings import config_manager
 from services.download_manager import get_download_manager
 import base64

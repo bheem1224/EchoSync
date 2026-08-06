@@ -1,41 +1,115 @@
 """
 Ingestion Orchestrator (core/orchestrator/ingestion.py).
-Streams PyDict telemetry payloads from echosync_core / Gatekeeper and performs batched 1,000-row UPSERT transactions into database.
+
+Parses raw PyDict telemetry payloads from the Rust FFI (echosync_core) and
+performs batched UPSERT transactions into the database using the strict 2-Model contract:
+
+  EchosyncTrack  -> tracks table       (logical metadata, keyed by sync_id)
+  EchosyncMedia  -> local_media table  (physical telemetry, keyed by media_id)
 """
 from typing import Callable, List, Dict, Any, Optional
 import logging
 from sqlalchemy.orm import Session
+
 from database.music_database import get_database
-from core.models import EchoSyncTrack
+from core.db.echo_sync_track import EchosyncTrack, EchosyncMedia
 from core.database.repositories.track_repo import bulk_upsert_tracks
 from core.database.utils import calculate_safe_batch_size
 
 logger = logging.getLogger("ingestion_orchestrator")
 
 
+def _parse_telemetry_dict(raw_dict: Dict[str, Any]) -> Optional[EchosyncTrack]:
+    """
+    Parse a single raw FFI PyDict into an EchosyncTrack with attached EchosyncMedia objects.
+
+    Handles two input shapes:
+    1. Rust FFI flat dict (legacy / current Rust engine output):
+       {"title": "...", "artist": "...", "file_path": "/music/track.flac", "duration_ms": 240000, ...}
+    2. Plugin SDK structured dict (new 2-Model format):
+       {"raw_title": "...", "artist_name": "...", "album_title": "...",
+        "media": [{"file_path": "/music/track.flac", "bitrate": 1411, ...}]}
+    """
+    try:
+        # --- Extract and build media list first ---
+        raw_media = raw_dict.pop("media", []) or []
+        media_list: List[EchosyncMedia] = []
+        for m in raw_media:
+            if isinstance(m, dict):
+                try:
+                    media_list.append(EchosyncMedia.from_dict(m))
+                except Exception as me:
+                    logger.debug(f"Skipping malformed media entry: {me}")
+
+        # --- Normalize flat FFI field names to EchosyncTrack constructor names ---
+        # Rust engine emits: title, artist, file_path, codec, duration_ms
+        # EchosyncTrack expects: raw_title, artist_name, album_title
+        if "raw_title" not in raw_dict:
+            raw_dict["raw_title"] = raw_dict.pop("title", None) or "Unknown Title"
+        if "artist_name" not in raw_dict:
+            raw_dict["artist_name"] = raw_dict.pop("artist", None) or "Unknown Artist"
+        if "album_title" not in raw_dict:
+            raw_dict["album_title"] = raw_dict.pop("album", None) or "Unknown Album"
+
+        # Hoist flat physical file fields into an EchosyncMedia if no media list was given
+        flat_file_path = raw_dict.pop("file_path", None)
+        flat_file_format = raw_dict.pop("file_format", None) or raw_dict.pop("codec", None)
+        flat_bitrate = raw_dict.pop("bitrate", None)
+        flat_sample_rate = raw_dict.pop("sample_rate", None)
+        flat_bit_depth = raw_dict.pop("bit_depth", None)
+        flat_file_size = raw_dict.pop("file_size_bytes", None) or raw_dict.pop("file_size", None)
+
+        if flat_file_path and not media_list:
+            media_list.append(EchosyncMedia(
+                file_path=flat_file_path,
+                file_format=flat_file_format,
+                bitrate=flat_bitrate,
+                sample_rate=flat_sample_rate,
+                bit_depth=flat_bit_depth,
+                file_size_bytes=flat_file_size,
+            ))
+
+        # Strip any remaining keys unknown to EchosyncTrack to avoid TypeError
+        import dataclasses
+        valid_fields = {f.name for f in dataclasses.fields(EchosyncTrack)}
+        raw_dict = {k: v for k, v in raw_dict.items() if k in valid_fields}
+
+        track = EchosyncTrack(**raw_dict)
+        track.media = media_list
+        return track
+    except Exception as e:
+        logger.warning(f"Skipping invalid telemetry record: {e} | data={raw_dict}")
+        return None
+
+
 class IngestionOrchestrator:
     """
-    Orchestrates high-throughput telemetry ingestion with dynamic chunking to prevent database locking and parameter limits.
+    Orchestrates high-throughput telemetry ingestion with dynamic chunking to prevent
+    database locking and SQLite parameter count limits.
     """
 
-    def __init__(self, batch_size: Optional[int] = None, session_factory: Optional[Callable[[], Session]] = None):
+    def __init__(
+        self,
+        batch_size: Optional[int] = None,
+        session_factory: Optional[Callable[[], Session]] = None,
+    ):
         self.batch_size = batch_size if batch_size is not None else calculate_safe_batch_size(column_count=10)
         self.session_factory = session_factory or (lambda: get_database().get_session())
 
     def ingest_telemetry_batch(self, pydict_batch: List[Dict[str, Any]]) -> int:
         """
-        Process a list of PyDict records yielded by FFI, parse into EchoSyncTrack models, and UPSERT into database.
+        Process a list of PyDict records yielded by the Rust FFI, parse into the
+        2-Model structure, and UPSERT into the database.
         """
         if not pydict_batch:
             return 0
 
-        tracks = []
+        tracks: List[EchosyncTrack] = []
         for raw_dict in pydict_batch:
-            try:
-                track = EchoSyncTrack.model_validate(raw_dict)
+            # Work on a copy so we don't mutate the caller's dict
+            track = _parse_telemetry_dict(dict(raw_dict))
+            if track is not None:
                 tracks.append(track)
-            except Exception as e:
-                logger.warning(f"Skipping invalid telemetry record: {e}")
 
         if not tracks:
             return 0
@@ -43,14 +117,17 @@ class IngestionOrchestrator:
         session = self.session_factory()
         try:
             total_upserted = 0
-            # Process in 1,000-row chunks
             for i in range(0, len(tracks), self.batch_size):
                 chunk = tracks[i:i + self.batch_size]
                 affected = bulk_upsert_tracks(session, chunk)
                 session.commit()
                 total_upserted += affected
 
-            logger.info(f"Ingested {total_upserted} tracks across {len(tracks)} telemetry records.")
+            logger.info(
+                f"Ingested {total_upserted} tracks "
+                f"({sum(len(t.media) for t in tracks)} media files) "
+                f"from {len(tracks)} telemetry records."
+            )
             return total_upserted
         except Exception as e:
             session.rollback()
@@ -61,8 +138,8 @@ class IngestionOrchestrator:
 
     def create_telemetry_callback(self) -> Any:
         """
-        Create a streaming telemetry callback function that buffers incoming PyDict batches
-        and triggers a 1,000-row UPSERT transaction whenever the buffer reaches 1,000 records.
+        Create a streaming telemetry callback that buffers incoming PyDict batches
+        and triggers a UPSERT transaction whenever the buffer reaches batch_size records.
         """
         buffer: List[Dict[str, Any]] = []
 

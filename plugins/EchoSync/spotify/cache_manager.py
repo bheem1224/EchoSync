@@ -218,7 +218,7 @@ class SpotifyCacheManager:
             if not items:
                 return None
             # Import lazily to avoid circular deps at module load time
-            from core.matching_engine.echo_sync_track import EchosyncTrack
+            from core.db.echo_sync_track import EchosyncTrack
             tracks = []
             for item in items:
                 track_obj = item.get('track')
