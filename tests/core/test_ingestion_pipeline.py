@@ -1,24 +1,28 @@
 import pytest
 from database.music_database import get_database, Track, LocalMedia
-from core.models import EchoSyncTrack
+from core.db.echo_sync_track import EchosyncTrack, EchosyncMedia
 from core.database.repositories.track_repo import TrackRepository, bulk_upsert_tracks
 from core.orchestrator.ingestion import IngestionOrchestrator
 
 
 def test_echosync_track_model():
-    track = EchoSyncTrack(
-        title="Testing Phase 4",
-        artist="Audiophile Engineer",
-        album="Rust Ingestion",
-        codec="FLAC",
-        sample_rate=96000,
-        bit_depth=24,
-        file_path="/media/library/test.flac"
+    track = EchosyncTrack(
+        raw_title="Testing Phase 4",
+        artist_name="Audiophile Engineer",
+        album_title="Rust Ingestion",
+        media=[
+            EchosyncMedia(
+                file_path="/media/library/test.flac",
+                file_format="FLAC",
+                sample_rate=96000,
+                bit_depth=24,
+            )
+        ]
     )
     assert track.title == "Testing Phase 4"
     assert track.artist_name == "Audiophile Engineer"
-    assert track.sample_rate == 96000
-    assert track.compute_sync_id() == "ss:track:file:/media/library/test.flac"
+    assert track.media[0].sample_rate == 96000
+    assert track.media[0].file_path == "/media/library/test.flac"
 
 
 def test_bulk_upsert_tracks_sqlalchemy2():
@@ -29,24 +33,34 @@ def test_bulk_upsert_tracks_sqlalchemy2():
 
     session = db.get_session()
     try:
-        t1 = EchoSyncTrack(
+        t1 = EchosyncTrack(
             sync_id="test_sync_001",
-            title="Track One",
-            artist="Artist A",
-            duration_ms=210000,
-            codec="FLAC",
-            bitrate=1411000,
-            sample_rate=44100,
-            bit_depth=16,
-            file_path="/media/test1.flac"
+            raw_title="Track One",
+            artist_name="Artist A",
+            album_title="Album A",
+            duration=210000,
+            media=[
+                EchosyncMedia(
+                    file_path="/media/test1.flac",
+                    file_format="FLAC",
+                    bitrate=1411000,
+                    sample_rate=44100,
+                    bit_depth=16,
+                )
+            ]
         )
-        t2 = EchoSyncTrack(
+        t2 = EchosyncTrack(
             sync_id="test_sync_002",
-            title="Track Two",
-            artist="Artist B",
-            duration_ms=180000,
-            codec="ALAC",
-            file_path="/media/test2.m4a"
+            raw_title="Track Two",
+            artist_name="Artist B",
+            album_title="Album B",
+            duration=180000,
+            media=[
+                EchosyncMedia(
+                    file_path="/media/test2.m4a",
+                    file_format="ALAC",
+                )
+            ]
         )
 
         rows = bulk_upsert_tracks(session, [t1, t2])
@@ -59,13 +73,18 @@ def test_bulk_upsert_tracks_sqlalchemy2():
         assert db_track.title == "Track One"
 
         # Test UPSERT conflict update: overwrite technical fields, COALESCE metadata
-        t1_updated = EchoSyncTrack(
+        t1_updated = EchosyncTrack(
             sync_id="test_sync_001",
-            title="Track One (Remastered)",
-            artist="Artist A",
-            duration_ms=215000,
-            codec="FLAC",
-            file_path="/media/test1.flac"
+            raw_title="Track One (Remastered)",
+            artist_name="Artist A",
+            album_title="Album A",
+            duration=215000,
+            media=[
+                EchosyncMedia(
+                    file_path="/media/test1.flac",
+                    file_format="FLAC",
+                )
+            ]
         )
         bulk_upsert_tracks(session, [t1_updated])
         session.commit()

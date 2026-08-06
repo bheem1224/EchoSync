@@ -6,10 +6,32 @@ from typing import Any, Dict, List, Optional, TYPE_CHECKING
 import inspect
 from datetime import datetime
 
+import re
+from dataclasses import field
+
 from core.enums import Capability
 from core.db.echo_sync_track import EchosyncTrack, EchosyncMedia
 from core.matching_engine import text_utils
 from core.request_manager import RequestManager
+from time_utils import utc_now
+
+
+@dataclass
+class PluginRef:
+    """Reference to a track in a specific plugin"""
+    plugin: str
+    plugin_id: str                    # Plugin's native ID
+    plugin_url: Optional[str] = None  # Direct URL if available
+    metadata: Dict[str, Any] = field(default_factory=dict)  # Plugin-specific extras
+    last_updated: datetime = field(default_factory=utc_now)
+
+    def validate(self) -> None:
+        """Validate the plugin reference fields."""
+        if not self.plugin_id:
+            raise ValueError("Plugin ID cannot be empty.")
+        if self.plugin_url and not re.match(r'^https?://', self.plugin_url):
+            raise ValueError("Plugin URL must start with http:// or https://.")
+
 
 class _ConfigFacade:
     def __init__(self, plugin_id: str):

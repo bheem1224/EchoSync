@@ -197,7 +197,20 @@ class TrackRepository:
             if not track_id:
                 continue  # Track insert failed or was filtered — skip media
 
-            media_list: List[EchosyncMedia] = getattr(t, "media", []) or []
+            media_list: List[EchosyncMedia] = list(getattr(t, "media", []) or [])
+            # Fallback for legacy objects that possess a flat file_path attribute
+            if not media_list and getattr(t, "file_path", None):
+                flat_path = getattr(t, "file_path")
+                media_list.append(EchosyncMedia(
+                    file_path=flat_path,
+                    media_id=getattr(t, "media_id", None) or generate_nanoid(),
+                    file_format=getattr(t, "file_format", None) or getattr(t, "codec", None),
+                    bitrate=getattr(t, "bitrate", None),
+                    sample_rate=getattr(t, "sample_rate", None),
+                    bit_depth=getattr(t, "bit_depth", None),
+                    file_size_bytes=getattr(t, "file_size_bytes", None) or getattr(t, "file_size", None),
+                ))
+
             for m in media_list:
                 raw_path = getattr(m, "file_path", None)
                 if not raw_path:

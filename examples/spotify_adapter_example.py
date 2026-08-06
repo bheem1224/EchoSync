@@ -8,7 +8,7 @@ AFTER (New): SpotifyAdapter creates stubs through music_database
 """
 
 from typing import List, Dict, Optional, Any
-from core.models import Track
+from core.db.echo_sync_track import EchosyncTrack as Track
 from database.music_database import MusicDatabase
 
 

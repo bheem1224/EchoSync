@@ -7,7 +7,7 @@ and attaches Jellyfin PluginRef. Adheres to Track-centric architecture.
 
 from typing import List, Optional, Dict, Any
 from core.tiered_logger import get_logger
-from core.models import Track
+from core.db.echo_sync_track import EchosyncTrack as Track, DownloadStatus
 from core.nexus_framework.plugin_SDK import sdk
 # (removed get_music_database import)
 from core.nexus_framework.plugin_SDK import PluginBase
@@ -194,7 +194,7 @@ class JellyfinAdapter:
         updates = {k: v for k, v in updates.items() if v is not None}
         track = self.enrich_track(track_id, **updates)
         try:
-            from core.models import DownloadStatus
+            from core.db.echo_sync_track import DownloadStatus
             status = DownloadStatus.VERIFIED.value if file_path else DownloadStatus.COMPLETE.value
             track = self.update_download_status(track_id, status=status)
         except Exception:

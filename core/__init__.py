@@ -15,9 +15,12 @@ Main components:
 # from the core package without triggering a full load of the matching engine 
 # before config_manager is instantiated.
 
-from .matching_engine import (
+from .db.echo_sync_track import (
     EchosyncTrack,
+    EchosyncMedia,
     QualityTag,
+)
+from .matching_engine import (
     TrackParser,
     ParseConfig,
     WeightedMatchingEngine,
@@ -50,6 +53,7 @@ from .matching_engine import (
 __all__ = [
     # Data models
     'EchosyncTrack',
+    'EchosyncMedia',
     'QualityTag',
     # Parsing
     'TrackParser',

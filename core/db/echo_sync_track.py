@@ -407,6 +407,15 @@ class EchosyncTrack:
         if isrc_value is None and isinstance(identifiers, dict):
             isrc_value = identifiers.get('isrc')
 
+        # 2-Model: Parse full EchosyncMedia dicts if present; fallback to stub EchosyncMedia(media_id=mid) if only media_ids array is provided
+        raw_media_list = data.get('media', [])
+        if raw_media_list:
+            media_list = [EchosyncMedia.from_dict(m) for m in raw_media_list]
+        elif data.get('media_ids'):
+            media_list = [EchosyncMedia(media_id=str(mid)) for mid in data.get('media_ids', []) if mid]
+        else:
+            media_list = []
+
         track = cls(
             sync_id=data.get('sync_id'),
             raw_title=raw_title,
@@ -425,7 +434,7 @@ class EchosyncTrack:
             release_year=data.get('release_year'),
             version=data.get('version'),
             added_at=added_at,
-            media=[EchosyncMedia.from_dict(m) for m in data.get('media', [])],
+            media=media_list,
             musicbrainz_id=data.get('mbid') or data.get('musicbrainz_id'),
             isrc=isrc_value,
             acoustid_id=data.get('acoustid') or data.get('acoustid_id'),

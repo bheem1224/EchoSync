@@ -9,7 +9,7 @@ Adapters NEVER own data; all operations go through MusicDatabase.
 
 from typing import List, Optional, Dict, Any
 from core.tiered_logger import get_logger
-from core.models import Track
+from core.db.echo_sync_track import EchosyncTrack as Track
 from core.nexus_framework.plugin_SDK import sdk
 
 logger = get_logger("spotify_adapter")

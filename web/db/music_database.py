@@ -20,7 +20,7 @@ SimilarArtist = Any
 DiscoveryTrack = Any
 RecentRelease = Any
 
-from core.models import Track
+from database.music_database import Track
 
 
 class MusicDatabaseWrapper:
