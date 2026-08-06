@@ -11,9 +11,6 @@ from typing import Dict, Generator, List, Optional, Tuple
 
 from time_utils import UTCDateTime, utc_now
 from sqlalchemy.orm import joinedload, selectinload
-from core.matching_engine.echo_sync_track import EchosyncTrack
-from core.matching_engine.matching_engine import WeightedMatchingEngine
-from core.matching_engine.scoring_profile import ExactSyncProfile
 import re
 from sqlalchemy import or_
 
@@ -543,6 +540,7 @@ class MusicDatabase:
                 query = query.filter(Artist.name.ilike(f"%{artist}%"))
             tracks = query.limit(limit).all()
             for t in tracks:
+                from core.matching_engine.echo_sync_track import EchosyncTrack
                 results.append(EchosyncTrack(
                     raw_title=t.title,
                     artist_name=t.artist.name,
@@ -591,6 +589,7 @@ class MusicDatabase:
                 .all()
             )
             for t in tracks:
+                from core.matching_engine.echo_sync_track import EchosyncTrack
                 results.append(EchosyncTrack(
                     raw_title=t.title,
                     artist_name=t.artist.name,

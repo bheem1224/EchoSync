@@ -33,10 +33,18 @@ impl MetadataExtractor {
         let p = path.as_ref();
         let path_str = p.to_string_lossy().to_string();
 
-        let tagged_file = Probe::open(p)
-            .map_err(|e| format!("Failed to open file probe: {}", e))?
-            .read()
-            .map_err(|e| format!("Failed to read audio file tags: {}", e))?;
+        let tagged_file = match Probe::open(p).and_then(|probe| probe.read()) {
+            Ok(tf) => tf,
+            Err(_) => {
+                let file_size_bytes = std::fs::metadata(p).map(|m| m.len()).unwrap_or(0);
+                return Ok(TrackMetadata {
+                    codec: "CORRUPT".to_string(),
+                    file_path: path_str,
+                    file_size_bytes,
+                    ..Default::default()
+                });
+            }
+        };
 
         let properties = tagged_file.properties();
         let duration_ms = properties.duration().as_millis() as u64;

@@ -25,6 +25,7 @@ from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
 from core.matching_engine.scoring_profile import PROFILE_EXACT_SYNC
 from core.matching_engine.echo_sync_track import EchosyncTrack
 from database.working_database import get_working_database, ReviewTask
+import echosync_core
 
 logger = get_logger("services.metadata_enhancer")
 
@@ -78,7 +79,7 @@ def _match_from_album_cache(
     Returns a ``(metadata, confidence)`` tuple on a hit, or ``None``.
     """
     try:
-        tags = _tagging_read(file_path)
+        tags = echosync_core.extract_metadata(str(file_path))
     except Exception:
         return None
 
@@ -226,7 +227,7 @@ class RetroactiveEnhancer:
                     if track_obj and track_obj.duration:
                         duration_sec = int(track_obj.duration / 1000)
                     else:
-                        raw_tags = _tagging_read(file_path)
+                        raw_tags = echosync_core.extract_metadata(str(file_path))
                         duration_ms = raw_tags.get("duration")
                         if duration_ms:
                             duration_sec = int(duration_ms / 1000)
@@ -281,7 +282,7 @@ class RetroactiveEnhancer:
 
     def read_tags(self, file_path: Path) -> Dict[str, Any]:
         """Read tags from a file using the internal tagging helper."""
-        return _tagging_read(file_path)
+        return echosync_core.extract_metadata(str(file_path))
 
     def tag_file(self, file_path: Path, metadata: Dict[str, Any]) -> None:
         """Write *metadata* to the physical audio file at *file_path*.
@@ -368,8 +369,14 @@ class RetroactiveEnhancer:
                         album_title=""
                     )
 
-                from core.file_handling import check_file_exists
-                if check_file_exists(file_path_str) and not track.fingerprint:
+                from core.io_gatekeeper import Gatekeeper
+                file_exists = False
+                try:
+                    Gatekeeper.authorize_and_execute({"operation": "validate_only", "target": file_path_str})
+                    file_exists = Path(file_path_str).is_file()
+                except Exception:
+                    pass
+                if file_exists and not track.fingerprint:
                     try:
                         fingerprint = FingerprintGenerator.generate(file_path_str)
                         if fingerprint:
@@ -609,7 +616,7 @@ class RetroactiveEnhancer:
 
                     # Step 1: Read Local Tags
                     try:
-                        file_tags = _tagging_read(local_path)
+                        file_tags = echosync_core.extract_metadata(str(local_path))
                     except Exception as e:
                         logger.warning("Failed to read tags from %s: %s", local_path.name, e)
                         file_tags = {}

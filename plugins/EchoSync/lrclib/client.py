@@ -4,7 +4,6 @@ from pathlib import Path
 from core.tiered_logger import get_logger
 from core.nexus_framework.plugin_SDK import ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
 
-from core.file_handling.base_io import safe_write_text
 from typing import Any, Optional
 
 def _safe_getattr(obj: Any, attr: str, default: Any = None) -> Any:
@@ -171,7 +170,7 @@ class LRCLibClient(PluginBase):
                 return False
 
             # Write LRC file
-            safe_write_text(lrc_path, lrc_content)
+            lrc_path.write_text(lrc_content, encoding='utf-8')
 
             lyrics_type = "synced" if _safe_getattr(lyrics_data, 'synced_lyrics', None) else "plain"
             logger.info(f"✅ Created {lyrics_type} LRC file: {lrc_path.name}")
