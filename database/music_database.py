@@ -698,9 +698,11 @@ class MusicDatabase:
                 .options(
                     selectinload(Artist.albums)
                     .selectinload(Album.tracks)
+                    .selectinload(Track.media_files),
+                    selectinload(Artist.tracks)
                     .selectinload(Track.media_files)
                 )
-                .filter(Artist.albums.any(Album.tracks.any(Track.media_files.any())))
+                .filter(Artist.tracks.any(Track.media_files.any()))
                 .order_by(Artist.name)
             )
 
@@ -743,6 +745,27 @@ class MusicDatabase:
                             "disc_number": track.disc_number
                         })
 
+                    artist_data["albums"].append(album_data)
+
+                # Handle loose tracks without an album
+                loose_tracks = [t for t in artist.tracks if t.album_id is None and t.media_files]
+                if loose_tracks:
+                    album_data = {
+                        "id": "unknown_" + str(artist.id),
+                        "title": "Unknown Album",
+                        "cover_image_url": None,
+                        "year": None,
+                        "tracks": []
+                    }
+                    sorted_tracks = sorted(loose_tracks, key=lambda t: (_safe_int(t.disc_number, 1), _safe_int(t.track_number, 0)))
+                    for track in sorted_tracks:
+                        album_data["tracks"].append({
+                            "id": track.id,
+                            "title": track.title,
+                            "duration": track.duration,
+                            "track_number": track.track_number,
+                            "disc_number": track.disc_number
+                        })
                     artist_data["albums"].append(album_data)
 
                 hierarchy.append(artist_data)
