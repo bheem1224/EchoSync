@@ -42,14 +42,25 @@ def _parse_telemetry_dict(raw_dict: Dict[str, Any]) -> Optional[EchosyncTrack]:
                     logger.debug(f"Skipping malformed media entry: {me}")
 
         # --- Normalize flat FFI field names to EchosyncTrack constructor names ---
-        # Rust engine emits: title, artist, file_path, codec, duration_ms
-        # EchosyncTrack expects: raw_title, artist_name, album_title
-        if "raw_title" not in raw_dict:
-            raw_dict["raw_title"] = raw_dict.pop("title", None) or "Unknown Title"
-        if "artist_name" not in raw_dict:
-            raw_dict["artist_name"] = raw_dict.pop("artist", None) or "Unknown Artist"
-        if "album_title" not in raw_dict:
-            raw_dict["album_title"] = raw_dict.pop("album", None) or "Unknown Album"
+        # Unconditionally pop alias/computed fields so init=False fields are never passed to __init__
+        title_val = raw_dict.pop("raw_title", None) or raw_dict.pop("title", None) or "Unknown Title"
+        artist_val = raw_dict.pop("artist_name", None) or raw_dict.pop("artist", None) or "Unknown Artist"
+        album_val = raw_dict.pop("album_title", None) or raw_dict.pop("album", None) or "Unknown Album"
+        duration_val = raw_dict.pop("duration", None) or raw_dict.pop("duration_ms", None)
+        mbid_val = raw_dict.pop("musicbrainz_id", None) or raw_dict.pop("mbid", None)
+
+        # Always strip non-init/computed fields (like display_title, media_ids)
+        raw_dict.pop("display_title", None)
+        raw_dict.pop("media_ids", None)
+
+        # Set mandatory constructor fields
+        raw_dict["raw_title"] = title_val
+        raw_dict["artist_name"] = artist_val
+        raw_dict["album_title"] = album_val
+        if duration_val is not None:
+            raw_dict["duration"] = duration_val
+        if mbid_val is not None:
+            raw_dict["musicbrainz_id"] = mbid_val
 
         # Hoist flat physical file fields into an EchosyncMedia if no media list was given
         flat_file_path = raw_dict.pop("file_path", None)
@@ -69,12 +80,12 @@ def _parse_telemetry_dict(raw_dict: Dict[str, Any]) -> Optional[EchosyncTrack]:
                 file_size_bytes=flat_file_size,
             ))
 
-        # Strip any remaining keys unknown to EchosyncTrack to avoid TypeError
+        # Filter strictly by dataclass fields where f.init is True
         import dataclasses
-        valid_fields = {f.name for f in dataclasses.fields(EchosyncTrack)}
-        raw_dict = {k: v for k, v in raw_dict.items() if k in valid_fields}
+        valid_init_fields = {f.name for f in dataclasses.fields(EchosyncTrack) if f.init}
+        clean_data = {k: v for k, v in raw_dict.items() if k in valid_init_fields}
 
-        track = EchosyncTrack(**raw_dict)
+        track = EchosyncTrack(**clean_data)
         track.media = media_list
         return track
     except Exception as e:

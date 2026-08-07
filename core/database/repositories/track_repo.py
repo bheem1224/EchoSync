@@ -239,7 +239,8 @@ class TrackRepository:
                 media_upsert = media_stmt.on_conflict_do_update(
                     index_elements=["file_path"],
                     set_={
-                        # Always refresh physical telemetry on conflict
+                        # Always refresh track_id and physical telemetry on conflict
+                        "track_id": media_stmt.excluded.track_id,
                         "file_format": media_stmt.excluded.file_format,
                         "bitrate": media_stmt.excluded.bitrate,
                         "sample_rate": media_stmt.excluded.sample_rate,

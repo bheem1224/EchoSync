@@ -327,6 +327,13 @@ class EchosyncTrack:
             else:
                 self.sort_title = self.title
 
+        # 6. Deterministic sync_id Assignment if None
+        if not self.sync_id:
+            title_norm = (self.title or self.raw_title or "").strip().lower()
+            artist_norm = (self.artist_name or "").strip().lower()
+            if title_norm and artist_norm:
+                self.sync_id = f"ss:track:meta:{title_norm}:{artist_norm}"
+
     @property
     def artist(self) -> str:
         return self.artist_name
