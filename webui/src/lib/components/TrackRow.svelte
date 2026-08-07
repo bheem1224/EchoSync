@@ -45,9 +45,26 @@
 
 <svelte:window on:click={handleClickOutside} />
 
-<div class="track-row group hover:bg-white/5 rounded-md px-3 py-2 grid grid-cols-[40px_1fr_60px_auto] items-center gap-2 transition-colors">
+<div class="track-row group hover:bg-white/5 rounded-md px-3 py-2 grid grid-cols-[40px_1fr_1fr_1fr_60px_auto] items-center gap-2 transition-colors">
     <span class="text-gray-500 text-xs font-mono">{track.track_number || '-'}</span>
     <span class="text-white text-sm font-medium truncate">{track.title}</span>
+
+    {#if track.artist_id || artist?.id}
+        <a href="/library/artists/{track.artist_id || artist?.id}" class="text-gray-400 text-xs hover:text-blue-400 hover:underline truncate">
+            {track.artist_name || artist?.name || 'Artist'}
+        </a>
+    {:else}
+        <span class="text-gray-400 text-xs truncate">{track.artist_name || artist?.name || '-'}</span>
+    {/if}
+
+    {#if track.album_id || album?.id}
+        <a href="/library/albums/{track.album_id || album?.id}" class="text-gray-400 text-xs hover:text-blue-400 hover:underline truncate">
+            {track.album_title || album?.title || 'Album'}
+        </a>
+    {:else}
+        <span class="text-gray-400 text-xs truncate">{track.album_title || album?.title || '-'}</span>
+    {/if}
+
     <span class="text-gray-500 text-xs font-mono text-right">{formatDuration(track.duration)}</span>
 
     <div class="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">

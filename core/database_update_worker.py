@@ -109,7 +109,8 @@ class DatabaseUpdateWorker:
 
                     if mappings:
                         with db.session_factory() as session:
-                            from database.music_database import Track, Artist, _canonicalize_path
+                            from database.music_database import Track, Artist
+                            from core.utils import PathMapper
                             import os
 
                             # Fetch all LocalMedia joined with Track & Artist for robust in-memory resolution
@@ -129,11 +130,13 @@ class DatabaseUpdateWorker:
                                 m_id = row.media_id
                                 fp = row.file_path
                                 if fp:
-                                    canon = _canonicalize_path(fp)
+                                    canon = PathMapper.to_local(fp)
                                     exact_path_map[fp] = m_id
                                     exact_path_map[canon] = m_id
                                     norm = fp.replace('\\', '/').lower()
                                     norm_path_map[norm] = m_id
+                                    norm_canon = canon.replace('\\', '/').lower()
+                                    norm_path_map[norm_canon] = m_id
 
                                     base = os.path.basename(fp).lower()
                                     if base not in filename_map:
@@ -151,14 +154,16 @@ class DatabaseUpdateWorker:
                                 raw_fp = m.get('file_path') or ''
 
                                 if raw_fp:
-                                    canon_fp = _canonicalize_path(raw_fp)
+                                    canon_fp = PathMapper.to_local(raw_fp)
                                     norm_fp = raw_fp.replace('\\', '/').lower()
+                                    norm_canon_fp = canon_fp.replace('\\', '/').lower()
 
                                     # 1. Exact path or canonical path or normalized path match
                                     media_id = (
                                         exact_path_map.get(raw_fp)
                                         or exact_path_map.get(canon_fp)
                                         or norm_path_map.get(norm_fp)
+                                        or norm_path_map.get(norm_canon_fp)
                                     )
 
                                     # 2. Filename / suffix match
