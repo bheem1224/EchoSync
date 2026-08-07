@@ -198,7 +198,7 @@
       "requirements": [],
       "hooks": [],
       "min_echosync_version": "2.4.0",
-      "beta_version": "2.4.3-beta.31",
+      "beta_version": "2.4.3-beta.32",
       "plugin_id": "listenbrainz",
       "source_url": "https://github.com/bheem1224/EchoSync/tree/main/plugins/EchoSync/listenbrainz",
       "download_url": "https://raw.githubusercontent.com/bheem1224/EchoSync/main/plugins/EchoSync/listenbrainz/releases/v2.4.2.zip",
