@@ -127,6 +127,8 @@ class EchosyncTrack:
     display_title: str = field(init=False)
 
     # Artist/Album Metadata
+    artist_id: Optional[int] = None
+    album_id: Optional[int] = None
     artist_sort_name: Optional[str] = None
     album_artist: Optional[str] = None
     album_sort_title: Optional[str] = None

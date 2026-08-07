@@ -109,25 +109,16 @@ class TrackRepository:
     # --- Core Upsert ---
 
     @classmethod
-    def bulk_upsert_tracks(cls, session: Session, tracks: List[EchosyncTrack]) -> int:
+    def resolve_artists_and_albums(cls, session: Session, tracks: List[EchosyncTrack]) -> None:
         """
-        Batched SQLite UPSERT using sqlalchemy.dialects.sqlite.insert.
-
-        2-Model contract:
-        - Phase 1: Batch UPSERT all tracks into the `tracks` table using sync_id.
-        - Phase 2: For each EchosyncMedia in track.media, UPSERT into `local_media`
-                   using file_path as conflict key. Resolves track_id via a single
-                   WHERE sync_id IN (...) bulk query (no N+1).
-
-        Metadata preservation: COALESCE ensures existing non-null values are never
-        overwritten by incoming None/empty values.
+        Batch resolve and upsert missing Artists and Albums, attaching their IDs 
+        back onto the EchosyncTrack instances.
         """
         if not tracks:
-            return 0
+            return
 
         default_artist_id = cls.get_or_create_default_artist(session)
-        now = datetime.now(timezone.utc)
-
+        
         # ── Step 0a: Batch Resolve & Upsert Artists ───────────────────────────
         artist_names = set()
         for t in tracks:
@@ -165,7 +156,6 @@ class TrackRepository:
 
         # ── Step 0b: Batch Resolve & Upsert Albums ────────────────────────────
         album_pairs = set()  # (album_title, artist_id)
-        track_album_info = []  # list of (t, artist_id, album_title_or_None)
         for t in tracks:
             art = (
                 getattr(t, "artist_name", None)
@@ -175,14 +165,13 @@ class TrackRepository:
             artist_id = default_artist_id
             if art and art.strip():
                 artist_id = artist_map.get(art.strip().lower(), default_artist_id)
+            
+            t.artist_id = artist_id
 
             alb = getattr(t, "album_title", None) or getattr(t, "album", None)
             if alb and alb.strip():
                 alb_clean = alb.strip()
                 album_pairs.add((alb_clean, artist_id))
-                track_album_info.append((t, artist_id, alb_clean))
-            else:
-                track_album_info.append((t, artist_id, None))
 
         album_map = {}  # (album_title.lower(), artist_id) -> album_id
         if album_pairs:
@@ -208,6 +197,22 @@ class TrackRepository:
                 for alb in new_albums_db:
                     album_map[(alb.title.lower(), alb.artist_id)] = alb.id
 
+        # Update track objects with resolved IDs
+        for t in tracks:
+            t.album_id = album_map.get((getattr(t, "album_title", None) or getattr(t, "album", ""), t.artist_id))
+
+    @classmethod
+    def bulk_upsert_tracks(cls, session: Session, tracks: List[EchosyncTrack]) -> int:
+        if not tracks:
+            return 0
+
+        now = datetime.now(timezone.utc)
+        default_artist_id = cls.get_or_create_default_artist(session)
+
+        # Ensure artists and albums are resolved if not already set
+        if any(getattr(t, "artist_id", None) is None for t in tracks):
+            cls.resolve_artists_and_albums(session, tracks)
+
         # Build sync_id for each track (strips query params)
         def _build_sync_id(t: EchosyncTrack) -> str:
             raw_sid = getattr(t, "sync_id", None)
@@ -220,17 +225,15 @@ class TrackRepository:
         # --- Phase 1: Batch UPSERT tracks ---
         track_values = []
         sync_ids_in_batch = []
-        for i, t in enumerate(tracks):
+        for t in tracks:
             sync_id = _build_sync_id(t)
             sync_ids_in_batch.append(sync_id)
             duration = getattr(t, "duration_ms", None) or getattr(t, "duration", None)
             mbid = getattr(t, "mbid", None) or getattr(t, "musicbrainz_id", None)
             track_title = getattr(t, "title", None) or getattr(t, "raw_title", None) or "Unknown Title"
 
-            _, artist_id, alb_title = track_album_info[i]
-            album_id = None
-            if alb_title:
-                album_id = album_map.get((alb_title.lower(), artist_id))
+            artist_id = getattr(t, "artist_id", None) or default_artist_id
+            album_id = getattr(t, "album_id", None)
 
             track_values.append({
                 "sync_id": sync_id,

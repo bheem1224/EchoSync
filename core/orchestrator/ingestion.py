@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from database.music_database import get_database
 from core.db.echo_sync_track import EchosyncTrack, EchosyncMedia
-from core.database.repositories.track_repo import bulk_upsert_tracks
+from core.database.repositories.track_repo import bulk_upsert_tracks, TrackRepository
 from core.database.utils import calculate_safe_batch_size
 
 logger = logging.getLogger("ingestion_orchestrator")
@@ -130,6 +130,7 @@ class IngestionOrchestrator:
             total_upserted = 0
             for i in range(0, len(tracks), self.batch_size):
                 chunk = tracks[i:i + self.batch_size]
+                TrackRepository.resolve_artists_and_albums(session, chunk)
                 affected = bulk_upsert_tracks(session, chunk)
                 session.commit()
                 total_upserted += affected

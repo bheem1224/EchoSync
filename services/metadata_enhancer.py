@@ -845,27 +845,29 @@ class RetroactiveEnhancer:
                     if res['metadata_status'].get('artist_fixed_from_tags') and track.artist:
                         track.artist.name = res['artist_name']
 
-                    if res.get('new_chromaprint_generated', False):
-                        # Avoid IntegrityError by checking if it exists
-                        existing_fp = session.query(AudioFingerprint).filter_by(chromaprint=res['chromaprint']).first()
-                        if not existing_fp:
-                            media = track.media_files[0] if track.media_files else None
-                            if media:
-                                track_fp = AudioFingerprint(
-                                    media_id=media.media_id,
-                                    chromaprint=res['chromaprint'],
-                                    acoustid_id=res['acoustid_id'],
-                                )
-                                session.add(track_fp)
-                        else:
-                            logger.debug(f"Skipping audio fingerprint insert for {track.id}: duplicate chromaprint.")
-                    elif res['has_fp_record'] and res['acoustid_id']:
-                        # Update existing FP record
-                        media = track.media_files[0] if track.media_files else None
-                        if media:
-                            track_fp = session.query(AudioFingerprint).filter_by(media_id=media.media_id).first()
-                            if track_fp and not track_fp.acoustid_id:
-                                track_fp.acoustid_id = res['acoustid_id']
+                    if track.media_files:
+                        media_ids = [m.media_id for m in track.media_files if m.media_id]
+                        existing_fps = {
+                            fp.media_id: fp 
+                            for fp in session.query(AudioFingerprint).filter(AudioFingerprint.media_id.in_(media_ids)).all()
+                        } if media_ids else {}
+
+                        if res.get('new_chromaprint_generated', False) and res.get('chromaprint'):
+                            for media in track.media_files:
+                                if media.media_id not in existing_fps:
+                                    track_fp = AudioFingerprint(
+                                        media_id=media.media_id,
+                                        chromaprint=res['chromaprint'],
+                                        acoustid_id=res.get('acoustid_id'),
+                                    )
+                                    session.add(track_fp)
+                                    existing_fps[media.media_id] = track_fp
+                                elif res.get('acoustid_id') and not existing_fps[media.media_id].acoustid_id:
+                                    existing_fps[media.media_id].acoustid_id = res['acoustid_id']
+                        elif res.get('has_fp_record') and res.get('acoustid_id'):
+                            for media in track.media_files:
+                                if media.media_id in existing_fps and not existing_fps[media.media_id].acoustid_id:
+                                    existing_fps[media.media_id].acoustid_id = res['acoustid_id']
 
                     # Always apply post-metadata enrichment hooks so that the cjk_restored stamp is set and aliases are persisted
                     track = hook_manager.apply_filters('post_metadata_enrichment', track)
