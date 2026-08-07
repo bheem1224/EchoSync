@@ -201,7 +201,7 @@ def create_app(testing: bool = False) -> Flask:
     
     # Trigger post-migration tasks (e.g., database_update job if v2.1.0 was migrated)
     try:
-        from core.migrations import trigger_post_migration_database_update
+        from core.db.migrations import trigger_post_migration_database_update
         trigger_post_migration_database_update()
     except Exception as e:
         print(f"[WARN] Failed to trigger post-migration tasks: {e}")

@@ -21,25 +21,30 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.create_table(
-        'ui_components',
-        sa.Column('id', sa.Integer(), primary_key=True, autoincrement=True),
-        sa.Column('plugin_id', sa.Integer(), nullable=True),
-        sa.Column('tag_name', sa.String(), nullable=False),
-        sa.Column('component_type', sa.String(), nullable=False),
-        sa.Column('entry_path', sa.String(), nullable=False),
-        sa.Column('is_core', sa.Boolean(), server_default='0', nullable=False),
-        sa.Column('created_at', sa.DateTime(), server_default=sa.text("(strftime('%s','now'))")),
-        sa.Column('updated_at', sa.DateTime(), server_default=sa.text("(strftime('%s','now'))")),
-    )
-    # Indexes for fast frontend queries
-    op.create_index('ix_ui_components_tag_name', 'ui_components', ['tag_name'], unique=True)
-    op.create_index('ix_ui_components_plugin_id', 'ui_components', ['plugin_id'])
-    op.create_index('ix_ui_components_component_type', 'ui_components', ['component_type'])
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    if not inspector.has_table('ui_components'):
+        op.create_table(
+            'ui_components',
+            sa.Column('id', sa.Integer(), primary_key=True, autoincrement=True),
+            sa.Column('plugin_id', sa.Integer(), nullable=True),
+            sa.Column('tag_name', sa.String(), nullable=False),
+            sa.Column('component_type', sa.String(), nullable=False),
+            sa.Column('entry_path', sa.String(), nullable=False),
+            sa.Column('is_core', sa.Boolean(), server_default='0', nullable=False),
+            sa.Column('created_at', sa.DateTime(), server_default=sa.text("(strftime('%s','now'))")),
+            sa.Column('updated_at', sa.DateTime(), server_default=sa.text("(strftime('%s','now'))")),
+        )
+        op.create_index('ix_ui_components_tag_name', 'ui_components', ['tag_name'], unique=True)
+        op.create_index('ix_ui_components_plugin_id', 'ui_components', ['plugin_id'])
+        op.create_index('ix_ui_components_component_type', 'ui_components', ['component_type'])
 
 
 def downgrade() -> None:
-    op.drop_index('ix_ui_components_component_type', table_name='ui_components')
-    op.drop_index('ix_ui_components_plugin_id', table_name='ui_components')
-    op.drop_index('ix_ui_components_tag_name', table_name='ui_components')
-    op.drop_table('ui_components')
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    if inspector.has_table('ui_components'):
+        op.drop_index('ix_ui_components_component_type', table_name='ui_components')
+        op.drop_index('ix_ui_components_plugin_id', table_name='ui_components')
+        op.drop_index('ix_ui_components_tag_name', table_name='ui_components')
+        op.drop_table('ui_components')

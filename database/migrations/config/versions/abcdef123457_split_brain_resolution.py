@@ -7,12 +7,21 @@ branch_labels = None
 depends_on = None
 
 def upgrade() -> None:
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    existing_cols = {col['name'] for col in inspector.get_columns('services')}
+
     with op.batch_alter_table('services', schema=None) as batch_op:
-        batch_op.add_column(sa.Column('beta_opt_in', sa.Boolean(), nullable=True))
-        batch_op.add_column(sa.Column('previous_version_path', sa.String(), nullable=True))
-        batch_op.add_column(sa.Column('verified_source', sa.Boolean(), server_default='0', nullable=False))
-        batch_op.add_column(sa.Column('privileged_mode', sa.Boolean(), server_default='0', nullable=False))
-        batch_op.add_column(sa.Column('permissions', sa.String(), server_default='[]', nullable=False))
+        if 'beta_opt_in' not in existing_cols:
+            batch_op.add_column(sa.Column('beta_opt_in', sa.Boolean(), nullable=True))
+        if 'previous_version_path' not in existing_cols:
+            batch_op.add_column(sa.Column('previous_version_path', sa.String(), nullable=True))
+        if 'verified_source' not in existing_cols:
+            batch_op.add_column(sa.Column('verified_source', sa.Boolean(), server_default='0', nullable=False))
+        if 'privileged_mode' not in existing_cols:
+            batch_op.add_column(sa.Column('privileged_mode', sa.Boolean(), server_default='0', nullable=False))
+        if 'permissions' not in existing_cols:
+            batch_op.add_column(sa.Column('permissions', sa.String(), server_default='[]', nullable=False))
 
 def downgrade() -> None:
     with op.batch_alter_table('services', schema=None) as batch_op:

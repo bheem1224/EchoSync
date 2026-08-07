@@ -278,7 +278,7 @@ def get_encryption_key_warning():
 def get_migration_status():
     """Check if v2.1.0 migration was triggered and notify frontend."""
     try:
-        from core.migrations import was_v2_1_migration_triggered
+        from core.db.migrations import was_v2_1_migration_triggered
         is_migrated = was_v2_1_migration_triggered()
         return jsonify({
             "v2_1_migration_triggered": is_migrated,
@@ -294,7 +294,7 @@ def get_migration_status():
 def acknowledge_migration():
     """Acknowledge the v2.1.0 migration notification."""
     try:
-        from core.migrations import acknowledge_v2_1_migration
+        from core.db.migrations import acknowledge_v2_1_migration
         acknowledge_v2_1_migration()
         logger.info("v2.1.0 migration notification acknowledged by user")
         return jsonify({"success": True}), 200

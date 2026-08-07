@@ -179,7 +179,9 @@ def run_auto_migrations() -> None:
 
     logger.info("Starting automatic database schema migrations via Alembic...")
 
-    alembic_cfg_path = Path(__file__).parent.parent / "alembic.ini"
+    alembic_cfg_path = Path(__file__).resolve().parents[2] / "alembic.ini"
+    if not alembic_cfg_path.exists():
+        alembic_cfg_path = Path(__file__).resolve().parent.parent / "alembic.ini"
 
     environments = [
         "alembic:config",

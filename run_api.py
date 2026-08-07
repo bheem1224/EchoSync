@@ -56,16 +56,16 @@ if safe_mode:
 
 
 # Run Phase 1 Database Migrations securely
-from core.migrations import run_migrations
+from core.db.migrations import run_migrations
 run_migrations()
 
 # Pillar 1: The Auto-Migrator
-from core.migrations import run_auto_migrations
+from core.db.migrations import run_auto_migrations
 run_auto_migrations()
 
 # Run Phase 2: working.db column migrations (must run after working DB engine is initialised)
 from database.working_database import get_working_database
-from core.migrations import run_working_db_migrations
+from core.db.migrations import run_working_db_migrations
 run_working_db_migrations(get_working_database().engine)
 
 from web.api_app import create_app
