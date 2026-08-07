@@ -9,6 +9,7 @@ from packaging import version
 from typing import Any, List, Dict, Optional
 from core.request_manager import RequestManager
 from core.settings import config_manager
+from core.path_security import resolve_safe_path, validate_zip_entry, PathTraversalError
 
 logger = logging.getLogger(__name__)
 
@@ -463,7 +464,7 @@ class PluginStore:
             clean_id = str(plugin_id)
             folder_path = clean_id.replace('.', '/')
             
-        dest_dir = self.plugins_dir / folder_path
+        dest_dir = resolve_safe_path(self.plugins_dir, folder_path)
         beta_dir = dest_dir / "beta"
 
         if channel == "beta":
@@ -471,7 +472,7 @@ class PluginStore:
         else:
             target_dir = dest_dir
 
-        tmp_dir = self.plugins_dir / f"tmp_{folder_path.replace('/', '_')}"
+        tmp_dir = resolve_safe_path(self.plugins_dir, f"tmp_{folder_path.replace('/', '_')}")
 
         try:
             logger.info(f"Direct downloading {plugin_id} ({channel}) from {download_url}")
@@ -552,30 +553,21 @@ class PluginStore:
 
                 # Task 2: Artifact Extraction (Direct Root Level)
                 with zipfile.ZipFile(tmp_zip_path, 'r') as z:
-                    # Robust Path Traversal Guard for POSIX and Windows
-                    resolved_tmp_dir = tmp_dir.resolve()
                     for zi in z.infolist():
-                        target_path = (tmp_dir / zi.filename).resolve()
                         try:
-                            if not target_path.is_relative_to(resolved_tmp_dir):
-                                logger.error(f"Malicious path traversal in artifact: {zi.filename}")
-                                return False
-                        except AttributeError:
-                            if not str(target_path).startswith(str(resolved_tmp_dir)):
-                                logger.error(f"Malicious path traversal in artifact: {zi.filename}")
-                                return False
+                            # Zip Slip Prevention via Path Sanitizer
+                            validate_zip_entry(tmp_dir, zi.filename)
+                        except PathTraversalError as pte:
+                            logger.error(f"Malicious Zip Slip path traversal in artifact: {zi.filename} - {pte}")
+                            return False
                         z.extract(zi, tmp_dir)
 
                 # Validation: Direct check for manifest.json at root
-                manifest_file = (tmp_dir / "manifest.json").resolve()
                 try:
-                    if not manifest_file.is_relative_to(resolved_tmp_dir):
-                        logger.error("Security violation: manifest.json resolves outside temporary directory")
-                        return False
-                except AttributeError:
-                    if not str(manifest_file).startswith(str(resolved_tmp_dir)):
-                        logger.error("Security violation: manifest.json resolves outside temporary directory")
-                        return False
+                    manifest_file = resolve_safe_path(tmp_dir, "manifest.json")
+                except PathTraversalError as pte:
+                    logger.error(f"Security violation: manifest.json resolves outside temporary directory: {pte}")
+                    return False
 
                 if not manifest_file.exists():
                     logger.error(f"Validation failed: Clean artifact missing manifest.json at root for {plugin_id}")
@@ -1056,7 +1048,7 @@ class PluginStore:
         import shutil
         # Convert dots to slashes for nested path support
         path_name = folder_id.replace('.', '/')
-        beta_path = self.plugins_dir / path_name / "beta"
+        beta_path = resolve_safe_path(self.plugins_dir, f"{path_name}/beta")
         if beta_path.exists():
             shutil.rmtree(beta_path, ignore_errors=True)
             logger.info(f"Removed leftover beta folder for plugin {folder_id}")

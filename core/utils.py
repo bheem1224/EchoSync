@@ -6,6 +6,8 @@ import re
 from typing import List, Dict, Union, Optional
 import logging
 
+from core.path_security import resolve_safe_path, validate_zip_entry, PathTraversalError
+
 logger = logging.getLogger("utils")
 
 

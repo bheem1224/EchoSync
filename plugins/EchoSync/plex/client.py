@@ -1108,9 +1108,7 @@ class PlexClient(MediaServerProvider):
                     file_path = _safe_getattr(media.parts[0], 'file', None)
             
             if file_path:
-                if not self.path_mapper:
-                    self.path_mapper = PathMapper()
-                file_path = self.path_mapper.to_local(file_path)
+                file_path = PathMapper.to_local(file_path)
 
             # Filter out rogue mount entries
             if file_path and not file_path.startswith("virtual://"):
