@@ -44,11 +44,11 @@ from sqlalchemy.orm import (
 
 
 import string
-import random
+import secrets
 
 def generate_nanoid(size=8) -> str:
     alphabet = string.ascii_letters + string.digits
-    return ''.join(random.choices(alphabet, k=size))
+    return ''.join(secrets.choice(alphabet) for _ in range(size))
 
 def _safe_parse_date(release_date) -> date:
     if not release_date:

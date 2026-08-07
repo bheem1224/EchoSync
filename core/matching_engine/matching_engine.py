@@ -3,9 +3,9 @@ import re
 _ISRC_PATTERN = re.compile(r'^[A-Z]{2}[A-Z0-9]{3}\d{2}\d{5}$')
 INVALID_ISRC_VALUES = frozenset(["0", "NULL", "NONE", "N/A", "UNKNOWN"])
 _ARTIST_SPLIT_PATTERN = re.compile(r'\s*(?:&|\bfeat\.?|\bft\.?|\bfeaturing\b|\bwith\b|\band\b|,)\s*', flags=re.IGNORECASE)
-_BRACKET_REMOVE_PATTERN = re.compile(r'[\(\[].*?[\)\]]')
+_BRACKET_REMOVE_PATTERN = re.compile(r'[\(\[][^()\[\]]*?[\)\]]')
 _HYPHEN_TRUNCATE_PATTERN = re.compile(r'-.*$')
-_STRIP_FEATURED_ARTIST_PATTERN = re.compile(r"[\(\[]\s*(?:feat\.?|ft\.?|featuring|with)\s+.*?[\)\]]|\s+(?:feat\.?|ft\.?|featuring|with)\s+.*$", flags=re.IGNORECASE)
+_STRIP_FEATURED_ARTIST_PATTERN = re.compile(r"[\(\[]\s*(?:feat\.?|ft\.?|featuring|with)\s+[^()\[\]]*?[\)\]]|\s+(?:feat\.?|ft\.?|featuring|with)\s+.*$", flags=re.IGNORECASE)
 _STRIP_SPECIAL_CHARS_PATTERN = re.compile(r'[^\w\s]')
 
 class MatchingConstants:

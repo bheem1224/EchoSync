@@ -127,4 +127,4 @@ def stream_audio():
 
     except Exception as e:
         logger.error(f"Error streaming local file {path_param}: {e}", exc_info=True)
-        return jsonify({"error": f"Internal server error: {e}"}), 500
+        return jsonify({"error": "An internal server error occurred while processing the request"}), 500

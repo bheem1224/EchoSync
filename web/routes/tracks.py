@@ -49,8 +49,8 @@ def _track_to_dict(track: Track) -> dict:
 def list_canonical_tracks():
     """List canonical tracks with pagination."""
     try:
-        limit = min(int(request.args.get("limit", 50)), 500)
-        offset = int(request.args.get("offset", 0))
+        limit = max(1, min(int(request.args.get("limit", 50)), 500))
+        offset = max(0, int(request.args.get("offset", 0)))
         db = get_database()
         with db.get_session() as session:
             tracks = (

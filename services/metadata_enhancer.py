@@ -211,11 +211,29 @@ class RetroactiveEnhancer:
                     try:
                         results = metadata_provider.search_metadata(track_obj, limit=10)
                         if results:
+                            if isinstance(results, EchosyncTrack):
+                                results_list = [results]
+                            elif isinstance(results, (list, tuple)):
+                                results_list = list(results)
+                            else:
+                                results_list = [results]
+
                             candidate_tracks = []
-                            for result in results:
-                                candidate = self._search_result_to_track(result)
+                            for result in results_list:
+                                if isinstance(result, EchosyncTrack):
+                                    candidate = result
+                                    mbid = result.musicbrainz_id
+                                    if not mbid and isinstance(result.identifiers, dict):
+                                        mbid = result.identifiers.get('musicbrainz_recording_id') or result.identifiers.get('mbid')
+                                elif isinstance(result, dict):
+                                    candidate = self._search_result_to_track(result)
+                                    mbid = result.get('mbid') or result.get('recording_id')
+                                else:
+                                    candidate = None
+                                    mbid = None
+
                                 if candidate:
-                                    candidate_tracks.append((candidate, result.get('mbid') or result.get('recording_id')))
+                                    candidate_tracks.append((candidate, mbid))
 
                             if candidate_tracks:
                                 from core.matching_engine.scoring_profile import PROFILE_EXACT_SYNC
@@ -224,6 +242,7 @@ class RetroactiveEnhancer:
                                 matcher = engine_cls(PROFILE_EXACT_SYNC)
                                 best_score = 0.0
                                 best_mbid = None
+                                best_candidate = None
 
                                 for candidate, mbid in candidate_tracks:
                                     match_result = matcher.calculate_match(track_obj, candidate)
@@ -231,12 +250,16 @@ class RetroactiveEnhancer:
                                     if score > best_score:
                                         best_score = score
                                         best_mbid = mbid
+                                        best_candidate = candidate
 
-                                if best_score >= 85.0 and best_mbid:
+                                if best_score >= 85.0:
                                     logger.info(f"✓ Matched '{file_path.name}' via local_metadata text search (score: {best_score:.1f}%)")
-                                    metadata = metadata_provider.get_metadata(best_mbid)
-                                    if metadata:
-                                        return metadata, best_score / 100.0
+                                    if best_mbid:
+                                        metadata = metadata_provider.get_metadata(best_mbid)
+                                        if metadata:
+                                            return metadata, best_score / 100.0
+                                    if best_candidate:
+                                        return best_candidate, best_score / 100.0
                         else:
                             logger.debug(f"No search results for fallback query using local_metadata")
                     except Exception as e:

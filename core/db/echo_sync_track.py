@@ -1,7 +1,7 @@
 
 import re
 _ATTRIBUTION_PATTERN = re.compile(
-    r"[\(\[]\s*(?:feat\.?|ft\.?|featuring|with)\s+.*?[\)\]]|\s+(?:feat\.?|ft\.?|featuring|with)\s+.*$",
+    r"[\(\[]\s*(?:feat\.?|ft\.?|featuring|with)\s+[^()\[\]]*?[\)\]]|\s+(?:feat\.?|ft\.?|featuring|with)\s+.*$",
     re.IGNORECASE
 )
 
