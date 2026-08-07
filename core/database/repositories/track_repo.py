@@ -252,6 +252,56 @@ class TrackRepository:
                 )
                 session.execute(media_upsert)
 
+        # --- Phase 3: Batch UPSERT ExternalIdentifiers ---
+        from database.music_database import ExternalIdentifier
+        track_id_to_media_id = {}
+        if sync_id_to_track_id:
+            batch_track_ids = list(sync_id_to_track_id.values())
+            media_rows = session.execute(
+                select(LocalMedia.track_id, LocalMedia.media_id).where(LocalMedia.track_id.in_(batch_track_ids))
+            ).all()
+            for row in media_rows:
+                if row.track_id not in track_id_to_media_id:
+                    track_id_to_media_id[row.track_id] = row.media_id
+
+        ident_values = []
+        for t in tracks:
+            sync_id = _build_sync_id(t)
+            track_id = sync_id_to_track_id.get(sync_id)
+            if not track_id:
+                continue
+            media_id = track_id_to_media_id.get(track_id)
+            if not media_id:
+                continue
+
+            identifiers = getattr(t, "identifiers", []) or []
+            for ident in identifiers:
+                if isinstance(ident, dict):
+                    source = ident.get("plugin_source") or ident.get("source")
+                    item_id = ident.get("plugin_item_id") or ident.get("item_id")
+                    raw_data = ident.get("raw_data")
+                    if source and item_id:
+                        ident_values.append({
+                            "media_id": media_id,
+                            "plugin_source": source,
+                            "plugin_item_id": str(item_id),
+                            "raw_data": raw_data,
+                        })
+
+        if ident_values:
+            ident_chunk_size = calculate_safe_batch_size(column_count=4)
+            for i in range(0, len(ident_values), ident_chunk_size):
+                i_chunk = ident_values[i:i + ident_chunk_size]
+                ident_stmt = sqlite_insert(ExternalIdentifier).values(i_chunk)
+                ident_upsert = ident_stmt.on_conflict_do_update(
+                    constraint="uq_plugin_item",
+                    set_={
+                        "media_id": ident_stmt.excluded.media_id,
+                        "raw_data": ident_stmt.excluded.raw_data,
+                    }
+                )
+                session.execute(ident_upsert)
+
         return affected_rows
 
 

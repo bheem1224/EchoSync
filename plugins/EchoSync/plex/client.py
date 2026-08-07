@@ -1175,7 +1175,7 @@ class PlexClient(MediaServerProvider):
 
             from core.db.echo_sync_track import EchosyncMedia
             media = []
-            if file_path or file_format or bitrate or file_size_bytes or added_at:
+            if file_path and os.path.exists(file_path):
                 media.append(EchosyncMedia(
                     file_path=file_path,
                     file_format=file_format,
