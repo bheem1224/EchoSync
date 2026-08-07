@@ -57,6 +57,10 @@ def copy_table_data(session_factory, dest_model, source_plugin_id: str, source_t
     safe_source_id = source_plugin_id.lower()
     source_table_full = f"plugin_{safe_source_id}_{source_table_name}"
     
+    if not re.match(r'^[a-zA-Z0-9_]+$', dest_table) or not re.match(r'^[a-zA-Z0-9_]+$', source_table_full):
+        logger.error(f"Invalid SQL identifier in table migration: dest='{dest_table}', source='{source_table_full}'")
+        return False
+
     from sqlalchemy import text
     from sqlalchemy.exc import OperationalError
 

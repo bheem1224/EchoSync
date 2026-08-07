@@ -860,6 +860,8 @@ class PluginBase(ABC):
                 cursor.execute("ATTACH DATABASE 'file:/data/music.db?mode=ro' AS music_lib")
 
                 working_mode = "rw" if write_access else "ro"
+                if working_mode not in ("ro", "rw", "rwc"):
+                    raise ValueError(f"Invalid attach database mode: {working_mode}")
                 cursor.execute(f"ATTACH DATABASE 'file:/data/working.db?mode={working_mode}' AS working")
             except Exception as e:
                 pass
