@@ -97,6 +97,56 @@ class DatabaseUpdateWorker:
 
             # --- REMOTE MEDIA CLIENT PATH ---
             else:
+                # --- IDENTIFIERS-ONLY FAST PATH ---
+                if self.identifiers_only and hasattr(self.media_client, 'get_identifier_mappings'):
+                    logger.info(f"identifiers_only mode: using get_identifier_mappings() for {self.server_type}")
+                    from database.music_database import ExternalIdentifier, LocalMedia
+                    from sqlalchemy import select
+                    from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+
+                    mappings = list(self.media_client.get_identifier_mappings())
+                    logger.info(f"Fetched {len(mappings)} identifier mappings from {self.server_type}")
+
+                    if mappings:
+                        with db.session_factory() as session:
+                            # Build a lookup: canonical file_path -> media_id from local_media
+                            all_paths = [m['file_path'] for m in mappings if m.get('file_path')]
+                            if all_paths:
+                                rows = session.execute(
+                                    select(LocalMedia.file_path, LocalMedia.media_id)
+                                    .where(LocalMedia.file_path.in_(all_paths))
+                                ).all()
+                                path_to_media_id = {row.file_path: row.media_id for row in rows}
+
+                                ident_values = []
+                                for m in mappings:
+                                    fp = m.get('file_path')
+                                    media_id = path_to_media_id.get(fp)
+                                    if not media_id:
+                                        continue
+                                    ident_values.append({
+                                        'media_id': media_id,
+                                        'plugin_source': m['plugin_source'],
+                                        'plugin_item_id': str(m['plugin_item_id']),
+                                        'raw_data': None,
+                                    })
+
+                                if ident_values:
+                                    stmt = sqlite_insert(ExternalIdentifier).values(ident_values)
+                                    upsert = stmt.on_conflict_do_update(
+                                        constraint="uq_plugin_item",
+                                        set_={"media_id": stmt.excluded.media_id}
+                                    )
+                                    session.execute(upsert)
+                                    session.commit()
+                                    logger.info(
+                                        f"Upserted {len(ident_values)} ExternalIdentifier rows "
+                                        f"for {self.server_type}"
+                                    )
+                                    self.processed_tracks = len(ident_values)
+                                    self.successful_operations = len(ident_values)
+                    return
+
                 logger.debug(f"Fetching library from {self.server_type} via media_client...")
                 all_tracks = list(self.media_client.get_all_tracks())
 

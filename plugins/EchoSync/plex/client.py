@@ -806,8 +806,66 @@ class PlexClient(MediaServerProvider):
         
         return False
     
+    def get_identifier_mappings(self, limit: Optional[int] = None):
+        """
+        Lightweight identifiers-only fetch: yields dicts of {file_path, plugin_source, plugin_item_id}
+        without constructing full EchosyncTrack objects.
+
+        Used by DatabaseUpdateWorker when identifiers_only=True so we can backfill
+        ExternalIdentifier rows keyed off LocalMedia.file_path without re-running the
+        full _convert_track_to_echosync() pipeline.
+        """
+        if not self.ensure_connection() or not self.music_library:
+            logger.warning("get_identifier_mappings: no active music library")
+            return
+
+        chunk_size = 1000
+        max_limit = limit if limit else 999999
+        offset = 0
+
+        while offset < max_limit:
+            current_limit = min(chunk_size, max_limit - offset)
+            try:
+                chunk_tracks = self.music_library.searchTracks(
+                    container_start=offset, container_size=current_limit
+                )
+            except Exception as e:
+                logger.error(f"get_identifier_mappings: Plex searchTracks failed at offset={offset}: {e}")
+                break
+
+            if not chunk_tracks:
+                break
+
+            for raw_track in chunk_tracks:
+                if not isinstance(raw_track, PlexTrack):
+                    continue
+                try:
+                    rating_key = str(_safe_getattr(raw_track, 'ratingKey', None) or '')
+                    if not rating_key or rating_key == 'None':
+                        continue
+
+                    file_path = None
+                    if hasattr(raw_track, 'media') and raw_track.media:
+                        media_obj = raw_track.media[0]
+                        if hasattr(media_obj, 'parts') and media_obj.parts:
+                            file_path = _safe_getattr(media_obj.parts[0], 'file', None)
+
+                    if file_path:
+                        file_path = PathMapper.to_local(file_path)
+
+                    yield {
+                        'file_path': file_path,
+                        'plugin_source': 'plex',
+                        'plugin_item_id': rating_key,
+                    }
+                except Exception as e:
+                    logger.debug(f"get_identifier_mappings: skipping track: {e}")
+
+            offset += len(chunk_tracks)
+
     def get_all_tracks(self, limit: Optional[int] = None):
         """Get all tracks from active music library iteratively to save RAM."""
+
         if not self.ensure_connection() or not self.music_library:
             logger.warning("No active music library")
             return
