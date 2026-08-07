@@ -1107,9 +1107,14 @@ class PlexClient(MediaServerProvider):
                 if hasattr(media, 'parts') and media.parts:
                     file_path = _safe_getattr(media.parts[0], 'file', None)
             
+            if file_path:
+                if not self.path_mapper:
+                    self.path_mapper = PathMapper()
+                file_path = self.path_mapper.to_local(file_path)
+
             # Filter out rogue mount entries
             if file_path and not file_path.startswith("virtual://"):
-                sanctioned_prefixes = tuple(config_manager.get("SANCTIONED_PATH_PREFIXES", ["/data/library/", "/data/music/"]))
+                sanctioned_prefixes = tuple(config_manager.get("SANCTIONED_PATH_PREFIXES", ["/data/library/"]))
                 if not file_path.startswith(sanctioned_prefixes):
                     if "PYTEST_CURRENT_TEST" not in os.environ:
                         logger.warning(f"Blocking rogue mount entry in Plex client: {file_path}. Expected one of {sanctioned_prefixes}")

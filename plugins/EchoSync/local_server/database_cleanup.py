@@ -71,7 +71,7 @@ class DatabaseCleanupJob(BaseJob):
             self.update_progress(10, 100, "Phase 0.5: Evicting rogue mount entries...")
             
             if "PYTEST_CURRENT_TEST" not in os.environ:
-                sanctioned_prefixes = tuple(config_manager.get("SANCTIONED_PATH_PREFIXES", ["/data/library/", "/data/music/"]))
+                sanctioned_prefixes = tuple(config_manager.get("SANCTIONED_PATH_PREFIXES", ["/data/library/"]))
                 from sqlalchemy import or_
                 # Build an OR condition for all sanctioned prefixes
                 prefix_conditions = [LocalMedia.file_path.startswith(prefix) for prefix in sanctioned_prefixes]
