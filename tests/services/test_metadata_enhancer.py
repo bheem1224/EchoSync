@@ -1,7 +1,7 @@
 from unittest.mock import MagicMock
 from pathlib import Path
 from core.db.echo_sync_track import EchosyncTrack
-from services.metadata_enhancer import RetroactiveEnhancer
+from services.metadata_enhancer import RetroactiveEnhancer, _tagging_write
 
 
 def test_identify_file_handles_single_echosync_track_from_search_metadata(monkeypatch):
@@ -35,3 +35,19 @@ def test_identify_file_handles_single_echosync_track_from_search_metadata(monkey
 
     assert metadata is not None
     assert confidence >= 0.85
+
+
+def test_tag_file_and_tagging_write_handles_call_without_name_error(tmp_path):
+    enhancer = RetroactiveEnhancer()
+    fake_file = tmp_path / "test_song.wav"
+    fake_file.write_bytes(b"RIFF dummy header audio content")
+
+    metadata = {
+        "title": "Lovely",
+        "artist": "Billie Eilish, Khalid",
+        "album": "Lovely",
+        "musicbrainz_id": "9fac88f3-f646-4099-926e-544180929d7f",
+    }
+
+    # Calling tag_file must not raise NameError for _tagging_write
+    enhancer.tag_file(fake_file, metadata)

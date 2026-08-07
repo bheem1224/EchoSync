@@ -125,6 +125,69 @@ def _match_from_album_cache(
     return None
 
 
+def _tagging_write(file_path: Any, tags: Dict[str, Any]) -> None:
+    """
+    Write physical audio tags to a file using Mutagen if available.
+    Safely catches ImportError if Mutagen is missing, logging a debug message instead of crashing.
+    """
+    path = Path(file_path)
+    if not path.exists():
+        logger.warning("_tagging_write: file does not exist at %s", path)
+        return
+
+    try:
+        import mutagen
+    except ImportError:
+        logger.debug("_tagging_write: mutagen not installed; skipping physical tag write for %s", path.name)
+        return
+
+    try:
+        # Try easy mutagen interface first for standard tags
+        audio = mutagen.File(str(path), easy=True)
+        if audio is not None:
+            easy_map = {
+                'title': 'title',
+                'artist': 'artist',
+                'album': 'album',
+                'date': 'date',
+                'release_year': 'date',
+                'track_number': 'tracknumber',
+                'disc_number': 'discnumber',
+                'isrc': 'isrc',
+                'genre': 'genre',
+            }
+            for key, val in tags.items():
+                if val is None or val == '':
+                    continue
+                easy_key = easy_map.get(key)
+                if easy_key:
+                    try:
+                        audio[easy_key] = [str(val)]
+                    except Exception:
+                        pass
+            audio.save()
+            logger.debug("_tagging_write: wrote easy tags to %s", path.name)
+            return
+    except Exception as e:
+        logger.debug("_tagging_write: easy tagging fallback for %s: %s", path.name, e)
+
+    try:
+        audio = mutagen.File(str(path))
+        if audio is not None and hasattr(audio, 'tags') and audio.tags is not None:
+            for key, val in tags.items():
+                if val is None or val == '':
+                    continue
+                try:
+                    upper_key = key.upper()
+                    if hasattr(audio.tags, '__setitem__'):
+                        audio.tags[upper_key] = str(val)
+                except Exception:
+                    pass
+            audio.save()
+            logger.debug("_tagging_write: wrote standard tags to %s", path.name)
+    except Exception as e:
+        logger.warning("_tagging_write: failed writing tags to %s: %s", path.name, e)
+
 
 class RetroactiveEnhancer:
     """Background service for library-wide batch metadata enhancement."""
