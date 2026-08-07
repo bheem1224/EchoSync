@@ -190,7 +190,7 @@ _FORBIDDEN_MODULE_CALLS: dict = {
 # Forbidden method names on *any* receiver.
 # pathlib.Path is the primary target; AST-only scanning cannot resolve types,
 # so we match conservatively — plugins must not call these directly regardless
-# of receiver type.  All legitimate I/O must go through LocalFileHandler.
+# of receiver type.  All legitimate I/O must go through Gatekeeper.
 _FORBIDDEN_METHOD_CALLS: frozenset = frozenset({"unlink", "write_text", "open"})
 
 
@@ -199,7 +199,7 @@ class PluginSecurityScanner(ast.NodeVisitor):
     AST-based pre-load security scanner for community plugins.
 
     Walks the parse tree of each .py source file *before* importlib touches it
-    and flags any raw file-I/O calls that bypass the LocalFileHandler gateway.
+    and flags any raw file-I/O calls that bypass the Gatekeeper gateway.
 
     Forbidden patterns detected
     ---------------------------

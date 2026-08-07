@@ -109,8 +109,8 @@ class FingerprintGenerator:
         """Generate a Chromaprint fingerprint and return it together with the
         fpcalc-computed duration (in whole seconds).
 
-        Using this avoids a second mutagen decode when both values are needed,
-        which is especially important for WAV files where mutagen duration
+        Using this avoids a second audio decode when both values are needed,
+        which is especially important for WAV files where header duration
         detection can be unreliable.
 
         Returns:

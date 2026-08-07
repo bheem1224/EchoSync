@@ -723,7 +723,7 @@ def lookup_review_queue_item_acoustid(task_id: int):
             if isinstance(fingerprint, bytes):
                 fingerprint = fingerprint.decode("utf-8", errors="ignore")
 
-            # Fall back to mutagen if fpcalc didn't report duration (very rare)
+            # Fall back to audio duration helper if fpcalc didn't report duration (very rare)
             if not duration or duration <= 0:
                 enhancer = get_metadata_enhancer()
                 if hasattr(enhancer, "_get_audio_duration"):

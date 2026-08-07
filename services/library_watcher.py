@@ -14,7 +14,7 @@ Flow
   _AudioEventHandler.on_created / on_moved
       ↓  per-path debounce timer (threading.Timer, 1.5 s)
   _process_new_file(path)
-      ├─ LocalFileHandler.read_tags()   → extract title / artist / isrc / …
+      ├─ echosync_core.extract_metadata()   → extract title / artist / isrc / …
       ├─ LibraryManager._upsert_track() → insert / update DB row atomically
       └─ event_bus.publish({"event": "TRACK_IMPORTED", …})
              ↓
@@ -54,6 +54,7 @@ from core.db.echo_sync_track import EchosyncTrack
 from core.settings import config_manager
 from core.tiered_logger import get_logger
 from database.music_database import get_database
+import echosync_core
 
 logger = get_logger("library_watcher")
 
@@ -164,7 +165,7 @@ def _process_new_file(path: Path) -> None:
         # ── 1. Extract tags ────────────────────────────────────────────────
         tags: dict[str, Any] = {}
         try:
-            tags = LocalFileHandler.get_instance().read_tags(path)
+            tags = echosync_core.extract_metadata(str(path))
         except Exception as tag_err:
             logger.warning("Watcher: tag extraction failed for %s: %s", path.name, tag_err)
 

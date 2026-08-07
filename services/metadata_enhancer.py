@@ -4,7 +4,7 @@ Metadata Enhancer Service - Service for identifying and tagging audio.
 This service focuses on:
 1. Fingerprinting audio (AcoustID)
 2. Fetching metadata (MusicBrainz)
-3. Tagging files (Mutagen)
+3. Tagging files (echosync_core)
 4. Managing the Review Queue (Database)
 
 It does NOT move files or scan directories (see AutoImportService).
@@ -127,66 +127,30 @@ def _match_from_album_cache(
 
 def _tagging_write(file_path: Any, tags: Dict[str, Any]) -> None:
     """
-    Write physical audio tags to a file using Mutagen if available.
-    Safely catches ImportError if Mutagen is missing, logging a debug message instead of crashing.
+    Write physical audio tags to a file via echosync_core.
+    If PyO3 bindings for physical tag writing are not exposed for a specific format,
+    fails gracefully.
     """
     path = Path(file_path)
     if not path.exists():
         logger.warning("_tagging_write: file does not exist at %s", path)
         return
 
-    try:
-        import mutagen
-    except ImportError:
-        logger.debug("_tagging_write: mutagen not installed; skipping physical tag write for %s", path.name)
+    tags_dict = {str(k): str(v) for k, v in tags.items() if v not in (None, '')}
+    if not tags_dict:
         return
 
     try:
-        # Try easy mutagen interface first for standard tags
-        audio = mutagen.File(str(path), easy=True)
-        if audio is not None:
-            easy_map = {
-                'title': 'title',
-                'artist': 'artist',
-                'album': 'album',
-                'date': 'date',
-                'release_year': 'date',
-                'track_number': 'tracknumber',
-                'disc_number': 'discnumber',
-                'isrc': 'isrc',
-                'genre': 'genre',
-            }
-            for key, val in tags.items():
-                if val is None or val == '':
-                    continue
-                easy_key = easy_map.get(key)
-                if easy_key:
-                    try:
-                        audio[easy_key] = [str(val)]
-                    except Exception:
-                        pass
-            audio.save()
-            logger.debug("_tagging_write: wrote easy tags to %s", path.name)
-            return
+        if hasattr(echosync_core, "write_metadata"):
+            echosync_core.write_metadata(str(path), tags_dict)
+            logger.debug("_tagging_write: wrote tags to %s via echosync_core", path.name)
+        elif hasattr(echosync_core, "write_tags"):
+            echosync_core.write_tags(str(path), tags_dict)
+            logger.debug("_tagging_write: wrote tags to %s via echosync_core", path.name)
+        else:
+            logger.debug("_tagging_write: physical tag writing not yet exposed in echosync_core for %s", path.name)
     except Exception as e:
-        logger.debug("_tagging_write: easy tagging fallback for %s: %s", path.name, e)
-
-    try:
-        audio = mutagen.File(str(path))
-        if audio is not None and hasattr(audio, 'tags') and audio.tags is not None:
-            for key, val in tags.items():
-                if val is None or val == '':
-                    continue
-                try:
-                    upper_key = key.upper()
-                    if hasattr(audio.tags, '__setitem__'):
-                        audio.tags[upper_key] = str(val)
-                except Exception:
-                    pass
-            audio.save()
-            logger.debug("_tagging_write: wrote standard tags to %s", path.name)
-    except Exception as e:
-        logger.warning("_tagging_write: failed writing tags to %s: %s", path.name, e)
+        logger.warning("_tagging_write: failed writing tags to %s via echosync_core: %s", path.name, e)
 
 
 class RetroactiveEnhancer:
@@ -398,7 +362,7 @@ class RetroactiveEnhancer:
 
         Translates the flat metadata dict produced by ``identify_file`` /
         ``auto_importer`` into the tag keys understood by ``_tagging_write``,
-        then writes them via Mutagen.  Called by ``auto_importer.finalize_import``
+        then writes them via echosync_core.  Called by ``auto_importer.finalize_import``
         before the file is moved into the library.
         """
         tags_to_write: Dict[str, Any] = {}

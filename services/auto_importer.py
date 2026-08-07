@@ -459,7 +459,13 @@ class AutoImportService:
                     dest_path = parent / f"{stem} ({counter}){ext_with_dot}"
                     counter += 1
 
-            moved_to = LocalFileHandler.get_instance().safe_move(file_path, dest_path)
+            from core.io_gatekeeper import Gatekeeper
+
+            moved_to = Gatekeeper.authorize_and_execute({
+                "operation": "safe_move",
+                "src": str(file_path),
+                "dst": str(dest_path)
+            })
             logger.info(f"Moved {file_path.name} → {moved_to}")
 
         except Exception as e:
