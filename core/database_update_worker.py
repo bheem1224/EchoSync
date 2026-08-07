@@ -109,21 +109,80 @@ class DatabaseUpdateWorker:
 
                     if mappings:
                         with db.session_factory() as session:
-                            # Build a lookup: canonical file_path -> media_id from local_media
-                            all_paths = [m['file_path'] for m in mappings if m.get('file_path')]
-                            if all_paths:
-                                rows = session.execute(
-                                    select(LocalMedia.file_path, LocalMedia.media_id)
-                                    .where(LocalMedia.file_path.in_(all_paths))
-                                ).all()
-                                path_to_media_id = {row.file_path: row.media_id for row in rows}
+                            from database.music_database import Track, Artist, _canonicalize_path
+                            import os
 
-                                ident_values = []
-                                for m in mappings:
-                                    fp = m.get('file_path')
-                                    media_id = path_to_media_id.get(fp)
+                            # Fetch all LocalMedia joined with Track & Artist for robust in-memory resolution
+                            query = (
+                                select(LocalMedia.media_id, LocalMedia.file_path, Track.raw_title, Track.display_title, Artist.name)
+                                .join(Track, LocalMedia.track_id == Track.id)
+                                .outerjoin(Artist, Track.artist_id == Artist.id)
+                            )
+                            db_rows = session.execute(query).all()
+
+                            exact_path_map = {}
+                            norm_path_map = {}
+                            filename_map = {}
+                            metadata_map = {}
+
+                            for row in db_rows:
+                                m_id = row.media_id
+                                fp = row.file_path
+                                if fp:
+                                    canon = _canonicalize_path(fp)
+                                    exact_path_map[fp] = m_id
+                                    exact_path_map[canon] = m_id
+                                    norm = fp.replace('\\', '/').lower()
+                                    norm_path_map[norm] = m_id
+
+                                    base = os.path.basename(fp).lower()
+                                    if base not in filename_map:
+                                        filename_map[base] = []
+                                    filename_map[base].append((m_id, norm))
+
+                                t_title = (row.raw_title or row.display_title or "").strip().lower()
+                                a_name = (row.name or "").strip().lower()
+                                if t_title and a_name:
+                                    metadata_map[(t_title, a_name)] = m_id
+
+                            ident_values = []
+                            for m in mappings:
+                                media_id = None
+                                raw_fp = m.get('file_path') or ''
+
+                                if raw_fp:
+                                    canon_fp = _canonicalize_path(raw_fp)
+                                    norm_fp = raw_fp.replace('\\', '/').lower()
+
+                                    # 1. Exact path or canonical path or normalized path match
+                                    media_id = (
+                                        exact_path_map.get(raw_fp)
+                                        or exact_path_map.get(canon_fp)
+                                        or norm_path_map.get(norm_fp)
+                                    )
+
+                                    # 2. Filename / suffix match
                                     if not media_id:
-                                        continue
+                                        base = os.path.basename(raw_fp).lower()
+                                        candidates = filename_map.get(base, [])
+                                        if len(candidates) == 1:
+                                            media_id = candidates[0][0]
+                                        elif len(candidates) > 1:
+                                            for c_id, c_norm in candidates:
+                                                if norm_fp.endswith(c_norm) or c_norm.endswith(norm_fp):
+                                                    media_id = c_id
+                                                    break
+                                            if not media_id:
+                                                media_id = candidates[0][0]
+
+                                # 3. Metadata match (title + artist)
+                                if not media_id:
+                                    m_title = (m.get('title') or '').strip().lower()
+                                    m_artist = (m.get('artist_name') or '').strip().lower()
+                                    if m_title and m_artist:
+                                        media_id = metadata_map.get((m_title, m_artist))
+
+                                if media_id:
                                     ident_values.append({
                                         'media_id': media_id,
                                         'plugin_source': m['plugin_source'],
@@ -131,20 +190,20 @@ class DatabaseUpdateWorker:
                                         'raw_data': None,
                                     })
 
-                                if ident_values:
-                                    stmt = sqlite_insert(ExternalIdentifier).values(ident_values)
-                                    upsert = stmt.on_conflict_do_update(
-                                        constraint="uq_plugin_item",
-                                        set_={"media_id": stmt.excluded.media_id}
-                                    )
-                                    session.execute(upsert)
-                                    session.commit()
-                                    logger.info(
-                                        f"Upserted {len(ident_values)} ExternalIdentifier rows "
-                                        f"for {self.server_type}"
-                                    )
-                                    self.processed_tracks = len(ident_values)
-                                    self.successful_operations = len(ident_values)
+                            if ident_values:
+                                stmt = sqlite_insert(ExternalIdentifier).values(ident_values)
+                                upsert = stmt.on_conflict_do_update(
+                                    constraint="uq_plugin_item",
+                                    set_={"media_id": stmt.excluded.media_id}
+                                )
+                                session.execute(upsert)
+                                session.commit()
+                                logger.info(
+                                    f"Upserted {len(ident_values)} ExternalIdentifier rows "
+                                    f"for {self.server_type}"
+                                )
+                                self.processed_tracks = len(ident_values)
+                                self.successful_operations = len(ident_values)
                     return
 
                 logger.debug(f"Fetching library from {self.server_type} via media_client...")

@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session, joinedload
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy import or_, and_, Integer
 
-from database.music_database import Track, LocalMedia, Artist, generate_nanoid
+from database.music_database import Track, LocalMedia, Artist, Album, generate_nanoid
 from database import _canonicalize_path
 # Canonical model: EchosyncTrack + EchosyncMedia from core.db
 from core.db.echo_sync_track import EchosyncTrack, EchosyncMedia
@@ -128,6 +128,86 @@ class TrackRepository:
         default_artist_id = cls.get_or_create_default_artist(session)
         now = datetime.now(timezone.utc)
 
+        # ── Step 0a: Batch Resolve & Upsert Artists ───────────────────────────
+        artist_names = set()
+        for t in tracks:
+            art = (
+                getattr(t, "artist_name", None)
+                or getattr(t, "artist", None)
+                or getattr(t, "album_artist", None)
+            )
+            if art and art.strip() and art.strip().lower() != "unknown artist":
+                artist_names.add(art.strip())
+
+        artist_map = {}  # lower name -> artist_id
+        if artist_names:
+            existing_artists = session.query(Artist).filter(
+                Artist.name.in_(list(artist_names))
+            ).all()
+            for a in existing_artists:
+                artist_map[a.name.lower()] = a.id
+                if a.normalized_name:
+                    artist_map[a.normalized_name.lower()] = a.id
+
+            missing_artists = [name for name in artist_names if name.lower() not in artist_map]
+            if missing_artists:
+                for name in missing_artists:
+                    new_artist = Artist(name=name)
+                    session.add(new_artist)
+                session.flush()
+                new_artists_db = session.query(Artist).filter(
+                    Artist.name.in_(missing_artists)
+                ).all()
+                for a in new_artists_db:
+                    artist_map[a.name.lower()] = a.id
+                    if a.normalized_name:
+                        artist_map[a.normalized_name.lower()] = a.id
+
+        # ── Step 0b: Batch Resolve & Upsert Albums ────────────────────────────
+        album_pairs = set()  # (album_title, artist_id)
+        track_album_info = []  # list of (t, artist_id, album_title_or_None)
+        for t in tracks:
+            art = (
+                getattr(t, "artist_name", None)
+                or getattr(t, "artist", None)
+                or getattr(t, "album_artist", None)
+            )
+            artist_id = default_artist_id
+            if art and art.strip():
+                artist_id = artist_map.get(art.strip().lower(), default_artist_id)
+
+            alb = getattr(t, "album_title", None) or getattr(t, "album", None)
+            if alb and alb.strip():
+                alb_clean = alb.strip()
+                album_pairs.add((alb_clean, artist_id))
+                track_album_info.append((t, artist_id, alb_clean))
+            else:
+                track_album_info.append((t, artist_id, None))
+
+        album_map = {}  # (album_title.lower(), artist_id) -> album_id
+        if album_pairs:
+            all_album_titles = list({pair[0] for pair in album_pairs})
+            all_artist_ids = list({pair[1] for pair in album_pairs})
+            existing_albums = session.query(Album).filter(
+                Album.title.in_(all_album_titles),
+                Album.artist_id.in_(all_artist_ids),
+            ).all()
+            for alb in existing_albums:
+                album_map[(alb.title.lower(), alb.artist_id)] = alb.id
+
+            missing_albums = [pair for pair in album_pairs if (pair[0].lower(), pair[1]) not in album_map]
+            if missing_albums:
+                for title, a_id in missing_albums:
+                    new_album = Album(title=title, artist_id=a_id)
+                    session.add(new_album)
+                session.flush()
+                new_albums_db = session.query(Album).filter(
+                    Album.title.in_([p[0] for p in missing_albums]),
+                    Album.artist_id.in_([p[1] for p in missing_albums]),
+                ).all()
+                for alb in new_albums_db:
+                    album_map[(alb.title.lower(), alb.artist_id)] = alb.id
+
         # Build sync_id for each track (strips query params)
         def _build_sync_id(t: EchosyncTrack) -> str:
             raw_sid = getattr(t, "sync_id", None)
@@ -140,17 +220,24 @@ class TrackRepository:
         # --- Phase 1: Batch UPSERT tracks ---
         track_values = []
         sync_ids_in_batch = []
-        for t in tracks:
+        for i, t in enumerate(tracks):
             sync_id = _build_sync_id(t)
             sync_ids_in_batch.append(sync_id)
             duration = getattr(t, "duration_ms", None) or getattr(t, "duration", None)
             mbid = getattr(t, "mbid", None) or getattr(t, "musicbrainz_id", None)
             track_title = getattr(t, "title", None) or getattr(t, "raw_title", None) or "Unknown Title"
+
+            _, artist_id, alb_title = track_album_info[i]
+            album_id = None
+            if alb_title:
+                album_id = album_map.get((alb_title.lower(), artist_id))
+
             track_values.append({
                 "sync_id": sync_id,
                 "title": track_title,
                 "normalized_title": track_title.lower(),
-                "artist_id": default_artist_id,
+                "artist_id": artist_id,
+                "album_id": album_id,
                 "duration": duration,
                 "track_number": getattr(t, "track_number", None),
                 "disc_number": getattr(t, "disc_number", None),
@@ -169,6 +256,8 @@ class TrackRepository:
                 set_={
                     "duration": stmt.excluded.duration,
                     "title": func.coalesce(stmt.excluded.title, Track.title),
+                    "artist_id": func.coalesce(stmt.excluded.artist_id, Track.artist_id),
+                    "album_id": func.coalesce(stmt.excluded.album_id, Track.album_id),
                     "track_number": func.coalesce(stmt.excluded.track_number, Track.track_number),
                     "disc_number": func.coalesce(stmt.excluded.disc_number, Track.disc_number),
                     "musicbrainz_id": func.coalesce(stmt.excluded.musicbrainz_id, Track.musicbrainz_id),

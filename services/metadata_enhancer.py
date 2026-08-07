@@ -849,19 +849,23 @@ class RetroactiveEnhancer:
                         # Avoid IntegrityError by checking if it exists
                         existing_fp = session.query(AudioFingerprint).filter_by(chromaprint=res['chromaprint']).first()
                         if not existing_fp:
-                            track_fp = AudioFingerprint(
-                                track_id=track.id,
-                                chromaprint=res['chromaprint'],
-                                acoustid_id=res['acoustid_id'],
-                            )
-                            session.add(track_fp)
+                            media = track.media_files[0] if track.media_files else None
+                            if media:
+                                track_fp = AudioFingerprint(
+                                    media_id=media.media_id,
+                                    chromaprint=res['chromaprint'],
+                                    acoustid_id=res['acoustid_id'],
+                                )
+                                session.add(track_fp)
                         else:
                             logger.debug(f"Skipping audio fingerprint insert for {track.id}: duplicate chromaprint.")
                     elif res['has_fp_record'] and res['acoustid_id']:
                         # Update existing FP record
-                        track_fp = session.query(AudioFingerprint).filter_by(track_id=track.id).first()
-                        if track_fp and not track_fp.acoustid_id:
-                            track_fp.acoustid_id = res['acoustid_id']
+                        media = track.media_files[0] if track.media_files else None
+                        if media:
+                            track_fp = session.query(AudioFingerprint).filter_by(media_id=media.media_id).first()
+                            if track_fp and not track_fp.acoustid_id:
+                                track_fp.acoustid_id = res['acoustid_id']
 
                     # Always apply post-metadata enrichment hooks so that the cjk_restored stamp is set and aliases are persisted
                     track = hook_manager.apply_filters('post_metadata_enrichment', track)

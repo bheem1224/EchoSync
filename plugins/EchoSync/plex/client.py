@@ -853,10 +853,15 @@ class PlexClient(MediaServerProvider):
                     if file_path:
                         file_path = PathMapper.to_local(file_path)
 
+                    title = _safe_getattr(raw_track, 'title', None)
+                    artist = _safe_getattr(raw_track, 'grandparentTitle', None) or _safe_getattr(raw_track, 'originalTitle', None)
+
                     yield {
                         'file_path': file_path,
                         'plugin_source': 'plex',
                         'plugin_item_id': rating_key,
+                        'title': title,
+                        'artist_name': artist,
                     }
                 except Exception as e:
                     logger.debug(f"get_identifier_mappings: skipping track: {e}")
@@ -1168,13 +1173,11 @@ class PlexClient(MediaServerProvider):
             if file_path:
                 file_path = PathMapper.to_local(file_path)
 
-            # Filter out rogue mount entries
+            # Filter out rogue mount entries from becoming local media
             if file_path and not file_path.startswith("virtual://"):
                 sanctioned_prefixes = tuple(config_manager.get("SANCTIONED_PATH_PREFIXES", ["/data/library/"]))
                 if not file_path.startswith(sanctioned_prefixes):
-                    if "PYTEST_CURRENT_TEST" not in os.environ:
-                        logger.warning(f"Blocking rogue mount entry in Plex client: {file_path}. Expected one of {sanctioned_prefixes}")
-                    return None
+                    file_path = None
             
             # Extract Plex track ID (ratingKey)
             plex_track_id = str(_safe_getattr(plex_track, 'ratingKey', None))
