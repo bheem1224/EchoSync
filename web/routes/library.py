@@ -434,7 +434,6 @@ def delete_track_endpoint(track_id):
 
 
 # FastAPI Router for SSE (as requested by user directives)
-router = APIRouter()
 
 @router.get("/scan/stream")
 async def stream_scan_progress():

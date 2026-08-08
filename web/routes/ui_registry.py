@@ -70,7 +70,7 @@ def _query_ui_registry() -> Dict[str, List[Dict[str, Any]]]:
                 # If stored as relative path, reconstruct the absolute endpoint URL
                 if entry_path and not (entry_path.startswith("/") or entry_path.startswith("http://") or entry_path.startswith("https://")):
                     ident = plugin_name.lower() if plugin_name else str(plugin_id)
-                    entry = f"/api/system/plugins/{ident}/{entry_path}"
+                    entry = f"/api/v1/system/plugins/{ident}/{entry_path}"
                 else:
                     entry = entry_path
 

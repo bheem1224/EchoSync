@@ -32,7 +32,7 @@
     
     // Check for encryption key auto-generation warning
     try {
-      const response = await apiClient.get('/encryption-key-warning');
+      const response = await apiClient.get('/v1/system/encryption-key-warning');
       if (response.data?.auto_generated) {
         showEncryptionWarning = true;
         encryptionKeyValue = response.data.key_value || '';
@@ -43,7 +43,7 @@
 
     // Check for v2.1.0 migration notification
     try {
-      const response = await apiClient.get('/migration-status');
+      const response = await apiClient.get('/v1/system/migration-status');
       if (response.data?.v2_1_migration_triggered) {
         showMigrationModal = true;
         migrationMessage = response.data.message || 'Echosync has been upgraded!';
