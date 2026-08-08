@@ -11,7 +11,7 @@
   category   : string  – e.g. "music_service" | "media_server" | "metadata"
                Matched against plugin.components[category] from the ui-manifest.
   passProps  : object  – optional key/value pairs forwarded to every Web Component
-               as attributes (e.g. { "api-base": "/api/plugins/spotify" }).
+               as attributes (e.g. { "api-base": "/api/v1/system/plugins/spotify" }).
   showEmpty  : boolean – if true and no plugins load, render the default empty slot.
                Default: true.
 
@@ -80,7 +80,7 @@
           // Natively track paths using exactly the plugin_id
           const absoluteUrl = (bundleUrl.startsWith('http') || bundleUrl.startsWith('/'))
             ? bundleUrl
-            : `/api/system/plugins/${comp.plugin_id}/ui/${bundleUrl.replace(/^\//, '')}`;
+            : `/api/v1/system/plugins/${comp.plugin_id}/ui/${bundleUrl.replace(/^\//, '')}`;
             
           try {
             await injectPluginBundle(absoluteUrl, comp.version ?? null);

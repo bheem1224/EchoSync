@@ -38,7 +38,7 @@
             // Natively track paths using exactly the plugin_id
             const absoluteUrl = (comp.entry.startsWith('http') || comp.entry.startsWith('/'))
               ? comp.entry
-              : `/api/system/plugins/${comp.plugin_id}/ui/${comp.entry.replace(/^\//, '')}`;
+              : `/api/v1/system/plugins/${comp.plugin_id}/ui/${comp.entry.replace(/^\//, '')}`;
             scriptsToLoad.set(absoluteUrl, comp.version ?? null);
           }
         }

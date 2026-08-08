@@ -34,7 +34,7 @@ export async function setConfig(configUpdates) {
  */
 export async function getAvailableAlgorithms() {
   try {
-    const response = await apiClient.get('/api/playlist-algorithms');
+    const response = await apiClient.get('/v1/core/playlists/algorithms');
     return response.data || [];
   } catch (error) {
     console.error('Failed to fetch algorithms:', error);

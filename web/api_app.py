@@ -11,7 +11,7 @@ import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
 from fastapi import FastAPI, Request, Depends
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
@@ -202,6 +202,13 @@ def create_app(testing: bool = False) -> FastAPI:
 
     if os.path.exists(ui_path):
         app.mount("/", StaticFiles(directory=ui_path, html=True), name="static")
+
+        from starlette.exceptions import HTTPException as StarletteHTTPException
+        @app.exception_handler(404)
+        async def spa_fallback(request: Request, exc: StarletteHTTPException):
+            if request.url.path.startswith("/api/"):
+                return JSONResponse({"detail": "API route not found"}, status_code=404)
+            return FileResponse(os.path.join(ui_path, 'index.html'))
 
     return app
 

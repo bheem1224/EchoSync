@@ -10,7 +10,7 @@
  *     pluginId  : string   – parent plugin folder_name, e.g. "spotify"
  *     title     : string   – display label, e.g. "Spotify Stats"
  *     icon      : string   – emoji / mdi token, e.g. "♫"
- *     yamlPath  : string   – URL to the view's YAML, e.g. "/api/plugins/spotify/static/dashboard.yaml"
+ *     yamlPath  : string   – URL to the view's YAML, e.g. "/api/v1/system/plugins/spotify/static/dashboard.yaml"
  *     href      : string   – computed SvelteKit route, e.g. "/plugin-views/spotify_analytics"
  *   }
  *

@@ -50,7 +50,7 @@
         {#if $player.currentTrack.cover_art_url}
           <img src={$player.currentTrack.cover_art_url} alt="Cover" class="cover-img" />
         {:else if $player.currentTrack.file_path || $player.currentTrack.path}
-          <img src={`/api/metadata/cover-art?path=${encodeURIComponent($player.currentTrack.file_path || $player.currentTrack.path)}`} 
+          <img src={`/api/v1/core/metadata/cover-art?path=${encodeURIComponent($player.currentTrack.file_path || $player.currentTrack.path)}`} 
                alt="Cover" 
                class="cover-img" 
                on:error={(e) => e.target.style.display = 'none'} />
