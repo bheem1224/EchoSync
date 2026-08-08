@@ -13,6 +13,7 @@ from database.music_database import get_database, Track, LocalMedia
 from core.tiered_logger import get_logger
 from core.database.repositories.track_repo import TrackRepository
 from core.db.schemas import TrackSummarySchema, TrackResponseSchema
+from web.schemas.track import TrackPatchRequest
 
 logger = get_logger("tracks_route")
 router = APIRouter(prefix="/api/v1/core/tracks", tags=["Core: Tracks"])
@@ -97,7 +98,7 @@ async def get_canonical_track(sync_id: str, detail: bool = Query(False)):
 
 
 @router.patch("/{sync_id}", response_model=TrackSummarySchema)
-async def patch_canonical_track(sync_id: str, request: Request):
+async def patch_canonical_track(sync_id: str, payload: TrackPatchRequest):
     """
     Partially update a track's logical metadata by sync_id.
 
@@ -105,11 +106,11 @@ async def patch_canonical_track(sync_id: str, request: Request):
     Rejects any attempt to patch physical file properties.
     """
     try:
-        payload = await request.json()
-        if not payload:
-            payload = {}
+        payload_dict = payload.model_dump(exclude_unset=True)
+        if not payload_dict:
+            payload_dict = {}
             
-        rejected = [k for k in payload if k in _PHYSICAL_FIELDS]
+        rejected = [k for k in payload_dict if k in _PHYSICAL_FIELDS]
         if rejected:
             raise HTTPException(
                 status_code=400, 
@@ -127,7 +128,7 @@ async def patch_canonical_track(sync_id: str, request: Request):
                 raise HTTPException(status_code=404, detail="Track not found")
 
             allowed = {"title", "track_number", "disc_number", "musicbrainz_id", "isrc", "global_rating"}
-            for key, val in payload.items():
+            for key, val in payload_dict.items():
                 if key in allowed and hasattr(track, key):
                     setattr(track, key, val)
             session.commit()

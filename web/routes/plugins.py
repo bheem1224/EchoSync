@@ -934,28 +934,14 @@ def get_plugin_settings(plugin_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/{plugin_id}/settings", dependencies=[Depends(require_auth)])
-def update_plugin_settings(plugin_id: str, request: Request):
+async def update_plugin_settings(plugin_id: str, request: Request):
     """Update settings for a specific plugin."""
-    import asyncio
     try:
-        loop = asyncio.get_event_loop()
-        payload = {}
-        if loop.is_running():
-            try:
-                payload = request.json()
-            except Exception:
-                pass
-        
-        if not payload:
-            try:
-                import json
-                payload_bytes = request._receive() 
-                # This is a bit tricky, but since it's a sync function in FastAPI, 
-                # request.json() is async. Let's rely on standard FastAPI DI.
-                pass
-            except:
-                pass
-
+        try:
+            payload = await request.json()
+        except Exception:
+            payload = {}
+            
         logger.info(f"Updating settings for plugin: {plugin_id}")
         return {"error": "Need to refactor DI for settings update"}
     except Exception as e:

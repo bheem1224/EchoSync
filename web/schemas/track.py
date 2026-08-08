@@ -1,18 +1,17 @@
-from dataclasses import dataclass, field
+from pydantic import BaseModel, Field
 from typing import List, Optional, Dict
 
-@dataclass
-class TrackSchema:
+class TrackSchema(BaseModel):
     id: Optional[str] = None
     title: Optional[str] = None
-    artists: List[str] = field(default_factory=list)
+    artists: List[str] = Field(default_factory=list)
     album: Optional[str] = None
     album_artist: Optional[str] = None
     duration_ms: Optional[int] = None
     isrc: Optional[str] = None
     track_number: Optional[int] = None
     disc_number: Optional[int] = None
-    plugin_refs: Dict[str, str] = field(default_factory=dict)
+    plugin_refs: Dict[str, str] = Field(default_factory=dict)
     source_plugin: Optional[str] = None
     metadata_richness: Optional[str] = None
     metadata_completeness: Optional[str] = None
@@ -25,25 +24,15 @@ class TrackSchema:
     acoustid_id: Optional[str] = None
 
     def to_dict(self) -> Dict:
-        return {
-            "id": self.id,
-            "title": self.title,
-            "artists": self.artists,
-            "album": self.album,
-            "album_artist": self.album_artist,
-            "duration_ms": self.duration_ms,
-            "isrc": self.isrc,
-            "track_number": self.track_number,
-            "disc_number": self.disc_number,
-            "plugin_refs": self.plugin_refs,
-            "source_plugin": self.source_plugin,
-            "metadata_richness": self.metadata_richness,
-            "metadata_completeness": self.metadata_completeness,
-            "bitrate": self.bitrate,
-            "sample_rate": self.sample_rate,
-            "file_size_bytes": self.file_size_bytes,
-            "added_at": self.added_at,
-            "file_format": self.file_format,
-            "musicbrainz_id": self.musicbrainz_id,
-            "acoustid_id": self.acoustid_id,
-        }
+        return self.model_dump(exclude_none=True)
+
+class TrackPatchRequest(BaseModel):
+    title: Optional[str] = None
+    track_number: Optional[int] = None
+    disc_number: Optional[int] = None
+    musicbrainz_id: Optional[str] = None
+    isrc: Optional[str] = None
+    global_rating: Optional[float] = None
+    
+    class Config:
+        extra = "allow"

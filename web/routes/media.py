@@ -99,11 +99,11 @@ def get_media_for_track(sync_id: str):
             if not track:
                 raise HTTPException(status_code=404, detail={"error": "Track not found"})
             media_list = TrackRepository.get_media_for_track(session, track.id)
-            return jsonify({
+            return {
                 "sync_id": sync_id,
                 "items": [_media_to_dict(m) for m in media_list],
                 "count": len(media_list),
-            })
+            }
     except Exception as e:
         logger.error(f"Error fetching media for track {sync_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail={"error": "Failed to fetch media for track"})

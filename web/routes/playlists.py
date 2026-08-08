@@ -1581,7 +1581,7 @@ def _sync_to_plex(payload, source, target, playlist_name, matches, download_miss
         logger.error(f"Failed to schedule Plex sync job '{job_name}': {e}")
         return {"accepted": False, "error": f"Failed to schedule sync: {e}"}
 
-    return jsonify({
+    return {
         "accepted": True,
         "job": job_name,
         "target": target,
@@ -1589,7 +1589,7 @@ def _sync_to_plex(payload, source, target, playlist_name, matches, download_miss
         "match_count": len(rating_keys),
         "sync_mode": sync_mode,
         "events_path": f"/api/playlists/sync/events?job={quote(job_name, safe='')}",
-    }), 202
+    }
 
 
 def _sync_to_tier(payload, source, target, playlist_name, matches, download_missing, sync_mode):
@@ -1688,7 +1688,7 @@ def _sync_to_tier(payload, source, target, playlist_name, matches, download_miss
         logger.error(f"Failed to schedule {target} sync job '{job_name}': {e}")
         return {"accepted": False, "error": f"Failed to schedule sync: {e}"}
 
-    return jsonify({
+    return {
         "accepted": True,
         "job": job_name,
         "target": target,
@@ -1696,7 +1696,7 @@ def _sync_to_tier(payload, source, target, playlist_name, matches, download_miss
         "track_count": len(track_ids),
         "sync_mode": sync_mode,
         "events_path": f"/api/playlists/sync/events?job={quote(job_name, safe='')}",
-    }), 202
+    }
 
 
 @router.get("/sync/events")
@@ -1708,11 +1708,11 @@ def sync_events(request: Request):
         return {"error": "job query parameter required"}
 
     events = event_bus.get_events(job_name, since_id=since)
-    return jsonify({
+    return {
         "job": job_name,
         "events": events,
         "count": len(events),
-    }), 200
+    }
 
 
 @router.get("/sync/history")
@@ -1725,20 +1725,23 @@ def sync_history_endpoint(request: Request):
     records = sync_history.get_records(source=source, target=target)
     recent = records[-limit:] if records else []
     
-    return jsonify({
+    return {
         "records": [r.to_dict() for r in recent],
         "total": len(recent),
-    }), 200
+    }
 
 
 @router.post("/download-missing")
-def download_missing_tracks(request: Request):
+async def download_missing_tracks(request: Request):
     """Trigger downloads for missing tracks identified during analysis.
     
     Directly queues tracks to the download_manager's queue.
     No separate job is created - the main download_manager job handles processing.
     """
-    payload = request.json() if hasattr(request, "json") else {} # NEED AWAIT
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
     missing = payload.get("missing") or []
     
     if not missing:
@@ -1799,13 +1802,13 @@ def download_missing_tracks(request: Request):
             except Exception as e:
                 logger.warning(f"Queued downloads but immediate processing trigger failed: {e}")
         
-        return jsonify({
+        return {
             "accepted": True,
             "track_count": len(missing),
             "queued": success_count,
             "failed": failed_count,
             "message": f"Queued {success_count} tracks to download_manager (failed: {failed_count})",
-        }), 200
+        }
     
     except Exception as e:
         logger.error(f"Failed to queue downloads: {e}")
@@ -1823,10 +1826,10 @@ def get_available_genres(request: Request):
         db = MusicDatabase()
         service = get_personalized_playlists_service(db)
         genres = service.get_available_genres()
-        return jsonify({
+        return {
             "genres": genres,
             "total": len(genres)
-        }), 200
+        }
     except Exception as e:
         logger.error(f"Error fetching genres: {e}")
         return {"error": "Failed to fetch genres"}
@@ -1840,11 +1843,11 @@ def get_genre_playlist(genre_name, request: Request):
         db = MusicDatabase()
         service = get_personalized_playlists_service(db)
         tracks = service.get_genre_playlist(genre_name, limit=limit)
-        return jsonify({
+        return {
             "genre": genre_name,
             "tracks": tracks,
             "total": len(tracks)
-        }), 200
+        }
     except Exception as e:
         logger.error(f"Error fetching genre playlist for {genre_name}: {e}")
         return {"error": "Failed to fetch genre playlist"}
@@ -1858,11 +1861,11 @@ def get_decade_playlist(decade, request: Request):
         db = MusicDatabase()
         service = get_personalized_playlists_service(db)
         tracks = service.get_decade_playlist(decade, limit=limit)
-        return jsonify({
+        return {
             "decade": decade,
             "tracks": tracks,
             "total": len(tracks)
-        }), 200
+        }
     except Exception as e:
         logger.error(f"Error fetching decade playlist for {decade}s: {e}")
         return {"error": "Failed to fetch decade playlist"}
@@ -1876,11 +1879,11 @@ def get_popular_picks(request: Request):
         db = MusicDatabase()
         service = get_personalized_playlists_service(db)
         tracks = service.get_popular_picks(limit=limit)
-        return jsonify({
+        return {
             "name": "Popular Picks",
             "tracks": tracks,
             "total": len(tracks)
-        }), 200
+        }
     except Exception as e:
         logger.error(f"Error fetching popular picks: {e}")
         return {"error": "Failed to fetch popular picks"}
@@ -1894,11 +1897,11 @@ def get_hidden_gems(request: Request):
         db = MusicDatabase()
         service = get_personalized_playlists_service(db)
         tracks = service.get_hidden_gems(limit=limit)
-        return jsonify({
+        return {
             "name": "Hidden Gems",
             "tracks": tracks,
             "total": len(tracks)
-        }), 200
+        }
     except Exception as e:
         logger.error(f"Error fetching hidden gems: {e}")
         return {"error": "Failed to fetch hidden gems"}
@@ -1912,11 +1915,11 @@ def get_discovery_shuffle(request: Request):
         db = MusicDatabase()
         service = get_personalized_playlists_service(db)
         tracks = service.get_discovery_shuffle(limit=limit)
-        return jsonify({
+        return {
             "name": "Discovery Shuffle",
             "tracks": tracks,
             "total": len(tracks)
-        }), 200
+        }
     except Exception as e:
         logger.error(f"Error fetching discovery shuffle: {e}")
         return {"error": "Failed to fetch discovery shuffle"}
@@ -1930,10 +1933,10 @@ def get_all_daily_mixes(request: Request):
         db = MusicDatabase()
         service = get_personalized_playlists_service(db)
         mixes = service.get_all_daily_mixes(max_mixes=max_mixes)
-        return jsonify({
+        return {
             "mixes": mixes,
             "total": len(mixes)
-        }), 200
+        }
     except Exception as e:
         logger.error(f"Error fetching daily mixes: {e}")
         return {"error": "Failed to fetch daily mixes"}
@@ -1980,11 +1983,11 @@ def schedule_recurring_sync(payload_obj: PlaylistSyncScheduleSchema):
         _register_scheduled_sync_job(sync_config)
     
     logger.info(f"Scheduled sync created: {sync_config['id']} (interval: {interval}s)")
-    return jsonify({
+    return {
         "accepted": True,
         "sync_id": sync_config["id"],
         "interval": interval,
-    }), 201
+    }
 
 
 @router.get("/sync/scheduled")
@@ -2004,10 +2007,10 @@ def list_scheduled_syncs(request: Request):
         else:
             sync["running"] = False
     
-    return jsonify({
+    return {
         "scheduled_syncs": scheduled_syncs,
         "count": len(scheduled_syncs),
-    }), 200
+    }
 
 
 @router.delete("/sync/scheduled/{sync_id}")

@@ -5,6 +5,7 @@ from web.auth import require_auth
 import json
 from core.tiered_logger import get_logger
 from core.job_queue import list_jobs as jq_list_jobs, job_queue
+from web.schemas.job import JobRunRequest, JobIntervalRequest
 
 logger = get_logger("jobs_route")
 router = APIRouter(prefix="/api/v1/system/jobs", tags=["Jobs"])
@@ -67,14 +68,12 @@ def jobs_summary(request: Request):
 
 
 @router.post("/run", dependencies=[Depends(require_auth)])
-async def run_job(request: Request):
+async def run_job(request: Request, payload: JobRunRequest = None):
     """Trigger immediate execution of a job."""
-    try:
-        payload = await request.json()
-    except Exception:
-        payload = {}
-    job_name = payload.get("job_name") or payload.get("name") or request.query_params.get("job_id") or request.query_params.get("name") or request.query_params.get("job_name")
-    params = payload.get("params") or {}
+    if not payload:
+        payload = JobRunRequest()
+    job_name = payload.job_name or payload.name or request.query_params.get("job_id") or request.query_params.get("name") or request.query_params.get("job_name")
+    params = payload.params or {}
     
     if not job_name:
         raise HTTPException(status_code=400, detail={"error": "job name required"})
@@ -131,13 +130,9 @@ def get_job(job_name: str):
 
 
 @router.post("/{job_name}/interval", dependencies=[Depends(require_auth)])
-async def update_job_interval_route(job_name: str, request: Request):
+async def update_job_interval_route(job_name: str, payload: JobIntervalRequest):
     """Update interval for any job and persist to config."""
-    try:
-        payload = await request.json()
-    except Exception:
-        payload = {}
-    new_interval = payload.get("interval_seconds")
+    new_interval = payload.interval_seconds
     
     if new_interval is None or new_interval < 60:
         raise HTTPException(status_code=400, detail={"error": "interval_seconds required and must be >= 60"})

@@ -58,10 +58,10 @@ def request_restart():
     # 3. Spin it off in a background thread so the HTTP response can complete
     threading.Thread(target=hard_kill, daemon=True).start()
 
-    return jsonify({
+    return {
         "success": True, 
         "message": "Restarting EchoSync..."
-    }), 200
+    }
 
 
 @router.post("/backup", dependencies=[Depends(require_auth)])
@@ -69,11 +69,11 @@ def create_system_backup():
     """Generates a full system backup and returns the path/status."""
     try:
         backup_path = backup_manager.create_backup()
-        return jsonify({
+        return {
             "success": True,
             "backup_path": backup_path,
             "filename": Path(backup_path).name
-        }), 200
+        }
     except Exception as e:
         logger.error(f"Backup failed: {e}")
         return {"success": False, "error": str(e)}
@@ -84,10 +84,10 @@ def list_system_backups():
     """Returns a list of all available backup files."""
     try:
         backups = backup_manager.list_backups()
-        return jsonify({
+        return {
             "success": True,
             "backups": backups
-        }), 200
+        }
     except Exception as e:
         logger.error(f"Failed to list backups: {e}")
         return {"success": False, "error": str(e)}
@@ -113,26 +113,32 @@ def download_system_backup(filename):
 
 
 @router.post("/restore", dependencies=[Depends(require_auth)])
-def restore_system_backup():
+async def restore_system_backup(request: Request):
     """Restores the system from an uploaded zip OR a local filename."""
     tmp_path = None
     
     try:
+        content_type = request.headers.get("content-type", "")
         # Check if it's a file upload
-        if 'file' in request.files:
-            file = request.files['file']
-            if file.filename == '' or not file.filename.endswith('.zip'):
-                return {"success": False, "error": "Invalid file upload"}
-            
-            import tempfile
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.zip') as tmp:
-                file.save(tmp.name)
-                tmp_path = Path(tmp.name)
-                restore_file = tmp_path
+        if "multipart/form-data" in content_type:
+            form = await request.form()
+            if 'file' in form:
+                file = form['file']
+                if not file.filename or not file.filename.endswith('.zip'):
+                    return {"success": False, "error": "Invalid file upload"}
+                
+                import tempfile
+                with tempfile.NamedTemporaryFile(delete=False, suffix='.zip') as tmp:
+                    content = await file.read()
+                    tmp.write(content)
+                    tmp_path = Path(tmp.name)
+                    restore_file = tmp_path
+            else:
+                return {"success": False, "error": "No file uploaded"}
         
         # Or a JSON payload with filename
-        elif request.is_json:
-            data = request.get_json()
+        elif "application/json" in content_type:
+            data = await request.json()
             filename = data.get("filename")
             if not filename:
                 return {"success": False, "error": "Filename missing in JSON"}
@@ -146,10 +152,10 @@ def restore_system_backup():
         success = backup_manager.restore_backup(restore_file)
         if success:
             request_restart() # Trigger reboot
-            return jsonify({
+            return {
                 "success": True,
                 "message": f"Restore from {Path(restore_file).name} successful. Restarting..."
-            }), 200
+            }
         else:
             return {"success": False, "error": "Restore engine failed"}
 
@@ -186,7 +192,7 @@ def system_stats():
         sys_cpu = psutil.cpu_percent(interval=None)
         app_cpu = process.cpu_percent(interval=None)
 
-        return jsonify({
+        return {
             "memory": {
                 "total": sys_mem.total,
                 "available": sys_mem.available,
@@ -197,7 +203,7 @@ def system_stats():
                 "system": sys_cpu,
                 "app": app_cpu
             }
-        }), 200
+        }
     except Exception as e:
         logger.error(f"Error getting system stats: {e}")
         return {"error": "Failed to get stats"}
@@ -228,11 +234,11 @@ def get_settings():
                 data["log_level"] = get_current_log_level()
             except Exception:
                 pass
-        return jsonify({
+        return {
             "settings": data,
             "schema": None,
             "version": None,
-        }), 200
+        }
     except Exception as e:
         logger.error(f"Error getting settings: {e}")
         return {"error": "Failed to get settings"}
@@ -244,15 +250,15 @@ def get_encryption_key_warning():
     try:
         if config_manager.was_encryption_key_auto_generated():
             key_value = config_manager.get_generated_encryption_key()
-            return jsonify({
+            return {
                 "auto_generated": True,
                 "key_value": key_value,
                 "message": "Encryption key was auto-generated. Pass MASTER_KEY as environment variable to persist settings across container restarts."
-            }), 200
+            }
         else:
-            return jsonify({
+            return {
                 "auto_generated": False
-            }), 200
+            }
     except Exception as e:
         logger.error(f"Error checking encryption key status: {e}")
         return {"error": "Failed to check encryption key status"}
@@ -264,10 +270,10 @@ def get_migration_status():
     try:
         from core.db.migrations import was_v2_1_migration_triggered
         is_migrated = was_v2_1_migration_triggered()
-        return jsonify({
+        return {
             "v2_1_migration_triggered": is_migrated,
             "message": "Echosync has been upgraded to v2.1.0! The database schema has undergone a massive structural upgrade to support the new Matching Engine. Your configuration is safe, but your media library database has been wiped and is currently being rebuilt from scratch in the background."
-        }), 200
+        }
     except Exception as e:
         logger.error(f"Error checking migration status: {e}")
         return {"error": "Failed to check migration status"}
@@ -405,24 +411,27 @@ def get_all_system_accounts():
                 linked_ids.append(other_id)
             user['linked_account_ids'] = linked_ids
 
-        return jsonify({
+        return {
             'music_accounts': all_accounts,
             'media_users': media_users
-        }), 200
+        }
     except Exception as e:
         logger.error(f"Error getting system accounts: {e}", exc_info=True)
         return {"error": str(e)}
 
 
 @router.post("/accounts/map", dependencies=[Depends(require_auth)])
-def map_system_accounts():
+async def map_system_accounts(request: Request):
     """Save the mapping between a media server user and music service accounts.
 
     Accepts:
         { "user_id": <int_account_id>, "account_ids": [<int>, ...] }
     """
     try:
-        payload = request.get_json(silent=True) or {}
+        try:
+            payload = await request.json()
+        except Exception:
+            payload = {}
         # user_id here is the relational Account.id for the media user
         source_account_id = payload.get('user_id')
         account_ids = [int(aid) for aid in payload.get('account_ids', [])]
@@ -539,22 +548,22 @@ def activity_toasts():
 @router.get("/downloads/status")
 def downloads_status():
     """Download queue status."""
-    return jsonify({
+    return {
         "active": [],
         "queued": [],
         "completed": [],
         "failed": []
-    }), 200
+    }
 
 
 @router.get("/quality-profile")
 def quality_profile():
     """Audio quality preferences."""
-    return jsonify({
+    return {
         "min_bitrate": 320,
         "preferred_format": "FLAC",
         "fallback_format": "MP3"
-    }), 200
+    }
 
 
 @router.get("/quality-profiles")
@@ -565,23 +574,26 @@ def list_quality_profiles():
         from core.nexus_framework.plugin_loader import PluginRegistry
         plugin_options = PluginRegistry.get_all_quality_options()
         
-        return jsonify({
+        return {
             'profiles': profiles,
             'plugin_options': plugin_options
-        }), 200
+        }
     except Exception as e:
         logger.error(f"Error listing quality profiles: {e}")
         return {'error': 'Failed to list quality profiles'}
 
 
 @router.post("/quality-profiles", dependencies=[Depends(require_auth)])
-def save_quality_profiles():
+async def save_quality_profiles(request: Request):
     """Accept and validate submitted quality profiles, then persist via config manager.
 
     Expects JSON body: { "profiles": [ ... ] }
     """
     try:
-        payload = request.get_json(silent=True) or {}
+        try:
+            payload = await request.json()
+        except Exception:
+            payload = {}
         profiles = payload.get('profiles') if isinstance(payload, dict) else None
         if profiles is None:
             return {'error': 'Missing profiles list'}
@@ -604,14 +616,17 @@ def save_quality_profiles():
 
 
 @router.post("/quality-profile", dependencies=[Depends(require_auth)])
-def save_single_quality_profile():
+async def save_single_quality_profile(request: Request):
     """Save a single quality profile into the stored list.
 
     Body: { "profile": { ... } }
     Replaces existing profile with same id or appends.
     """
     try:
-        payload = request.get_json(silent=True) or {}
+        try:
+            payload = await request.json()
+        except Exception:
+            payload = {}
         profile = payload.get('profile') if isinstance(payload, dict) else None
         if profile is None:
             return {'error': 'Missing profile object'}
@@ -652,7 +667,7 @@ def save_single_quality_profile():
 
 
 @router.get("/browse")
-def browse_filesystem():
+def browse_filesystem(request: Request):
     """Browse allowed filesystem roots and folders for the UI Browse buttons.
 
     Query params:
@@ -662,7 +677,7 @@ def browse_filesystem():
     Returns JSON: { path: <abs>, root: <root_key>, entries: [ {name, path, relpath, is_dir} ] }
     """
     try:
-        requested = request.args.get('path', '')
+        requested = request.query_params.get('path', '')
         settings_data = config_manager.get_all() or {}
         storage = settings_data.get('storage', {})
 
@@ -748,10 +763,10 @@ def get_preferences():
 
 
 @router.post("/settings/preferences", dependencies=[Depends(require_auth)])
-def update_preferences():
+async def update_preferences(request: Request):
     """Update metadata enhancement preferences."""
     try:
-        payload = request.get_json()
+        payload = await request.json()
         if not payload:
             return {"error": "Missing payload"}
 
@@ -767,10 +782,10 @@ def update_preferences():
 
 
 @router.post("/settings/preview-rename", dependencies=[Depends(require_auth)])
-def preview_rename():
+async def preview_rename(request: Request):
     """Preview file renaming based on template."""
     try:
-        payload = request.get_json()
+        payload = await request.json()
         if not payload:
              return {"error": "Missing payload"}
 
@@ -790,7 +805,7 @@ def preview_rename():
 
 
 @router.post("/enhance/trigger", dependencies=[Depends(require_auth)])
-def trigger_metadata_enhancement():
+async def trigger_metadata_enhancement(request: Request):
     """Manually kick off a retroactive metadata enhancement batch.
 
     Optional JSON body: { "batch_size": <int> }  (default 100)
@@ -798,7 +813,10 @@ def trigger_metadata_enhancement():
     Returns JSON: { "status": "ok", "batch_size": <int> }
     """
     try:
-        body = request.get_json(silent=True, force=True) or {}
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
         size = int(body.get("batch_size", 100))
         get_metadata_enhancer().enhance_library_metadata(batch_size=size)
         return {"status": "ok", "batch_size": size}

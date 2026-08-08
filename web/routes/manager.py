@@ -343,17 +343,15 @@ def get_suggestion_candidates(limit: int = Query(100), _=Depends(require_auth)):
             delete_candidates.sort(key=lambda item: (item["score_10"], -item["ratings_count"]))
             upgrade_candidates.sort(key=lambda item: (item["score_10"], -item["ratings_count"]))
 
-            return jsonify(
-                {
-                    "success": True,
-                    "delete_candidates": delete_candidates[:limit],
-                    "upgrade_candidates": upgrade_candidates[:limit],
-                    "thresholds": {
-                        "delete_month_end": "score 1-2",
-                        "upgrade_week_end": "score 3-4",
-                    },
-                }
-            ), 200
+            return {
+                "success": True,
+                "delete_candidates": delete_candidates[:limit],
+                "upgrade_candidates": upgrade_candidates[:limit],
+                "thresholds": {
+                    "delete_month_end": "score 1-2",
+                    "upgrade_week_end": "score 3-4",
+                },
+            }
     except Exception as e:
         logger.error(f"Error getting suggestion candidates: {e}", exc_info=True)
         return {"error": str(e)}
@@ -470,7 +468,7 @@ def run_manager_scan(_=Depends(require_auth)):
             f"{staged_deletes} staged deletes, {staged_upgrades} staged upgrades"
         )
 
-        return jsonify({
+        return {
             "success": True,
             "summary": {
                 "duplicates_auto_resolve": auto_resolve_count,
@@ -478,7 +476,7 @@ def run_manager_scan(_=Depends(require_auth)):
                 "staged_deletes": staged_deletes,
                 "staged_upgrades": staged_upgrades,
             }
-        }), 200
+        }
 
     except Exception as e:
         logger.error(f"Error running manager scan: {e}", exc_info=True)
@@ -668,11 +666,11 @@ def fetch_metadata(track_id: int, _=Depends(require_auth)):
         enhancer = get_metadata_enhancer()
         metadata, confidence = enhancer.identify_file(Path(path))
 
-        return jsonify({
+        return {
             "success": True,
             "metadata": metadata,
             "confidence": confidence
-        }), 200
+        }
     except Exception as e:
         logger.error(f"Error fetching metadata for track {track_id}: {e}", exc_info=True)
         return {"error": str(e)}
@@ -688,10 +686,10 @@ def override_track(track_id: int, payload: TrackOverrideRequest, _=Depends(requi
     
     Manual track management should happen through the auto_importer or library hygiene service.
     """
-    return jsonify({
+    raise HTTPException(status_code=410, detail={
         "success": False,
         "error": "Manual track overrides are deprecated. Use Phase 3 Suggestion Engine consensus rules."
-    }), 410
+    })
 
 @router.post("/conflicts/resolve")
 def resolve_conflict(payload: ConflictResolveRequest, _=Depends(require_auth)):
@@ -747,7 +745,7 @@ def get_trends(user_id: Optional[int] = Query(None), account_id: Optional[int] =
 
             avg = sum_ratings / total_filtered if total_filtered > 0 else 0
 
-            return jsonify({
+            return {
                 "total_ratings": total_filtered,
                 "average_rating": avg,
                 "distribution": distribution,
@@ -758,7 +756,7 @@ def get_trends(user_id: Optional[int] = Query(None), account_id: Optional[int] =
                     "working_username": target_user.username if target_user else None,
                 },
                 "note": "Genre stats unavailable (schema limitation)"
-            }), 200
+            }
     except Exception as e:
         logger.error(f"Error getting trends: {e}", exc_info=True)
         return {"error": str(e)}
@@ -793,7 +791,7 @@ def get_suggestion_queue(_=Depends(require_auth)):
         with work_db.session_scope() as session:
             # Use SuggestionStagingQueue (the real table) instead of invented SuggestionIntent
             items = session.query(SuggestionStagingQueue).filter(SuggestionStagingQueue.status == "pending").all()
-            return jsonify({
+            return {
                 "success": True,
                 "suggestions": [
                     {
@@ -807,7 +805,7 @@ def get_suggestion_queue(_=Depends(require_auth)):
                         "account_id": item.account_id,
                     } for item in items
                 ]
-            }), 200
+            }
     except Exception as e:
         logger.error(f"Error getting suggestion queue: {e}", exc_info=True)
         return {"error": str(e)}

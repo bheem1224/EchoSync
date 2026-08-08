@@ -206,7 +206,7 @@ def get_suggestion_accounts(request: Request):
                 }
             })
         
-        return jsonify({
+        return {
             'accounts': result_accounts,
             'genre_scope': {
                 'source': scope_source,
@@ -214,7 +214,7 @@ def get_suggestion_accounts(request: Request):
                 'user_id': scoped_account.get('user_id') if scoped_account else None,
             },
             'genre_distribution': scoped_distribution,
-        }), 200
+        }
         
     except Exception as e:
         logger.error(f"Error getting suggestion accounts: {e}", exc_info=True)
@@ -295,11 +295,11 @@ def get_pending_suggestions(account_id: int):
         except Exception as e:
             logger.error(f"Error in ON_SUGGESTION_READY hook: {e}")
 
-        return jsonify({
+        return {
             'account_id': account_id,
             'pending_tracks': pending_tracks[:limit],
             'count': len(pending_tracks)
-        }), 200
+        }
         
     except Exception as e:
         logger.error(f"Error getting pending suggestions: {e}", exc_info=True)
@@ -347,12 +347,12 @@ def approve_suggestion(payload: ApproveSuggestionRequest):
         
         logger.info(f"Approved suggestion: {track.sync_id} for account {account_id}")
         
-        return jsonify({
+        return {
             'success': True,
             'download_id': download_id,
             'sync_id': track.sync_id,
             'message': f'Track queued for download and will be added to {playlist_name}'
-        }), 201
+        }
         
     except Exception as e:
         logger.error(f"Error approving suggestion: {e}", exc_info=True)
@@ -405,10 +405,10 @@ def get_suggestion_audit(request: Request):
         except Exception as e:
             logger.warning(f"Error fetching audit history: {e}")
         
-        return jsonify({
+        return {
             'audit_history': audit_history,
             'count': len(audit_history)
-        }), 200
+        }
         
     except Exception as e:
         logger.error(f"Error getting audit history: {e}", exc_info=True)
@@ -438,11 +438,11 @@ def toggle_auto_suggestions(payload: ToggleAutoRequest):
         
         logger.info(f"Automated suggestion job {'enabled' if enabled else 'disabled'}")
         
-        return jsonify({
+        return {
             'success': True,
             'auto_job_enabled': enabled,
             'message': f'Automated suggestion job {("enabled" if enabled else "disabled")}'
-        }), 200
+        }
         
     except Exception as e:
         logger.error(f"Error toggling auto suggestions: {e}", exc_info=True)

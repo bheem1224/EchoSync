@@ -51,24 +51,24 @@ def trigger_library_scan(request: Request):
         
         # Check if it has scan capability
         if not hasattr(provider, 'trigger_library_scan'):
-            return jsonify({
+            raise HTTPException(status_code=400, detail={
                 "error": f"Media server '{active_server}' does not support library scans"
-            }), 400
+            })
         
         # Trigger scan
         success = provider.trigger_library_scan(path=path)
         
         if success:
             logger.info(f"Library scan initiated on {active_server} {f'(path: {path})' if path else ''}")
-            return jsonify({
+            return {
                 "success": True,
                 "server": active_server,
                 "message": "Library scan initiated"
-            }), 200
+            }
         else:
-            return jsonify({
+            raise HTTPException(status_code=500, detail={
                 "error": f"Failed to initiate library scan on {active_server}"
-            }), 500
+            })
             
     except Exception as e:
         logger.error(f"Library scan error: {e}", exc_info=True)
@@ -106,17 +106,17 @@ def get_library_scan_status(request: Request):
         
         # Check if it has scan capability
         if not hasattr(provider, 'get_scan_status'):
-            return jsonify({
+            raise HTTPException(status_code=400, detail={
                 "error": f"Media server '{active_server}' does not support scan status"
-            }), 400
+            })
         
         # Get status
         status = provider.get_scan_status()
         
-        return jsonify({
+        return {
             "server": active_server,
             **status  # Merge in the status dict (scanning, progress, eta_seconds, error)
-        }), 200
+        }
             
     except Exception as e:
         logger.error(f"Library scan status error: {e}", exc_info=True)
@@ -169,14 +169,14 @@ def update_database(request: Request):
                     except Exception:
                         pass
                 if _already_running:
-                    return jsonify({
+                    raise HTTPException(status_code=409, detail={
                         "error": "Database update already in progress",
                         "current_progress": {
                             "artists": _db_update_worker.processed_artists,
                             "albums": _db_update_worker.processed_albums,
                             "tracks": _db_update_worker.processed_tracks
                         }
-                    }), 409
+                    })
         
         # Get provider instance
         provider = None
@@ -228,12 +228,12 @@ def update_database(request: Request):
                 # Start worker thread
                 _db_update_worker.start()
             
-            return jsonify({
+            return {
                 "success": True,
                 "server": active_server,
                 "mode": mode,
                 "message": f"Database update started in {mode} mode"
-            }), 200
+            }
         except Exception as e:
             logger.error(f"Failed to start database update worker: {e}", exc_info=True)
             raise HTTPException(status_code=500, detail={"error": f"Failed to start database update: {str(e)}"})
@@ -297,11 +297,11 @@ def get_database_update_status(request: Request):
                 "warnings": getattr(_db_update_worker, "warnings", [])
             }
 
-    return jsonify({
+    return {
         "running": is_running,
         "progress": stats,
         "server": active_server
-    }), 200
+    }
 
 
 @router.post("/backfill-identifiers")
@@ -332,11 +332,11 @@ def backfill_identifiers():
         
         count = library_manager.backfill_provider_identifiers(active_server)
         
-        return jsonify({
+        return {
             "success": True,
             "count": count,
             "message": f"Successfully backfilled {count} identifiers for {active_server}"
-        }), 200
+        }
     except Exception as e:
         logger.error(f"Backfill error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail={"error": str(e)})
@@ -373,10 +373,10 @@ def cancel_database_update():
             
             logger.info("Database update cancelled by user")
             
-            return jsonify({
+            return {
                 "success": True,
                 "message": "Database update cancelled"
-            }), 200
+            }
             
     except Exception as e:
         logger.error(f"Database update cancel error: {e}", exc_info=True)
@@ -394,7 +394,7 @@ def get_library_index(request: Request):
     """
     try:
         index = media_manager.get_library_index()
-        response = jsonify(index)
+        response = JSONResponse(content=index)
         response.headers['Deprecation'] = 'true'
         response.headers['X-EchoSync-Warning'] = 'Legacy nested tracks payload'
         return response
