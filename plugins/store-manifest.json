@@ -1,6 +1,18 @@
 {
   "plugins": [
     {
+      "id": "Test.Echo Test",
+      "version": "1.0.0",
+      "name": "Echo Test",
+      "author": "Test",
+      "category": "utility",
+      "beta_version": "1.0.1-beta.1",
+      "plugin_id": "echo_test",
+      "source_url": "https://github.com/bheem1224/EchoSync/tree/main/plugins/EchoSync/echo_test",
+      "download_url": "https://raw.githubusercontent.com/bheem1224/EchoSync/main/plugins/EchoSync/echo_test/releases/v1.0.0.zip",
+      "beta_url": "https://raw.githubusercontent.com/bheem1224/EchoSync/main/plugins/EchoSync/echo_test/beta.zip"
+    },
+    {
       "id": "EchoSync.Tidal",
       "name": "Tidal",
       "description": "Official EchoSync provider for tidal",
