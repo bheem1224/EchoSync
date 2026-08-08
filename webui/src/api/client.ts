@@ -64,8 +64,18 @@ apiClient.interceptors.request.use(
 
 // Add a response interceptor
 apiClient.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    const warning = response?.headers['x-echosync-warning'];
+    if (warning) {
+      console.warn(`%c[EchoSync-Warning] Legacy components/routes detected: ${warning}`, 'color: #ff3e00; font-weight: bold;');
+    }
+    return response;
+  },
   (error) => {
+    const warning = error.response?.headers['x-echosync-warning'];
+    if (warning) {
+      console.warn(`%c[EchoSync-Warning] Legacy components/routes detected: ${warning}`, 'color: #ff3e00; font-weight: bold;');
+    }
     // Handle global API errors
     if (error.response?.status === 401) {
        console.warn('[API] Unauthorized: Outbound Gateway Blocked.');

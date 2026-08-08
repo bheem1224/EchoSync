@@ -68,6 +68,7 @@ class EchosyncMedia:
     bitrate: Optional[int] = None
     sample_rate: Optional[int] = None
     bit_depth: Optional[int] = None
+    channels: Optional[int] = None
     file_size_bytes: Optional[int] = None
     inode: Optional[int] = None
     mtime: Optional[float] = None
@@ -81,6 +82,7 @@ class EchosyncMedia:
             'bitrate': self.bitrate,
             'sample_rate': self.sample_rate,
             'bit_depth': self.bit_depth,
+            'channels': self.channels,
             'file_size_bytes': self.file_size_bytes,
             'inode': self.inode,
             'mtime': self.mtime,
@@ -102,6 +104,7 @@ class EchosyncMedia:
             bitrate=data.get('bitrate'),
             sample_rate=data.get('sample_rate'),
             bit_depth=data.get('bit_depth'),
+            channels=data.get('channels'),
             file_size_bytes=data.get('file_size_bytes'),
             inode=data.get('inode'),
             mtime=data.get('mtime'),

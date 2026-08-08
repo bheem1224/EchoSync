@@ -46,8 +46,9 @@ def _parse_telemetry_dict(raw_dict: Dict[str, Any]) -> Optional[EchosyncTrack]:
         title_val = raw_dict.pop("raw_title", None) or raw_dict.pop("title", None) or "Unknown Title"
         artist_val = raw_dict.pop("artist_name", None) or raw_dict.pop("artist", None) or "Unknown Artist"
         album_val = raw_dict.pop("album_title", None) or raw_dict.pop("album", None) or "Unknown Album"
-        duration_val = raw_dict.pop("duration", None) or raw_dict.pop("duration_ms", None)
+        duration_val = raw_dict.pop("duration_ms", None) or raw_dict.pop("duration", None)
         mbid_val = raw_dict.pop("musicbrainz_id", None) or raw_dict.pop("mbid", None)
+        year_val = raw_dict.pop("year", None) or raw_dict.pop("release_year", None)
 
         # Always strip non-init/computed fields (like display_title, media_ids)
         raw_dict.pop("display_title", None)
@@ -61,6 +62,8 @@ def _parse_telemetry_dict(raw_dict: Dict[str, Any]) -> Optional[EchosyncTrack]:
             raw_dict["duration"] = duration_val
         if mbid_val is not None:
             raw_dict["musicbrainz_id"] = mbid_val
+        if year_val is not None:
+            raw_dict["release_year"] = int(year_val)
 
         # Hoist flat physical file fields into an EchosyncMedia if no media list was given
         flat_file_path = raw_dict.pop("file_path", None)
@@ -68,6 +71,7 @@ def _parse_telemetry_dict(raw_dict: Dict[str, Any]) -> Optional[EchosyncTrack]:
         flat_bitrate = raw_dict.pop("bitrate", None)
         flat_sample_rate = raw_dict.pop("sample_rate", None)
         flat_bit_depth = raw_dict.pop("bit_depth", None)
+        flat_channels = raw_dict.pop("channels", None)
         flat_file_size = raw_dict.pop("file_size_bytes", None) or raw_dict.pop("file_size", None)
 
         if flat_file_path and not media_list:
@@ -77,6 +81,7 @@ def _parse_telemetry_dict(raw_dict: Dict[str, Any]) -> Optional[EchosyncTrack]:
                 bitrate=flat_bitrate,
                 sample_rate=flat_sample_rate,
                 bit_depth=flat_bit_depth,
+                channels=flat_channels,
                 file_size_bytes=flat_file_size,
             ))
 

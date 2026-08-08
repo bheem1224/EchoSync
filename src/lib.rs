@@ -76,6 +76,8 @@ fn track_metadata_to_pydict<'py>(py: Python<'py>, meta: &TrackMetadata) -> PyRes
     dict.set_item("duration_ms", meta.duration_ms)?;
     dict.set_item("file_path", &meta.file_path)?;
     dict.set_item("file_size_bytes", meta.file_size_bytes)?;
+    dict.set_item("mtime", meta.mtime)?;
+    dict.set_item("inode", meta.inode)?;
     Ok(dict)
 }
 

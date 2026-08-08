@@ -211,23 +211,18 @@ def update_database():
             )
             return jsonify({"error": f"Could not connect to {active_server}: {str(e)}"}), 500
         
-        # Import DatabaseUpdateWorker
+        # Import LibrarySyncService
         try:
-            from core.database_update_worker import DatabaseUpdateWorker
+            from services.library_sync_service import LibrarySyncService
         except ImportError as e:
-            logger.error(f"Failed to import DatabaseUpdateWorker: {e}")
+            logger.error(f"Failed to import LibrarySyncService: {e}")
             return jsonify({"error": "Database update module not available"}), 500
         
         # Create and start worker
         try:
             with _db_update_lock:
-                _db_update_worker = DatabaseUpdateWorker(
-                    media_client=provider,
-                    database_path=None,  # Use default path
-                    full_refresh=full_refresh,
-                    server_type=active_server,
-                    force_sequential=False
-                )
+                import threading
+                _db_update_worker = threading.Thread(target=LibrarySyncService().sync_library)
                 # Start worker thread
                 _db_update_worker.start()
             
@@ -392,10 +387,15 @@ media_manager = MediaManagerService()
 
 @bp.get("/index")
 def get_library_index():
-    """Get the full library hierarchy."""
+    """Get the full library hierarchy.
+    DEPRECATED: Emits legacy nested payload. Use /api/v1/core/tracks?detail=true instead.
+    """
     try:
         index = media_manager.get_library_index()
-        return jsonify(index)
+        response = jsonify(index)
+        response.headers['Deprecation'] = 'true'
+        response.headers['X-EchoSync-Warning'] = 'Legacy nested tracks payload'
+        return response
     except Exception as e:
         logger.error(f"Error fetching library index: {e}")
         return jsonify({"error": str(e)}), 500

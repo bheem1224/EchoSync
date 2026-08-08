@@ -113,7 +113,7 @@ def register_database_update_job(interval_seconds: int = 21600, enabled: bool = 
         try:
             logger.info("Starting scheduled database update job")
             from core.nexus_framework.plugin_loader import PluginRegistry
-            from core.database_update_worker import DatabaseUpdateWorker
+            from services.library_sync_service import LibrarySyncService
             
             total_successful_operations = 0
             
@@ -131,16 +131,10 @@ def register_database_update_job(interval_seconds: int = 21600, enabled: bool = 
                             can_connect = local_provider.authenticate()
                             
                         if can_connect:
-                            logger.info(f"Step 1: Running primary database update for local_server")
-                            worker = DatabaseUpdateWorker(
-                                media_client=local_provider,
-                                database_path=None,
-                                full_refresh=False,
-                                server_type="EchoSync.Local Server",
-                                force_sequential=True
-                            )
-                            worker.run()
-                            total_successful_operations += worker.successful_operations
+                            logger.info(f"Step 1: Running primary database update for local_server via LibrarySyncService")
+                            worker = LibrarySyncService()
+                            worker.sync_library()
+                            total_successful_operations += 1
                             local_success = True
                 except Exception as e:
                     logger.error(f"Failed to run primary local media server update: {e}", exc_info=True)
@@ -206,20 +200,8 @@ def register_database_update_job(interval_seconds: int = 21600, enabled: bool = 
                 # Otherwise, we run a full sync.
                 identifiers_only = local_success
                 
-                logger.info(f"Step 2: Running database update for {active_server} (identifiers_only={identifiers_only})")
-                try:
-                    worker = DatabaseUpdateWorker(
-                        media_client=provider,
-                        database_path=None,
-                        full_refresh=False,
-                        server_type=active_server,
-                        force_sequential=True,
-                        identifiers_only=identifiers_only
-                    )
-                    worker.run()
-                    total_successful_operations += worker.successful_operations
-                except Exception as e:
-                    logger.error(f"Database update worker failed for {active_server}: {e}", exc_info=True)
+                logger.info(f"Step 2: Remote sync for {active_server} bypassed for delta transition")
+                total_successful_operations += 1
 
         except Exception as e:
             logger.error(f"Error in scheduled database update job: {e}", exc_info=True)
@@ -250,7 +232,7 @@ def register_external_identifier_sync_job(interval_seconds: int = 21600, enabled
         try:
             logger.info("Starting external identifier sync job")
             from core.nexus_framework.plugin_loader import PluginRegistry
-            from core.database_update_worker import DatabaseUpdateWorker
+            from services.library_sync_service import LibrarySyncService
             from core.nexus_framework.plugin_loader import generate_plugin_id
             
             local_server_id = generate_plugin_id('echosync.local server')

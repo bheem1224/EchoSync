@@ -29,41 +29,7 @@
   /** Whether to render the default slot when no plugins are available */
   export let showEmpty = true;
 
-  // Keep track of <script> tags we've already injected so we never double-inject.
-  const _injectedUrls = new Set();
-
-  // ── Plugin script injection ────────────────────────────────────────────
-  /**
-   * Injects a <script type="module" src="…"> tag into document.head if it
-   * hasn't been injected in this session yet.  Returns a Promise that
-   * resolves once the script has loaded (or immediately if already present).
-   */
-  function injectScript(url, version = null) {
-    const separator = url.includes('?') ? '&' : '?';
-    const finalUrl = version ? `${url}${separator}v=${version}` : url;
-
-    if (_injectedUrls.has(finalUrl)) return Promise.resolve();
-
-    if (Array.from(document.getElementsByTagName('script')).some(s => {
-      const sAttr = s.getAttribute('src');
-      return sAttr && (sAttr === url || sAttr.startsWith(url));
-    })) {
-      _injectedUrls.add(finalUrl);
-      return Promise.resolve();
-    }
-
-    return new Promise((resolve, reject) => {
-      const el = document.createElement('script');
-      el.type = 'module';
-      el.src = finalUrl;
-      el.onload  = () => { _injectedUrls.add(finalUrl); resolve(); };
-      el.onerror = () => {
-        console.error(`[DynamicPluginLoader] Script injection failed for path: ${url}`);
-        reject(new Error(`Failed to load plugin bundle: ${url}`));
-      };
-      document.head.appendChild(el);
-    });
-  }
+  import { injectPluginBundle } from '../lib/plugin/injectPluginBundle';
 
   /**
    * Helper to wrap a promise with a timeout.
@@ -118,7 +84,7 @@
             : `/api/system/plugins/${comp.plugin_id}/ui/${bundleUrl.replace(/^\//, '')}`;
             
           try {
-            await injectScript(absoluteUrl, null);
+            await injectPluginBundle(absoluteUrl, comp.version ?? null);
             
             // Defensively wait for custom element registry definition with a timeout
             await waitWithTimeout(
@@ -134,7 +100,7 @@
                 name: comp.plugin_name || pluginId
               },
               tag,
-              apiBase: `/api/plugins/${pluginId}`,
+              apiBase: `/api/v1/plugins/${pluginId}`,
               failed: false,
               is_active: true
             };
@@ -147,7 +113,7 @@
                 name: comp.plugin_name || pluginId
               },
               tag,
-              apiBase: `/api/plugins/${pluginId}`,
+              apiBase: `/api/v1/plugins/${pluginId}`,
               failed: true,
               errorMsg: err?.message ?? 'Unknown loading error'
             };
@@ -223,15 +189,17 @@
             <p>{errorMsg}</p>
           </div>
         {:else}
-          <svelte:element
-            this={tag}
-            use:initCard={{ apiBase, pluginId: plugin.id }}
-            api-base={apiBase}
-            apiBase={apiBase}
-            apibase={apiBase}
-            plugin-id={plugin.id}
-            {...passProps}
-          />
+          <div style="contain: content; isolation: isolate;">
+            <svelte:element
+              this={tag}
+              use:initCard={{ apiBase, pluginId: plugin.id }}
+              api-base={apiBase}
+              apiBase={apiBase}
+              apibase={apiBase}
+              plugin-id={plugin.id}
+              {...passProps}
+            />
+          </div>
         {/if}
       {/each}
     </div>

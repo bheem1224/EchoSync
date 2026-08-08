@@ -1,6 +1,7 @@
 <script>
   // Side-effect import: registers <echosync-system-overview> custom element
   import '../../components/core/SystemOverview.svelte';
+  import { injectPluginBundle } from '$lib/plugin/injectPluginBundle';
 
   let activeViewIndex = 0;
 
@@ -28,7 +29,7 @@
     }
 
     if (manifestData) {
-      const scriptsToLoad = new Set();
+      const scriptsToLoad = new Map();
       for (const [category, components] of Object.entries(manifestData)) {
         if (!Array.isArray(components)) continue;
         for (const comp of components) {
@@ -37,29 +38,18 @@
             const absoluteUrl = (comp.entry.startsWith('http') || comp.entry.startsWith('/'))
               ? comp.entry
               : `/api/system/plugins/${comp.plugin_id}/ui/${comp.entry.replace(/^\//, '')}`;
-            scriptsToLoad.add(absoluteUrl);
+            scriptsToLoad.set(absoluteUrl, comp.version ?? null);
           }
         }
       }
 
-      await Promise.all(Array.from(scriptsToLoad).map(src => {
-        return new Promise((resolve) => {
-          if (Array.from(document.getElementsByTagName('script')).some(s => {
-            const sAttr = s.getAttribute('src');
-            return sAttr && (sAttr === src || sAttr.startsWith(src));
-          })) {
-            return resolve();
-          }
-          const script = document.createElement('script');
-          script.type = 'module';
-          script.src = src;
-          script.onload = () => resolve();
-          script.onerror = () => {
-            console.error(`[Dashboard] Script injection failed for path: ${src} (HTTP 404)`);
-            resolve(); // Gracefully catch error so it doesn't freeze the pipeline
-          };
-          document.head.appendChild(script);
-        });
+      await Promise.all(Array.from(scriptsToLoad.entries()).map(async ([url, version]) => {
+        try {
+          await injectPluginBundle(url, version);
+        } catch (err) {
+          // Gracefully catch error so it doesn't freeze the pipeline
+          console.error(`[Dashboard] Script injection failed for path: ${url} (HTTP 404)`, err);
+        }
       }));
     }
 

@@ -120,8 +120,25 @@ function createPlayerStore() {
    * When called with a track object, delegates to playTrack().
    * When called with no argument, resumes current playback.
    */
-  function play(track) {
+  async function play(track) {
     if (!track) { resume(); return; }
+
+    // JIT Hydration: Fetch media array if missing
+    if (!track.media || track.media.length === 0) {
+      if (track.sync_id) {
+        try {
+          // Note: using dynamic import or top-level import for apiClient
+          const { default: apiClient } = await import('../api/client');
+          const res = await apiClient.get(`/v1/core/tracks/${encodeURIComponent(track.sync_id)}?detail=true`);
+          if (res.data && res.data.media) {
+            track = { ...track, media: res.data.media };
+          }
+        } catch (err) {
+          console.error("[Player JIT] Failed to hydrate track media:", err);
+        }
+      }
+    }
+
     playTrack(`/api/library/stream/${track.id}`, track);
   }
 

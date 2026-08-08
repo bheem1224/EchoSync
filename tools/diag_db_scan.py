@@ -6,7 +6,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from core.nexus_framework.plugin_loader import PluginRegistry
-from core.database_update_worker import DatabaseUpdateWorker
+from services.library_sync_service import LibrarySyncService
 from database import MusicDatabase
 from database.music_database import Track
 from core.settings import config_manager
@@ -31,9 +31,9 @@ def run_diagnostic():
         count_before = session.query(Track).count()
         print(f"Tracks in DB BEFORE import: {count_before}")
         
-    print("Starting database update worker...")
-    worker = DatabaseUpdateWorker(media_client=provider, server_type="EchoSync.Local Server", database_path="data/music.db")
-    worker.run()
+    print("Starting library sync...")
+    worker = LibrarySyncService(database_path="data/music.db")
+    worker.sync_library()
     
     # Count after
     with db.session_scope() as session:

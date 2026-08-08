@@ -3,6 +3,11 @@ use lofty::probe::Probe;
 use lofty::tag::{Accessor, ItemKey};
 use std::path::Path;
 
+#[cfg(unix)]
+use std::os::unix::fs::MetadataExt;
+#[cfg(windows)]
+use std::os::windows::fs::MetadataExt;
+
 /// Pure Rust struct storing audiophile metadata and technical audio stream properties.
 #[derive(Debug, Clone, Default)]
 pub struct TrackMetadata {
@@ -23,6 +28,8 @@ pub struct TrackMetadata {
     pub duration_ms: u64,
     pub file_path: String,
     pub file_size_bytes: u64,
+    pub mtime: Option<f64>,
+    pub inode: Option<u64>,
 }
 
 pub struct MetadataExtractor;
@@ -33,14 +40,37 @@ impl MetadataExtractor {
         let p = path.as_ref();
         let path_str = p.to_string_lossy().to_string();
 
+        let mut file_size_bytes = 0;
+        let mut mtime = None;
+        let mut inode = None;
+
+        if let Ok(m) = std::fs::metadata(p) {
+            file_size_bytes = m.len();
+            if let Ok(modified) = m.modified() {
+                if let Ok(dur) = modified.duration_since(std::time::UNIX_EPOCH) {
+                    mtime = Some(dur.as_secs_f64());
+                }
+            }
+            #[cfg(unix)]
+            {
+                inode = Some(m.ino());
+            }
+            #[cfg(windows)]
+            {
+                // m.file_index() is nightly-only (windows_by_handle), so we fallback to None
+                inode = None;
+            }
+        }
+
         let tagged_file = match Probe::open(p).and_then(|probe| probe.read()) {
             Ok(tf) => tf,
             Err(_) => {
-                let file_size_bytes = std::fs::metadata(p).map(|m| m.len()).unwrap_or(0);
                 return Ok(TrackMetadata {
                     codec: "CORRUPT".to_string(),
                     file_path: path_str,
                     file_size_bytes,
+                    mtime,
+                    inode,
                     ..Default::default()
                 });
             }
@@ -86,8 +116,6 @@ impl MetadataExtractor {
             }
         }
 
-        let file_size_bytes = std::fs::metadata(p).map(|m| m.len()).unwrap_or(0);
-
         Ok(TrackMetadata {
             title,
             artist,
@@ -106,6 +134,8 @@ impl MetadataExtractor {
             duration_ms,
             file_path: path_str,
             file_size_bytes,
+            mtime,
+            inode,
         })
     }
 }

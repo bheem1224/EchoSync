@@ -79,10 +79,37 @@
       }
   }
 
-  function selectArtist(artist) {
+  async function selectArtist(artist) {
       selectedArtist = artist;
       viewMode = 'detail';
       window.scrollTo({ top: 0, behavior: 'smooth' });
+
+      // Parent-driven JIT bulk hydration for all tracks under this artist
+      const allTracks = artist.albums.flatMap(a => a.tracks);
+      const tracksNeedingHydration = allTracks.filter(t => (!t.media || t.media.length === 0) && t.sync_id);
+      
+      if (tracksNeedingHydration.length > 0) {
+          const syncIds = tracksNeedingHydration.map(t => t.sync_id).join(',');
+          try {
+              const res = await apiClient.get(`/v1/core/tracks?detail=true&ids=${encodeURIComponent(syncIds)}`);
+              if (res.data && res.data.items) {
+                  const detailedTracksMap = new Map(res.data.items.map(dt => [dt.sync_id, dt]));
+                  // Update tracks in-place
+                  for (const album of artist.albums) {
+                      album.tracks = album.tracks.map(t => {
+                          if (detailedTracksMap.has(t.sync_id)) {
+                              return { ...t, media: detailedTracksMap.get(t.sync_id).media };
+                          }
+                          return t;
+                      });
+                  }
+                  // Force Svelte 5 state reactivity
+                  selectedArtist = { ...selectedArtist };
+              }
+          } catch (err) {
+              console.error("Bulk hydration failed:", err);
+          }
+      }
   }
 
   function backToGrid() {

@@ -230,6 +230,18 @@ class Track(Base):
         return best.file_path if best else None
 
     @property
+    def artist_name(self) -> Optional[str]:
+        return self.artist.name if self.artist else None
+
+    @property
+    def album_title(self) -> Optional[str]:
+        return self.album.title if self.album else None
+
+    @property
+    def media_ids(self) -> List[str]:
+        return [m.media_id for m in self.media_files if m.media_id]
+
+    @property
     def audio_fingerprints(self):
         """Aggregate all fingerprints from all attached media files."""
         fps = []
@@ -263,6 +275,7 @@ class LocalMedia(Base):
     bitrate: Mapped[Optional[int]] = mapped_column(Integer)
     sample_rate: Mapped[Optional[int]] = mapped_column(Integer)
     bit_depth: Mapped[Optional[int]] = mapped_column(Integer)
+    channels: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     file_size_bytes: Mapped[Optional[int]] = mapped_column(BigInteger)
     inode: Mapped[Optional[int]] = mapped_column(BigInteger, index=True)
     mtime: Mapped[Optional[float]] = mapped_column(Float)
@@ -739,10 +752,12 @@ class MusicDatabase:
                     for track in sorted_tracks:
                         album_data["tracks"].append({
                             "id": track.id,
+                            "sync_id": track.sync_id,
                             "title": track.title,
                             "duration": track.duration,
                             "track_number": track.track_number,
-                            "disc_number": track.disc_number
+                            "disc_number": track.disc_number,
+                            "media_ids": [m.media_id for m in track.media_files if getattr(m, 'media_id', None)]
                         })
 
                     artist_data["albums"].append(album_data)

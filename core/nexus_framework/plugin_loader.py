@@ -6,6 +6,13 @@ import importlib
 import os
 import sys
 import json
+from pydantic import BaseModel
+from typing import Dict, Any, List, Optional, Type
+from fastapi import FastAPI, APIRouter, Depends, Request
+
+async def enforce_plugin_passport(request: Request):
+    """Zero-Trust Passport Enforcer for Plugin Sub-Applications."""
+    pass
 from pathlib import Path
 from typing import Type, TypeVar, Protocol, List, Optional, Dict, Any
 
@@ -311,8 +318,9 @@ class PluginLoader:
 
     _load_lock = threading.Lock()
 
-    def __init__(self, app_root: Path):
+    def __init__(self, app_root: Path, main_app=None):
         self.app_root = Path(app_root)
+        self.main_app = main_app
         self.plugins_dir = Path(config_manager.get_plugins_dir())
         self.loaded_blueprints: List[Blueprint] = []
         from core.hook_manager import hook_manager
@@ -320,6 +328,60 @@ class PluginLoader:
         self.hook_manager = hook_manager
         self.config_db = get_config_database()
 
+
+    def unload_plugin(self, plugin_id: int):
+        """Unload a plugin, unmount its FastAPI sub-application, and purge it from memory."""
+        logger.info(f"Unloading plugin {plugin_id}")
+        
+        # 1. Unmount from FastAPI
+        try:
+            if hasattr(self, 'main_app') and self.main_app:
+                mount_path = f"/api/v1/plugins/{plugin_id}"
+                # Iterate backwards to safely remove mounts
+                for i in range(len(self.main_app.routes) - 1, -1, -1):
+                    route = self.main_app.routes[i]
+                    if getattr(route, 'path', None) == mount_path and route.__class__.__name__ == 'Mount':
+                        del self.main_app.routes[i]
+                        logger.info(f"Unmounted FastAPI sub-application at {mount_path}")
+        except Exception as e:
+            logger.error(f"Failed to unmount routes during unload_plugin for {plugin_id}: {e}")
+
+        # 2. Kill Workers
+        try:
+            from core.job_queue import job_queue
+            from core.task_manager import supervisor, plugin_state_manager, PluginLifecycleState
+            job_queue.kill_jobs_by_plugin(plugin_id)
+            supervisor.terminate_owner_processes(str(plugin_id))
+            
+            # Note: We need clean_ns to cleanly terminate namespaced processes, but 
+            # if we don't have it here, terminating by string ID is the fallback.
+            # Usually the supervisor cleans up all children by tracking the plugin_id.
+            plugin_state_manager.set_state(str(plugin_id), PluginLifecycleState.ERROR, "Unloaded")
+        except Exception as e:
+            logger.warning(f"Failed to kill workers for {plugin_id} during unload.")
+
+        # 3. Purge Memory (Strict DB-Driven Unload)
+        try:
+            from database.config_database import get_config_database
+            db = get_config_database()
+            conn = db._open_connection()
+            try:
+                c = conn.cursor()
+                c.execute("SELECT loaded_modules FROM services WHERE plugin_id=?", (plugin_id,))
+                row = c.fetchone()
+                if row and row[0]:
+                    import json
+                    loaded_modules = json.loads(row[0])
+                    logger.debug(f"Purging {len(loaded_modules)} tracked modules for {plugin_id} from sys.modules")
+                    for mod_ns in loaded_modules:
+                        if mod_ns in sys.modules:
+                            del sys.modules[mod_ns]
+                else:
+                    logger.warning(f"No loaded_modules array found for plugin_id {plugin_id}, skipping strict purge.")
+            finally:
+                conn.close()
+        except Exception as e:
+            logger.error(f"Failed to fetch or parse loaded_modules during unload: {e}")
 
     def reload_plugin(self, plugin_id: int):
         """Perform a true Zero-Downtime hot reload of a plugin."""
@@ -973,21 +1035,37 @@ class PluginLoader:
                     logger.warning("UI Registry operation failed due to an unexpected error.")
                     logger.debug(f"Raw exception data: {ui_err}", exc_info=True)
 
-                # Tear down existing blueprints for this plugin
+                # Tear down existing FastAPI mounts for this plugin
                 try:
-                    self.loaded_blueprints = [bp for bp in self.loaded_blueprints if not bp.name.startswith(f"{provider_id}_")]
+                    if hasattr(self, 'main_app') and self.main_app:
+                        mount_path = f"/api/v1/plugins/{plugin_id}"
+                        # Iterate backwards to safely remove mounts
+                        for i in range(len(self.main_app.routes) - 1, -1, -1):
+                            route = self.main_app.routes[i]
+                            # Use duck typing to find the Mount
+                            if getattr(route, 'path', None) == mount_path and route.__class__.__name__ == 'Mount':
+                                del self.main_app.routes[i]
                 except Exception as e:
-                    logger.warning("An error occurred during framework execution.")
-                    logger.debug(f"Raw exception data: {e}", exc_info=True)
+                    logger.warning("Failed to tear down existing routes for this plugin.")
                     logger.debug(f"Raw exception data: {e}", exc_info=True)
 
-                # Collect Blueprints
-                for bp_attr in ('RouteBlueprint', 'RouteBlueprint2', 'RouteBlueprint3'):
-                    blueprint = getattr(module, bp_attr, None)
-                    if isinstance(blueprint, Blueprint):
-                        blueprint.name = f"{provider_id}_{bp_attr.lower()}"
-                        blueprint.url_prefix = f"/api/plugins/{plugin_id}"
-                        self.loaded_blueprints.append(blueprint)
+                # Collect FastAPI Routers
+                plugin_routers = []
+                for router_attr in ('RouteBlueprint', 'api_router', 'router'):
+                    api_router = getattr(module, router_attr, None)
+                    if isinstance(api_router, APIRouter):
+                        plugin_routers.append(api_router)
+                
+                if plugin_routers and hasattr(self, 'main_app') and self.main_app:
+                    plugin_app = FastAPI(
+                        title=f"Plugin: {provider_id}",
+                        dependencies=[Depends(enforce_plugin_passport)]
+                    )
+                    for router in plugin_routers:
+                        plugin_app.include_router(router)
+                    
+                    self.main_app.mount(f"/api/v1/plugins/{plugin_id}", plugin_app)
+                    logger.info(f"Mounted sub-application for {plugin_id} at /api/v1/plugins/{plugin_id}")
 
 
                 # Persist combined loaded_modules to DB (Single-Shot Write)

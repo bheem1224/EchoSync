@@ -239,6 +239,8 @@ class TrackRepository:
                 "sync_id": sync_id,
                 "title": track_title,
                 "normalized_title": track_title.lower(),
+                "sort_title": getattr(t, "sort_title", None),
+                "edition": getattr(t, "edition", None),
                 "artist_id": artist_id,
                 "album_id": album_id,
                 "duration": duration,
@@ -259,6 +261,8 @@ class TrackRepository:
                 set_={
                     "duration": stmt.excluded.duration,
                     "title": func.coalesce(stmt.excluded.title, Track.title),
+                    "sort_title": func.coalesce(stmt.excluded.sort_title, Track.sort_title),
+                    "edition": func.coalesce(stmt.excluded.edition, Track.edition),
                     "artist_id": func.coalesce(stmt.excluded.artist_id, Track.artist_id),
                     "album_id": func.coalesce(stmt.excluded.album_id, Track.album_id),
                     "track_number": func.coalesce(stmt.excluded.track_number, Track.track_number),
@@ -300,6 +304,7 @@ class TrackRepository:
                     bitrate=getattr(t, "bitrate", None),
                     sample_rate=getattr(t, "sample_rate", None),
                     bit_depth=getattr(t, "bit_depth", None),
+                    channels=getattr(t, "channels", None),
                     file_size_bytes=getattr(t, "file_size_bytes", None) or getattr(t, "file_size", None),
                 ))
 
@@ -317,6 +322,7 @@ class TrackRepository:
                     "bitrate": getattr(m, "bitrate", None),
                     "sample_rate": getattr(m, "sample_rate", None),
                     "bit_depth": getattr(m, "bit_depth", None),
+                    "channels": getattr(m, "channels", None),
                     "file_size_bytes": getattr(m, "file_size_bytes", None),
                     "inode": getattr(m, "inode", None),
                     "mtime": getattr(m, "mtime", None),
@@ -337,6 +343,7 @@ class TrackRepository:
                         "bitrate": media_stmt.excluded.bitrate,
                         "sample_rate": media_stmt.excluded.sample_rate,
                         "bit_depth": media_stmt.excluded.bit_depth,
+                        "channels": media_stmt.excluded.channels,
                         "file_size_bytes": media_stmt.excluded.file_size_bytes,
                         "inode": media_stmt.excluded.inode,
                         "mtime": media_stmt.excluded.mtime,
