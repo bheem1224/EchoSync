@@ -1,5 +1,6 @@
 <svelte:options customElement="echosync-system-overview" />
 <script>
+  import apiClient from '../../api/client';
   import { onMount, onDestroy } from 'svelte';
 
   /**
@@ -41,30 +42,30 @@
 
   async function loadSystemStatus() {
     try {
-      const resp = await fetch(`${apiBase}/api/status`);
-      if (resp.ok) systemStatus = await resp.json();
+      const resp = await apiClient.get('/v1/system/health');
+      if (resp.status === 200) systemStatus = resp.data;
     } catch (e) { /* ignore */ }
   }
 
   async function loadJobsSummary() {
     try {
-      const resp = await fetch(`${apiBase}/api/jobs/summary`);
-      if (resp.ok) jobsSummary = await resp.json();
+      const resp = await apiClient.get('/v1/system/jobs/summary');
+      if (resp.status === 200) jobsSummary = resp.data;
     } catch (e) { /* ignore */ }
   }
 
   async function loadLibraryStats() {
     try {
-      const resp = await fetch(`${apiBase}/api/library/`);
-      if (resp.ok) libraryStats = await resp.json();
+      const resp = await apiClient.get('/v1/core/library/');
+      if (resp.status === 200) libraryStats = resp.data;
     } catch (e) { /* ignore */ }
   }
 
   async function loadUpdateStatus() {
     try {
-      const resp = await fetch(`${apiBase}/api/library/update-status`);
-      if (resp.ok) {
-        updateStatus = await resp.json();
+      const resp = await apiClient.get('/v1/core/library/update-status');
+      if (resp.status === 200) {
+        updateStatus = resp.data;
         updatingDb = updateStatus?.running || false;
       }
     } catch (e) { /* ignore */ }
@@ -75,11 +76,9 @@
     updatingDb = true;
     error = null;
     try {
-      const resp = await fetch(`${apiBase}/api/library/update-database?mode=${updateMode}`, {
-        method: 'POST'
-      });
-      const data = await resp.json();
-      if (!resp.ok) {
+      const resp = await apiClient.post(`/v1/core/library/update-database?mode=${updateMode}`);
+      const data = resp.data;
+      if (resp.status !== 200) {
         error = data.error || 'Failed to start update';
         updatingDb = false;
       }
@@ -91,9 +90,7 @@
 
   async function cancelUpdate() {
     try {
-      await fetch(`${apiBase}/api/library/update-cancel`, {
-        method: 'POST'
-      });
+      await apiClient.post(`/v1/core/library/update-cancel`);
       updatingDb = false;
       await loadUpdateStatus();
     } catch (e) { /* ignore */ }

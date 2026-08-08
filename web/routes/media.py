@@ -6,13 +6,15 @@ All lookups are keyed by media_id (NanoID), enforcing the 2-Model contract:
   - Tracks are identified by sync_id (logical identity)
   - Physical files are identified by media_id (physical telemetry)
 """
-from flask import Blueprint, jsonify, request
+from fastapi import APIRouter, Request, HTTPException, Depends
+from fastapi.responses import JSONResponse, FileResponse
+from web.auth import require_auth
 from core.database.repositories.track_repo import TrackRepository
 from database.music_database import get_database
 from core.tiered_logger import get_logger
 
 logger = get_logger("media_route")
-bp = Blueprint("media", __name__, url_prefix="/api/media")
+router = APIRouter(prefix="/api/v1/core/media", tags=["Media"])
 
 
 def _media_to_dict(m) -> dict:
@@ -32,7 +34,7 @@ def _media_to_dict(m) -> dict:
     }
 
 
-@bp.get("/<media_id>")
+@router.get("/{media_id}")
 def get_media(media_id: str):
     """
     Fetch physical file telemetry for a single media file by its media_id (NanoID).
@@ -45,28 +47,28 @@ def get_media(media_id: str):
         with db.get_session() as session:
             media = TrackRepository.get_media_by_media_id(session, media_id)
             if not media:
-                return jsonify({"error": "Media not found"}), 404
-            return jsonify(_media_to_dict(media))
+                raise HTTPException(status_code=404, detail={"error": "Media not found"})
+            return _media_to_dict(media)
     except Exception as e:
         logger.error(f"Error fetching media {media_id}: {e}", exc_info=True)
-        return jsonify({"error": "Failed to fetch media"}), 500
+        raise HTTPException(status_code=500, detail={"error": "Failed to fetch media"})
 
 
-@bp.get("/")
-def get_media_bulk():
+@router.get("/")
+def get_media_bulk(request: Request):
     """
     Bulk fetch physical file telemetry for multiple media files.
 
     GET /api/media/?ids=abc,def,ghi
     Response: { items: [...], count: N }
     """
-    ids_param = request.args.get("ids", "")
+    ids_param = request.query_params.get("ids", "")
     if not ids_param:
-        return jsonify({"error": "Missing required 'ids' query parameter"}), 400
+        raise HTTPException(status_code=400, detail={"error": "Missing required 'ids' query parameter"})
 
     media_ids = [i.strip() for i in ids_param.split(",") if i.strip()]
     if not media_ids:
-        return jsonify({"error": "No valid media IDs provided"}), 400
+        raise HTTPException(status_code=400, detail={"error": "No valid media IDs provided"})
 
     try:
         db = get_database()
@@ -76,13 +78,13 @@ def get_media_bulk():
                 media = TrackRepository.get_media_by_media_id(session, media_id)
                 if media:
                     results.append(_media_to_dict(media))
-        return jsonify({"items": results, "count": len(results)})
+        return {"items": results, "count": len(results)}
     except Exception as e:
         logger.error(f"Error fetching bulk media: {e}", exc_info=True)
-        return jsonify({"error": "Failed to fetch media"}), 500
+        raise HTTPException(status_code=500, detail={"error": "Failed to fetch media"})
 
 
-@bp.get("/track/<sync_id>")
+@router.get("/track/{sync_id}")
 def get_media_for_track(sync_id: str):
     """
     Fetch all physical file telemetry for a track identified by sync_id.
@@ -95,7 +97,7 @@ def get_media_for_track(sync_id: str):
         with db.get_session() as session:
             track = TrackRepository.get_track_by_sync_id(session, sync_id)
             if not track:
-                return jsonify({"error": "Track not found"}), 404
+                raise HTTPException(status_code=404, detail={"error": "Track not found"})
             media_list = TrackRepository.get_media_for_track(session, track.id)
             return jsonify({
                 "sync_id": sync_id,
@@ -104,4 +106,4 @@ def get_media_for_track(sync_id: str):
             })
     except Exception as e:
         logger.error(f"Error fetching media for track {sync_id}: {e}", exc_info=True)
-        return jsonify({"error": "Failed to fetch media for track"}), 500
+        raise HTTPException(status_code=500, detail={"error": "Failed to fetch media for track"})

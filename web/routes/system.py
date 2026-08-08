@@ -1,7 +1,10 @@
 """System endpoints for status, settings, and logs."""
 
 from web.auth import require_auth
-from flask import Blueprint, jsonify, request, Response, send_file
+from fastapi import APIRouter, HTTPException, Depends, Request, Response
+from fastapi.responses import JSONResponse, FileResponse
+from pydantic import BaseModel
+from typing import Optional, Dict, Any, List
 import json
 import os
 import time
@@ -13,40 +16,25 @@ from core.backup_manager import backup_manager
 from pathlib import Path
 
 logger = get_logger("system_route")
-bp = Blueprint("system", __name__, url_prefix="/api")
+router = APIRouter(prefix="/api/v1/system", tags=["System"])
 
 
-@bp.get("/health")
+@router.get("/health")
 def health_check():
     """Health endpoint with actual service health check results."""
     try:
         from services.health_check import get_system_health
         health_data = get_system_health()
-        return jsonify(health_data), 200
+        return health_data
     except Exception as e:
         logger.error(f"Error in health check: {e}", exc_info=True)
-        return jsonify({"status": "error", "results": {}}), 500
+        return {"status": "error", "results": {}}
 
 
-@bp.get("/status")
-def system_status():
-    """System health check and service status."""
-    try:
-        from core.state import system_state
-        return jsonify({
-            "status": "online",
-            "platform": platform.system(),
-            "python_version": platform.python_version(),
-            "uptime": int(time.time() - system_state.start_time),
-            "restart_pending": system_state.restart_pending
-        }), 200
-    except Exception as e:
-        logger.error(f"Error getting system status: {e}")
-        return jsonify({"error": "Failed to get status"}), 500
 
 
-@bp.post("/restart")
-@require_auth
+
+@router.post("/restart", dependencies=[Depends(require_auth)])
 def request_restart():
     """Forcefully but cleanly exit the application to trigger a Docker/System restart."""
     import time
@@ -76,8 +64,7 @@ def request_restart():
     }), 200
 
 
-@bp.post("/system/backup")
-@require_auth
+@router.post("/backup", dependencies=[Depends(require_auth)])
 def create_system_backup():
     """Generates a full system backup and returns the path/status."""
     try:
@@ -89,11 +76,10 @@ def create_system_backup():
         }), 200
     except Exception as e:
         logger.error(f"Backup failed: {e}")
-        return jsonify({"success": False, "error": str(e)}), 500
+        return {"success": False, "error": str(e)}
 
 
-@bp.get("/system/backups")
-@require_auth
+@router.get("/backups", dependencies=[Depends(require_auth)])
 def list_system_backups():
     """Returns a list of all available backup files."""
     try:
@@ -104,11 +90,10 @@ def list_system_backups():
         }), 200
     except Exception as e:
         logger.error(f"Failed to list backups: {e}")
-        return jsonify({"success": False, "error": str(e)}), 500
+        return {"success": False, "error": str(e)}
 
 
-@bp.get("/system/backups/<filename>/download")
-@require_auth
+@router.get("/backups/{filename}/download", dependencies=[Depends(require_auth)])
 def download_system_backup(filename):
     """Downloads a specific backup file."""
     try:
@@ -119,16 +104,15 @@ def download_system_backup(filename):
             download_name=filename
         )
     except FileNotFoundError:
-        return jsonify({"success": False, "error": "Backup not found"}), 404
+        return {"success": False, "error": "Backup not found"}
     except ValueError as e:
-        return jsonify({"success": False, "error": str(e)}), 400
+        return {"success": False, "error": str(e)}
     except Exception as e:
         logger.error(f"Download failed: {e}")
-        return jsonify({"success": False, "error": "Download failed"}), 500
+        return {"success": False, "error": "Download failed"}
 
 
-@bp.post("/system/restore")
-@require_auth
+@router.post("/restore", dependencies=[Depends(require_auth)])
 def restore_system_backup():
     """Restores the system from an uploaded zip OR a local filename."""
     tmp_path = None
@@ -138,7 +122,7 @@ def restore_system_backup():
         if 'file' in request.files:
             file = request.files['file']
             if file.filename == '' or not file.filename.endswith('.zip'):
-                return jsonify({"success": False, "error": "Invalid file upload"}), 400
+                return {"success": False, "error": "Invalid file upload"}
             
             import tempfile
             with tempfile.NamedTemporaryFile(delete=False, suffix='.zip') as tmp:
@@ -151,12 +135,12 @@ def restore_system_backup():
             data = request.get_json()
             filename = data.get("filename")
             if not filename:
-                return jsonify({"success": False, "error": "Filename missing in JSON"}), 400
+                return {"success": False, "error": "Filename missing in JSON"}
             
             restore_file = backup_manager.get_backup_path(filename)
             
         else:
-            return jsonify({"success": False, "error": "No restore source provided"}), 400
+            return {"success": False, "error": "No restore source provided"}
 
         # Execute restore
         success = backup_manager.restore_backup(restore_file)
@@ -167,19 +151,19 @@ def restore_system_backup():
                 "message": f"Restore from {Path(restore_file).name} successful. Restarting..."
             }), 200
         else:
-            return jsonify({"success": False, "error": "Restore engine failed"}), 500
+            return {"success": False, "error": "Restore engine failed"}
 
     except FileNotFoundError:
-        return jsonify({"success": False, "error": "Local backup file not found"}), 404
+        return {"success": False, "error": "Local backup file not found"}
     except Exception as e:
         logger.error(f"Restore failed: {e}")
-        return jsonify({"success": False, "error": str(e)}), 500
+        return {"success": False, "error": str(e)}
     finally:
         if tmp_path and tmp_path.exists():
             os.remove(tmp_path)
 
 
-@bp.get("/stats")
+@router.get("/stats")
 def system_stats():
     """System resource usage statistics, distinguishing app vs system."""
     try:
@@ -216,12 +200,12 @@ def system_stats():
         }), 200
     except Exception as e:
         logger.error(f"Error getting system stats: {e}")
-        return jsonify({"error": "Failed to get stats"}), 500
+        return {"error": "Failed to get stats"}
 
 
 from services.metadata_enhancer import get_metadata_enhancer
 
-@bp.get("/settings")
+@router.get("/settings")
 def get_settings():
     """Get current application settings (Svelte expects settings/schema/version).
 
@@ -251,10 +235,10 @@ def get_settings():
         }), 200
     except Exception as e:
         logger.error(f"Error getting settings: {e}")
-        return jsonify({"error": "Failed to get settings"}), 500
+        return {"error": "Failed to get settings"}
 
 
-@bp.get("/encryption-key-warning")
+@router.get("/encryption-key-warning")
 def get_encryption_key_warning():
     """Check if encryption key was auto-generated and return warning info."""
     try:
@@ -271,10 +255,10 @@ def get_encryption_key_warning():
             }), 200
     except Exception as e:
         logger.error(f"Error checking encryption key status: {e}")
-        return jsonify({"error": "Failed to check encryption key status"}), 500
+        return {"error": "Failed to check encryption key status"}
 
 
-@bp.get("/migration-status")
+@router.get("/migration-status")
 def get_migration_status():
     """Check if v2.1.0 migration was triggered and notify frontend."""
     try:
@@ -286,21 +270,20 @@ def get_migration_status():
         }), 200
     except Exception as e:
         logger.error(f"Error checking migration status: {e}")
-        return jsonify({"error": "Failed to check migration status"}), 500
+        return {"error": "Failed to check migration status"}
 
 
-@bp.post("/migration-acknowledge")
-@require_auth
+@router.post("/migration-acknowledge", dependencies=[Depends(require_auth)])
 def acknowledge_migration():
     """Acknowledge the v2.1.0 migration notification."""
     try:
         from core.db.migrations import acknowledge_v2_1_migration
         acknowledge_v2_1_migration()
         logger.info("v2.1.0 migration notification acknowledged by user")
-        return jsonify({"success": True}), 200
+        return {"success": True}
     except Exception as e:
         logger.error(f"Error acknowledging migration: {e}")
-        return jsonify({"error": "Failed to acknowledge migration"}), 500
+        return {"error": "Failed to acknowledge migration"}
 
 
 # Allowlist of top-level config keys that the UI is permitted to write via this
@@ -323,8 +306,7 @@ _SETTINGS_ALLOWLIST: frozenset = frozenset({
 })
 
 
-@bp.get("/system/accounts")
-@require_auth
+@router.get("/accounts", dependencies=[Depends(require_auth)])
 def get_all_system_accounts():
     """Returns music accounts and media server users for the manager UI.
 
@@ -429,11 +411,10 @@ def get_all_system_accounts():
         }), 200
     except Exception as e:
         logger.error(f"Error getting system accounts: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+        return {"error": str(e)}
 
 
-@bp.post("/system/accounts/map")
-@require_auth
+@router.post("/accounts/map", dependencies=[Depends(require_auth)])
 def map_system_accounts():
     """Save the mapping between a media server user and music service accounts.
 
@@ -446,7 +427,7 @@ def map_system_accounts():
         source_account_id = payload.get('user_id')
         account_ids = [int(aid) for aid in payload.get('account_ids', [])]
         if source_account_id is None:
-            return jsonify({'error': 'user_id (Account ID) is required'}), 400
+            return {'error': 'user_id (Account ID) is required'}
 
         from database.config_database import get_config_database
         config_db = get_config_database()
@@ -458,15 +439,15 @@ def map_system_accounts():
         for target_id in account_ids:
             config_db.set_account_mapping(int(source_account_id), target_id)
 
-        return jsonify({'success': True}), 200
+        return {'success': True}
     except Exception as e:
         logger.error(f"Error mapping accounts: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+        return {"error": str(e)}
 
 
-@bp.route("/settings", methods=["POST", "PATCH"])
-@require_auth
-def update_settings():
+@router.post("/settings", dependencies=[Depends(require_auth)])
+@router.patch("/settings", dependencies=[Depends(require_auth)])
+async def update_settings(request: Request):
     """Update application settings (partial update).
 
     Handles the special `log_level` key by updating the live console logger
@@ -476,44 +457,49 @@ def update_settings():
     rejected with 400 to prevent arbitrary config-tree injection.
     """
     try:
-        payload = request.get_json(silent=True) or {}
+        payload = await request.json()
+    except Exception:
+        payload = {}
+        
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="Invalid JSON payload")
 
-        # Reject any key not in the explicit allowlist.
-        rejected_keys = [k for k in payload if k not in _SETTINGS_ALLOWLIST]
-        if rejected_keys:
-            logger.warning(f"Rejected unknown settings keys: {rejected_keys}")
-            return jsonify({
-                "error": "Rejected unknown settings keys",
-                "rejected_keys": rejected_keys,
-                "allowed_keys": list(_SETTINGS_ALLOWLIST)
-            }), 400
+    rejected_keys = [k for k in payload if k not in _SETTINGS_ALLOWLIST]
+    if rejected_keys:
+        logger.warning(f"Rejected unknown settings keys: {rejected_keys}")
+        raise HTTPException(status_code=400, detail={
+            "error": "Rejected unknown settings keys",
+            "rejected_keys": rejected_keys,
+            "allowed_keys": list(_SETTINGS_ALLOWLIST)
+        })
 
-        # Adjust log level immediately if requested.
-        if "log_level" in payload:
-            lvl = payload.get("log_level") or ""
-            normalized = lvl.strip().lower()
-            if normalized == "normal":
-                normalized = "INFO"
-            elif normalized == "verbose":
-                normalized = "NOTSET"
-            elif normalized == "debug":
-                normalized = "DEBUG"
-            try:
-                from core.tiered_logger import set_log_level
-                set_log_level(normalized.upper())
-            except Exception:
-                pass
+    # Adjust log level immediately if requested.
+    if "log_level" in payload:
+        lvl = payload.get("log_level") or ""
+        normalized = lvl.strip().lower()
+        if normalized == "normal":
+            normalized = "INFO"
+        elif normalized == "verbose":
+            normalized = "NOTSET"
+        elif normalized == "debug":
+            normalized = "DEBUG"
+        try:
+            from core.tiered_logger import set_log_level
+            set_log_level(normalized.upper())
+        except Exception:
+            pass
 
-        # Handle custom_ui_path validation
-        restart_warning = False
-        if "custom_ui_path" in payload:
-            ui_path = str(payload["custom_ui_path"]).strip()
-            if ui_path:
-                if not os.path.isdir(ui_path):
-                    return jsonify({"error": f"Custom UI directory does not exist: {ui_path}"}), 400
-            payload["custom_ui_path"] = ui_path
-            restart_warning = True
+    # Handle custom_ui_path validation
+    restart_warning = False
+    if "custom_ui_path" in payload:
+        ui_path = str(payload["custom_ui_path"]).strip()
+        if ui_path:
+            if not os.path.isdir(ui_path):
+                raise HTTPException(status_code=400, detail=f"Custom UI directory does not exist: {ui_path}")
+        payload["custom_ui_path"] = ui_path
+        restart_warning = True
 
+    try:
         for key, value in payload.items():
             config_manager.set(key, value)
 
@@ -521,36 +507,36 @@ def update_settings():
         if restart_warning:
             resp["warning"] = "Application restart is required to apply the Custom UI Path."
 
-        return jsonify(resp), 200
+        return resp
     except Exception as e:
         logger.error(f"Error updating settings: {e}")
-        return jsonify({"error": "Failed to update settings"}), 500
+        raise HTTPException(status_code=500, detail="Failed to update settings")
 
 
-@bp.get("/logs")
+@router.get("/logs")
 def get_logs():
     """Retrieve recent application logs."""
     try:
         # TODO: implement log retrieval from logging system
-        return jsonify({"logs": []}), 200
+        return {"logs": []}
     except Exception as e:
         logger.error(f"Error getting logs: {e}")
-        return jsonify({"error": "Failed to get logs"}), 500
+        return {"error": "Failed to get logs"}
 
 
-@bp.get("/activity/feed")
+@router.get("/activity/feed")
 def activity_feed():
     """Activity feed for dashboard."""
-    return jsonify({"items": []}), 200
+    return {"items": []}
 
 
-@bp.get("/activity/toasts")
+@router.get("/activity/toasts")
 def activity_toasts():
     """Toast notifications."""
-    return jsonify({"toasts": []}), 200
+    return {"toasts": []}
 
 
-@bp.get("/downloads/status")
+@router.get("/downloads/status")
 def downloads_status():
     """Download queue status."""
     return jsonify({
@@ -561,7 +547,7 @@ def downloads_status():
     }), 200
 
 
-@bp.get("/quality-profile")
+@router.get("/quality-profile")
 def quality_profile():
     """Audio quality preferences."""
     return jsonify({
@@ -571,7 +557,7 @@ def quality_profile():
     }), 200
 
 
-@bp.get('/quality-profiles')
+@router.get("/quality-profiles")
 def list_quality_profiles():
     """Return stored quality profiles from config manager and dynamic plugin options."""
     try:
@@ -585,11 +571,10 @@ def list_quality_profiles():
         }), 200
     except Exception as e:
         logger.error(f"Error listing quality profiles: {e}")
-        return jsonify({'error': 'Failed to list quality profiles'}), 500
+        return {'error': 'Failed to list quality profiles'}
 
 
-@bp.post('/quality-profiles')
-@require_auth
+@router.post("/quality-profiles", dependencies=[Depends(require_auth)])
 def save_quality_profiles():
     """Accept and validate submitted quality profiles, then persist via config manager.
 
@@ -599,27 +584,26 @@ def save_quality_profiles():
         payload = request.get_json(silent=True) or {}
         profiles = payload.get('profiles') if isinstance(payload, dict) else None
         if profiles is None:
-            return jsonify({'error': 'Missing profiles list'}), 400
+            return {'error': 'Missing profiles list'}
 
         # Basic validation: list of dicts with id and name
         if not isinstance(profiles, list):
-            return jsonify({'error': 'Profiles must be a list'}), 400
+            return {'error': 'Profiles must be a list'}
 
         for p in profiles:
             if not isinstance(p, dict) or 'id' not in p or 'name' not in p:
-                return jsonify({'error': 'Invalid profiles format; each profile must include id and name'}), 400
+                return {'error': 'Invalid profiles format; each profile must include id and name'}
 
         ok = config_manager.set_quality_profiles(profiles)
         if not ok:
-            return jsonify({'error': 'Failed to persist profiles'}), 500
-        return jsonify({'success': True}), 200
+            return {'error': 'Failed to persist profiles'}
+        return {'success': True}
     except Exception as e:
         logger.error(f"Error saving quality profiles: {e}")
-        return jsonify({'error': 'Failed to save profiles'}), 500
+        return {'error': 'Failed to save profiles'}
 
 
-@bp.post('/quality-profile')
-@require_auth
+@router.post("/quality-profile", dependencies=[Depends(require_auth)])
 def save_single_quality_profile():
     """Save a single quality profile into the stored list.
 
@@ -630,10 +614,10 @@ def save_single_quality_profile():
         payload = request.get_json(silent=True) or {}
         profile = payload.get('profile') if isinstance(payload, dict) else None
         if profile is None:
-            return jsonify({'error': 'Missing profile object'}), 400
+            return {'error': 'Missing profile object'}
 
         if not isinstance(profile, dict) or 'id' not in profile or 'name' not in profile:
-            return jsonify({'error': 'Invalid profile format; id and name required'}), 400
+            return {'error': 'Invalid profile format; id and name required'}
 
         # Debug log incoming profile payload to help track missing arrays
         try:
@@ -660,14 +644,14 @@ def save_single_quality_profile():
 
         ok = config_manager.set_quality_profiles(existing)
         if not ok:
-            return jsonify({'error': 'Failed to persist profile'}), 500
-        return jsonify({'success': True, 'profile': profile}), 200
+            return {'error': 'Failed to persist profile'}
+        return {'success': True, 'profile': profile}
     except Exception as e:
         logger.error(f"Error saving single quality profile: {e}")
-        return jsonify({'error': 'Failed to save profile'}), 500
+        return {'error': 'Failed to save profile'}
 
 
-@bp.get('/browse')
+@router.get("/browse")
 def browse_filesystem():
     """Browse allowed filesystem roots and folders for the UI Browse buttons.
 
@@ -694,7 +678,7 @@ def browse_filesystem():
 
         # If no path provided, return available roots
         if not requested:
-            return jsonify({'roots': [{'key': k, 'path': p} for k, p in allowed_roots.items()]}), 200
+            return {'roots': [{'key': k, 'path': p} for k, p in allowed_roots.items()]}
 
         # Special-case: allow browsing filesystem root when client requests '/'
         if requested == '/':
@@ -730,11 +714,11 @@ def browse_filesystem():
                 matched_root = ('host', req_path)
 
         if not matched_root:
-            return jsonify({'error': 'Path not allowed'}), 403
+            return {'error': 'Path not allowed'}
 
         # Path must exist and be a directory
         if not os.path.exists(req_path) or not os.path.isdir(req_path):
-            return jsonify({'error': 'Path not found or not a directory'}), 404
+            return {'error': 'Path not found or not a directory'}
 
         entries = []
         for name in sorted(os.listdir(req_path)):
@@ -746,69 +730,66 @@ def browse_filesystem():
                 'is_dir': os.path.isdir(full)
             })
 
-        return jsonify({'path': req_path, 'root': matched_root[0], 'entries': entries}), 200
+        return {'path': req_path, 'root': matched_root[0], 'entries': entries}
     except Exception as e:
         logger.error(f"Error browsing filesystem: {e}")
-        return jsonify({'error': 'Failed to browse path'}), 500
+        return {'error': 'Failed to browse path'}
 
 
-@bp.get("/settings/preferences")
+@router.get("/settings/preferences")
 def get_preferences():
     """Get metadata enhancement preferences."""
     try:
         prefs = config_manager.get('metadata_enhancement') or {}
-        return jsonify(prefs), 200
+        return prefs
     except Exception as e:
         logger.error(f"Error getting preferences: {e}")
-        return jsonify({"error": "Failed to get preferences"}), 500
+        return {"error": "Failed to get preferences"}
 
 
-@bp.post("/settings/preferences")
-@require_auth
+@router.post("/settings/preferences", dependencies=[Depends(require_auth)])
 def update_preferences():
     """Update metadata enhancement preferences."""
     try:
         payload = request.get_json()
         if not payload:
-            return jsonify({"error": "Missing payload"}), 400
+            return {"error": "Missing payload"}
 
         # Validate/Sanitize if needed
         current = config_manager.get('metadata_enhancement') or {}
         updated = {**current, **payload}
 
         config_manager.set('metadata_enhancement', updated)
-        return jsonify({"success": True, "preferences": updated}), 200
+        return {"success": True, "preferences": updated}
     except Exception as e:
         logger.error(f"Error updating preferences: {e}")
-        return jsonify({"error": "Failed to update preferences"}), 500
+        return {"error": "Failed to update preferences"}
 
 
-@bp.post("/settings/preview-rename")
-@require_auth
+@router.post("/settings/preview-rename", dependencies=[Depends(require_auth)])
 def preview_rename():
     """Preview file renaming based on template."""
     try:
         payload = request.get_json()
         if not payload:
-             return jsonify({"error": "Missing payload"}), 400
+             return {"error": "Missing payload"}
 
         template = payload.get('template')
         sample_data = payload.get('sample_data') # Optional
 
         if not template:
-             return jsonify({"error": "Missing template"}), 400
+             return {"error": "Missing template"}
 
         enhancer = get_metadata_enhancer()
         preview = enhancer.generate_preview_path(template, sample_data)
 
-        return jsonify({"preview": preview}), 200
+        return {"preview": preview}
     except Exception as e:
         logger.error(f"Error generating preview: {e}")
-        return jsonify({"error": "Failed to generate preview"}), 500
+        return {"error": "Failed to generate preview"}
 
 
-@bp.post("/enhance/trigger")
-@require_auth
+@router.post("/enhance/trigger", dependencies=[Depends(require_auth)])
 def trigger_metadata_enhancement():
     """Manually kick off a retroactive metadata enhancement batch.
 
@@ -820,14 +801,13 @@ def trigger_metadata_enhancement():
         body = request.get_json(silent=True, force=True) or {}
         size = int(body.get("batch_size", 100))
         get_metadata_enhancer().enhance_library_metadata(batch_size=size)
-        return jsonify({"status": "ok", "batch_size": size}), 200
+        return {"status": "ok", "batch_size": size}
     except Exception as exc:
         logger.error("Manual enhance trigger failed: %s", exc, exc_info=True)
-        return jsonify({"error": str(exc)}), 500
+        return {"error": str(exc)}
 
 
-@bp.post("/system/reset/state")
-@require_auth
+@router.post("/reset/state", dependencies=[Depends(require_auth)])
 def reset_state():
     """Drops all tables in working.db and calls create_all() to give a clean operational slate."""
     try:
@@ -836,14 +816,13 @@ def reset_state():
         working_db = get_working_database()
         working_db.drop_all()
         working_db.create_all()
-        return jsonify({"success": True, "message": "System state reset successfully."}), 200
+        return {"success": True, "message": "System state reset successfully."}
     except Exception as e:
         logger.error(f"Error resetting system state: {e}", exc_info=True)
-        return jsonify({"success": False, "error": "Failed to reset system state"}), 500
+        return {"success": False, "error": "Failed to reset system state"}
 
 
-@bp.post("/system/reset/library")
-@require_auth
+@router.post("/reset/library", dependencies=[Depends(require_auth)])
 def reset_library():
     """Drops and recreates all tables in music_library.db (Wipes the media database, forces a re-crawl)."""
     try:
@@ -852,14 +831,13 @@ def reset_library():
         music_db = get_database()
         music_db.drop_all()
         music_db.create_all()
-        return jsonify({"success": True, "message": "Music library reset successfully. Ready for rescanning."}), 200
+        return {"success": True, "message": "Music library reset successfully. Ready for rescanning."}
     except Exception as e:
         logger.error(f"Error resetting library: {e}", exc_info=True)
-        return jsonify({"success": False, "error": "Failed to reset library"}), 500
+        return {"success": False, "error": "Failed to reset library"}
 
 
-@bp.post("/system/reset/factory")
-@require_auth
+@router.post("/reset/factory", dependencies=[Depends(require_auth)])
 def reset_factory():
     """Deletes working.db, music_library.db, and config.db, triggering OOBE on next boot."""
     try:
@@ -912,13 +890,12 @@ def reset_factory():
         JobQueue.RESTART_PENDING = True
         threading.Thread(target=execute_factory_reset, daemon=True).start()
         
-        return jsonify({"success": True, "message": "Factory reset initiated. System will restart shortly."}), 200
+        return {"success": True, "message": "Factory reset initiated. System will restart shortly."}
     except Exception as e:
         logger.error(f"Error initiating factory reset: {e}", exc_info=True)
-        return jsonify({"success": False, "error": "Failed to initiate factory reset"}), 500
+        return {"success": False, "error": "Failed to initiate factory reset"}
 
-@bp.post('/jobs/<job_name>/kill')
-@require_auth
+@router.post("/jobs/{job_name}/kill", dependencies=[Depends(require_auth)])
 def kill_job(job_name):
     """Terminate a running job violently if it is a process, or softly if it is a thread."""
     try:
@@ -930,7 +907,7 @@ def kill_job(job_name):
             job = job_queue._jobs.get(job_name)
 
             if not val and not (job and job.running):
-                return jsonify({'error': 'Job not running'}), 404
+                return {'error': 'Job not running'}
 
             # If it's a multiprocessing Process, terminate it
             if isinstance(val, multiprocessing.Process) and val.is_alive():
@@ -942,71 +919,17 @@ def kill_job(job_name):
                 job_queue._is_running[job_name] = False
                 if job:
                     job.running = False
-                return jsonify({'success': True, 'message': f'Process terminated for {job_name}'}), 200
+                return {'success': True, 'message': f'Process terminated for {job_name}'}
 
             # Otherwise, soft kill for threads
             if job:
                 job.running = False
             job_queue._is_running[job_name] = False
-            return jsonify({'success': True, 'message': f'Soft stop signal sent to thread for {job_name}'}), 200
+            return {'success': True, 'message': f'Soft stop signal sent to thread for {job_name}'}
 
     except Exception as e:
         logger.error(f"Error killing job: {e}")
-        return jsonify({'error': 'Failed to kill job'}), 500
+        return {'error': 'Failed to kill job'}
 
 
-@bp.post('/v1/system/queue/cancel')
-@require_auth
-def cancel_queue_job():
-    """Cancel a running or scheduled job in the task manager using the new CancellationToken API."""
-    try:
-        from core.job_queue import job_queue
-        
-        data = request.get_json()
-        if not data or 'job_name' not in data:
-            return jsonify({"status": "error", "message": "job_name is required in JSON payload"}), 400
-            
-        job_name = data['job_name']
-        
-        success = job_queue.cancel_job(job_name)
-        if success:
-            return jsonify({
-                "status": "success",
-                "message": f"Cancellation requested for {job_name}"
-            }), 200
-        else:
-            return jsonify({
-                "status": "error", 
-                "message": f"Job {job_name} not found or not cancellable"
-            }), 404
-            
-            
-    except Exception as e:
-        logger.error(f"Error in cancel_queue_job: {e}", exc_info=True)
-        return jsonify({"status": "error", "message": "Internal server error during cancellation"}), 500
 
-
-@bp.get('/v1/system/queue/stream')
-@require_auth
-def stream_queue_progress():
-    """SSE endpoint streaming the live status of the job queue."""
-    def event_generator():
-        try:
-            from core.job_queue import job_queue
-            import time
-            import json
-            
-            last_state = None
-            while True:
-                state = job_queue.get_queue_state()
-                state_str = json.dumps(state, sort_keys=True)
-                if state_str != last_state:
-                    yield f"event: queue_update\ndata: {state_str}\n\n"
-                    last_state = state_str
-                time.sleep(1.0)
-        except GeneratorExit:
-            logger.debug("SSE stream client disconnected cleanly (system queue).")
-        except Exception as e:
-            logger.error(f"SSE stream error (queue): {e}", exc_info=True)
-
-    return Response(event_generator(), mimetype="text/event-stream")

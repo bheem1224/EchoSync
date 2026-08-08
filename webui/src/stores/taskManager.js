@@ -1,4 +1,5 @@
 import { writable } from 'svelte/store';
+import apiClient from '../api/client';
 
 const initialQueueState = {
   running_jobs: [],
@@ -17,7 +18,7 @@ function createTaskManagerStore() {
   const { subscribe, set, update } = writable(initialQueueState);
   let eventSource = null;
 
-  function connect(streamUrl = '/api/v1/system/queue/stream') {
+  function connect(streamUrl = '/api/v1/system/jobs/stream') {
     disconnect();
 
     try {
@@ -64,14 +65,10 @@ function createTaskManagerStore() {
     });
 
     try {
-      const response = await fetch('/api/v1/system/queue/cancel', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ job_name: jobName })
-      });
+      const response = await apiClient.post(`/v1/system/jobs/${jobName}/cancel`);
 
-      if (!response.ok) {
-        throw new Error(`Failed to cancel job: ${response.statusText}`);
+      if (response.status !== 200) {
+        throw new Error(`Failed to cancel job: ${(response.statusText || 'Error')}`);
       }
     } catch (err) {
       console.error(`Error cancelling job ${jobName}:`, err);

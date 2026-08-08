@@ -20,8 +20,8 @@
         const interval = setInterval(async () => {
           try {
             // Using raw fetch to avoid interceptors that might redirect to login during downtime
-            let res = await fetch('/api/health');
-            if (res.ok) {
+            let res = await apiClient.get('/v1/system/health');
+            if (res.status === 200) {
               clearInterval(interval);
               window.location.reload(); // Now refresh!
             }

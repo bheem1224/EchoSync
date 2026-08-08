@@ -114,8 +114,8 @@
     !normalizeUnknown(task.detected_metadata.raw_title) && 
     !normalizeUnknown(task.detected_metadata.artist_name);
 
-  $: streamUrl = task?.id ? `/api/review-queue/${task.id}/stream` : '';
-  $: coverUrl = task?.current_metadata?._has_embedded_cover ? `/api/review-queue/${task.id}/cover` : '';
+  $: streamUrl = task?.id ? `/api/v1/core/metadata_review/${task.id}/stream` : '';
+  $: coverUrl = task?.current_metadata?._has_embedded_cover ? `/api/v1/core/metadata_review/${task.id}/cover` : '';
 
   function getFilename(filePath) {
     if (!filePath) return 'Unknown file';

@@ -1,4 +1,4 @@
-from flask import Blueprint, jsonify
+from fastapi import APIRouter
 from core.tiered_logger import get_logger
 from core.nexus_framework.plugin_loader import get_plugin_capabilities
 from core.nexus_framework.plugin_SDK import PlaylistSupport
@@ -6,7 +6,7 @@ from core.nexus_framework.plugin_SDK import PlaylistSupport
 from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
 
 logger = get_logger("sync_route")
-bp = Blueprint("sync", __name__, url_prefix="/api/sync")
+router = APIRouter(prefix="/api/v1/core/sync", tags=["Sync"])
 
 
 def _serialize_provider(provider_name):
@@ -131,15 +131,15 @@ def _clean_mocks(val):
     return val
 
 
-@bp.get("/status")
+@router.get("/status")
 def sync_status():
     """Return minimal sync status for dashboard widget."""
     status = build_sync_status()
-    return jsonify(_clean_mocks(status))
+    return _clean_mocks(status)
 
 
-@bp.get("/options")
+@router.get("/options")
 def sync_options():
     """Return sync source/target options derived from provider registry."""
     options = build_sync_options()
-    return jsonify(_clean_mocks(options))
+    return _clean_mocks(options)

@@ -11,7 +11,7 @@ function createSettingsStore() {
 
   async function load() {
     try {
-      const response = await apiClient.get('/settings');
+      const response = await apiClient.get('/v1/system/settings');
       
       // Extract version and schema if backend exposes them
       const version = response.data?.version || response.data?.schema_version || null;
@@ -32,8 +32,8 @@ function createSettingsStore() {
 
   async function save(patch) {
     try {
-      // API client baseURL is '/api' so use '/settings' to avoid '/api/api/...'
-      await apiClient.patch('/settings', patch);
+      // API client baseURL is '/api' so use '/v1/system/settings'
+      await apiClient.patch('/v1/system/settings', patch);
       update((state) => ({
         ...state,
         data: { ...state.data, ...patch },

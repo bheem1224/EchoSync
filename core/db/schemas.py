@@ -33,3 +33,34 @@ class TrackSummarySchema(BaseModel):
 
 class TrackResponseSchema(TrackSummarySchema):
     media: List[EchosyncMediaSchema] = []
+
+class SuccessResponse(BaseModel):
+    success: bool
+
+class QueueItemSchema(BaseModel):
+    id: int
+    file_path: Optional[str] = None
+    filename: Optional[str] = None
+    detected_metadata: Optional[dict] = None
+    confidence_score: Optional[float] = None
+    created_at: Optional[str] = None
+
+class QueueItemDetailSchema(QueueItemSchema):
+    source_metadata: Optional[dict] = None
+    file_exists: bool = False
+
+class QueueListResponse(BaseModel):
+    queue: List[QueueItemSchema]
+
+class QueueDetailResponse(BaseModel):
+    item: QueueItemDetailSchema
+
+class ApproveMatchRequest(BaseModel):
+    id: int
+    metadata: dict
+
+class ManualSearchRequest(BaseModel):
+    query: str
+
+class IgnoreTaskRequest(BaseModel):
+    id: int

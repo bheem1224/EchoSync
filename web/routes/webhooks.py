@@ -1,6 +1,6 @@
 """Webhooks API for receiving push events from media servers."""
 
-from flask import Blueprint, request, jsonify
+from fastapi import APIRouter, Request
 from core.tiered_logger import get_logger
 from core.webhook_parsers import parse_media_server_webhook
 from database.working_database import get_working_database, PlaybackHistory
@@ -9,33 +9,44 @@ from time_utils import utc_now
 
 logger = get_logger("webhooks")
 
-bp = Blueprint('webhooks', __name__, url_prefix='/api/webhooks')
+router = APIRouter(prefix="/api/v1/system/webhooks", tags=["Webhooks"])
 
 
-@bp.post('/<plugin>')
-def handle_plugin_webhook(plugin: str):
+@router.post("/{plugin}")
+async def handle_plugin_webhook(plugin: str, request: Request):
     """Handle incoming webhooks from any supported media server (plex, navidrome, …)."""
     try:
         try:
             from core.hook_manager import hook_manager
 
-            # Extract raw payload data safely
+            content_type = request.headers.get("content-type", "")
             raw_payload = None
-            if request.is_json:
-                raw_payload = request.get_json(silent=True)
-            elif request.form:
-                raw_payload = dict(request.form)
-            else:
-                raw_payload = request.get_data(as_text=True)
+            form_data = {}
 
-            plugin_action = hook_manager.apply_filters('ON_INBOUND_WEBHOOK', None, provider=plugin, payload=raw_payload, headers=dict(request.headers))
+            if "application/json" in content_type:
+                raw_payload = await request.json()
+            elif "application/x-www-form-urlencoded" in content_type or "multipart/form-data" in content_type:
+                form = await request.form()
+                form_data = dict(form)
+                raw_payload = form_data
+            else:
+                body = await request.body()
+                raw_payload = body.decode('utf-8', errors='replace')
+
+            plugin_action = hook_manager.apply_filters(
+                'ON_INBOUND_WEBHOOK', None, provider=plugin, payload=raw_payload, headers=dict(request.headers)
+            )
             if plugin_action == "SKIP":
                 logger.info(f"Plugin intercepted and handled webhook for plugin: {plugin}")
-                return jsonify({"status": "ok"}), 200
+                return {"status": "ok"}
         except Exception as e:
             logger.error(f"Error in ON_INBOUND_WEBHOOK hook: {e}")
+            form_data = {} # fallback
+            raw_payload = {}
 
-        parsed_data = parse_media_server_webhook(request, plugin=plugin)
+        # Pass the parsed dictionary to the webhook parser
+        payload_to_parse = raw_payload if isinstance(raw_payload, dict) else form_data
+        parsed_data = parse_media_server_webhook(payload_to_parse, plugin=plugin)
 
         if parsed_data:
             user_id = parsed_data.get('user_id')
@@ -71,4 +82,4 @@ def handle_plugin_webhook(plugin: str):
         logger.error(f"Error handling {plugin} webhook: {e}", exc_info=True)
 
     # ALWAYS return 200 OK so the media server never marks our endpoint as dead.
-    return jsonify({"status": "ok"}), 200
+    return {"status": "ok"}

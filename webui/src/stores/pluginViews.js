@@ -19,7 +19,7 @@
  */
 
 import { writable, derived, get } from 'svelte/store';
-import { apiFetch } from '../lib/api';
+import apiClient from '../api/client';
 
 // ── Internal writable ─────────────────────────────────────────────────────
 const _state = writable({
@@ -48,9 +48,9 @@ export async function loadPluginViews() {
 
   _loadPromise = (async () => {
     try {
-      const res = await apiFetch('/api/ui/registry');
+      const res = await apiClient.get('/v1/system/ui-registry');
 
-      if (!res.ok) {
+      if (res.status !== 200) {
         if (res.status === 404) {
           console.warn('[pluginViews] registry endpoint not found (404). No plugin views registered.');
           _state.update((s) => ({ ...s, loaded: true, views: [] }));

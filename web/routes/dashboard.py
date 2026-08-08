@@ -1,12 +1,13 @@
 import os
-from flask import Blueprint, jsonify, request
+from fastapi import APIRouter, HTTPException, Depends, Request
+from fastapi.responses import JSONResponse
 from web.auth import require_auth
 from core.tiered_logger import get_logger
 from ruamel.yaml import YAML
 from ruamel.yaml.error import YAMLError
 
 logger = get_logger("dashboard_route")
-dashboard_bp = Blueprint("dashboard", __name__, url_prefix="/api/system/dashboard")
+dashboard_bp = APIRouter(prefix="/api/v1/system/dashboard", tags=["Dashboard"])
 
 DASHBOARD_FILE = os.path.join("config", "webui", "dashboard.yaml")
 DEFAULT_DASHBOARD_CONTENT = """# EchoSync Dashboard Configuration
@@ -25,8 +26,7 @@ def _ensure_file():
         with open(DASHBOARD_FILE, "w", encoding="utf-8") as f:
             f.write(DEFAULT_DASHBOARD_CONTENT)
 
-@dashboard_bp.get("/")
-@require_auth
+@dashboard_bp.get("", dependencies=[Depends(require_auth)])
 def get_dashboard():
     """Reads dashboard.yaml and returns the parsed structure as standard JSON."""
     _ensure_file()
@@ -40,20 +40,23 @@ def get_dashboard():
             data = {}
 
     except YAMLError as e:
-        return jsonify({"error": "YAML Syntax Error", "details": str(e)}), 400
+        raise HTTPException(status_code=400, detail={"error": "YAML Syntax Error", "details": str(e)})
     except Exception as e:
         logger.error(f"Error reading dashboard.yaml: {e}")
-        return jsonify({"error": "Failed to read dashboard configuration"}), 500
+        raise HTTPException(status_code=500, detail="Failed to read dashboard configuration")
 
-    return jsonify(data), 200
+    return data
 
-@dashboard_bp.post("/")
-@require_auth
-def update_dashboard():
+@dashboard_bp.post("", dependencies=[Depends(require_auth)])
+async def update_dashboard(request: Request):
     """Accepts a JSON payload, converts it, and writes it back to dashboard.yaml preserving comments."""
-    payload = request.get_json()
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = None
+        
     if payload is None:
-        return jsonify({"error": "Invalid or missing JSON payload"}), 400
+        raise HTTPException(status_code=400, detail="Invalid or missing JSON payload")
 
     _ensure_file()
 
@@ -67,7 +70,6 @@ def update_dashboard():
         if data is None:
             data = payload
         elif isinstance(data, dict) and isinstance(payload, dict):
-            # Update root level keys, removing ones not in payload
             for key in list(data.keys()):
                 if key not in payload:
                     del data[key]
@@ -79,17 +81,14 @@ def update_dashboard():
         with open(DASHBOARD_FILE, "w", encoding="utf-8") as f:
             yaml.dump(data, f)
 
-        return jsonify({"success": True}), 200
+        return {"success": True}
     except YAMLError as e:
-        return jsonify({"error": "YAML Syntax Error while writing", "details": str(e)}), 400
+        raise HTTPException(status_code=400, detail={"error": "YAML Syntax Error while writing", "details": str(e)})
     except Exception as e:
         logger.error(f"Error writing dashboard.yaml: {e}")
-        return jsonify({"error": "Failed to write dashboard configuration"}), 500
+        raise HTTPException(status_code=500, detail="Failed to write dashboard configuration")
 
-layout_bp = Blueprint("dashboard_layout", __name__, url_prefix="/api/dashboard")
-
-@layout_bp.get("/layout")
-@require_auth
+@dashboard_bp.get("/layout", dependencies=[Depends(require_auth)])
 def get_dashboard_layout():
     """Reads the Lovelace dashboard layout from config/dashboard.yaml."""
     layout_file = os.path.join("config", "dashboard.yaml")
@@ -121,7 +120,7 @@ def get_dashboard_layout():
     }
 
     if not os.path.exists(layout_file):
-        return jsonify(fallback), 200
+        return fallback
 
     try:
         with open(layout_file, "r", encoding="utf-8") as f:
@@ -135,4 +134,4 @@ def get_dashboard_layout():
         logger.error(f"Error reading config/dashboard.yaml: {e}")
         data = fallback
 
-    return jsonify(data), 200
+    return data

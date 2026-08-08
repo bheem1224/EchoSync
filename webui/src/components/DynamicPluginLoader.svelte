@@ -21,6 +21,7 @@
   loading  – Optional override for the loading state.
 -->
 <script>
+  import apiClient from '../api/client';
   // ── Props ──────────────────────────────────────────────────────────────
   /** Category key to look up in plugin.components (e.g. "music_service") */
   export let category = '';
@@ -50,9 +51,7 @@
 
     try {
       // 1. Fetch the UI manifest from the backend
-      const resp = await fetch('/api/ui/registry', {
-        credentials: 'include',
-      });
+      const resp = await apiClient.get('/v1/system/ui-registry');
 
       if (!resp.ok) {
         if (resp.status === 404) {
@@ -62,7 +61,7 @@
         throw new Error(`UI registry fetch failed: ${resp.status} ${resp.statusText}`);
       }
 
-      const data = await resp.json();
+      const data = resp.data;
       const typeKey = cat.endsWith('s') ? cat : `${cat}s`;
       const components = Array.isArray(data?.[typeKey]) ? data[typeKey] : [];
 

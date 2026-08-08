@@ -1,4 +1,5 @@
 <script>
+  import apiClient from '../api/client';
   import { createEventDispatcher, onMount } from 'svelte';
   const dispatch = createEventDispatcher();
 
@@ -15,12 +16,12 @@
     loading = true;
     error = null;
     try {
-      const res = await fetch(`/api/browse?path=${encodeURIComponent(path)}`);
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
+      const res = await apiClient.get(`/v1/system/browse?path=${encodeURIComponent(path)}`);
+      if (res.status !== 200) {
+        const body = res.data || {};
         throw new Error(body.error || res.statusText);
       }
-      const data = await res.json();
+      const data = res.data;
       currentPath = data.path;
       editablePath = currentPath;
       rootKey = data.root;
@@ -76,9 +77,9 @@
   onMount(async () => {
     // If startPath empty, request roots and pick downloads if present
     if (!startPath) {
-      const rootsRes = await fetch('/api/browse');
-      if (rootsRes.ok) {
-        const d = await rootsRes.json();
+      const rootsRes = await apiClient.get('/v1/system/browse');
+      if (rootsRes.status === 200) {
+        const d = rootsRes.data;
         const downloads = (d.roots || []).find(r => r.key === 'downloads');
         const pick = downloads ? downloads.key : (d.roots && d.roots[0] && d.roots[0].key) || '';
         await fetchPath(pick);

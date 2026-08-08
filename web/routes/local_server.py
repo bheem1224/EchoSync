@@ -1,11 +1,12 @@
 import subprocess
 from pathlib import Path
-from flask import Blueprint, request, jsonify, send_file, Response, stream_with_context
+from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import FileResponse, StreamingResponse
 from core.settings import config_manager
 from core.tiered_logger import get_logger
 
 logger = get_logger("local_server_routes")
-bp = Blueprint("local_server", __name__, url_prefix="/api/local_server")
+router = APIRouter(prefix="/api/v1/system/local_server", tags=["Local Server"])
 
 # Formats that modern browsers can decode natively — served directly with Accept-Ranges.
 _NATIVE_FORMATS = {'.mp3', '.flac', '.wav', '.m4a', '.ogg'}
@@ -14,49 +15,47 @@ _NATIVE_FORMATS = {'.mp3', '.flac', '.wav', '.m4a', '.ogg'}
 _TRANSCODE_FORMATS = {'.dsf', '.dff', '.ape', '.wma'}
 
 
-@bp.get("/stream")
-def stream_audio():
+@router.get("/stream")
+def stream_audio(path: str = Query(..., description="Path to the audio file")):
     """Stream audio file from the local library.
 
     Native formats (FLAC, MP3, WAV, M4A, OGG) are served directly via
-    send_file which enables Accept-Ranges byte-range delivery.
+    FileResponse which enables Accept-Ranges byte-range delivery.
 
     Exotic formats (DSF, DFF, APE, WMA) are transcoded on-the-fly to a FLAC
     stream via FFmpeg so the frontend player remains lightweight and never
     needs to handle exotic codec decoding itself.
     """
-    path_param = request.args.get("path")
-
-    if not path_param:
-        return jsonify({"error": "Missing 'path' query parameter"}), 400
+    if not path:
+        raise HTTPException(status_code=400, detail="Missing 'path' query parameter")
 
     _lib = config_manager.get('storage.library_dir') or config_manager.get('library_dir')
     library_dir = Path(_lib) if _lib else None
 
     if not library_dir:
-        return jsonify({"error": "Library directory is not configured"}), 500
+        raise HTTPException(status_code=500, detail="Library directory is not configured")
 
     try:
-        requested_path = Path(path_param).resolve()
+        requested_path = Path(path).resolve()
         library_root = library_dir.resolve()
 
         # Verify that the requested path falls within the library root.
         # This prevents directory traversal attacks (e.g., path=../../etc/passwd).
         if not requested_path.is_relative_to(library_root):
             logger.warning(f"Security violation: Attempted to access file outside library path: {requested_path}")
-            return jsonify({"error": "Security violation: Access denied"}), 403
+            raise HTTPException(status_code=403, detail="Security violation: Access denied")
 
         if not requested_path.exists():
-            return jsonify({"error": "File not found"}), 404
+            raise HTTPException(status_code=404, detail="File not found")
 
         if not requested_path.is_file():
-            return jsonify({"error": "Requested path is not a file"}), 400
+            raise HTTPException(status_code=400, detail="Requested path is not a file")
 
         ext = requested_path.suffix.lower()
 
         # --- Native formats: direct byte-range delivery ---
         if ext in _NATIVE_FORMATS:
-            return send_file(requested_path, conditional=True)
+            return FileResponse(path=str(requested_path), media_type=f"audio/{ext.lstrip('.')}")
 
         # --- Exotic formats: server-side FFmpeg transcode to FLAC stream ---
         if ext in _TRANSCODE_FORMATS:
@@ -114,17 +113,19 @@ def stream_audio():
                         )
                     proc.stderr.close()
 
-            return Response(
-                stream_with_context(generate()),
-                mimetype="audio/flac",
+            return StreamingResponse(
+                generate(),
+                media_type="audio/flac",
                 headers={
                     "Content-Disposition": f'inline; filename="{requested_path.stem}.flac"',
                 },
             )
 
         # Unknown/unsupported format — serve as-is and let the client decide.
-        return send_file(requested_path, conditional=True)
+        return FileResponse(path=str(requested_path))
 
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error streaming local file {path_param}: {e}", exc_info=True)
-        return jsonify({"error": "An internal server error occurred while processing the request"}), 500
+        logger.error(f"Error streaming local file {path}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="An internal server error occurred while processing the request")

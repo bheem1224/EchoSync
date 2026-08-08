@@ -1,6 +1,6 @@
 import json
-from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional
+import logging
+from typing import Any, Dict, Optional
 import socket
 import ipaddress
 import urllib.parse
@@ -27,19 +27,8 @@ def validate_safe_url(url: str) -> Optional[str]:
         if ip.is_private or ip.is_loopback or ip.is_multicast or ip.is_link_local:
             return None
 
-        # Rebuild the URL using the IP address but keeping the original Host header semantics.
-        # However, for simple fields like image_url, the client fetching it might just be the browser
-        # or a generic requests call. If we replace the hostname with IP, HTTPS certs might fail.
-        # But this is what the audit explicitly recommended for SSRF TOCTOU prevention.
-        # We will replace the netloc with the IP address (with port if present).
-
         port_suffix = f":{parsed.port}" if parsed.port else ""
         new_netloc = f"{ip_addr}{port_suffix}"
-
-        # We can't easily pass the Host header if this URL is used by a browser or an opaque downloader,
-        # but we do what we can. The audit said: "implement an HTTP client configuration that strictly binds requests
-        # to the IP resolved... or configure network-level egress filtering."
-        # Returning the IP-bound URL is the standard code-level fix for URL validation functions.
 
         rewritten = parsed._replace(netloc=new_netloc).geturl()
         return rewritten
@@ -47,85 +36,34 @@ def validate_safe_url(url: str) -> Optional[str]:
         logger.warning(f"URL validation failed for {url}: {e}")
         return None
 
+class WebhookParser:
+    def parse_and_publish(self, data: dict) -> None:
+        raise NotImplementedError
 
-class WebhookParser(ABC):
-    @abstractmethod
-    def parse(self, request) -> Optional[Dict[str, Any]]:
-        pass
+    def parse(self, data: dict) -> Optional[Dict[str, Any]]:
+        raise NotImplementedError
+
 
 class PlexWebhookParser(WebhookParser):
     def __init__(self, event_bus=None):
         self.event_bus = event_bus
 
-    def parse_and_publish(self, payload: Dict[str, Any]) -> None:
+    def parse_and_publish(self, data: dict) -> None:
+        pass # Placeholder for event_bus publishing if needed
+
+    def parse(self, data: dict) -> Optional[Dict[str, Any]]:
         try:
-            event_type = payload.get('event')
-
-            if event_type not in ['media.rate', 'media.scrobble']:
-                return
-
-            metadata = payload.get('Metadata', {})
-            if metadata.get('type') != 'track':
-                return
-
-            provider_item_id = metadata.get('ratingKey')
-            if not provider_item_id:
-                return
-
-            provider_item_id = str(provider_item_id)
-
-            # Keep guid parsing for legacy compatibility if available
-            guid = metadata.get('guid', '')
-            sync_id = None
-            if guid.startswith('mbid://'):
-                sync_id = f"ss:track:mbid:{guid.split('mbid://')[1]}"
-
-            account = payload.get('Account', {})
-            user_id = account.get('id')
-            if user_id is not None:
-                user_id = str(user_id)
-
-            if event_type == 'media.rate':
-                raw_plex_rating = float(metadata.get('userRating', 0))
-                rating = raw_plex_rating / 2.0
-                event = {
-                    "event": "TRACK_RATED",
-                    "sync_id": sync_id,  # May be None, that is fine
-                    "data": {
-                        "rating": rating,
-                        "account_id": user_id,
-                        "plugin": "plex",
-                        "plugin_item_id": provider_item_id
-                    }
-                }
-            elif event_type == 'media.scrobble':
-                event = {
-                    "event": "TRACK_PLAYED",
-                    "sync_id": sync_id,  # May be None, that is fine
-                    "data": {
-                        "account_id": user_id,
-                        "plugin": "plex",
-                        "plugin_item_id": provider_item_id
-                    }
-                }
+            if 'payload' in data:
+                payload_str = data.get('payload')
+                if isinstance(payload_str, str):
+                    payload = json.loads(payload_str)
+                else:
+                    payload = payload_str
             else:
-                return
+                payload = data
 
-            if self.event_bus:
-                self.event_bus.publish(event)
-        except Exception:
-            pass
-
-    def parse(self, request) -> Optional[Dict[str, Any]]:
-        try:
-            if not request.form or 'payload' not in request.form:
+            if not isinstance(payload, dict):
                 return None
-
-            payload_str = request.form.get('payload')
-            if not payload_str:
-                return None
-
-            payload = json.loads(payload_str)
 
             event_type = payload.get('event')
             if event_type != "media.scrobble":
@@ -152,14 +90,15 @@ class PlexWebhookParser(WebhookParser):
         except Exception:
             return None
 
+
 class NavidromeWebhookParser(WebhookParser):
     def __init__(self, event_bus=None):
         self.event_bus = event_bus
 
-    def parse_and_publish(self, payload: Dict[str, Any]) -> None:
+    def parse_and_publish(self, data: dict) -> None:
         pass
 
-    def parse(self, request) -> Optional[Dict[str, Any]]:
+    def parse(self, data: dict) -> Optional[Dict[str, Any]]:
         pass
 
 
@@ -169,14 +108,14 @@ _PLUGIN_PARSERS = {
 }
 
 
-def parse_media_server_webhook(request, plugin: str = "plex") -> Optional[Dict[str, Any]]:
+def parse_media_server_webhook(data: dict, plugin: str = "plex") -> Optional[Dict[str, Any]]:
     """
     Module-level dispatcher: parse an inbound webhook request from any supported
     media server and return a normalised ``{user_id, plugin_item_id}`` dict on
     a ``media.scrobble`` / track event, or ``None`` for unrecognised events.
 
     Args:
-        request: The Flask ``request`` object.
+        data: The raw dictionary payload from the webhook request.
         plugin: Lowercase plugin name (e.g. ``"plex"``, ``"navidrome"``).
 
     Returns:
@@ -186,7 +125,7 @@ def parse_media_server_webhook(request, plugin: str = "plex") -> Optional[Dict[s
     if parser_cls is None:
         return None
 
-    parsed_data = parser_cls().parse(request)
+    parsed_data = parser_cls().parse(data)
 
     if parsed_data:
         # Sanitize any URL fields

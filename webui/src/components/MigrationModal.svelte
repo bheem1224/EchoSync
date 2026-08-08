@@ -1,4 +1,5 @@
 <script>
+  import apiClient from '../api/client';
   import { createEventDispatcher } from 'svelte';
   const dispatch = createEventDispatcher();
 
@@ -7,12 +8,7 @@
   async function handleAcknowledge() {
     try {
       // Call backend to clear the migration flag
-      const response = await fetch('/api/migration-acknowledge', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        }
-      });
+      const response = await apiClient.post('/v1/system/migration-acknowledge');
 
       if (!response.ok) {
         throw new Error('Failed to acknowledge migration');

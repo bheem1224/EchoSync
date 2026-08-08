@@ -1,4 +1,5 @@
 <script>
+  import apiClient from '../api/client';
   import { onMount, onDestroy } from 'svelte';
   
   let duplicates = [];
@@ -6,9 +7,9 @@
 
   async function fetchDuplicates() {
     try {
-      const res = await fetch('/api/manager/duplicates');
-      if (res.ok) {
-        const data = await res.json();
+      const res = await apiClient.get('/v1/system/manager/duplicates');
+      if (res.status === 200) {
+        const data = res.data;
         duplicates = data.duplicates || [];
       }
     } catch (e) { console.error(e); }

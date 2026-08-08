@@ -1,4 +1,5 @@
 <script>
+  import apiClient from '../../../api/client';
   import { onMount } from 'svelte';
   import { plugins } from '../../../stores/plugins';
   import { settings } from '../../../stores/settings';
@@ -80,7 +81,7 @@
     
     // Trigger background reorganization job
     try {
-      await fetch('/api/jobs/run/reorganize_library', { method: 'POST' });
+      await apiClient.post('/v1/system/jobs/run', { job_name: 'reorganize_library' });
       feedback.addToast('Library reorganization started. Check Active Jobs.', 'info');
       
       // Update initial settings to reflect the new saved state

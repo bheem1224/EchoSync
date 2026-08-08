@@ -1,4 +1,5 @@
 <script>
+  import apiClient from '../api/client';
   import { onMount, onDestroy } from 'svelte';
   
   let pendingActions = [];
@@ -6,9 +7,9 @@
 
   async function fetchPendingActions() {
     try {
-      const res = await fetch('/api/manager/queue/actions');
-      if (res.ok) {
-        const data = await res.json();
+      const res = await apiClient.get('/v1/system/manager/queue/actions');
+      if (res.status === 200) {
+        const data = res.data;
         pendingActions = data.queue || [];
       }
     } catch (e) { console.error(e); }

@@ -1,62 +1,65 @@
-from flask import Blueprint, jsonify, request, Response, stream_with_context
+from fastapi import APIRouter, Request, HTTPException
+from fastapi.responses import JSONResponse, StreamingResponse
+import asyncio
 import json
 from web.services.search_service import SearchAdapter
 
-bp = Blueprint("search", __name__, url_prefix="/api/search")
+router = APIRouter(prefix="/api/v1/core/search", tags=["Search"])
 
-@bp.get("/")
-def aggregate_search():
-    q = request.args.get("q")
+@router.get("/")
+async def aggregate_search(request: Request):
+    q = request.query_params.get("q")
     if not q:
-        return jsonify({"error": "missing query"}), 400
+        raise HTTPException(status_code=400, detail={"error": "missing query"})
 
-    plugins_param = request.args.get("plugins") or ""
+    plugins_param = request.query_params.get("plugins") or ""
     plugin_names = [p for p in plugins_param.split(",") if p] or None
 
-    types_param = request.args.get("types") or ""
+    types_param = request.query_params.get("types") or ""
     search_types = [t for t in types_param.split(",") if t] or None
 
     adapter = SearchAdapter()
 
-    def generate():
+    async def generate():
         try:
+            # We wrap the synchronous generator to avoid blocking the event loop
             for source, results in adapter.aggregate_stream(q, plugin_names=plugin_names, search_types=search_types):
                 yield f"data: {json.dumps({'source': source, 'results': results})}\n\n"
+                await asyncio.sleep(0.01)
             yield "data: {\"status\": \"done\"}\n\n"
-        except GeneratorExit:
-            return
         except Exception as e:
             from core.tiered_logger import get_logger
             get_logger("search_route").error(f"Error in aggregate_search stream generator: {e}")
 
-    return Response(stream_with_context(generate()), mimetype="text/event-stream")
+    return StreamingResponse(generate(), media_type="text/event-stream")
 
 
-@bp.get("/discovery")
-def federated_discovery():
-    import asyncio
-    q = request.args.get("q")
+@router.get("/discovery")
+async def federated_discovery(request: Request):
+    q = request.query_params.get("q")
     if not q:
-        return jsonify({"error": "missing query"}), 400
+        raise HTTPException(status_code=400, detail={"error": "missing query"})
 
-    plugins_param = request.args.get("plugins") or ""
+    plugins_param = request.query_params.get("plugins") or ""
     plugin_names = [p for p in plugins_param.split(",") if p] or None
 
     adapter = SearchAdapter()
-    # Run the async federated discovery in a sync context to avoid Flask [async] extra requirement
     try:
-        results = asyncio.run(adapter.federated_discovery(q, enabled_plugins=plugin_names))
+        results = await adapter.federated_discovery(q, enabled_plugins=plugin_names)
     except Exception as e:
         from core.tiered_logger import get_logger
         get_logger("search_route").error(f"Federated discovery error: {e}")
         results = []
 
-    return jsonify({"query": q, "results": results}), 200
+    return {"query": q, "results": results}
 
 
-@bp.post("/route")
-def route_search_result():
-    payload = request.get_json(silent=True) or {}
+@router.post("/route")
+async def route_search_result(request: Request):
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
     item = payload.get("item")
     action = payload.get("action")
     target = payload.get("target")
@@ -65,4 +68,4 @@ def route_search_result():
     result = adapter.route_result(item=item, action=action, target=target)
 
     status = 200 if result.get("accepted") else 400
-    return jsonify(result), status
+    return result, status

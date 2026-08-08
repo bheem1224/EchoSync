@@ -1,4 +1,5 @@
 <script>
+  import apiClient from '../api/client';
   import { onMount, onDestroy } from 'svelte';
   
   let duplicates = [];
@@ -15,9 +16,9 @@
 
   async function fetchDuplicates() {
     try {
-      const res = await fetch('/api/manager/duplicates');
-      if (res.ok) {
-        const data = await res.json();
+      const res = await apiClient.get('/v1/system/manager/duplicates');
+      if (res.status === 200) {
+        const data = res.data;
         duplicates = data.duplicates || [];
       }
     } catch (e) { console.error(e); }
@@ -25,9 +26,9 @@
 
   async function fetchPendingActions() {
     try {
-      const res = await fetch('/api/manager/queue/actions');
-      if (res.ok) {
-        const data = await res.json();
+      const res = await apiClient.get('/v1/system/manager/queue/actions');
+      if (res.status === 200) {
+        const data = res.data;
         pendingActions = data.queue || [];
       }
     } catch (e) { console.error(e); }
@@ -57,7 +58,7 @@
 
   async function vetoPendingAction(item) {
     try {
-      await fetch('/api/manager/suggestion-candidates/override', { method: 'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ sync_id: item.sync_id, field: 'admin_exempt_deletion', value: true }) });
+      await apiClient.post('/v1/system/manager/suggestion-candidates/override', { sync_id: item.sync_id, field: 'admin_exempt_deletion', value: true });
       fetchPendingActions();
     } catch (e) { console.error(e); }
   }
@@ -65,8 +66,8 @@
   async function executeNow(item) {
     try {
       if (!item.track_id) { alert('No track id'); return; }
-      const endpoint = item.action_needed === 'DELETE_MONTH_END' ? `/api/manager/track/${item.track_id}/force_delete` : `/api/manager/track/${item.track_id}/force_upgrade`;
-      await fetch(endpoint, { method: 'POST' });
+      const endpoint = item.action_needed === 'DELETE_MONTH_END' ? `/api/v1/system/manager/track/${item.track_id}/force_delete` : `/api/v1/system/manager/track/${item.track_id}/force_upgrade`;
+      await apiClient.post(endpoint);
       fetchPendingActions();
     } catch (e) { console.error(e); }
   }

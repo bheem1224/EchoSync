@@ -32,6 +32,7 @@
   default – Fallback when no views are defined.
 -->
 <script>
+  import apiClient from '../api/client';
   import { onMount, createEventDispatcher, tick } from 'svelte';
 
   const dispatch = createEventDispatcher();
@@ -69,11 +70,11 @@
       let rawYaml = yamlSource;
 
       if (!rawYaml && yamlUrl) {
-        const res = await fetch(yamlUrl, { credentials: 'include' });
-        if (!res.ok) {
+        const res = await apiClient.get(yamlUrl);
+        if (res.status !== 200) {
           throw new Error(`[YamlDashboardRenderer] Failed to fetch ${yamlUrl}: ${res.status} ${res.statusText}`);
         }
-        rawYaml = await res.text();
+        rawYaml = res.data;
       }
 
       if (!rawYaml) {

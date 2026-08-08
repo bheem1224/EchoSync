@@ -1,147 +1,163 @@
-from flask import Blueprint, jsonify, request
+from typing import List, Dict, Any, Optional
+from fastapi import APIRouter, HTTPException, Depends, Body
+from pydantic import BaseModel, ConfigDict
 from services.storage_service import get_storage_service
 from core.tiered_logger import get_logger
+from web.auth import require_auth
 
 logger = get_logger("accounts_route")
-bp = Blueprint("accounts", __name__, url_prefix="/api/accounts")
+router = APIRouter(prefix="/api/v1/system/accounts", tags=["Accounts"])
 
-@bp.get("/<service_name>")
-def list_service_accounts(service_name):
+class AccountResponse(BaseModel):
+    service: str
+    accounts: List[Dict[str, Any]]
+    total: int
+    model_config = ConfigDict(from_attributes=True)
+
+class CreateAccountRequest(BaseModel):
+    account_name: str
+    display_name: Optional[str] = None
+
+class CreateAccountResponse(BaseModel):
+    success: bool
+    account_id: int
+    account_name: str
+    model_config = ConfigDict(from_attributes=True)
+
+class ActivateAccountRequest(BaseModel):
+    is_active: bool = True
+
+class ActivateAccountResponse(BaseModel):
+    success: bool
+    is_active: bool
+    model_config = ConfigDict(from_attributes=True)
+
+class GenericSuccessResponse(BaseModel):
+    success: bool
+    model_config = ConfigDict(from_attributes=True)
+
+class UpdateAccountNameRequest(BaseModel):
+    name: str
+
+class AccountOverridesRequest(BaseModel):
+    managed_user_id: str
+    service_account_id: str
+    action: str
+
+@router.get("/{service_name}", response_model=AccountResponse)
+def list_service_accounts(service_name: str):
     """List all accounts for a specific service."""
     try:
         storage = get_storage_service()
         accounts = storage.list_accounts(service_name)
-        return jsonify({
-            'service': service_name,
-            'accounts': accounts,
-            'total': len(accounts)
-        }), 200
+        return AccountResponse(
+            service=service_name,
+            accounts=accounts,
+            total=len(accounts)
+        )
     except Exception as e:
         logger.error(f"Error listing accounts for {service_name}: {e}")
-        return jsonify({'error': str(e)}), 500
+        raise HTTPException(status_code=500, detail=str(e))
 
-@bp.post("/<service_name>")
-def create_account(service_name):
+@router.post("/{service_name}", response_model=CreateAccountResponse, status_code=201)
+def create_account(service_name: str, payload: CreateAccountRequest):
     """Create a new account for a service."""
     try:
-        payload = request.get_json(silent=True) or {}
-        account_name = payload.get('account_name')
-        display_name = payload.get('display_name', account_name)
-        
-        if not account_name:
-            return jsonify({'error': 'account_name is required'}), 400
-        
         storage = get_storage_service()
         account_id = storage.ensure_account(
             service_name=service_name,
-            account_name=account_name,
-            display_name=display_name
+            account_name=payload.account_name,
+            display_name=payload.display_name or payload.account_name
         )
         
         if account_id:
-            return jsonify({
-                'success': True,
-                'account_id': account_id,
-                'account_name': account_name
-            }), 201
+            return CreateAccountResponse(
+                success=True,
+                account_id=account_id,
+                account_name=payload.account_name
+            )
         else:
-            return jsonify({'error': 'Failed to create account'}), 500
+            raise HTTPException(status_code=500, detail="Failed to create account")
     except Exception as e:
         logger.error(f"Error creating account for {service_name}: {e}")
-        return jsonify({'error': str(e)}), 500
+        raise HTTPException(status_code=500, detail=str(e))
 
-@bp.put("/<service_name>/<int:account_id>/activate")
-def activate_account(service_name, account_id):
+@router.put("/{service_name}/{account_id}/activate", response_model=ActivateAccountResponse)
+def activate_account(service_name: str, account_id: int, payload: ActivateAccountRequest = Body(default=ActivateAccountRequest())):
     """Activate an account (toggle active status for multi-account support)."""
     try:
-        payload = request.get_json(silent=True) or {}
-        is_active = payload.get('is_active', True)
-        
         storage = get_storage_service()
-        success = storage.toggle_account_active(account_id, is_active)
+        success = storage.toggle_account_active(account_id, payload.is_active)
         
         if success:
-            return jsonify({'success': True, 'is_active': is_active}), 200
+            return ActivateAccountResponse(success=True, is_active=payload.is_active)
         else:
-            return jsonify({'error': 'Failed to update account status'}), 500
+            raise HTTPException(status_code=500, detail="Failed to update account status")
     except Exception as e:
         logger.error(f"Error updating account {account_id} status for {service_name}: {e}")
-        return jsonify({'error': str(e)}), 500
+        raise HTTPException(status_code=500, detail=str(e))
 
-@bp.delete("/<service_name>/<int:account_id>")
-def delete_account(service_name, account_id):
+@router.delete("/{service_name}/{account_id}", response_model=GenericSuccessResponse)
+def delete_account(service_name: str, account_id: int):
     """Delete an account."""
     try:
         storage = get_storage_service()
         success = storage.delete_account(account_id)
         
         if success:
-            return jsonify({'success': True}), 200
+            return GenericSuccessResponse(success=True)
         else:
-            return jsonify({'error': 'Failed to delete account'}), 500
+            raise HTTPException(status_code=500, detail="Failed to delete account")
     except Exception as e:
         logger.error(f"Error deleting account {account_id} for {service_name}: {e}")
-        return jsonify({'error': str(e)}), 500
+        raise HTTPException(status_code=500, detail=str(e))
 
-@bp.put("/<service_name>/<int:account_id>/name")
-def update_account_name(service_name, account_id):
+@router.put("/{service_name}/{account_id}/name", response_model=GenericSuccessResponse)
+def update_account_name(service_name: str, account_id: int, payload: UpdateAccountNameRequest):
     """Update account display name."""
     try:
-        payload = request.get_json(silent=True) or {}
-        new_name = payload.get('name')
-        
-        if not new_name:
-            return jsonify({'error': 'name is required'}), 400
-        
         storage = get_storage_service()
-        success = storage.update_account_name(account_id, new_name)
+        success = storage.update_account_name(account_id, payload.name)
         
         if success:
-            return jsonify({'success': True}), 200
+            return GenericSuccessResponse(success=True)
         else:
-            return jsonify({'error': 'Failed to update account name'}), 500
+            raise HTTPException(status_code=500, detail="Failed to update account name")
     except Exception as e:
         logger.error(f"Error updating account name for {account_id}: {e}")
-        return jsonify({'error': str(e)}), 500
+        raise HTTPException(status_code=500, detail=str(e))
 
-from web.auth import require_auth
-@bp.post("/overrides")
-@require_auth
-def set_account_overrides():
+@router.post("/overrides", response_model=GenericSuccessResponse, dependencies=[Depends(require_auth)])
+def set_account_overrides(payload: AccountOverridesRequest):
     from core.settings import config_manager
     try:
-        payload = request.get_json(silent=True) or {}
-        managed_user_id = payload.get('managed_user_id')
-        service_account_id = payload.get('service_account_id')
-        action = payload.get('action') # "unfuse" | "refuse"
-
-        if not managed_user_id or not service_account_id or action not in ("unfuse", "refuse"):
-            return jsonify({'error': 'Missing or invalid parameters: managed_user_id, service_account_id, action'}), 400
+        if payload.action not in ("unfuse", "refuse"):
+            raise HTTPException(status_code=400, detail="Invalid action parameter")
 
         from core.nexus_framework.plugin_loader import PluginRegistry
         active_servers = PluginRegistry.get_active_services_by_type('media_server')
         active_media_server = active_servers[0].split('.')[-1] if active_servers else 'plex'
         if not active_media_server:
-            return jsonify({'error': 'No active media server configured'}), 400
+            raise HTTPException(status_code=400, detail="No active media server configured")
 
         provider_config = config_manager.get(active_media_server, {})
         account_map_override = provider_config.get("account_map_override", {})
 
-        overrides = account_map_override.get(managed_user_id, [])
+        overrides = account_map_override.get(payload.managed_user_id, [])
 
-        if action == "unfuse":
-            if service_account_id in overrides:
-                overrides.remove(service_account_id)
-        elif action == "refuse":
-            if service_account_id not in overrides:
-                overrides.append(service_account_id)
+        if payload.action == "unfuse":
+            if payload.service_account_id in overrides:
+                overrides.remove(payload.service_account_id)
+        elif payload.action == "refuse":
+            if payload.service_account_id not in overrides:
+                overrides.append(payload.service_account_id)
 
-        account_map_override[managed_user_id] = overrides
+        account_map_override[payload.managed_user_id] = overrides
         provider_config["account_map_override"] = account_map_override
         config_manager.set(active_media_server, provider_config)
         config_manager.save_settings(config_manager.get_settings())
 
-        return jsonify({'success': True}), 200
+        return GenericSuccessResponse(success=True)
     except Exception as e:
         logger.error(f"Error setting account override: {e}", exc_info=True)
-        return jsonify({'error': str(e)}), 500
+        raise HTTPException(status_code=500, detail=str(e))

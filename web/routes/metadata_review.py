@@ -1,12 +1,10 @@
-"""Metadata review queue endpoints."""
-from web.auth import require_auth
-
-
 from pathlib import Path
 import threading
 from typing import Any, Dict, List, Optional, cast
 
-from flask import Blueprint, jsonify, request, send_file
+from fastapi import APIRouter, HTTPException, Depends, Request
+from fastapi.responses import JSONResponse, FileResponse
+from pydantic import BaseModel
 
 from core.db.echo_sync_track import EchosyncTrack
 from core.enums import Capability
@@ -19,9 +17,22 @@ from core.tiered_logger import get_logger
 from database import get_database
 from database.working_database import ReviewTask, get_working_database
 from services.metadata_enhancer import get_metadata_enhancer, MetadataEnhancerService
+from web.auth import require_auth
+from core.db.schemas import QueueListResponse, SuccessResponse
 
 logger = get_logger("metadata_review_route")
-bp = Blueprint("metadata_review", __name__, url_prefix="/api")
+router = APIRouter(prefix="/api/v1/core/metadata_review", tags=["Metadata Review"])
+
+class UpdateReviewQueueRequest(BaseModel):
+    metadata: Optional[Dict[str, Any]] = None
+    track_data: Optional[Dict[str, Any]] = None
+
+class ApproveReviewQueueRequest(BaseModel):
+    metadata: Optional[Dict[str, Any]] = None
+    detected_metadata: Optional[Dict[str, Any]] = None
+
+class MusicBrainzLookupRequest(BaseModel):
+    metadata: Optional[Dict[str, Any]] = None
 
 def _get_media_file_path(media_id: str) -> Optional[str]:
     if not media_id:
@@ -330,7 +341,7 @@ def _submit_acoustid_contribution_async(fingerprint: str, duration: int, mbid: s
         logger.debug(f"AcoustID background contribution failed: {exc}")
 
 
-@bp.get("/review-queue")
+@router.get("")
 def get_review_queue():
     """Return pending metadata review tasks sorted newest-first."""
     db = get_working_database()
@@ -351,35 +362,28 @@ def get_review_queue():
                 serialized_tasks.append(
                     _serialize_task(task, detected_metadata=detected_metadata, current_metadata=current_metadata)
                 )
-            return jsonify(
-                {
-                    "tasks": serialized_tasks
-                }
-            ), 200
+            return {"tasks": serialized_tasks}
     except Exception as e:
         logger.error(f"Failed to fetch review queue: {e}", exc_info=True)
-        return jsonify({"error": "Failed to fetch review queue"}), 500
+        raise HTTPException(status_code=500, detail="Failed to fetch review queue")
 
 
-@bp.patch("/review-queue/<int:task_id>/save")
-@bp.put("/review-queue/<int:task_id>")
-@require_auth
-def update_review_queue_item(task_id: int):
+@router.patch("/{task_id}/save")
+@router.put("/{task_id}")
+def update_review_queue_item(task_id: int, payload: UpdateReviewQueueRequest, _=Depends(require_auth)):
     """Update track_data JSON blob or save progress incrementally for a review task."""
-    payload = request.get_json(silent=True)
-    if not payload:
-        return jsonify({"error": "Missing JSON payload"}), 400
-
-    metadata = payload.get("metadata") or payload.get("track_data") or payload
+    metadata = payload.metadata or payload.track_data or payload.model_dump(exclude_unset=True)
+    if not metadata:
+        raise HTTPException(status_code=400, detail="Missing JSON payload")
     if not isinstance(metadata, dict):
-        return jsonify({"error": "Invalid metadata payload"}), 400
+        raise HTTPException(status_code=400, detail="Invalid metadata payload")
 
     db = get_working_database()
     try:
         with db.session_scope() as session:
             task = session.query(ReviewTask).filter(ReviewTask.id == task_id).first()
             if not task:
-                return jsonify({"error": "Task not found"}), 404
+                raise HTTPException(status_code=404, detail="Task not found")
 
             # Update/Merge into track_data blob incrementally
             if not task.track_data:
@@ -391,10 +395,12 @@ def update_review_queue_item(task_id: int):
             if any(k in metadata for k in ["title", "artist", "album", "year", "musicbrainz_id"]):
                 task.detected_metadata = metadata
 
-            return jsonify({"success": True, "id": task.id}), 200
+            return {"success": True, "id": task.id}
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to update review task {task_id}: {e}", exc_info=True)
-        return jsonify({"error": "Failed to update review task"}), 500
+        raise HTTPException(status_code=500, detail="Failed to update review task")
 
 
 def _process_approval_background(task_id: int, final_metadata: Dict[str, Any]):
@@ -426,29 +432,27 @@ def _process_approval_background(task_id: int, final_metadata: Dict[str, Any]):
     except Exception as e:
         logger.error(f"Background approval task {task_id} failed: {e}", exc_info=True)
 
-@bp.post("/review-queue/<int:task_id>/approve")
-@require_auth
-def approve_review_queue_item(task_id: int):
+@router.post("/{task_id}/approve")
+def approve_review_queue_item(task_id: int, payload: ApproveReviewQueueRequest, _=Depends(require_auth)):
     """Approve a review task: write tags, relocate file, import file, mark approved."""
-    payload = request.get_json(silent=True)
-    final_metadata = _extract_payload_metadata(payload)
+    final_metadata = payload.metadata or payload.detected_metadata or payload.model_dump(exclude_unset=True)
 
     if not isinstance(final_metadata, dict):
-        return jsonify({"error": "Invalid metadata payload"}), 400
+        raise HTTPException(status_code=400, detail="Invalid metadata payload")
 
     db = get_working_database()
     try:
         with db.session_scope() as session:
             task = session.query(ReviewTask).filter(ReviewTask.id == task_id).first()
             if not task:
-                return jsonify({"error": "Task not found"}), 404
+                raise HTTPException(status_code=404, detail="Task not found")
 
             if not task.file_path:
-                return jsonify({"error": "File path not found"}), 404
+                raise HTTPException(status_code=404, detail="File path not found")
 
             file_path = Path(task.file_path)
             if not file_path.exists() or not file_path.is_file():
-                return jsonify({"error": "File does not exist"}), 404
+                raise HTTPException(status_code=404, detail="File does not exist")
 
             from core.job_queue import job_queue
             def _background_approval_task():
@@ -603,19 +607,19 @@ def approve_review_queue_item(task_id: int):
             job_queue.register_job(job_name, _background_approval_task, interval_seconds=None)
             job_queue.execute_job_now(job_name)
 
-            return jsonify(
-                {
-                    "success": True,
-                    "id": task.id,
-                    "status": "approved_queued"
-                }
-            ), 202
+            return {
+                "success": True,
+                "id": task.id,
+                "status": "approved_queued"
+            }
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to approve review task {task_id}: {e}", exc_info=True)
-        return jsonify({"error": "Failed to approve review task"}), 500
+        raise HTTPException(status_code=500, detail="Failed to approve review task")
 
 
-@bp.get("/review-queue/<int:task_id>/stream")
+@router.get("/{task_id}/stream")
 def stream_review_queue_item(task_id: int):
     """Stream raw audio file for a review task with Range support."""
     db = get_working_database()
@@ -623,31 +627,25 @@ def stream_review_queue_item(task_id: int):
         with db.session_scope() as session:
             task = session.query(ReviewTask).filter(ReviewTask.id == task_id).first()
             if not task:
-                return jsonify({"error": "Task not found"}), 404
+                raise HTTPException(status_code=404, detail="Task not found")
 
             file_path = _resolve_task_file(task)
             if not file_path:
-                return jsonify({"error": "File does not exist"}), 404
+                raise HTTPException(status_code=404, detail="File does not exist")
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to stream review task {task_id}: {e}", exc_info=True)
-        return jsonify({"error": "Failed to stream review file"}), 500
+        raise HTTPException(status_code=500, detail="Failed to stream review file")
 
-    # Use Flask's native send_file with conditional=True to automatically
-    # handle 'Accept-Ranges: bytes' and safe streaming without holding locks.
-    # Called outside the session_scope so the DB connection is released before
-    # the (potentially long-running) streaming response begins.
-    from flask import send_file
-
-    return send_file(
-        file_path,
-        mimetype="audio/mpeg" if file_path.suffix.lower() == ".mp3" else "audio/flac",
-        as_attachment=False,
-        conditional=True,
-        download_name=file_path.name
+    return FileResponse(
+        path=str(file_path),
+        media_type="audio/mpeg" if file_path.suffix.lower() == ".mp3" else "audio/flac",
+        filename=file_path.name
     )
 
 
-@bp.get("/review-queue/<int:task_id>/cover")
+@router.get("/{task_id}/cover")
 def get_review_queue_item_cover(task_id: int):
     """Stream embedded cover art for a review task."""
     db = get_working_database()
@@ -655,11 +653,11 @@ def get_review_queue_item_cover(task_id: int):
         with db.session_scope() as session:
             task = session.query(ReviewTask).filter(ReviewTask.id == task_id).first()
             if not task:
-                return jsonify({"error": "Task not found"}), 404
+                raise HTTPException(status_code=404, detail="Task not found")
 
             file_path = _resolve_task_file(task)
             if not file_path:
-                return jsonify({"error": "File does not exist"}), 404
+                raise HTTPException(status_code=404, detail="File does not exist")
 
             from core.file_handling.tagging_io import read_tags
             metadata = read_tags(file_path)
@@ -668,22 +666,19 @@ def get_review_queue_item_cover(task_id: int):
             cover_mime = metadata.get("_cover_mime") or "image/jpeg"
             
             if not cover_data:
-                return jsonify({"error": "No embedded cover found"}), 404
+                raise HTTPException(status_code=404, detail="No embedded cover found")
 
-            import io
-            return send_file(
-                io.BytesIO(cover_data),
-                mimetype=cover_mime,
-                as_attachment=False
-            )
+            from fastapi.responses import Response
+            return Response(content=cover_data, media_type=cover_mime)
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to fetch cover for review task {task_id}: {e}", exc_info=True)
-        return jsonify({"error": "Failed to fetch cover"}), 500
+        raise HTTPException(status_code=500, detail="Failed to fetch cover")
 
 
-@bp.post("/review-queue/<int:task_id>/lookup/acoustid")
-@require_auth
-def lookup_review_queue_item_acoustid(task_id: int):
+@router.post("/{task_id}/lookup/acoustid")
+def lookup_review_queue_item_acoustid(task_id: int, _=Depends(require_auth)):
     """Run AcoustID fingerprint lookup and update detected metadata.
 
     Flow
@@ -703,22 +698,22 @@ def lookup_review_queue_item_acoustid(task_id: int):
         with db.session_scope() as session:
             task = session.query(ReviewTask).filter(ReviewTask.id == task_id).first()
             if not task:
-                return jsonify({"error": "Task not found"}), 404
+                raise HTTPException(status_code=404, detail="Task not found")
 
             file_path = _resolve_task_file(task)
             if not file_path:
-                return jsonify({"error": "File does not exist"}), 404
+                raise HTTPException(status_code=404, detail="File does not exist")
 
             fingerprint_provider = get_plugin_by_capability(Capability.RESOLVE_FINGERPRINT)
             metadata_provider = get_plugin_by_capability(Capability.FETCH_METADATA)
             if not fingerprint_provider:
-                return jsonify({"error": "No fingerprint provider configured"}), 503
+                raise HTTPException(status_code=503, detail="No fingerprint provider configured")
 
             # ── Step 1: generate fingerprint + duration in one fpcalc call ──────
             fingerprint, duration = FingerprintGenerator.generate_with_duration(str(file_path))
 
             if not fingerprint:
-                return jsonify({"error": "Fingerprint generation failed"}), 422
+                raise HTTPException(status_code=422, detail="Fingerprint generation failed")
 
             if isinstance(fingerprint, bytes):
                 fingerprint = fingerprint.decode("utf-8", errors="ignore")
@@ -733,7 +728,7 @@ def lookup_review_queue_item_acoustid(task_id: int):
                         duration = None
 
             if not duration or int(duration) <= 0:
-                return jsonify({"error": "Audio duration unavailable for lookup"}), 422
+                raise HTTPException(status_code=422, detail="Audio duration unavailable for lookup")
 
             duration_int = int(duration)
 
@@ -775,13 +770,13 @@ def lookup_review_queue_item_acoustid(task_id: int):
                 track_obj.identifiers["source"] = "acoustid_no_match"
                 task.track_data = track_obj.to_dict()
                 flag_modified(task, "track_data")
-                return jsonify({
+                return {
                     "success": True,
                     "acoustid_match": False,
                     "acoustid_fingerprint": fingerprint,
                     "acoustid_fingerprint_duration": duration_int,
                     "task": _serialize_task(task),
-                }), 200
+                }
 
             # ── Step 5: match found → enrich metadata ────────────────────────────
             if acoustid_id:
@@ -809,24 +804,23 @@ def lookup_review_queue_item_acoustid(task_id: int):
             confidence_floor = 0.9 if mbids else 0.6
             task.confidence_score = max(float(task.confidence_score or 0.0), confidence_floor)
 
-            return jsonify({
+            return {
                 "success": True,
                 "acoustid_match": True,
                 "task": _serialize_task(task),
-            }), 200
+            }
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed acoustid lookup for review task {task_id}: {e}", exc_info=True)
-        return jsonify({"error": "AcoustID lookup failed"}), 500
+        raise HTTPException(status_code=500, detail="AcoustID lookup failed")
 
 
-@bp.post("/review-queue/<int:task_id>/lookup/musicbrainz")
-@require_auth
-def lookup_review_queue_item_musicbrainz(task_id: int):
+@router.post("/{task_id}/lookup/musicbrainz")
+def lookup_review_queue_item_musicbrainz(task_id: int, payload: MusicBrainzLookupRequest, _=Depends(require_auth)):
     """Run text-based MusicBrainz lookup and update detected metadata."""
-    from flask import request
-
-    payload = request.get_json(silent=True) or {}
-    logger.debug(f"[MusicBrainz Route] POST request received for task_id={task_id}, payload={payload}")
+    payload_data = payload.metadata or payload.model_dump(exclude_unset=True)
+    logger.debug(f"[MusicBrainz Route] POST request received for task_id={task_id}, payload={payload_data}")
 
     db = get_working_database()
     try:
@@ -834,11 +828,11 @@ def lookup_review_queue_item_musicbrainz(task_id: int):
             task = session.query(ReviewTask).filter(ReviewTask.id == task_id).first()
             if not task:
                 logger.debug(f"[MusicBrainz Route] Task {task_id} not found in database")
-                return jsonify({"error": "Task not found"}), 404
+                raise HTTPException(status_code=404, detail="Task not found")
 
             current = _normalize_detected_metadata(task.detected_metadata) or {}
-            artist = str(payload.get("artist") or current.get("artist") or "").strip()
-            title = str(payload.get("title") or current.get("title") or "").strip()
+            artist = str(payload_data.get("artist") or current.get("artist") or "").strip()
+            title = str(payload_data.get("title") or current.get("title") or "").strip()
             task_file_path = task.file_path
 
         logger.debug(f"[MusicBrainz Route] Extracted initial search info: artist='{artist}', title='{title}', file_path='{task_file_path}'")
@@ -879,10 +873,10 @@ def lookup_review_queue_item_musicbrainz(task_id: int):
                             task.track_data = found_track.to_dict()
                             flag_modified(task, "track_data")
                             task.confidence_score = max(float(task.confidence_score or 0.0), 0.95)
-                            return jsonify({
+                            return {
                                 "success": True,
                                 "task": _serialize_task(task),
-                            }), 200
+                            }
             elif track_obj and track_obj.title and track_obj.artist_name:
                 artist = track_obj.artist_name
                 title = track_obj.title
@@ -900,27 +894,27 @@ def lookup_review_queue_item_musicbrainz(task_id: int):
                     task = session.query(ReviewTask).filter(ReviewTask.id == task_id).first()
                     task.track_data = empty_track.to_dict()
                     flag_modified(task, "track_data")
-                    return jsonify({
+                    return {
                         "success": False,
                         "error": "No physical tags found and AcoustID match failed",
                         "task": _serialize_task(task, detected_metadata=empty_track.to_dict()),
-                    }), 200
+                    }
 
         if not artist or not title:
-            return jsonify({"error": "artist and title are required"}), 400
+            raise HTTPException(status_code=400, detail="artist and title are required")
 
         metadata_provider = plugin_loader.get_plugin("EchoSync.musicbrainz")
         logger.debug(f"[MusicBrainz Route] Resolved metadata provider: {getattr(metadata_provider, 'name', type(metadata_provider).__name__) if metadata_provider else None}")
         if not metadata_provider:
             logger.error("[MusicBrainz Route] No metadata provider configured")
-            return jsonify({"error": "No metadata provider configured"}), 503
+            raise HTTPException(status_code=503, detail="No metadata provider configured")
 
         from sqlalchemy.orm.attributes import flag_modified
         with db.session_scope() as session:
             task = session.query(ReviewTask).filter(ReviewTask.id == task_id).first()
             if not task:
                 logger.debug(f"[MusicBrainz Route] Task {task_id} not found in database in second session check")
-                return jsonify({"error": "Task not found"}), 404
+                raise HTTPException(status_code=404, detail="Task not found")
 
             track_obj = EchosyncTrack.from_dict(task.track_data or {})
 
@@ -936,7 +930,7 @@ def lookup_review_queue_item_musicbrainz(task_id: int):
             found_track = _musicbrainz_text_search(metadata_provider, track_obj)
             if not found_track:
                 logger.debug("[MusicBrainz Route] No MusicBrainz match found")
-                return jsonify({"error": "No MusicBrainz match found"}), 404
+                raise HTTPException(status_code=404, detail="No MusicBrainz match found")
 
             logger.debug(f"[MusicBrainz Route] MusicBrainz match found: {found_track.to_dict()}")
             found_track.identifiers["source"] = "musicbrainz_text_lookup"
@@ -945,10 +939,12 @@ def lookup_review_queue_item_musicbrainz(task_id: int):
             task.confidence_score = max(float(task.confidence_score or 0.0), 0.85)
 
             logger.debug(f"[MusicBrainz Route] Successfully updated task {task_id} with MusicBrainz data")
-            return jsonify({
+            return {
                 "success": True,
                 "task": _serialize_task(task),
-            }), 200
+            }
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed musicbrainz lookup for review task {task_id}: {e}", exc_info=True)
-        return jsonify({"error": "MusicBrainz lookup failed"}), 500
+        raise HTTPException(status_code=500, detail="MusicBrainz lookup failed")

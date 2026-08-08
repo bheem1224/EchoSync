@@ -3,7 +3,7 @@
   import { scanStore } from '../stores/scanStore';
   import { scanService } from '../services/ScanService';
 
-  export let streamUrl: string = '/api/v1/library/scan/stream';
+  export let streamUrl: string = '/api/v1/core/library/scan/stream';
   export let autoConnect: boolean = true;
 
   if (autoConnect) {

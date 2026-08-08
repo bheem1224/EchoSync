@@ -44,9 +44,10 @@ async def list_canonical_tracks(
 ):
     """List canonical tracks with pagination, optionally fetching details or batching ids."""
     try:
+        from sqlalchemy.orm import selectinload
         db = get_database()
         with db.get_session() as session:
-            query = session.query(Track)
+            query = session.query(Track).options(selectinload(Track.media))
             
             if ids:
                 sync_ids = [s.strip() for s in ids.split(",") if s.strip()]

@@ -1,5 +1,41 @@
 from web.auth import require_auth
-from flask import Blueprint, jsonify, request
+from fastapi import APIRouter, HTTPException, Depends, Request, Query
+from pydantic import BaseModel
+from typing import Any, Dict, List, Optional
+
+class ManagerSettingsRequest(BaseModel):
+    enabled: Optional[bool] = None
+    delete_threshold: Optional[int] = None
+    upgrade_threshold: Optional[int] = None
+    auto_delete: Optional[bool] = None
+    auto_upgrade: Optional[bool] = None
+    upgrade_quality_profile_id: Optional[str] = None
+    auto_delete_low_quality_duplicates: Optional[bool] = None
+    auto_process_suggestion_engine_ratings: Optional[bool] = None
+    automation_level: Optional[int] = None
+
+class UIBetaRequest(BaseModel):
+    enabled: Optional[bool] = None
+
+class OverrideRequest(BaseModel):
+    sync_id: str
+    field: Optional[str] = None
+    value: Optional[Any] = None
+
+class TrackOverrideRequest(BaseModel):
+    action: str
+
+class VetoRequest(BaseModel):
+    sync_id: str
+    reason: Optional[str] = None
+
+class ExecuteRequest(BaseModel):
+    sync_id: str
+    quality_profile_id: Optional[str] = None
+
+class ConflictResolveRequest(BaseModel):
+    resolution: str
+
 from time_utils import utc_now
 from core.tiered_logger import get_logger
 from core.nexus_framework.plugin_store import plugin_store
@@ -18,7 +54,7 @@ from datetime import datetime
 import base64
 
 logger = get_logger("web.routes.manager")
-bp = Blueprint("manager", __name__, url_prefix="/api/manager")
+router = APIRouter(prefix="/api/v1/system/manager", tags=["Manager"])
 
 
 # ---------------------------------------------------------------------------
@@ -92,7 +128,7 @@ def _resolve_track_preview(sync_id: str):
         }
 
 
-def _resolve_working_user_for_trends():
+def _resolve_working_user_for_trends(user_id: Optional[int] = None, account_id: Optional[int] = None):
     """Resolve the working DB user for trends filtering.
 
     Resolution order:
@@ -102,8 +138,8 @@ def _resolve_working_user_for_trends():
     config_db = get_config_database()
     working_db = get_working_database()
 
-    requested_user_id = request.args.get("user_id", type=int)
-    requested_account_id = request.args.get("account_id", type=int)
+    requested_user_id = user_id
+    requested_account_id = account_id
 
     resolved_user = None
     resolved_account_id = None
@@ -160,12 +196,11 @@ def _resolve_working_user_for_trends():
 
     return resolved_user, resolved_account_id, "active_account"
 
-@bp.route("/settings", methods=["GET", "POST"])
-@require_auth
-def manager_settings():
+@router.api_route("/settings", methods=["GET", "POST"])
+def manager_settings(request: Request, payload: Optional[ManagerSettingsRequest] = None, _=Depends(require_auth)):
     """Get or update manager settings."""
     if request.method == "POST":
-        payload = request.get_json() or {}
+        payload_data = payload.model_dump(exclude_unset=True) if payload else {}
         try:
             manager_config = config_manager.get('manager', {})
             for key in [
@@ -180,7 +215,7 @@ def manager_settings():
                 'automation_level',
             ]:
                 if key in payload:
-                    manager_config[key] = payload[key]
+                    manager_config[key] = payload_data[key]
 
             # Compute and persist routing booleans derived from automation_level
             level = int(manager_config.get('automation_level', 1))
@@ -188,10 +223,10 @@ def manager_settings():
             manager_config['_routing'] = routing
 
             config_manager.set('manager', manager_config)
-            return jsonify({"success": True, "settings": manager_config, "routing": routing}), 200
+            return {"success": True, "settings": manager_config, "routing": routing}
         except Exception as e:
             logger.error(f"Error updating manager settings: {e}")
-            return jsonify({"error": str(e)}), 500
+            return {"error": str(e)}
     else:
         # GET
         try:
@@ -210,15 +245,14 @@ def manager_settings():
             level = int(settings.get('automation_level', 1))
             routing = automation_level_to_routing(level)
             settings['_routing'] = routing
-            return jsonify({"success": True, "settings": settings, "routing": routing}), 200
+            return {"success": True, "settings": settings, "routing": routing}
         except Exception as e:
             logger.error(f"Error getting manager settings: {e}")
-            return jsonify({"error": str(e)}), 500
+            return {"error": str(e)}
 
 
-@bp.route('/ui-beta', methods=['GET', 'POST'])
-@require_auth
-def ui_beta_opt():
+@router.api_route("/ui-beta", methods=["GET", "POST"])
+def ui_beta_opt(request: Request, payload: Optional[UIBetaRequest] = None, _=Depends(require_auth)):
     """Get or set the UI plugin beta opt-in flag stored in config.json.
 
     GET: returns { beta_opt_in: bool, dev_mode: bool }
@@ -227,10 +261,10 @@ def ui_beta_opt():
     import os
     try:
         if request.method == 'POST':
-            payload = request.get_json() or {}
-            val = payload.get('beta_opt_in')
+            payload_data = payload.model_dump(exclude_unset=True) if payload else {}
+            val = payload_data.get('beta_opt_in')
             if val is None or not isinstance(val, bool):
-                return jsonify({'error': 'beta_opt_in (boolean) required'}), 400
+                return {'error': 'beta_opt_in (boolean) required'}
             # Persist to config under ui.beta_plugin_ui
             config_manager.set('ui.beta_plugin_ui', bool(val))
             if not val:
@@ -239,7 +273,7 @@ def ui_beta_opt():
             else:
                 restore_result = {}
             config_manager.save_settings(config_manager.get_settings())
-            return jsonify({'success': True, 'beta_opt_in': bool(val), 'restore_result': restore_result}), 200
+            return {'success': True, 'beta_opt_in': bool(val), 'restore_result': restore_result}
 
         # GET: return current saved value and dev_mode env flag
         saved = bool(config_manager.get('ui.beta_plugin_ui', False))
@@ -250,18 +284,17 @@ def ui_beta_opt():
         if os.environ.get('DEV_MODE', '').lower() in ('1', 'true', 'yes'):
             dev_mode = True
 
-        return jsonify({'beta_opt_in': saved, 'dev_mode': dev_mode}), 200
+        return {'beta_opt_in': saved, 'dev_mode': dev_mode}
     except Exception as e:
         logger.error(f"Error handling ui-beta opt: {e}")
-        return jsonify({'error': str(e)}), 500
+        return {'error': str(e)}
 
 
-@bp.route("/suggestion-candidates", methods=["GET"])
-@require_auth
-def get_suggestion_candidates():
+@router.get("/suggestion-candidates")
+def get_suggestion_candidates(limit: int = Query(100), _=Depends(require_auth)):
     """Get consensus-threshold candidates from working DB using the 10-point lifecycle model."""
     work_db = get_working_database()
-    limit = request.args.get("limit", default=100, type=int) or 100
+    limit = limit or 100
     limit = max(1, min(limit, 500))
 
     try:
@@ -323,23 +356,22 @@ def get_suggestion_candidates():
             ), 200
     except Exception as e:
         logger.error(f"Error getting suggestion candidates: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+        return {"error": str(e)}
 
 
-@bp.route("/suggestion-candidates/override", methods=["POST"])
-@require_auth
+@router.post("/suggestion-candidates/override")
 def toggle_suggestion_candidate_override():
     """Toggle admin exemption flags used by the suggestion engine lifecycle gate."""
-    payload = request.get_json() or {}
-    sync_id = _normalize_sync_id(payload.get("sync_id"))
-    field = payload.get("field")
-    value = bool(payload.get("value"))
+    payload_data = payload.model_dump(exclude_unset=True) if payload else {}
+    sync_id = _normalize_sync_id(payload_data.get("sync_id"))
+    field = payload_data.get("field")
+    value = bool(payload_data.get("value"))
 
     valid_fields = {"admin_exempt_deletion", "admin_force_upgrade"}
     if not sync_id:
-        return jsonify({"error": "sync_id is required"}), 400
+        return {"error": "sync_id is required"}
     if field not in valid_fields:
-        return jsonify({"error": f"field must be one of: {sorted(valid_fields)}"}), 400
+        return {"error": f"field must be one of: {sorted(valid_fields)}"}
 
     work_db = get_working_database()
     try:
@@ -355,7 +387,7 @@ def toggle_suggestion_candidate_override():
             ]
 
             if not rating_user_ids:
-                return jsonify({"error": "No ratings found for the provided sync_id"}), 404
+                return {"error": "No ratings found for the provided sync_id"}
 
             existing_states = (
                 session.query(UserTrackState)
@@ -383,14 +415,13 @@ def toggle_suggestion_candidate_override():
                 "admin_force_upgrade": any(state.admin_force_upgrade for state in all_states),
             }
 
-            return jsonify({"success": True, "state": response_state}), 200
+            return {"success": True, "state": response_state}
     except Exception as e:
         logger.error(f"Error toggling suggestion candidate override for {sync_id}: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+        return {"error": str(e)}
 
-@bp.route("/scan", methods=["POST"])
-@require_auth
-def run_manager_scan():
+@router.post("/scan")
+def run_manager_scan(_=Depends(require_auth)):
     """Scan for duplicates and stage lifecycle actions — no actions are executed.
 
     This always runs regardless of auto flags. Duplicates are returned for the
@@ -451,25 +482,23 @@ def run_manager_scan():
 
     except Exception as e:
         logger.error(f"Error running manager scan: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+        return {"error": str(e)}
 
 
-@bp.route("/prune/run", methods=["POST"])
-@require_auth
-def run_prune_job():
+@router.post("/prune/run")
+def run_prune_job(_=Depends(require_auth)):
     """Immediately triggers the background 'Prune/Delete' job."""
     try:
         service = DuplicateHygieneService()
         # Run synchronously for now as per "Immediately triggers"
         result = service.run_prune_job()
-        return jsonify({"success": True, "result": result}), 200
+        return {"success": True, "result": result}
     except Exception as e:
         logger.error(f"Error running prune job: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+        return {"error": str(e)}
 
-@bp.route("/duplicates", methods=["GET"])
-@require_auth
-def get_duplicates():
+@router.get("/duplicates")
+def get_duplicates(_=Depends(require_auth)):
     """Get all duplicate groups (auto-resolve and manual-review) for the queue."""
     try:
         service = DuplicateHygieneService()
@@ -477,14 +506,13 @@ def get_duplicates():
         # Combine both types — auto_resolve groups are sorted by quality (recommended_keep_id set),
         # manual_review groups have recommended_keep_id=None. Both have a unified 'tracks' list.
         all_duplicates = result.get('auto_resolve', []) + result.get('manual_review', [])
-        return jsonify({"success": True, "duplicates": all_duplicates}), 200
+        return {"success": True, "duplicates": all_duplicates}
     except Exception as e:
         logger.error(f"Error getting duplicates: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+        return {"error": str(e)}
 
-@bp.route("/queue/actions", methods=["GET"])
-@require_auth
-def get_action_queue():
+@router.get("/queue/actions")
+def get_action_queue(_=Depends(require_auth)):
     """Get currently staged lifecycle actions and their queue age."""
     now = utc_now()
     work_db = get_working_database()
@@ -539,19 +567,18 @@ def get_action_queue():
 
         queue.sort(key=lambda row: (row["action_needed"], -(row["days_in_queue"] or 0)))
 
-        return jsonify({"success": True, "queue": queue, "count": len(queue)}), 200
+        return {"success": True, "queue": queue, "count": len(queue)}
     except Exception as e:
         logger.error(f"Error getting staged lifecycle queue: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+        return {"error": str(e)}
 
 
-@bp.route("/track/<int:track_id>/force_delete", methods=["POST"])
-@require_auth
-def force_delete_track(track_id: int):
+@router.post("/track/{track_id}/force_delete")
+def force_delete_track(track_id: int, _=Depends(require_auth)):
     """Force immediate lifecycle delete execution for a track, bypassing timers."""
     sync_id = _sync_id_from_track_id(track_id)
     if not sync_id:
-        return jsonify({"error": "Track not found"}), 404
+        return {"error": "Track not found"}
 
     try:
         result = execute_delete_now(sync_id)
@@ -566,24 +593,23 @@ def force_delete_track(track_id: int):
                 if intent:
                     session.delete(intent)
 
-        return jsonify(result), status
+        return result, status
     except Exception as e:
         logger.error(f"Error forcing delete for track {track_id}: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+        return {"error": str(e)}
 
 
-@bp.route("/track/<int:track_id>/force_upgrade", methods=["POST"])
-@require_auth
-def force_upgrade_track(track_id: int):
+@router.post("/track/{track_id}/force_upgrade")
+def force_upgrade_track(track_id: int, _=Depends(require_auth)):
     """Force immediate lifecycle upgrade execution for a track, bypassing timers."""
     from core.event_bus import event_bus
 
     sync_id = _sync_id_from_track_id(track_id)
     if not sync_id:
-        return jsonify({"error": "Track not found"}), 404
+        return {"error": "Track not found"}
 
-    payload = request.get_json(silent=True) or {}
-    quality_profile_id = payload.get("quality_profile_id")
+    payload_data = payload.model_dump(exclude_unset=True) if payload else {}
+    quality_profile_id = payload_data.get("quality_profile_id")
 
     try:
         # Fetch EchosyncTrack dict
@@ -625,20 +651,19 @@ def force_upgrade_track(track_id: int):
             if intent:
                 session.delete(intent)
 
-        return jsonify({"success": True}), 200
+        return {"success": True}
     except Exception as e:
         logger.error(f"Error forcing upgrade for track {track_id}: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+        return {"error": str(e)}
 
-@bp.route("/track/<int:track_id>/fetch_metadata", methods=["POST"])
-@require_auth
-def fetch_metadata(track_id):
+@router.post("/track/{track_id}/fetch_metadata")
+def fetch_metadata(track_id: int, _=Depends(require_auth)):
     """Manually triggers the MetadataEnhancer for a specific track ID."""
     db = get_database()
     try:
         path = db.get_track_path(track_id)
         if not path:
-            return jsonify({"error": "Track not found or file missing"}), 404
+            return {"error": "Track not found or file missing"}
 
         enhancer = get_metadata_enhancer()
         metadata, confidence = enhancer.identify_file(Path(path))
@@ -650,11 +675,10 @@ def fetch_metadata(track_id):
         }), 200
     except Exception as e:
         logger.error(f"Error fetching metadata for track {track_id}: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+        return {"error": str(e)}
 
-@bp.route("/track/<int:track_id>/override", methods=["POST"])
-@require_auth
-def override_track(track_id):
+@router.post("/track/{track_id}/override")
+def override_track(track_id: int, payload: TrackOverrideRequest, _=Depends(require_auth)):
     """DEPRECATED: Manual overrides removed in Phase 3.
     
     Phase 3 Suggestion Engine uses event-driven consensus, not system flags.
@@ -669,35 +693,33 @@ def override_track(track_id):
         "error": "Manual track overrides are deprecated. Use Phase 3 Suggestion Engine consensus rules."
     }), 410
 
-@bp.route("/conflicts/resolve", methods=["POST"])
-@require_auth
-def resolve_conflict():
+@router.post("/conflicts/resolve")
+def resolve_conflict(payload: ConflictResolveRequest, _=Depends(require_auth)):
     """Manually resolve a conflict by keeping one track and deleting others."""
-    payload = request.get_json() or {}
-    keep_id = payload.get("keep_id")
-    delete_ids = payload.get("delete_ids", [])
+    payload_data = payload.model_dump(exclude_unset=True) if payload else {}
+    keep_id = payload_data.get("keep_id")
+    delete_ids = payload_data.get("delete_ids", [])
 
     if not keep_id or not delete_ids:
-        return jsonify({"error": "keep_id and delete_ids are required"}), 400
+        return {"error": "keep_id and delete_ids are required"}
 
     try:
         service = DuplicateHygieneService()
         success = service.resolve_conflict(keep_id, delete_ids)
         if success:
-            return jsonify({"success": True}), 200
+            return {"success": True}
         else:
-            return jsonify({"error": "Failed to resolve some conflicts"}), 500
+            return {"error": "Failed to resolve some conflicts"}
     except Exception as e:
         logger.error(f"Error resolving conflict: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+        return {"error": str(e)}
 
-@bp.route("/trends", methods=["GET"])
-@require_auth
-def get_trends():
+@router.get("/trends")
+def get_trends(user_id: Optional[int] = Query(None), account_id: Optional[int] = Query(None), _=Depends(require_auth)):
     """Returns library stats (filtered)."""
     work_db = get_working_database()
     try:
-        target_user, resolved_account_id, source = _resolve_working_user_for_trends()
+        target_user, resolved_account_id, source = _resolve_working_user_for_trends(user_id=user_id, account_id=account_id)
 
         with work_db.session_scope() as session:
             # Use SQL aggregation for efficiency
@@ -739,36 +761,33 @@ def get_trends():
             }), 200
     except Exception as e:
         logger.error(f"Error getting trends: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+        return {"error": str(e)}
 
-@bp.route("/search", methods=["GET"])
-@require_auth
-def search_library():
+@router.get("/search")
+def search_library(q: str = Query(None), _=Depends(require_auth)):
     """Unified search endpoint."""
-    query = request.args.get("q")
+    query = q
     if not query:
-        return jsonify({"artists": [], "albums": [], "tracks": []}), 200
+        return {"artists": [], "albums": [], "tracks": []}
 
     db = get_database()
     try:
         results = db.search_library(query)
-        return jsonify(results), 200
+        return results
     except Exception as e:
         logger.error(f"Error searching library: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+        return {"error": str(e)}
 
-@bp.route("/settings", methods=["POST"])
-@require_auth
-def set_manager_settings():
+@router.post("/settings")
+def set_manager_settings(payload: ManagerSettingsRequest, _=Depends(require_auth)):
     from core.settings import config_manager
-    payload = request.get_json(silent=True) or {}
+    payload_data = payload.model_dump(exclude_unset=True) if payload else {}
     config_manager.set("media_manager", payload)
     config_manager.save_settings(config_manager.get_settings())
-    return jsonify({"success": True}), 200
+    return {"success": True}
 
-@bp.route("/queue/suggestions", methods=["GET"])
-@require_auth
-def get_suggestion_queue():
+@router.get("/queue/suggestions")
+def get_suggestion_queue(_=Depends(require_auth)):
     work_db = get_working_database()
     try:
         with work_db.session_scope() as session:
@@ -791,26 +810,25 @@ def get_suggestion_queue():
             }), 200
     except Exception as e:
         logger.error(f"Error getting suggestion queue: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+        return {"error": str(e)}
 
-@bp.route("/suggestion-candidates/override", methods=["POST"])
-@require_auth
-def override_suggestion_candidate():
-    payload = request.get_json(silent=True) or {}
-    sync_id = payload.get("sync_id")
+@router.post("/suggestion-candidates/override")
+def override_suggestion_candidate(payload: OverrideRequest, _=Depends(require_auth)):
+    payload_data = payload.model_dump(exclude_unset=True) if payload else {}
+    sync_id = payload_data.get("sync_id")
     # Note: These fields are usually in UserTrackState, but if the UI is overriding the staging queue directly:
-    field = payload.get("field")
-    value = payload.get("value")
+    field = payload_data.get("field")
+    value = payload_data.get("value")
 
     if not sync_id or value is None:
-        return jsonify({"error": "Invalid payload"}), 400
+        return {"error": "Invalid payload"}
 
     work_db = get_working_database()
     try:
         with work_db.session_scope() as session:
             item = session.query(SuggestionStagingQueue).filter_by(sync_id=sync_id).first()
             if not item:
-                return jsonify({"error": "Suggestion not found"}), 404
+                return {"error": "Suggestion not found"}
 
             # Update context_data if the field is not a direct column
             if hasattr(item, field):
@@ -819,27 +837,26 @@ def override_suggestion_candidate():
                 ctx = dict(item.context_data or {})
                 ctx[field] = value
                 item.context_data = ctx
-            return jsonify({"success": True}), 200
+            return {"success": True}
     except Exception as e:
         logger.error(f"Error overriding suggestion candidate: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+        return {"error": str(e)}
 
 
-@bp.route("/veto", methods=["POST"])
-@require_auth
-def veto_suggestion():
+@router.post("/veto")
+def veto_suggestion(payload: VetoRequest, _=Depends(require_auth)):
     """Add a sync_id to the persistent veto / blacklist so the Intent Engine
     never surfaces it again.  Also marks any matching SuggestionStagingQueue
     row as 'vetoed'.
 
     Body: { "sync_id": "ss:track:meta:...", "reason": "<optional note>" }
     """
-    payload = request.get_json(silent=True) or {}
-    sync_id = _normalize_sync_id(payload.get("sync_id", ""))
-    reason = payload.get("reason", "")
+    payload_data = payload.model_dump(exclude_unset=True) if payload else {}
+    sync_id = _normalize_sync_id(payload_data.get("sync_id", ""))
+    reason = payload_data.get("reason", "")
 
     if not sync_id:
-        return jsonify({"error": "sync_id is required"}), 400
+        return {"error": "sync_id is required"}
 
     work_db = get_working_database()
     try:
@@ -858,15 +875,14 @@ def veto_suggestion():
                 item.status = "vetoed"
 
         logger.info(f"Vetoed sync_id={sync_id} (reason={reason!r})")
-        return jsonify({"success": True, "sync_id": sync_id}), 200
+        return {"success": True, "sync_id": sync_id}
     except Exception as e:
         logger.error(f"Error vetoing suggestion {sync_id}: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+        return {"error": str(e)}
 
 
-@bp.route("/execute", methods=["POST"])
-@require_auth
-def execute_pending_action():
+@router.post("/execute")
+def execute_pending_action(payload: ExecuteRequest, _=Depends(require_auth)):
     """Bypass countdown timers and immediately execute a Pending Actions entry.
 
     Dispatches DELETE_MONTH_END → execute_delete_now
@@ -876,12 +892,12 @@ def execute_pending_action():
     """
     from core.event_bus import event_bus
 
-    payload = request.get_json(silent=True) or {}
-    sync_id = _normalize_sync_id(payload.get("sync_id", ""))
-    quality_profile_id = payload.get("quality_profile_id")
+    payload_data = payload.model_dump(exclude_unset=True) if payload else {}
+    sync_id = _normalize_sync_id(payload_data.get("sync_id", ""))
+    quality_profile_id = payload_data.get("quality_profile_id")
 
     if not sync_id:
-        return jsonify({"error": "sync_id is required"}), 400
+        return {"error": "sync_id is required"}
 
     work_db = get_working_database()
     try:
@@ -896,14 +912,14 @@ def execute_pending_action():
                 .all()
             )
             if not states:
-                return jsonify({"error": "No pending lifecycle action found for this sync_id"}), 404
+                return {"error": "No pending lifecycle action found for this sync_id"}
 
             action = states[0].lifecycle_action  # All rows share the same action
 
         if action == "DELETE_MONTH_END":
             result = execute_delete_now(sync_id)
             if not result.get("success"):
-                return jsonify(result), 400
+                return result
         elif action == "UPGRADE_WEEK_END":
             preview = _resolve_track_preview(sync_id) or {}
             event_bus.publish({
@@ -914,7 +930,7 @@ def execute_pending_action():
                 "priority": 1,
             })
         else:
-            return jsonify({"error": f"Unknown lifecycle action: {action}"}), 400
+            return {"error": f"Unknown lifecycle action: {action}"}
 
         # Clear the lifecycle action from working DB rows
         with work_db.session_scope() as session:
@@ -923,7 +939,7 @@ def execute_pending_action():
             ).update({"lifecycle_action": None, "lifecycle_queued_at": None})
 
         logger.info(f"Executed pending action {action} for sync_id={sync_id}")
-        return jsonify({"success": True, "sync_id": sync_id, "executed_action": action}), 200
+        return {"success": True, "sync_id": sync_id, "executed_action": action}
     except Exception as e:
         logger.error(f"Error executing pending action for {sync_id}: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+        return {"error": str(e)}

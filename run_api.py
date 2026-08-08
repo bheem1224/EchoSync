@@ -99,9 +99,9 @@ if __name__ == "__main__":
         except Exception as e:
             logger.error(f"Failed to remove boot lock file: {e}")
 
-    # Run in standard HTTP mode
-    # debug=True enables the debugger, but we EXPLICITLY disable the reloader
-    # because the app dynamically writes to the `plugins/` directory at runtime.
-    # If the reloader is on, installing a plugin triggers a mid-request server restart,
-    # causing SQLite disk I/O errors and port conflicts.
-    app.run(host="0.0.0.0", port=5000, debug=dev_mode, use_reloader=False)
+    # Run in standard HTTP mode via Uvicorn
+    # We EXPLICITLY disable the reloader because the app dynamically writes to 
+    # the `plugins/` directory at runtime. If the reloader is on, installing a plugin 
+    # triggers a mid-request server restart, causing SQLite disk I/O errors and port conflicts.
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=5000, reload=False)

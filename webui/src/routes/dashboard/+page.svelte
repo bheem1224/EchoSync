@@ -1,4 +1,5 @@
 <script>
+  import apiClient from '../../api/client';
   // Side-effect import: registers <echosync-system-overview> custom element
   import '../../components/core/SystemOverview.svelte';
   import { injectPluginBundle } from '$lib/plugin/injectPluginBundle';
@@ -9,12 +10,12 @@
     // 1. Fetch manifest and inject scripts
     // Fetch UI registry and manager ui-beta opt state
     const [manifestRes, uiBetaRes] = await Promise.all([
-      fetch('/api/ui/registry', { credentials: 'include' }),
-      fetch('/api/manager/ui-beta', { credentials: 'include' }).catch(() => null)
+      apiClient.get('/v1/system/ui-registry'),
+      apiClient.get('/v1/system/manager/ui-beta').catch(() => null)
     ]);
 
-    if (!manifestRes.ok) throw new Error('Failed to fetch UI registry');
-    const manifestData = await manifestRes.json();
+    if (manifestRes.status !== 200) throw new Error('Failed to fetch UI registry');
+    const manifestData = manifestRes.data;
 
     let betaOpt = false;
     let devMode = false;
@@ -54,9 +55,9 @@
     }
 
     // 2. Fetch layout
-    const layoutRes = await fetch('/api/system/dashboard', { credentials: 'include' });
-    if (!layoutRes.ok) throw new Error('Failed to fetch dashboard layout');
-    return await layoutRes.json();
+    const layoutRes = await apiClient.get('/v1/system/dashboard');
+    if (layoutRes.status !== 200) throw new Error('Failed to fetch dashboard layout');
+    return layoutRes.data;
   }
 
   $: dashboardPromise = loadDashboard();

@@ -2,7 +2,7 @@ import logging
 import re
 from difflib import SequenceMatcher
 from urllib.parse import quote
-from flask import Blueprint, jsonify, request
+from fastapi import APIRouter, HTTPException, Request
 from web.services.sync_service import SyncAdapter
 from core.personalized_playlists import get_personalized_playlists_service
 from database.music_database import MusicDatabase
@@ -18,11 +18,41 @@ from core.hook_manager import hook_manager
 import time
 import uuid
 
+from pydantic import BaseModel
+from typing import List, Optional, Any, Dict
+
+class PlaylistAnalyzeSchema(BaseModel):
+    source: Optional[str] = None
+    target: Optional[str] = None
+    target_source: Optional[str] = None
+    playlists: Optional[List[Any]] = None
+    quality_profile: Optional[str] = "Auto"
+
+class PlaylistSyncSchema(BaseModel):
+    target: Optional[str] = None
+    target_source: Optional[str] = None
+    playlist_name: Optional[str] = None
+    matches: Optional[List[Any]] = None
+    download_missing: Optional[bool] = False
+    source: Optional[str] = "unknown"
+
+class PlaylistDownloadMissingSchema(BaseModel):
+    missing: Optional[List[Any]] = None
+
+class PlaylistSyncScheduleSchema(BaseModel):
+    source: Optional[str] = None
+    target: Optional[str] = None
+    target_source: Optional[str] = None
+    playlists: Optional[List[Any]] = None
+    interval: Optional[int] = 3600
+    download_missing: Optional[bool] = False
+    enabled: Optional[bool] = True
+
 # In-memory store for ad-hoc analysis jobs started via API
 ANALYSIS_JOBS = {}
 
 logger = get_logger("playlists_api")
-bp = Blueprint("playlists", __name__, url_prefix="/api/playlists")
+router = APIRouter(prefix="/api/v1/core/playlists", tags=["Playlists"])
 
 # ── Semantic Substring Failsafe — safe OST filler dictionary ──────────────────
 # Words that commonly appear in longer CJK/English OST title variants but do NOT
@@ -1249,15 +1279,15 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
         "missing": missing_tracks,
     }
 
-@bp.get("/")
-def list_playlists():
+@router.get("/")
+def list_playlists(request: Request):
     # Placeholder: surface playlists via provider adapters (future)
-    return jsonify({"items": [], "total": 0}), 200
+    return {"items": [], "total": 0}
 
-@bp.post("/analyze")
-def analyze_playlists():
+@router.post("/analyze")
+def analyze_playlists(payload_obj: PlaylistAnalyzeSchema):
     """Analyze playlists: fetch real tracks from source provider and check against database using WeightedMatchingEngine."""
-    payload = request.get_json(silent=True) or {}
+    payload = payload_obj.model_dump(exclude_unset=True) if payload_obj else {}
     source = payload.get("source")
     target = payload.get("target")
     target_source = payload.get("target_source") or target
@@ -1265,23 +1295,23 @@ def analyze_playlists():
     quality_profile = payload.get("quality_profile", "Auto")
 
     if not source:
-        return jsonify({"error": "source provider required"}), 400
+        return {"error": "source provider required"}
     
     if not playlists:
-        return jsonify({"error": "playlists list required"}), 400
+        return {"error": "playlists list required"}
 
     try:
         result = _analyze_playlists_internal(source, target_source, playlists, quality_profile)
-        return jsonify(result), 200
+        return result
     except Exception as e:
         logger.error(f"Error analyzing playlists: {e}", exc_info=True)
-        return jsonify({"error": f"Analysis failed: {str(e)}"}), 500
+        return {"error": f"Analysis failed: {str(e)}"}
 
 
-@bp.post('/analyze/start')
-def start_analyze_job():
+@router.post("/analyze/start")
+def start_analyze_job(payload_obj: PlaylistAnalyzeSchema):
     """Start playlist analysis as a background job and return a job_id to poll."""
-    payload = request.get_json(silent=True) or {}
+    payload = payload_obj.model_dump(exclude_unset=True) if payload_obj else {}
     source = payload.get('source')
     target = payload.get('target')
     target_source = payload.get('target_source') or target
@@ -1289,9 +1319,9 @@ def start_analyze_job():
     quality_profile = payload.get('quality_profile', 'Auto')
 
     if not source:
-        return jsonify({"error": "source provider required"}), 400
+        return {"error": "source provider required"}
     if not playlists:
-        return jsonify({"error": "playlists list required"}), 400
+        return {"error": "playlists list required"}
 
     job_id = str(uuid.uuid4())
     job_name = f"playlist_analyze:{job_id}"
@@ -1325,7 +1355,7 @@ def start_analyze_job():
 
     source_caps = get_plugin_capabilities(source)
     if not source_caps:
-        return jsonify({'error': f'Source plugin {source} not found'}), 404
+        return {'error': f'Source plugin {source} not found'}
         
     target_caps = get_plugin_capabilities(target)
 
@@ -1334,16 +1364,16 @@ def start_analyze_job():
         job_queue.execute_job_now(job_name)
     except Exception as e:
         logger.error(f"Failed to start background analysis job: {e}")
-        return jsonify({"error": "failed to start background job"}), 500
+        return {"error": "failed to start background job"}
 
-    return jsonify({"accepted": True, "job_id": job_id, "job_name": job_name}), 202
+    return {"accepted": True, "job_id": job_id, "job_name": job_name}
 
 
-@bp.get('/analyze/<job_id>')
-def get_analyze_job(job_id):
+@router.get("/analyze/{job_id}")
+def get_analyze_job(job_id, request: Request):
     rec = ANALYSIS_JOBS.get(job_id)
     if not rec:
-        return jsonify({"error": "job not found"}), 404
+        return {"error": "job not found"}
     # Do not leak large results unnecessarily; include result when finished
     payload = {
         'status': rec.get('status'),
@@ -1353,12 +1383,12 @@ def get_analyze_job(job_id):
     }
     if rec.get('status') == 'finished':
         payload['result'] = rec.get('result')
-    return jsonify(payload), 200
+    return payload
 
 
-@bp.post("/sync")
-def trigger_sync():
-    payload = request.get_json(silent=True) or {}
+@router.post("/sync")
+def trigger_sync(payload_obj: PlaylistSyncSchema):
+    payload = payload_obj.model_dump(exclude_unset=True) if payload_obj else {}
     target = payload.get("target_source") or payload.get("target")
     playlist_name = payload.get("playlist_name")
     matches = payload.get("matches") or []
@@ -1366,10 +1396,10 @@ def trigger_sync():
     source = payload.get("source", "unknown")
 
     if not target:
-        return jsonify({"accepted": False, "error": "target_source required"}), 400
+        return {"accepted": False, "error": "target_source required"}
 
     if not playlist_name:
-        return jsonify({"accepted": False, "error": "playlist_name required"}), 400
+        return {"accepted": False, "error": "playlist_name required"}
 
     from core.nexus_framework.plugin_SDK import PlaylistSupport
     from core.nexus_framework.plugin_loader import get_plugin_capabilities
@@ -1377,16 +1407,16 @@ def trigger_sync():
     try:
         source_caps = get_plugin_capabilities(source)
         if source_caps.supports_playlists not in (PlaylistSupport.READ, PlaylistSupport.READ_WRITE):
-            return jsonify({"accepted": False, "error": f"Source provider {source} does not support reading playlists"}), 400
+            return {"accepted": False, "error": f"Source provider {source} does not support reading playlists"}
     except KeyError:
-        return jsonify({"accepted": False, "error": f"Source provider {source} not found"}), 400
+        return {"accepted": False, "error": f"Source provider {source} not found"}
 
     try:
         target_caps = get_plugin_capabilities(target)
         if target_caps.supports_playlists != PlaylistSupport.READ_WRITE:
-            return jsonify({"accepted": False, "error": f"Target provider {target} does not support writing playlists"}), 400
+            return {"accepted": False, "error": f"Target provider {target} does not support writing playlists"}
     except KeyError:
-        return jsonify({"accepted": False, "error": f"Target provider {target} not found"}), 400
+        return {"accepted": False, "error": f"Target provider {target} not found"}
 
     # Detect sync mode: tier-to-tier (streaming↔streaming) vs local-server (streaming→server)
     is_source_tier = getattr(source_caps, 'supports_streaming', False)
@@ -1416,7 +1446,7 @@ def trigger_sync():
         # Tier-to-tier sync: add tracks to target provider's playlist
         return _sync_to_tier(payload, source, target, playlist_name, matches, download_missing, sync_mode)
     else:
-        return jsonify({"accepted": False, "error": f"Sync to {target} not implemented"}), 400
+        return {"accepted": False, "error": f"Sync to {target} not implemented"}
 
 
 def _sync_to_plex(payload, source, target, playlist_name, matches, download_missing, sync_mode, source_account_name=None, target_user_id=None):
@@ -1424,7 +1454,7 @@ def _sync_to_plex(payload, source, target, playlist_name, matches, download_miss
     # Collect ratingKeys from matches (target_identifier)
     rating_keys = [m.get("target_identifier") for m in matches if m.get("target_identifier")]
     if not rating_keys:
-        return jsonify({"accepted": False, "error": "No Plex ratingKeys provided in matches"}), 400
+        return {"accepted": False, "error": "No Plex ratingKeys provided in matches"}
 
     # Schedule a one-off sync job with retry/backoff
     job_name = f"sync:plex:{playlist_name}:{int(time.time())}"
@@ -1549,7 +1579,7 @@ def _sync_to_plex(payload, source, target, playlist_name, matches, download_miss
             raise RuntimeError(f"Job '{job_name}' is already running or unavailable")
     except Exception as e:
         logger.error(f"Failed to schedule Plex sync job '{job_name}': {e}")
-        return jsonify({"accepted": False, "error": f"Failed to schedule sync: {e}"}), 500
+        return {"accepted": False, "error": f"Failed to schedule sync: {e}"}
 
     return jsonify({
         "accepted": True,
@@ -1567,7 +1597,7 @@ def _sync_to_tier(payload, source, target, playlist_name, matches, download_miss
     # Collect provider-specific IDs from matches (target_identifier for tier target)
     track_ids = [m.get("target_identifier") for m in matches if m.get("target_identifier")]
     if not track_ids:
-        return jsonify({"accepted": False, "error": f"No {target} track IDs provided in matches"}), 400
+        return {"accepted": False, "error": f"No {target} track IDs provided in matches"}
 
     # Schedule a one-off sync job
     job_name = f"sync:{target}:{playlist_name}:{int(time.time())}"
@@ -1656,7 +1686,7 @@ def _sync_to_tier(payload, source, target, playlist_name, matches, download_miss
             raise RuntimeError(f"Job '{job_name}' is already running or unavailable")
     except Exception as e:
         logger.error(f"Failed to schedule {target} sync job '{job_name}': {e}")
-        return jsonify({"accepted": False, "error": f"Failed to schedule sync: {e}"}), 500
+        return {"accepted": False, "error": f"Failed to schedule sync: {e}"}
 
     return jsonify({
         "accepted": True,
@@ -1669,13 +1699,13 @@ def _sync_to_tier(payload, source, target, playlist_name, matches, download_miss
     }), 202
 
 
-@bp.get("/sync/events")
-def sync_events():
-    job_name = request.args.get("job")
-    since = request.args.get("since", type=int)
+@router.get("/sync/events")
+def sync_events(request: Request):
+    job_name = request.query_params.get("job")
+    since = request.query_params.get("since", type=int)
 
     if not job_name:
-        return jsonify({"error": "job query parameter required"}), 400
+        return {"error": "job query parameter required"}
 
     events = event_bus.get_events(job_name, since_id=since)
     return jsonify({
@@ -1685,12 +1715,12 @@ def sync_events():
     }), 200
 
 
-@bp.get("/sync/history")
-def sync_history_endpoint():
+@router.get("/sync/history")
+def sync_history_endpoint(request: Request):
     """Get recent sync records for observability."""
-    source = request.args.get("source")
-    target = request.args.get("target")
-    limit = request.args.get("limit", 20, type=int)
+    source = request.query_params.get("source")
+    target = request.query_params.get("target")
+    limit = request.query_params.get("limit", 20, type=int)
     
     records = sync_history.get_records(source=source, target=target)
     recent = records[-limit:] if records else []
@@ -1701,18 +1731,18 @@ def sync_history_endpoint():
     }), 200
 
 
-@bp.post("/download-missing")
-def download_missing_tracks():
+@router.post("/download-missing")
+def download_missing_tracks(request: Request):
     """Trigger downloads for missing tracks identified during analysis.
     
     Directly queues tracks to the download_manager's queue.
     No separate job is created - the main download_manager job handles processing.
     """
-    payload = request.get_json(silent=True) or {}
+    payload = request.json() if hasattr(request, "json") else {} # NEED AWAIT
     missing = payload.get("missing") or []
     
     if not missing:
-        return jsonify({"accepted": False, "error": "missing tracks list required"}), 400
+        return {"accepted": False, "error": "missing tracks list required"}
     
     try:
         from services.download_manager import get_download_manager
@@ -1779,15 +1809,15 @@ def download_missing_tracks():
     
     except Exception as e:
         logger.error(f"Failed to queue downloads: {e}")
-        return jsonify({"accepted": False, "error": f"Failed to queue downloads: {e}"}), 500
+        return {"accepted": False, "error": f"Failed to queue downloads: {e}"}
 
 
 # ========================================
 # PERSONALIZED PLAYLISTS ENDPOINTS
 # ========================================
 
-@bp.get("/genres")
-def get_available_genres():
+@router.get("/genres")
+def get_available_genres(request: Request):
     """Get list of available genres from discovery pool"""
     try:
         db = MusicDatabase()
@@ -1799,14 +1829,14 @@ def get_available_genres():
         }), 200
     except Exception as e:
         logger.error(f"Error fetching genres: {e}")
-        return jsonify({"error": "Failed to fetch genres"}), 500
+        return {"error": "Failed to fetch genres"}
 
 
-@bp.get("/genre/<genre_name>")
-def get_genre_playlist(genre_name):
+@router.get("/genre/{genre_name}")
+def get_genre_playlist(genre_name, request: Request):
     """Get playlist for a specific genre"""
     try:
-        limit = request.args.get("limit", 50, type=int)
+        limit = request.query_params.get("limit", 50, type=int)
         db = MusicDatabase()
         service = get_personalized_playlists_service(db)
         tracks = service.get_genre_playlist(genre_name, limit=limit)
@@ -1817,14 +1847,14 @@ def get_genre_playlist(genre_name):
         }), 200
     except Exception as e:
         logger.error(f"Error fetching genre playlist for {genre_name}: {e}")
-        return jsonify({"error": "Failed to fetch genre playlist"}), 500
+        return {"error": "Failed to fetch genre playlist"}
 
 
-@bp.get("/decade/<int:decade>")
-def get_decade_playlist(decade):
+@router.get("/decade/{decade}")
+def get_decade_playlist(decade, request: Request):
     """Get playlist for a specific decade"""
     try:
-        limit = request.args.get("limit", 100, type=int)
+        limit = request.query_params.get("limit", 100, type=int)
         db = MusicDatabase()
         service = get_personalized_playlists_service(db)
         tracks = service.get_decade_playlist(decade, limit=limit)
@@ -1835,14 +1865,14 @@ def get_decade_playlist(decade):
         }), 200
     except Exception as e:
         logger.error(f"Error fetching decade playlist for {decade}s: {e}")
-        return jsonify({"error": "Failed to fetch decade playlist"}), 500
+        return {"error": "Failed to fetch decade playlist"}
 
 
-@bp.get("/popular-picks")
-def get_popular_picks():
+@router.get("/popular-picks")
+def get_popular_picks(request: Request):
     """Get high-popularity tracks from discovery pool"""
     try:
-        limit = request.args.get("limit", 50, type=int)
+        limit = request.query_params.get("limit", 50, type=int)
         db = MusicDatabase()
         service = get_personalized_playlists_service(db)
         tracks = service.get_popular_picks(limit=limit)
@@ -1853,14 +1883,14 @@ def get_popular_picks():
         }), 200
     except Exception as e:
         logger.error(f"Error fetching popular picks: {e}")
-        return jsonify({"error": "Failed to fetch popular picks"}), 500
+        return {"error": "Failed to fetch popular picks"}
 
 
-@bp.get("/hidden-gems")
-def get_hidden_gems():
+@router.get("/hidden-gems")
+def get_hidden_gems(request: Request):
     """Get low-popularity underground tracks from discovery pool"""
     try:
-        limit = request.args.get("limit", 50, type=int)
+        limit = request.query_params.get("limit", 50, type=int)
         db = MusicDatabase()
         service = get_personalized_playlists_service(db)
         tracks = service.get_hidden_gems(limit=limit)
@@ -1871,14 +1901,14 @@ def get_hidden_gems():
         }), 200
     except Exception as e:
         logger.error(f"Error fetching hidden gems: {e}")
-        return jsonify({"error": "Failed to fetch hidden gems"}), 500
+        return {"error": "Failed to fetch hidden gems"}
 
 
-@bp.get("/discovery-shuffle")
-def get_discovery_shuffle():
+@router.get("/discovery-shuffle")
+def get_discovery_shuffle(request: Request):
     """Get random tracks from discovery pool"""
     try:
-        limit = request.args.get("limit", 50, type=int)
+        limit = request.query_params.get("limit", 50, type=int)
         db = MusicDatabase()
         service = get_personalized_playlists_service(db)
         tracks = service.get_discovery_shuffle(limit=limit)
@@ -1889,14 +1919,14 @@ def get_discovery_shuffle():
         }), 200
     except Exception as e:
         logger.error(f"Error fetching discovery shuffle: {e}")
-        return jsonify({"error": "Failed to fetch discovery shuffle"}), 500
+        return {"error": "Failed to fetch discovery shuffle"}
 
 
-@bp.get("/daily-mixes")
-def get_all_daily_mixes():
+@router.get("/daily-mixes")
+def get_all_daily_mixes(request: Request):
     """Get all daily mixes"""
     try:
-        max_mixes = request.args.get("max_mixes", 4, type=int)
+        max_mixes = request.query_params.get("max_mixes", 4, type=int)
         db = MusicDatabase()
         service = get_personalized_playlists_service(db)
         mixes = service.get_all_daily_mixes(max_mixes=max_mixes)
@@ -1906,13 +1936,13 @@ def get_all_daily_mixes():
         }), 200
     except Exception as e:
         logger.error(f"Error fetching daily mixes: {e}")
-        return jsonify({"error": "Failed to fetch daily mixes"}), 500
+        return {"error": "Failed to fetch daily mixes"}
 
 
-@bp.post("/sync/schedule")
-def schedule_recurring_sync():
+@router.post("/sync/schedule")
+def schedule_recurring_sync(payload_obj: PlaylistSyncScheduleSchema):
     """Schedule a recurring playlist sync job (e.g., every 6 hours)."""
-    payload = request.get_json(silent=True) or {}
+    payload = payload_obj.model_dump(exclude_unset=True) if payload_obj else {}
     source = payload.get("source")
     target = payload.get("target_source") or payload.get("target")
     playlists = payload.get("playlists", [])
@@ -1921,10 +1951,10 @@ def schedule_recurring_sync():
     enabled = payload.get("enabled", True)
 
     if not source or not target or not playlists:
-        return jsonify({"error": "source, target, and playlists required"}), 400
+        return {"error": "source, target, and playlists required"}
 
     if interval < 300:
-        return jsonify({"error": "interval must be at least 300 seconds (5 minutes)"}), 400
+        return {"error": "interval must be at least 300 seconds (5 minutes)"}
 
     # Create scheduled sync config
     from core.settings import config_manager
@@ -1957,8 +1987,8 @@ def schedule_recurring_sync():
     }), 201
 
 
-@bp.get("/sync/scheduled")
-def list_scheduled_syncs():
+@router.get("/sync/scheduled")
+def list_scheduled_syncs(request: Request):
     """List all scheduled playlist sync jobs."""
     from core.settings import config_manager
     scheduled_syncs = config_manager.get("scheduled_syncs", [])
@@ -1980,8 +2010,8 @@ def list_scheduled_syncs():
     }), 200
 
 
-@bp.delete("/sync/scheduled/<sync_id>")
-def delete_scheduled_sync(sync_id):
+@router.delete("/sync/scheduled/{sync_id}")
+def delete_scheduled_sync(sync_id, request: Request):
     """Delete a scheduled sync job."""
     from core.settings import config_manager
     scheduled_syncs = config_manager.get("scheduled_syncs", [])
@@ -1989,7 +2019,7 @@ def delete_scheduled_sync(sync_id):
     # Find and remove sync
     updated_syncs = [s for s in scheduled_syncs if s.get("id") != sync_id]
     if len(updated_syncs) == len(scheduled_syncs):
-        return jsonify({"error": "Sync not found"}), 404
+        return {"error": "Sync not found"}
     
     config_manager.set("scheduled_syncs", updated_syncs)
     config_manager.save_config()
@@ -2000,7 +2030,7 @@ def delete_scheduled_sync(sync_id):
         job_queue.unregister_job(job_name)
     
     logger.info(f"Scheduled sync deleted: {sync_id}")
-    return jsonify({"accepted": True}), 200
+    return {"accepted": True}
 
 
 def _register_scheduled_sync_job(sync_config):
@@ -2062,3 +2092,4 @@ def load_scheduled_syncs_on_startup():
             _register_scheduled_sync_job(sync_config)
     
     logger.info(f"Loaded {len([s for s in scheduled_syncs if s.get('enabled')])} scheduled syncs")
+

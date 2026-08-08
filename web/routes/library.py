@@ -1,4 +1,6 @@
-from flask import Blueprint, jsonify, request, send_file
+from fastapi import APIRouter, Request, Depends, Query, HTTPException
+from fastapi.responses import JSONResponse, FileResponse
+from typing import Optional
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 import asyncio
@@ -13,17 +15,17 @@ from core.tiered_logger import get_logger
 import threading
 
 logger = get_logger("library")
-bp = Blueprint("library", __name__, url_prefix="/api/library")
+router = APIRouter(prefix="/api/v1/core/library", tags=["Library"])
 
-@bp.get("/")
+@router.get("/")
 def library_overview():
     adapter = LibraryAdapter()
     data = adapter.overview()
-    return jsonify(data), 200
+    return data
 
 
-@bp.post("/scan")
-def trigger_library_scan():
+@router.post("/scan")
+def trigger_library_scan(request: Request):
     """
     Trigger a library scan/refresh on the active media server.
     
@@ -31,7 +33,7 @@ def trigger_library_scan():
         - path: Optional library section path (Plex section ID, Jellyfin library name, etc.)
     """
     try:
-        path = request.args.get("path")
+        path = request.query_params.get("path")
         
         # Get active media server
         from core.nexus_framework.plugin_loader import PluginRegistry
@@ -39,13 +41,13 @@ def trigger_library_scan():
         active_server = active_servers[0] if active_servers else None
 
         if not active_server:
-            return jsonify({"error": "No active media server configured"}), 400
+            raise HTTPException(status_code=400, detail={"error": "No active media server configured"})
 
         try:
             provider = PluginRegistry.create_instance(active_server)
         except Exception as e:
             logger.error(f"Failed to create provider instance for {active_server}: {e}")
-            return jsonify({"error": f"Media server '{active_server}' not available"}), 500
+            raise HTTPException(status_code=500, detail={"error": f"Media server '{active_server}' not available"})
         
         # Check if it has scan capability
         if not hasattr(provider, 'trigger_library_scan'):
@@ -70,11 +72,11 @@ def trigger_library_scan():
             
     except Exception as e:
         logger.error(f"Library scan error: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+        raise HTTPException(status_code=500, detail={"error": str(e)})
 
 
-@bp.get("/scan-status")
-def get_library_scan_status():
+@router.get("/scan-status")
+def get_library_scan_status(request: Request):
     """
     Get current library scan status from the active media server.
     
@@ -94,13 +96,13 @@ def get_library_scan_status():
         active_server = active_servers[0] if active_servers else None
 
         if not active_server:
-            return jsonify({"error": "No active media server configured"}), 400
+            raise HTTPException(status_code=400, detail={"error": "No active media server configured"})
 
         try:
             provider = PluginRegistry.create_instance(active_server)
         except Exception as e:
             logger.error(f"Failed to create provider instance for {active_server}: {e}")
-            return jsonify({"error": f"Media server '{active_server}' not available"}), 500
+            raise HTTPException(status_code=500, detail={"error": f"Media server '{active_server}' not available"})
         
         # Check if it has scan capability
         if not hasattr(provider, 'get_scan_status'):
@@ -118,7 +120,7 @@ def get_library_scan_status():
             
     except Exception as e:
         logger.error(f"Library scan status error: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+        raise HTTPException(status_code=500, detail={"error": str(e)})
 
 
 # Global worker instance to track database update progress
@@ -126,8 +128,8 @@ _db_update_worker = None
 _db_update_lock = threading.Lock()
 
 
-@bp.post("/update-database")
-def update_database():
+@router.post("/update-database")
+def update_database(request: Request):
     """
     Update Echosync database from active media server library.
     
@@ -137,7 +139,7 @@ def update_database():
     global _db_update_worker
     
     try:
-        mode = request.args.get("mode", "incremental").lower()
+        mode = request.query_params.get("mode", "incremental").lower()
         full_refresh = (mode == "full")
         
         # Get active media server
@@ -147,10 +149,10 @@ def update_database():
             active_server = active_servers[0] if active_servers else None
         except Exception as e:
             logger.error(f"Failed to get active media server: {e}")
-            return jsonify({"error": f"Failed to get active media server: {str(e)}"}), 500
+            raise HTTPException(status_code=500, detail={"error": f"Failed to get active media server: {str(e)}"})
         
         if not active_server:
-            return jsonify({"error": "No active media server configured"}), 400
+            raise HTTPException(status_code=400, detail={"error": "No active media server configured"})
         
         # Check if update is already running
         with _db_update_lock:
@@ -186,10 +188,10 @@ def update_database():
                 provider = PluginRegistry.create_instance(active_server)
         except Exception as e:
             logger.error(f"Failed to create provider instance for {active_server}: {e}", exc_info=True)
-            return jsonify({"error": f"Media server '{active_server}' not available: {str(e)}"}), 500
+            raise HTTPException(status_code=500, detail={"error": f"Media server '{active_server}' not available: {str(e)}"})
         
         if not provider:
-            return jsonify({"error": f"Media server '{active_server}' not available"}), 500
+            raise HTTPException(status_code=500, detail={"error": f"Media server '{active_server}' not available"})
         
         # Ensure connection
         try:
@@ -203,20 +205,20 @@ def update_database():
                     "likely expired or missing credentials.",
                     active_server,
                 )
-                return jsonify({"error": msg}), 500
+                raise HTTPException(status_code=500, detail={"error": msg})
         except Exception as e:
             logger.error(
                 "update-database: connection to %s raised an exception: %s",
                 active_server, e, exc_info=True,
             )
-            return jsonify({"error": f"Could not connect to {active_server}: {str(e)}"}), 500
+            raise HTTPException(status_code=500, detail={"error": f"Could not connect to {active_server}: {str(e)}"})
         
         # Import LibrarySyncService
         try:
             from services.library_sync_service import LibrarySyncService
         except ImportError as e:
             logger.error(f"Failed to import LibrarySyncService: {e}")
-            return jsonify({"error": "Database update module not available"}), 500
+            raise HTTPException(status_code=500, detail={"error": "Database update module not available"})
         
         # Create and start worker
         try:
@@ -234,15 +236,15 @@ def update_database():
             }), 200
         except Exception as e:
             logger.error(f"Failed to start database update worker: {e}", exc_info=True)
-            return jsonify({"error": f"Failed to start database update: {str(e)}"}), 500
+            raise HTTPException(status_code=500, detail={"error": f"Failed to start database update: {str(e)}"})
         
     except Exception as e:
         logger.error(f"Database update error: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+        raise HTTPException(status_code=500, detail={"error": str(e)})
 
 
-@bp.get("/update-status")
-def get_database_update_status():
+@router.get("/update-status")
+def get_database_update_status(request: Request):
     """
     Get current database update progress.
     
@@ -266,7 +268,7 @@ def get_database_update_status():
         active_server = active_servers[0] if active_servers else None
     except Exception as e:
         logger.error(f"Database update status error: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+        raise HTTPException(status_code=500, detail={"error": str(e)})
 
     is_running = False
     stats = {
@@ -302,7 +304,7 @@ def get_database_update_status():
     }), 200
 
 
-@bp.post("/backfill-identifiers")
+@router.post("/backfill-identifiers")
 def backfill_identifiers():
     """
     Repair tracks that are missing their media-server external identifier (e.g. Plex
@@ -320,7 +322,7 @@ def backfill_identifiers():
         active_server = active_servers[0] if active_servers else None
         
         if not active_server:
-            return jsonify({"error": "No active media server configured"}), 400
+            raise HTTPException(status_code=400, detail={"error": "No active media server configured"})
 
         from database.music_database import get_database
         from database import LibraryManager
@@ -337,10 +339,10 @@ def backfill_identifiers():
         }), 200
     except Exception as e:
         logger.error(f"Backfill error: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+        raise HTTPException(status_code=500, detail={"error": str(e)})
 
 
-@bp.post("/update-cancel")
+@router.post("/update-cancel")
 def cancel_database_update():
     """Cancel the running database update."""
     global _db_update_worker
@@ -348,7 +350,7 @@ def cancel_database_update():
     try:
         with _db_update_lock:
             if _db_update_worker is None:
-                return jsonify({"error": "No database update in progress"}), 400
+                raise HTTPException(status_code=400, detail={"error": "No database update in progress"})
             
             # Check if running
             is_running = False
@@ -361,7 +363,7 @@ def cancel_database_update():
                     pass
             
             if not is_running:
-                return jsonify({"error": "No database update in progress"}), 400
+                raise HTTPException(status_code=400, detail={"error": "No database update in progress"})
             
             # Stop the worker and kill job
             _db_update_worker.stop()
@@ -378,15 +380,15 @@ def cancel_database_update():
             
     except Exception as e:
         logger.error(f"Database update cancel error: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+        raise HTTPException(status_code=500, detail={"error": str(e)})
 
 
 # New Media Manager Routes
 
 media_manager = MediaManagerService()
 
-@bp.get("/index")
-def get_library_index():
+@router.get("/index")
+def get_library_index(request: Request):
     """Get the full library hierarchy.
     DEPRECATED: Emits legacy nested payload. Use /api/v1/core/tracks?detail=true instead.
     """
@@ -398,35 +400,35 @@ def get_library_index():
         return response
     except Exception as e:
         logger.error(f"Error fetching library index: {e}")
-        return jsonify({"error": str(e)}), 500
+        raise HTTPException(status_code=500, detail={"error": str(e)})
 
 
-@bp.get("/stream/<int:track_id>")
+@router.get("/stream/{track_id}")
 def stream_track(track_id):
     """Stream a track file."""
     try:
         file_path = media_manager.get_track_stream(track_id)
         if not file_path:
-            return jsonify({"error": "Track not found or file missing"}), 404
+            raise HTTPException(status_code=404, detail={"error": "Track not found or file missing"})
 
         return send_file(file_path)
     except Exception as e:
         logger.error(f"Error streaming track {track_id}: {e}")
-        return jsonify({"error": str(e)}), 500
+        raise HTTPException(status_code=500, detail={"error": str(e)})
 
 
-@bp.delete("/<int:track_id>")
+@router.delete("/{track_id}")
 def delete_track_endpoint(track_id):
     """Delete a track."""
     try:
         success = media_manager.delete_track(track_id)
         if success:
-            return jsonify({"success": True, "message": f"Track {track_id} deleted"}), 200
+            return {"success": True, "message": f"Track {track_id} deleted"}
         else:
-            return jsonify({"error": "Failed to delete track"}), 500
+            raise HTTPException(status_code=500, detail={"error": "Failed to delete track"})
     except Exception as e:
         logger.error(f"Error deleting track {track_id}: {e}")
-        return jsonify({"error": str(e)}), 500
+        raise HTTPException(status_code=500, detail={"error": str(e)})
 
 
 

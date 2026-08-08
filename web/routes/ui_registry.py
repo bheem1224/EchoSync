@@ -7,17 +7,15 @@ Endpoint:
     GET /api/ui/registry
 """
 
-from flask import Blueprint, jsonify
+from fastapi import APIRouter, Depends
 from web.auth import require_auth
 from core.tiered_logger import get_logger
 from contextlib import contextmanager
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, Session
-from typing import Generator
+from typing import Dict, List, Any
 
 logger = get_logger("ui_registry")
 
-ui_registry_bp = Blueprint("ui_registry", __name__, url_prefix="/api/ui")
+router = APIRouter(prefix="/api/v1/system/ui-registry", tags=["UI Registry"])
 
 
 @contextmanager
@@ -31,7 +29,7 @@ def config_db_connection():
         conn.close()
 
 
-def _query_ui_registry() -> dict:
+def _query_ui_registry() -> Dict[str, List[Dict[str, Any]]]:
     """Shared query logic — used by both the new and legacy endpoints.
 
     Performs a single indexed query against ``ui_components`` joined with
@@ -40,7 +38,7 @@ def _query_ui_registry() -> dict:
 
     Returns a dict of ``{ component_type: [ {tag_name, entry, plugin_id}, ... ] }``.
     """
-    registry: dict[str, list[dict]] = {}
+    registry: Dict[str, List[Dict[str, Any]]] = {}
 
     try:
         with config_db_connection() as conn:
@@ -96,9 +94,8 @@ def _query_ui_registry() -> dict:
     return registry
 
 
-@ui_registry_bp.route("/registry", methods=["GET"])
-@require_auth
-def get_ui_registry():
+@router.get("")
+def get_ui_registry(user=Depends(require_auth)):
     """Return all active, registered UI components categorised by type.
 
     Response shape::
@@ -111,4 +108,4 @@ def get_ui_registry():
           "views":    [...]
         }
     """
-    return jsonify(_query_ui_registry())
+    return _query_ui_registry()

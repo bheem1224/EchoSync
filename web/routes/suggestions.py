@@ -9,7 +9,18 @@ Exposes:
 - POST /api/suggestions/toggle-auto - Toggle automated suggestion job
 """
 
-from flask import Blueprint, jsonify, request
+from fastapi import APIRouter, HTTPException, Request
+from pydantic import BaseModel
+from typing import Any, Dict, List, Optional
+
+class ApproveSuggestionRequest(BaseModel):
+    track: Dict[str, Any]
+    account_id: int
+    playlist_name: Optional[str] = "Suggestions for You"
+
+class ToggleAutoRequest(BaseModel):
+    enabled: bool
+
 from core.tiered_logger import get_logger
 from core.settings import config_manager
 from database.config_database import get_config_database
@@ -23,7 +34,7 @@ import base64
 import logging
 
 logger = get_logger("suggestions")
-bp = Blueprint("suggestions", __name__, url_prefix="/api/suggestions")
+router = APIRouter(prefix="/api/v1/core/suggestions", tags=["Suggestions"])
 
 
 
@@ -103,8 +114,8 @@ def _calculate_top_genres_for_user(work_session, music_session, user_id: int, li
     return top
 
 
-@bp.get("/accounts")
-def get_suggestion_accounts():
+@router.get("/accounts")
+def get_suggestion_accounts(request: Request):
     """
     Returns a list of all managed accounts with their taste profile summaries.
     
@@ -118,8 +129,8 @@ def get_suggestion_accounts():
         working_db = get_working_database()
         music_db = get_music_database()
         
-        requested_account_id = request.args.get('account_id', type=int)
-        requested_user_id = request.args.get('user_id')
+        requested_account_id = request.query_params.get('account_id', type=int)
+        requested_user_id = request.query_params.get('user_id')
 
         # Get all services that support playlist read/write and metrics capabilities dynamically
         from core.nexus_framework.plugin_loader import PluginRegistry
@@ -207,10 +218,10 @@ def get_suggestion_accounts():
         
     except Exception as e:
         logger.error(f"Error getting suggestion accounts: {e}", exc_info=True)
-        return jsonify({'error': str(e)}), 500
+        return {'error': str(e)}
 
 
-@bp.get("/pending/<int:account_id>")
+@router.get("/pending/{account_id}")
 def get_pending_suggestions(account_id: int):
     """
     Returns 10-20 highly scored tracks recommended for this account
@@ -221,7 +232,7 @@ def get_pending_suggestions(account_id: int):
     """
     try:
         from core.hook_manager import hook_manager
-        limit = request.args.get('limit', default=15, type=int)
+        limit = request.query_params.get('limit', default=15, type=int)
         limit = min(limit, 20)  # Cap at 20
         
         try:
@@ -242,7 +253,7 @@ def get_pending_suggestions(account_id: int):
         account = next((acc for acc in accounts if acc['id'] == account_id), None)
         
         if not account:
-            return jsonify({'error': 'Account not found'}), 404
+            return {'error': 'Account not found'}
         
         # Get pending recommendations for this user
         # This would come from a scoring engine that evaluates what tracks match user's taste
@@ -292,11 +303,11 @@ def get_pending_suggestions(account_id: int):
         
     except Exception as e:
         logger.error(f"Error getting pending suggestions: {e}", exc_info=True)
-        return jsonify({'error': str(e)}), 500
+        return {'error': str(e)}
 
 
-@bp.post("/approve")
-def approve_suggestion():
+@router.post("/approve")
+def approve_suggestion(payload: ApproveSuggestionRequest):
     """
     Approve a suggestion and queue it for download.
     
@@ -308,13 +319,13 @@ def approve_suggestion():
     }
     """
     try:
-        payload = request.get_json(silent=True) or {}
-        track_data = payload.get('track')
-        account_id = payload.get('account_id')
-        playlist_name = payload.get('playlist_name', 'Suggestions for You')
+        payload_data = payload.model_dump(exclude_unset=True) if payload else {}
+        track_data = payload_data.get('track')
+        account_id = payload_data.get('account_id')
+        playlist_name = payload_data.get('playlist_name', 'Suggestions for You')
         
         if not track_data or not account_id:
-            return jsonify({'error': 'Missing track or account_id'}), 400
+            return {'error': 'Missing track or account_id'}
         
         # Queue the track for download
         dm = get_download_manager()
@@ -326,13 +337,13 @@ def approve_suggestion():
             track = EchosyncTrack.from_dict(track_data)
         except Exception as e:
             logger.warning(f"Failed to parse track from payload: {e}")
-            return jsonify({'error': 'Invalid track data'}), 400
+            return {'error': 'Invalid track data'}
         
         # Queue the download
         download_id = dm.queue_download(track)
         
         if not download_id:
-            return jsonify({'error': 'Failed to queue download'}), 500
+            return {'error': 'Failed to queue download'}
         
         logger.info(f"Approved suggestion: {track.sync_id} for account {account_id}")
         
@@ -345,11 +356,11 @@ def approve_suggestion():
         
     except Exception as e:
         logger.error(f"Error approving suggestion: {e}", exc_info=True)
-        return jsonify({'error': str(e)}), 500
+        return {'error': str(e)}
 
 
-@bp.get("/audit")
-def get_suggestion_audit():
+@router.get("/audit")
+def get_suggestion_audit(request: Request):
     """
     Returns audit history of approved suggestions and their outcomes.
     
@@ -358,8 +369,8 @@ def get_suggestion_audit():
         - account_id: Filter by specific account (optional)
     """
     try:
-        limit = request.args.get('limit', default=50, type=int)
-        account_id = request.args.get('account_id', type=int)
+        limit = request.query_params.get('limit', default=50, type=int)
+        account_id = request.query_params.get('account_id', type=int)
         
         working_db = get_working_database()
         config_db = get_config_database()
@@ -401,11 +412,11 @@ def get_suggestion_audit():
         
     except Exception as e:
         logger.error(f"Error getting audit history: {e}", exc_info=True)
-        return jsonify({'error': str(e)}), 500
+        return {'error': str(e)}
 
 
-@bp.post("/toggle-auto")
-def toggle_auto_suggestions():
+@router.post("/toggle-auto")
+def toggle_auto_suggestions(payload: ToggleAutoRequest):
     """
     Toggle the automated daily background suggestion job on/off.
     
@@ -415,11 +426,11 @@ def toggle_auto_suggestions():
     }
     """
     try:
-        payload = request.get_json(silent=True) or {}
-        enabled = payload.get('enabled')
+        payload_data = payload.model_dump(exclude_unset=True) if payload else {}
+        enabled = payload_data.get('enabled')
         
         if enabled is None:
-            return jsonify({'error': 'Missing "enabled" field'}), 400
+            return {'error': 'Missing "enabled" field'}
         
         # Update config to enable/disable the suggestion job
         # This job would run the suggestion discovery and consensus engine
@@ -435,4 +446,4 @@ def toggle_auto_suggestions():
         
     except Exception as e:
         logger.error(f"Error toggling auto suggestions: {e}", exc_info=True)
-        return jsonify({'error': str(e)}), 500
+        return {'error': str(e)}

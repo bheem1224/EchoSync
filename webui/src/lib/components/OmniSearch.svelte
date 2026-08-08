@@ -398,11 +398,7 @@
             clearLibrary();
             results.external = [];
 
-            const response = await fetch(`${API_BASE_URL}/search?q=${encodeURIComponent(term)}&types=tracks,albums,artists`, {
-                headers,
-                credentials: 'include',
-                signal
-            });
+            const response = await apiClient.get(`/v1/core/search/?q=${encodeURIComponent(term)}&types=tracks,albums,artists`);
 
             if (!response.ok) {
                 throw new Error(`Search failed: ${response.statusText}`);
