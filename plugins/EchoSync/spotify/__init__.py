@@ -1,5 +1,5 @@
 from .client import SpotifyClient
-from .routes import bp
+from .routes import router
 
 ProviderClass = SpotifyClient
 RouteBlueprint = bp

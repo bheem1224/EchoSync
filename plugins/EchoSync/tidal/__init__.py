@@ -1,5 +1,5 @@
 from .client import TidalClient
-from .routes import bp
+from .routes import router
 from . import oauth_routes
 
 ProviderClass = TidalClient

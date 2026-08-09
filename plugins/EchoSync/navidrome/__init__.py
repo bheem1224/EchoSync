@@ -1,5 +1,5 @@
 from .client import NavidromeClient
-from .routes import bp
+from .routes import router
 
 ProviderClass = NavidromeClient
 RouteBlueprint = bp

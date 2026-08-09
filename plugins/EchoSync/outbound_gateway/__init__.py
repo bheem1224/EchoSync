@@ -1,5 +1,5 @@
 from .client import OutboundGatewayProvider
-from .routes import bp as RouteBlueprint, ExternalGatewayRegistry
+from .routes import router as RouteBlueprint, ExternalGatewayRegistry
 
 ProviderClass = OutboundGatewayProvider
 

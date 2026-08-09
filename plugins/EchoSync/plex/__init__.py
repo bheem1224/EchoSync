@@ -1,5 +1,5 @@
 from .client import PlexClient
-from .routes import bp
+from .routes import router
 
 ProviderClass = PlexClient
 RouteBlueprint = bp

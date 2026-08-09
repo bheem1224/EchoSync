@@ -1,5 +1,5 @@
 from .client import SlskdProvider
-from .routes import bp
+from .routes import router
 
 ProviderClass = SlskdProvider
 RouteBlueprint = bp

@@ -1,5 +1,5 @@
 from .client import JellyfinClient
-from .routes import bp
+from .routes import router
 
 ProviderClass = JellyfinClient
 RouteBlueprint = bp
