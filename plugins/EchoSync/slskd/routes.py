@@ -1,35 +1,37 @@
 """Slskd (Soulseek daemon) provider routes.
 
-All paths here are relative to the plugin blueprint prefix, which
-plugin_loader sets to  /api/plugins/<plugin_name>  (e.g. /api/plugins/Slskd).
+All paths here are relative to the plugin router prefix, which
+plugin_loader mounts to /api/v1/plugins/<plugin_id>.
 
 SlskdCard.svelte calls:
-  GET  ${apiBase}/providers/download-clients/active   → proxied to plugins_api
-  POST ${apiBase}/providers/download-clients/activate → proxied to plugins_api
-  GET  ${apiBase}/providers/soulseek/settings
-  POST ${apiBase}/providers/soulseek/settings
-  POST ${apiBase}/providers/soulseek/connection/test
-  GET  ${apiBase}/providers/soulseek/settings/key
+  GET  ${apiBase}/download-clients/active
+  POST ${apiBase}/download-clients/activate
+  GET  ${apiBase}/settings
+  POST ${apiBase}/settings
+  POST ${apiBase}/connection/test
+  GET  ${apiBase}/settings/key
 """
 
 import logging
-from flask import Blueprint, jsonify, request
+from fastapi import APIRouter, Request, HTTPException
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel
+from typing import Optional, Dict, Any
 from core.tiered_logger import get_logger
 import asyncio
 import aiohttp
 
 logger = get_logger("slskd_routes")
 
-# NOTE: url_prefix is overridden by plugin_loader to /api/plugins/<name>.
-# The sub-paths below match what SlskdCard.svelte sends relative to apiBase.
-bp = Blueprint("soulseek_routes", __name__, url_prefix="/api/plugins/Slskd")
+# The router will be mounted automatically by the plugin loader
+router = APIRouter()
 
 
 # ---------------------------------------------------------------------------
 # Download-client proxies — SlskdCard needs these under its own apiBase
 # ---------------------------------------------------------------------------
 
-@bp.get("/providers/download-clients/active")
+@router.get("/download-clients/active")
 def get_active_download_client():
     """Proxy: return the currently active download client."""
     def _safe_get(obj, attr, default):
@@ -41,34 +43,37 @@ def get_active_download_client():
         active = next((c for c in clients if _safe_get(c, 'is_active', False)), None)
         if active:
             name = _safe_get(active, 'name', 'slskd')
-            return jsonify({"active": True, "name": name, "provider": name}), 200
-        return jsonify({"active": False, "name": None}), 200
+            return {"active": True, "name": name, "provider": name}
+        return {"active": False, "name": None}
     except Exception as e:
         logger.error(f"Failed to get active download client: {e}")
-        return jsonify({"active": False, "error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal error checking client"}), 200
+        return {"active": False, "error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal error checking client"}
 
 
-@bp.post("/providers/download-clients/activate")
-def activate_download_client():
+class ActivateClientRequest(BaseModel):
+    provider: str = "slskd"
+
+@router.post("/download-clients/activate")
+def activate_download_client(data: ActivateClientRequest):
     """Proxy: activate this plugin as the active download client."""
     try:
-        data = request.get_json() or {}
-        provider = data.get("provider", "slskd")
         # Forward to the core plugins_api activate endpoint
-        from web.routes.plugins_api import bp as plugins_bp
-        # Delegate by calling the function directly
-        from web.routes.plugins_api import activate_download_client as core_activate
-        return core_activate()
+        from web.routes.plugins import activate_download_client as core_activate
+        # Since core_activate takes a Request in FastAPI, we might need to mock it or just set it directly
+        from core.settings import config_manager
+        config_manager.set_active_download_client(data.provider)
+        config_manager.save_settings(config_manager.get_settings())
+        return {"success": True}
     except Exception as e:
         logger.error(f"Failed to activate download client: {e}")
-        return jsonify({"success": False, "error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}), 500
+        raise HTTPException(status_code=500, detail=str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error")
 
 
 # ---------------------------------------------------------------------------
 # Soulseek / slskd settings
 # ---------------------------------------------------------------------------
 
-@bp.route("/providers/soulseek/settings", methods=["GET"])
+@router.get("/settings")
 def get_settings():
     """Get slskd configuration settings."""
     from core.nexus_framework.plugin_SDK import sdk
@@ -78,33 +83,34 @@ def get_settings():
         api_key = sdk.secrets.get('api_key') or ''
         masked_api_key = '****' if api_key else ''
 
-        return jsonify({
+        return {
             "slskd_url": slskd_url,
             "server_name": server_name,
             "api_key": masked_api_key,
             "has_api_key": bool(api_key),
             "configured": bool(slskd_url and api_key),
-        }), 200
+        }
     except Exception as e:
         logger.error(f"Failed to get slskd settings: {e}", exc_info=True)
-        return jsonify({"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}), 500
+        raise HTTPException(status_code=500, detail=str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error")
 
 
-@bp.route("/providers/soulseek/settings", methods=["POST"])
-def save_settings():
+class SettingsRequest(BaseModel):
+    slskd_url: Optional[str] = ""
+    api_key: Optional[str] = ""
+    server_name: Optional[str] = ""
+
+@router.post("/settings")
+def save_settings(data: SettingsRequest):
     """Save slskd configuration settings."""
     from core.nexus_framework.plugin_SDK import sdk
     try:
-        data = request.get_json()
-        if not data:
-            return jsonify({"error": "No data provided"}), 400
+        if not data.slskd_url:
+            raise HTTPException(status_code=400, detail="Server URL is required")
 
-        slskd_url = data.get("slskd_url", "").strip()
-        api_key = data.get("api_key", "").strip()
-        server_name = data.get("server_name", "").strip()
-
-        if not slskd_url:
-            return jsonify({"error": "Server URL is required"}), 400
+        slskd_url = data.slskd_url.strip()
+        api_key = data.api_key.strip() if data.api_key else ""
+        server_name = data.server_name.strip() if data.server_name else ""
 
         sdk.config.set('slskd_url', slskd_url)
         sdk.config.set('server_name', server_name)
@@ -112,26 +118,31 @@ def save_settings():
             sdk.secrets.set('api_key', api_key)
 
         logger.info(f"Saved slskd settings: url={slskd_url}")
-        return jsonify({"success": True}), 200
+        return {"success": True}
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to save slskd settings: {e}", exc_info=True)
-        return jsonify({"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}), 500
+        raise HTTPException(status_code=500, detail=str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error")
 
 
-@bp.route("/providers/soulseek/connection/test", methods=["POST"])
-def test_connection():
+class TestConnectionRequest(BaseModel):
+    slskd_url: Optional[str] = None
+    api_key: Optional[str] = None
+
+@router.post("/connection/test")
+def test_connection(data: TestConnectionRequest):
     """Test connection to slskd server."""
     from core.nexus_framework.plugin_SDK import sdk
     try:
-        payload = request.get_json(silent=True) or {}
-        slskd_url = payload.get('slskd_url') or sdk.config.get('slskd_url', '')
+        slskd_url = data.slskd_url or sdk.config.get('slskd_url', '')
         slskd_url = slskd_url.rstrip('/') if slskd_url else ''
-        api_key = payload.get('api_key') or sdk.secrets.get('api_key') or ''
+        api_key = data.api_key or sdk.secrets.get('api_key') or ''
 
         if not slskd_url:
-            return jsonify({"success": False, "error": "slskd URL not configured"}), 400
+            raise HTTPException(status_code=400, detail="slskd URL not configured")
         if not api_key:
-            return jsonify({"success": False, "error": "API key not configured"}), 400
+            raise HTTPException(status_code=400, detail="API key not configured")
 
         async def _test():
             try:
@@ -161,21 +172,27 @@ def test_connection():
         finally:
             loop.close()
 
-        return jsonify(result), 200 if result["success"] else 400
+        if not result["success"]:
+            return JSONResponse(status_code=400, content=result)
+        return result
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to test slskd connection: {e}", exc_info=True)
-        return jsonify({"success": False, "error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}), 500
+        raise HTTPException(status_code=500, detail=str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error")
 
 
-@bp.route("/providers/soulseek/settings/key", methods=["GET"])
+@router.get("/settings/key")
 def get_api_key():
     """Return the raw API key (only used by UI show/hide toggle)."""
     from core.nexus_framework.plugin_SDK import sdk
     try:
         api_key = sdk.secrets.get('api_key') or ''
         if not api_key:
-            return jsonify({"error": "API key not configured"}), 404
-        return jsonify({"api_key": api_key}), 200
+            raise HTTPException(status_code=404, detail="API key not configured")
+        return {"api_key": api_key}
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to fetch API key: {e}", exc_info=True)
-        return jsonify({"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}), 500
+        raise HTTPException(status_code=500, detail=str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error")

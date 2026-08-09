@@ -47,7 +47,7 @@
 
   async function loadSettings() {
     try {
-      const response = await fetch(`${apiBase}/providers/soulseek/settings`);
+      const response = await fetch(`${apiBase}/settings`);
       const data = await response.json();
       if (data) {
         slskdUrl = data.slskd_url || '';
@@ -78,7 +78,7 @@
         payload.api_key = apiKey;
       }
       
-      await fetch(`${apiBase}/providers/soulseek/settings`, { 
+      await fetch(`${apiBase}/settings`, { 
         method: 'POST', 
         headers: { 'Content-Type': 'application/json' }, 
         body: JSON.stringify(payload) 
@@ -96,7 +96,7 @@
 
     try {
       testing = true;
-      const response = await fetch(`${apiBase}/providers/soulseek/connection/test`, { method: 'POST' });
+      const response = await fetch(`${apiBase}/connection/test`, { method: 'POST' });
       const data = await response.json();
       
       if (data?.success) {
@@ -119,7 +119,7 @@
 
     if (willShow && hasApiKeyInDb && apiKey === '****' && !dbApiKeyRevealed) {
       try {
-        const resp = await fetch(`${apiBase}/providers/soulseek/settings/key`);
+        const resp = await fetch(`${apiBase}/settings/key`);
         const data = await resp.json();
         if (data && data.api_key) {
           apiKey = data.api_key;

@@ -2158,7 +2158,7 @@ function ri(e, t) {
 	}
 	async function _() {
 		try {
-			let e = await (await fetch(`${n()}/providers/soulseek/settings`)).json();
+			let e = await (await fetch(`${n()}/settings`)).json();
 			e && (P(r, e.slskd_url || ""), P(a, e.server_name || ""), P(i, e.api_key || ""), P(f, e.has_api_key || !1), P(o, e.configured || !1));
 		} catch (e) {
 			console.error("Failed to load slskd settings:", e);
@@ -2175,7 +2175,7 @@ function ri(e, t) {
 				slskd_url: Z(r),
 				server_name: Z(a)
 			};
-			Z(i) && Z(i) !== "****" && (e.api_key = Z(i)), await fetch(`${n()}/providers/soulseek/settings`, {
+			Z(i) && Z(i) !== "****" && (e.api_key = Z(i)), await fetch(`${n()}/settings`, {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify(e)
@@ -2188,7 +2188,7 @@ function ri(e, t) {
 	}
 	async function te() {
 		if (Z(r).trim()) try {
-			P(l, !0), (await (await fetch(`${n()}/providers/soulseek/connection/test`, { method: "POST" })).json())?.success ? (P(o, !0), await _()) : P(o, !1);
+			P(l, !0), (await (await fetch(`${n()}/connection/test`, { method: "POST" })).json())?.success ? (P(o, !0), await _()) : P(o, !1);
 		} catch (e) {
 			console.error("Failed to test slskd connection:", e), P(o, !1);
 		} finally {
@@ -2198,7 +2198,7 @@ function ri(e, t) {
 	async function v() {
 		let e = !Z(d);
 		if (P(d, e), e && Z(f) && Z(i) === "****" && !p) try {
-			let e = await (await fetch(`${n()}/providers/soulseek/settings/key`)).json();
+			let e = await (await fetch(`${n()}/settings/key`)).json();
 			e && e.api_key ? (P(i, e.api_key), p = !0) : P(d, !1);
 		} catch {
 			P(d, !1);
