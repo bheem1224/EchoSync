@@ -4,7 +4,7 @@ from core.nexus_framework.plugin_SDK import sdk
 import threading
 import uuid
 import logging
-from fastapi import APIRouter, Request, HTTPException
+from fastapi import APIRouter, Request, HTTPException, Depends
 from fastapi.responses import JSONResponse
 from core.tiered_logger import get_logger
 
@@ -363,8 +363,7 @@ def cancel_oauth(session_id: str):
 
 from web.auth import require_auth
 
-@router.post("/sync_users")
-@require_auth
+@router.post("/sync_users", dependencies=[Depends(require_auth)])
 def sync_plex_users():
     """Sync Plex admin and managed users into settings database and return the updated list."""
     try:
