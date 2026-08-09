@@ -57,7 +57,7 @@
 
   async function refreshStats() {
     try {
-      const s = await apiClient.get('/stats');
+      const s = await apiClient.get('/system/stats');
       if (s && s.data) {
         cpuUsage = Math.round(s.data.cpu?.app || 0);
         appMemoryMb = Math.round((s.data.memory?.app_rss || 0) / (1024 ** 2));

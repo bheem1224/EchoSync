@@ -145,7 +145,7 @@ def update_plugin_config(data: UpdateConfigRequest):
     return GenericSuccessResponse(success=True)
 
 class ReposListResponse(BaseModel):
-    repos: List[Dict[str, Any]]
+    repos: List[str]
     model_config = ConfigDict(from_attributes=True)
 
 @router.get("/repos", response_model=ReposListResponse, dependencies=[Depends(require_auth)])

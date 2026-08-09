@@ -16,10 +16,10 @@ def list_jobs(request: Request):
     """Return raw job queue listing (plain array for Svelte)."""
     try:
         items = jq_list_jobs()
-        return Response(json.dumps({
+        return JSONResponse(content={
             "total": len(items),
             "items": items
-        }), status=200, mimetype="application/json")
+        }, status_code=200)
     except Exception as e:
         logger.error(f"Error listing jobs: {e}")
         payload = {"total": 0, "items": []}

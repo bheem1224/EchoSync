@@ -85,7 +85,7 @@ class Gatekeeper:
         Ensure resolved target_path sits strictly within at least one authorized storage root.
         Raises SecurityViolationError if path traversal or unauthorized directory access is detected.
         """
-        resolved_target = target_path.resolve()
+        resolved_target = Path(target_path).resolve()
 
         is_allowed = False
         for root in self.allowed_roots:

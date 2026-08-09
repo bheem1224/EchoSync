@@ -63,23 +63,23 @@ export interface SystemHealthResponse {
 }
 
 export async function fetchSystemHealth(): Promise<SystemHealthResponse> {
-  const response = await apiClient.get<SystemHealthResponse>('/v1/system/health');
+  const response = await apiClient.get<SystemHealthResponse>('/system/tasks/health');
   return response.data;
 }
 
 export async function fetchTaskQueue(): Promise<TaskQueueSummaryResponse> {
-  const response = await apiClient.get<TaskQueueSummaryResponse>('/v1/tasks/queue');
+  const response = await apiClient.get<TaskQueueSummaryResponse>('/system/tasks/queue');
   return response.data;
 }
 
 export async function fetchProcesses(): Promise<ProcessListResponse> {
-  const response = await apiClient.get<ProcessListResponse>('/v1/tasks/processes');
+  const response = await apiClient.get<ProcessListResponse>('/system/tasks/processes');
   return response.data;
 }
 
 export async function terminateProcess(registrationId: string): Promise<ProcessTerminateResponse> {
   const response = await apiClient.post<ProcessTerminateResponse>(
-    `/v1/tasks/processes/${encodeURIComponent(registrationId)}/terminate`
+    `/system/tasks/processes/${encodeURIComponent(registrationId)}/terminate`
   );
   return response.data;
 }

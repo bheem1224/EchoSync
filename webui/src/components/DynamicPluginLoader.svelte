@@ -53,7 +53,7 @@
       // 1. Fetch the UI manifest from the backend
       const resp = await apiClient.get('/system/ui-registry');
 
-      if (!resp.ok) {
+      if (resp.status !== 200) {
         if (resp.status === 404) {
           console.warn(`[DynamicPluginLoader] /api/ui/registry not found. No plugins will load for category="${cat}".`);
           return [];

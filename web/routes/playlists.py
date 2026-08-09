@@ -1702,7 +1702,8 @@ def _sync_to_tier(payload, source, target, playlist_name, matches, download_miss
 @router.get("/sync/events")
 def sync_events(request: Request):
     job_name = request.query_params.get("job")
-    since = request.query_params.get("since", type=int)
+    since_val = request.query_params.get("since")
+    since = int(since_val) if since_val is not None else None
 
     if not job_name:
         return {"error": "job query parameter required"}
@@ -1720,7 +1721,7 @@ def sync_history_endpoint(request: Request):
     """Get recent sync records for observability."""
     source = request.query_params.get("source")
     target = request.query_params.get("target")
-    limit = request.query_params.get("limit", 20, type=int)
+    limit = int(request.query_params.get("limit", 20))
     
     records = sync_history.get_records(source=source, target=target)
     recent = records[-limit:] if records else []
@@ -1839,7 +1840,7 @@ def get_available_genres(request: Request):
 def get_genre_playlist(genre_name, request: Request):
     """Get playlist for a specific genre"""
     try:
-        limit = request.query_params.get("limit", 50, type=int)
+        limit = int(request.query_params.get("limit", 50))
         db = MusicDatabase()
         service = get_personalized_playlists_service(db)
         tracks = service.get_genre_playlist(genre_name, limit=limit)
@@ -1857,7 +1858,7 @@ def get_genre_playlist(genre_name, request: Request):
 def get_decade_playlist(decade, request: Request):
     """Get playlist for a specific decade"""
     try:
-        limit = request.query_params.get("limit", 100, type=int)
+        limit = int(request.query_params.get("limit", 100))
         db = MusicDatabase()
         service = get_personalized_playlists_service(db)
         tracks = service.get_decade_playlist(decade, limit=limit)
@@ -1875,7 +1876,7 @@ def get_decade_playlist(decade, request: Request):
 def get_popular_picks(request: Request):
     """Get high-popularity tracks from discovery pool"""
     try:
-        limit = request.query_params.get("limit", 50, type=int)
+        limit = int(request.query_params.get("limit", 50))
         db = MusicDatabase()
         service = get_personalized_playlists_service(db)
         tracks = service.get_popular_picks(limit=limit)
@@ -1893,7 +1894,7 @@ def get_popular_picks(request: Request):
 def get_hidden_gems(request: Request):
     """Get low-popularity underground tracks from discovery pool"""
     try:
-        limit = request.query_params.get("limit", 50, type=int)
+        limit = int(request.query_params.get("limit", 50))
         db = MusicDatabase()
         service = get_personalized_playlists_service(db)
         tracks = service.get_hidden_gems(limit=limit)
@@ -1911,7 +1912,7 @@ def get_hidden_gems(request: Request):
 def get_discovery_shuffle(request: Request):
     """Get random tracks from discovery pool"""
     try:
-        limit = request.query_params.get("limit", 50, type=int)
+        limit = int(request.query_params.get("limit", 50))
         db = MusicDatabase()
         service = get_personalized_playlists_service(db)
         tracks = service.get_discovery_shuffle(limit=limit)
@@ -1929,7 +1930,7 @@ def get_discovery_shuffle(request: Request):
 def get_all_daily_mixes(request: Request):
     """Get all daily mixes"""
     try:
-        max_mixes = request.query_params.get("max_mixes", 4, type=int)
+        max_mixes = int(request.query_params.get("max_mixes", 4))
         db = MusicDatabase()
         service = get_personalized_playlists_service(db)
         mixes = service.get_all_daily_mixes(max_mixes=max_mixes)

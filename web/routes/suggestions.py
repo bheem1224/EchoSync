@@ -129,7 +129,7 @@ def get_suggestion_accounts(request: Request):
         working_db = get_working_database()
         music_db = get_music_database()
         
-        requested_account_id = request.query_params.get('account_id', type=int)
+        requested_account_id = (int(request.query_params.get('account_id')) if request.query_params.get('account_id') is not None else None)
         requested_user_id = request.query_params.get('user_id')
 
         # Get all services that support playlist read/write and metrics capabilities dynamically
@@ -232,7 +232,7 @@ def get_pending_suggestions(account_id: int):
     """
     try:
         from core.hook_manager import hook_manager
-        limit = request.query_params.get('limit', default=15, type=int)
+        limit = int(request.query_params.get('limit', 15))
         limit = min(limit, 20)  # Cap at 20
         
         try:
@@ -369,8 +369,8 @@ def get_suggestion_audit(request: Request):
         - account_id: Filter by specific account (optional)
     """
     try:
-        limit = request.query_params.get('limit', default=50, type=int)
-        account_id = request.query_params.get('account_id', type=int)
+        limit = int(request.query_params.get('limit', 50))
+        account_id = (int(request.query_params.get('account_id')) if request.query_params.get('account_id') is not None else None)
         
         working_db = get_working_database()
         config_db = get_config_database()
