@@ -26,7 +26,7 @@
 
   async function loadSettings() {
     try {
-      const res = await apiClient.get("/manager/settings");
+      const res = await apiClient.get("/system/manager/settings");
       if (res.data?.settings) {
         settings = { ...settings, ...res.data.settings };
       }
@@ -47,7 +47,7 @@
   async function saveSettings() {
     savingSettings = true;
     try {
-      await apiClient.post("/manager/settings", settings);
+      await apiClient.post("/system/manager/settings", settings);
       feedback.addToast("Settings saved", "success");
     } catch (e) {
       feedback.addToast("Failed to save settings", "error");

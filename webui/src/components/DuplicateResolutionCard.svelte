@@ -7,7 +7,7 @@
 
   async function fetchDuplicates() {
     try {
-      const res = await apiClient.get('/v1/system/manager/duplicates');
+      const res = await apiClient.get('/system/manager/duplicates');
       if (res.status === 200) {
         const data = res.data;
         duplicates = data.duplicates || [];

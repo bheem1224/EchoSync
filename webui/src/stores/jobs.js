@@ -22,8 +22,8 @@ function createJobsStore() {
   async function load() {
     try {
       const [active, history] = await Promise.all([
-        apiClient.get('/jobs/active'),
-        apiClient.get('/jobs'),
+        apiClient.get('/system/jobs/active'),
+        apiClient.get('/system/jobs'),
       ]);
 
       // Defensive guards for API shape consistency

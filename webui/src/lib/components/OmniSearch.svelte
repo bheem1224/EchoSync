@@ -338,7 +338,7 @@
       }
       else if (prefix === '#') {
         if (term.trim()) {
-            const res = await apiClient.get(`/manager/search?q=${encodeURIComponent(term)}`);
+            const res = await apiClient.get(`/system/manager/search?q=${encodeURIComponent(term)}`);
             results.library.tracks = res.data?.tracks || [];
             results.library.albums = res.data?.albums || [];
             results.library.artists = res.data?.artists || [];
@@ -351,7 +351,7 @@
       }
       else if (prefix === '@') {
         if (term.trim()) {
-            const res = await apiClient.get(`/manager/search?q=${encodeURIComponent(term)}&types=artists`);
+            const res = await apiClient.get(`/system/manager/search?q=${encodeURIComponent(term)}&types=artists`);
             results.library.artists = res.data?.artists || [];
             results.library.albums = [];
             results.library.tracks = [];
@@ -367,7 +367,7 @@
         const value = valueParts.join(':').trim();
         if (key && value) {
             if (key.toLowerCase() === 'isrc') {
-                const res = await apiClient.get(`/metadata/isrc/${encodeURIComponent(value)}`);
+                const res = await apiClient.get(`/core/metadata/isrc/${encodeURIComponent(value)}`);
                 if (res.data?.result) {
                     results.external = [{
                         ...res.data.result,
@@ -378,7 +378,7 @@
                     }];
                 }
             } else {
-                const res = await apiClient.get(`/manager/search?q=${encodeURIComponent(value)}&field=${encodeURIComponent(key)}`);
+                const res = await apiClient.get(`/system/manager/search?q=${encodeURIComponent(value)}&field=${encodeURIComponent(key)}`);
                 results.library.tracks = res.data?.tracks || [];
                 results.library.albums = res.data?.albums || [];
                 results.library.artists = res.data?.artists || [];
@@ -398,7 +398,7 @@
             clearLibrary();
             results.external = [];
 
-            const response = await apiClient.get(`/v1/core/search/?q=${encodeURIComponent(term)}&types=tracks,albums,artists`);
+            const response = await apiClient.get(`/core/search/?q=${encodeURIComponent(term)}&types=tracks,albums,artists`);
 
             if (!response.ok) {
                 throw new Error(`Search failed: ${response.statusText}`);

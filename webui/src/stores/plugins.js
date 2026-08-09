@@ -9,7 +9,7 @@ function createPluginsStore() {
 
   async function load() {
     try {
-      const response = await apiClient.get('/v1/system/plugins');
+      const response = await apiClient.get('/system/plugins');
       const list = Array.isArray(response.data)
         ? response.data
         : Array.isArray(response.data?.plugins)

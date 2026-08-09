@@ -15,7 +15,7 @@ function createHealthStore() {
     if (loading) return;
     loading = true;
     try {
-      const response = await apiClient.get('/health');
+      const response = await apiClient.get('/system/health');
       set({
         status: response.data.status,
         services: response.data.results || {},

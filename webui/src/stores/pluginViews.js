@@ -48,7 +48,7 @@ export async function loadPluginViews() {
 
   _loadPromise = (async () => {
     try {
-      const res = await apiClient.get('/v1/system/ui-registry');
+      const res = await apiClient.get('/system/ui-registry');
 
       if (res.status !== 200) {
         if (res.status === 404) {

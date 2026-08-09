@@ -12,7 +12,7 @@
   async function handleRestart() {
     try {
       isRestarting = true;
-      await apiClient.post('/restart');
+      await apiClient.post('/system/restart');
       
       // Wait 3 seconds for the container to die
       setTimeout(() => {
@@ -20,7 +20,7 @@
         const interval = setInterval(async () => {
           try {
             // Using raw fetch to avoid interceptors that might redirect to login during downtime
-            let res = await apiClient.get('/v1/system/health');
+            let res = await apiClient.get('/system/health');
             if (res.status === 200) {
               clearInterval(interval);
               window.location.reload(); // Now refresh!

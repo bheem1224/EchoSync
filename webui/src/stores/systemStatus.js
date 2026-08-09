@@ -14,7 +14,7 @@ function createSystemStatusStore() {
 
   async function load() {
     try {
-      const response = await apiClient.get('/v1/system/health');
+      const response = await apiClient.get('/system/health');
       set({
         ...response.data,
         lastUpdated: new Date(),

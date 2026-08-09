@@ -129,7 +129,7 @@ function createPlayerStore() {
         try {
           // Note: using dynamic import or top-level import for apiClient
           const { default: apiClient } = await import('../api/client');
-          const res = await apiClient.get(`/v1/core/tracks/${encodeURIComponent(track.sync_id)}?detail=true`);
+          const res = await apiClient.get(`/core/tracks/${encodeURIComponent(track.sync_id)}?detail=true`);
           if (res.data && res.data.media) {
             track = { ...track, media: res.data.media };
           }

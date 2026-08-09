@@ -10,8 +10,8 @@
     // 1. Fetch manifest and inject scripts
     // Fetch UI registry and manager ui-beta opt state
     const [manifestRes, uiBetaRes] = await Promise.all([
-      apiClient.get('/v1/system/ui-registry'),
-      apiClient.get('/v1/system/manager/ui-beta').catch(() => null)
+      apiClient.get('/system/ui-registry'),
+      apiClient.get('/system/manager/ui-beta').catch(() => null)
     ]);
 
     if (manifestRes.status !== 200) throw new Error('Failed to fetch UI registry');
@@ -55,7 +55,7 @@
     }
 
     // 2. Fetch layout
-    const layoutRes = await apiClient.get('/v1/system/dashboard');
+    const layoutRes = await apiClient.get('/system/dashboard');
     if (layoutRes.status !== 200) throw new Error('Failed to fetch dashboard layout');
     return layoutRes.data;
   }

@@ -45,7 +45,7 @@ function createPreferencesStore() {
       console.error('Failed to load quality profiles, falling back to settings', e);
       // fallback to settings key
       try {
-        const sresp = await apiClient.get('/settings');
+        const sresp = await apiClient.get('/system/settings');
         const data = sresp.data?.settings || {};
         const profiles = Array.isArray(data.quality_profiles) ? data.quality_profiles : [];
         set({ loaded: true, profiles });
@@ -63,7 +63,7 @@ function createPreferencesStore() {
     } catch (e) {
       console.error('Failed to save quality profiles via API, falling back to settings.save', e);
       try {
-        await apiClient.post('/settings', { quality_profiles: profiles });
+        await apiClient.post('/system/settings', { quality_profiles: profiles });
         update((s) => ({ ...s, profiles }));
       } catch (e2) {
         console.error('Fallback save also failed', e2);
@@ -87,7 +87,7 @@ function createPreferencesStore() {
 
   async function saveProfile(profile) {
     try {
-      await apiClient.post('/quality-profile', { profile });
+      await apiClient.post('/system/quality-profile', { profile });
       // merge into existing store
       update((s) => {
         const list = Array.isArray(s.profiles) ? [...s.profiles] : [];

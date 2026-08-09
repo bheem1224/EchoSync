@@ -423,7 +423,7 @@
 
     isrcLookupLoading = true;
     try {
-      const response = await apiClient.get(`/metadata/isrc/${encodeURIComponent(isrc)}`);
+      const response = await apiClient.get(`/core/metadata/isrc/${encodeURIComponent(isrc)}`);
       
       const isOk = response && (response.status >= 200 && response.status < 300);
       if (!isOk) {

@@ -7,7 +7,7 @@
 
   async function fetchPendingActions() {
     try {
-      const res = await apiClient.get('/v1/system/manager/queue/actions');
+      const res = await apiClient.get('/system/manager/queue/actions');
       if (res.status === 200) {
         const data = res.data;
         pendingActions = data.queue || [];

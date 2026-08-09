@@ -28,7 +28,7 @@
     async function fetchAccounts() {
         loadingAccounts = true;
         try {
-            const response = await apiClient.get('/suggestions/accounts');
+            const response = await apiClient.get('/core/suggestions/accounts');
             accounts = (response.data?.accounts || []).map((account) => ({
                 ...account,
                 normalizedGenres: normalizeGenres(account)
@@ -45,7 +45,7 @@
     async function fetchAudit() {
         loadingAudit = true;
         try {
-            const response = await apiClient.get('/suggestions/audit');
+            const response = await apiClient.get('/core/suggestions/audit');
             auditHistory = response.data?.audit_history || [];
         } catch (error) {
             console.error('Failed to load suggestion audit log:', error);
@@ -175,7 +175,7 @@
         pendingTracks = [];
 
         try {
-            const response = await apiClient.get(`/suggestions/pending/${accountId}`);
+            const response = await apiClient.get(`/core/suggestions/pending/${accountId}`);
             const tracks = response.data?.pending_tracks || [];
             pendingTracks = tracks.map((item, index) => normalizePendingTrack(item, index));
         } catch (error) {
@@ -195,7 +195,7 @@
         togglingAuto = true;
 
         try {
-            const response = await apiClient.post('/suggestions/toggle-auto', {
+            const response = await apiClient.post('/core/suggestions/toggle-auto', {
                 enabled: next
             });
             autoSuggestEnabled = !!response.data?.auto_job_enabled;
@@ -222,7 +222,7 @@
         approvingSyncIds = new Set([...approvingSyncIds, track.sync_id]);
 
         try {
-            await apiClient.post('/suggestions/approve', {
+            await apiClient.post('/core/suggestions/approve', {
                 account_id: selectedAccount.id,
                 track: track.payload,
                 playlist_name: `Suggestions for ${selectedAccount.name || 'User'}`

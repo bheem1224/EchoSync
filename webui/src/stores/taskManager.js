@@ -65,7 +65,7 @@ function createTaskManagerStore() {
     });
 
     try {
-      const response = await apiClient.post(`/v1/system/jobs/${jobName}/cancel`);
+      const response = await apiClient.post(`/system/jobs/${jobName}/cancel`);
 
       if (response.status !== 200) {
         throw new Error(`Failed to cancel job: ${(response.statusText || 'Error')}`);

@@ -16,7 +16,7 @@
     loading = true;
     error = null;
     try {
-      const res = await apiClient.get(`/v1/system/browse?path=${encodeURIComponent(path)}`);
+      const res = await apiClient.get(`/system/browse?path=${encodeURIComponent(path)}`);
       if (res.status !== 200) {
         const body = res.data || {};
         throw new Error(body.error || res.statusText);
@@ -77,7 +77,7 @@
   onMount(async () => {
     // If startPath empty, request roots and pick downloads if present
     if (!startPath) {
-      const rootsRes = await apiClient.get('/v1/system/browse');
+      const rootsRes = await apiClient.get('/system/browse');
       if (rootsRes.status === 200) {
         const d = rootsRes.data;
         const downloads = (d.roots || []).find(r => r.key === 'downloads');

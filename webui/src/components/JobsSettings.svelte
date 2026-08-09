@@ -30,7 +30,7 @@
 
   async function loadJobs() {
     try {
-      const response = await apiClient.get('/jobs');
+      const response = await apiClient.get('/system/jobs');
       if (response.data && response.data.items) {
         jobs = response.data.items.map(job => ({
           ...job,
@@ -117,7 +117,7 @@
       if (jobName === 'auto_import_scan' && forceScan) {
         payload.params = { force_scan: true };
       }
-      await apiClient.post('/jobs/run', payload);
+      await apiClient.post('/system/jobs/run', payload);
       feedback.addToast(`Job "${jobName}" started`, 'success');
       await loadJobs(); // Refresh to show updated status
     } catch (error) {
@@ -154,7 +154,7 @@
     }
 
     try {
-      await apiClient.post(`/jobs/${jobName}/interval`, { interval_seconds: intervalSeconds });
+      await apiClient.post(`/system/jobs/${jobName}/interval`, { interval_seconds: intervalSeconds });
       feedback.addToast('Interval updated', 'success');
       editingInterval = null;
       newInterval = '';

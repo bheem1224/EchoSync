@@ -116,7 +116,7 @@
 
     try {
       console.log(`[Sync] Loading playlists for plugin: ${sourceProvider}`);
-      const response = await apiClient.get(`/plugins/${sourceProvider}/playlists`);
+      const response = await apiClient.get(`/system/plugins/${sourceProvider}/playlists`);
       console.log('[Sync] Full response object:', response);
       console.log('[Sync] Response data:', response.data);
       console.log('[Sync] Response data type:', typeof response.data);
@@ -156,7 +156,7 @@
           });
 
         // Start analysis as a background job
-        const startResp = await apiClient.post('/playlists/analyze/start', {
+        const startResp = await apiClient.post('/core/playlists/analyze/start', {
           source: sourceProvider,
           target: targetProvider,
           quality_profile: selectedQuality,
@@ -176,7 +176,7 @@
 
         async function pollOnce() {
           try {
-            const statusResp = await apiClient.get(`/playlists/analyze/${jobId}`);
+            const statusResp = await apiClient.get(`/core/playlists/analyze/${jobId}`);
             const d = statusResp.data;
             if (!d) return false;
             if (d.status === 'finished') {
@@ -218,7 +218,7 @@
     success = '';
 
     try {
-      const response = await apiClient.post('/playlists/download-missing', {
+      const response = await apiClient.post('/core/playlists/download-missing', {
         missing: analysisResult.missing || []
       });
 
@@ -273,7 +273,7 @@
       // Increase timeout proportional to number of selected playlists
       const syncTimeoutMs = Math.max(10000, selectedPlaylists.length * 10000);
       const response = await apiClient.post(
-        '/playlists/sync',
+        '/core/playlists/sync',
         {
           source: sourceProvider,
           target_source: targetProvider,
@@ -383,7 +383,7 @@
   
   async function loadScheduledSyncs() {
     try {
-      const response = await apiClient.get('/playlists/sync/scheduled');
+      const response = await apiClient.get('/core/playlists/sync/scheduled');
       scheduledSyncs = response.data.scheduled_syncs || [];
     } catch (err) {
       console.error('Failed to load scheduled syncs:', err);
@@ -420,7 +420,7 @@
   
   async function createScheduledSync() {
     try {
-      const response = await apiClient.post('/playlists/sync/schedule', {
+      const response = await apiClient.post('/core/playlists/sync/schedule', {
         source: scheduleForm.source,
         target_source: scheduleForm.target,
         playlists: scheduleForm.playlists,
@@ -441,7 +441,7 @@
   async function deleteScheduledSync(syncId) {
     if (!confirm('Delete this scheduled sync?')) return;
     try {
-      await apiClient.delete(`/playlists/sync/scheduled/${syncId}`);
+      await apiClient.delete(`/core/playlists/sync/scheduled/${syncId}`);
       success = 'Scheduled sync deleted.';
       loadScheduledSyncs();
     } catch (err) {

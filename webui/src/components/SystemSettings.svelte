@@ -69,7 +69,7 @@
         memoryUsage = Math.max(rawMemPercent, 1);
       }
 
-      const health = await apiClient.get('/health');
+      const health = await apiClient.get('/system/health');
       if (health && health.data && health.data.library) {
         libraryStats = {
           totalTracks: health.data.library.total_tracks !== undefined ? String(health.data.library.total_tracks) : libraryStats.totalTracks,

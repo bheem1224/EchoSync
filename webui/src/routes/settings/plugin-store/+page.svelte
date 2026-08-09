@@ -71,7 +71,7 @@
 
   async function loadUiBeta() {
     try {
-      const resp = await apiClient.get('/manager/ui-beta');
+      const resp = await apiClient.get('/system/manager/ui-beta');
       if (resp && resp.data) {
         betaOpt = !!resp.data.beta_opt_in;
         devMode = !!resp.data.dev_mode;
@@ -83,7 +83,7 @@
 
   async function setUiBetaOpt(val) {
     try {
-      const resp = await apiClient.post('/manager/ui-beta', { beta_opt_in: !!val });
+      const resp = await apiClient.post('/system/manager/ui-beta', { beta_opt_in: !!val });
       if (resp && resp.data) {
         betaOpt = !!resp.data.beta_opt_in;
         feedback.addToast(`Beta UI opt ${betaOpt ? 'enabled' : 'disabled'}`, 'success');
@@ -332,7 +332,7 @@
       confirmText="Restart Now"
       cancelText="Later"
       on:confirm={() => {
-        apiClient.post('/restart');
+        apiClient.post('/system/restart');
         window.location.reload();
       }}
       on:cancel={() => showBetaOptOutMessage = false}

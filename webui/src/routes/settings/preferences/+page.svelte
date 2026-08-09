@@ -81,7 +81,7 @@
     
     // Trigger background reorganization job
     try {
-      await apiClient.post('/v1/system/jobs/run', { job_name: 'reorganize_library' });
+      await apiClient.post('/system/jobs/run', { job_name: 'reorganize_library' });
       feedback.addToast('Library reorganization started. Check Active Jobs.', 'info');
       
       // Update initial settings to reflect the new saved state

@@ -8,7 +8,7 @@
   async function handleAcknowledge() {
     try {
       // Call backend to clear the migration flag
-      const response = await apiClient.post('/v1/system/migration-acknowledge');
+      const response = await apiClient.post('/system/migration-acknowledge');
 
       if (!response.ok) {
         throw new Error('Failed to acknowledge migration');

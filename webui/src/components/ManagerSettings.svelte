@@ -16,7 +16,7 @@
 
   async function loadManagerSettings() {
     try {
-      const r = await apiClient.get('/v1/system/manager/settings');
+      const r = await apiClient.get('/system/manager/settings');
       if (r.status === 200) {
         const data = r.data;
         settings = { ...settings, ...data.settings };
@@ -26,14 +26,14 @@
 
   async function saveSettings() {
     try {
-      await apiClient.post('/v1/system/manager/settings', settings);
+      await apiClient.post('/system/manager/settings', settings);
       alert('Settings saved');
     } catch (e) { console.error(e); alert('Save failed'); }
   }
 
   async function runManagerScan() {
     try {
-      const r = await apiClient.post('/v1/system/manager/scan');
+      const r = await apiClient.post('/system/manager/scan');
       if (r.status === 200) { alert('Scan complete'); }
     } catch (e) { console.error(e); alert('Scan failed'); }
   }
@@ -41,7 +41,7 @@
   async function runPruneJob() {
     if (!confirm('Run Prune Job?')) return;
     try {
-      const r = await apiClient.post('/v1/system/manager/prune/run');
+      const r = await apiClient.post('/system/manager/prune/run');
       if (r.status === 200) { const j = r.data; alert(`Prune completed: ${j.result.deleted_count} deleted`); }
     } catch (e) { console.error(e); alert('Prune failed'); }
   }

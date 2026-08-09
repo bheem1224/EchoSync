@@ -36,7 +36,7 @@
 
       // Fetch job status
       try {
-        const jobsResponse = await apiClient.get('/jobs');
+        const jobsResponse = await apiClient.get('/system/jobs');
         if (jobsResponse.data && jobsResponse.data.items) {
           const downloadJob = jobsResponse.data.items.find(j => j.name === 'download_manager');
           downloadManagerRunning = downloadJob ? downloadJob.running : false;

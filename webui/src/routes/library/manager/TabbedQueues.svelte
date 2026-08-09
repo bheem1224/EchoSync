@@ -25,7 +25,7 @@
 
   async function fetchSuggestions() {
     try {
-      const res = await apiClient.get('/manager/queue/suggestions');
+      const res = await apiClient.get('/system/manager/queue/suggestions');
       data.suggestions = res.data.suggestions || [];
     } catch (e) { console.error(e); }
     loading.suggestions = false;
@@ -33,7 +33,7 @@
 
   async function fetchPendingActions() {
     try {
-      const res = await apiClient.get('/manager/queue/actions');
+      const res = await apiClient.get('/system/manager/queue/actions');
       data.pending = res.data.queue || [];
     } catch (e) { console.error(e); }
     loading.pending = false;
@@ -42,7 +42,7 @@
   // ── Actions ────────────────────────────────────────────────────────────
   async function handleVeto(sync_id, title) {
     try {
-      await apiClient.post('/manager/veto', { sync_id });
+      await apiClient.post('/system/manager/veto', { sync_id });
       feedback.addToast(`Vetoed: ${title || sync_id}`, 'success');
       data.suggestions = data.suggestions.filter(s => s.sync_id !== sync_id);
       data.pending     = data.pending.filter(p => p.sync_id !== sync_id);
@@ -53,7 +53,7 @@
 
   async function handleExecute(sync_id, title) {
     try {
-      await apiClient.post('/manager/execute', { sync_id });
+      await apiClient.post('/system/manager/execute', { sync_id });
       feedback.addToast(`Executing: ${title || sync_id}`, 'success');
       data.pending = data.pending.filter(p => p.sync_id !== sync_id);
     } catch (e) {
@@ -64,7 +64,7 @@
   async function handleApproveSuggestion(sync_id, title) {
     // Move to pending actions by flagging a lifecycle action via override
     try {
-      await apiClient.post('/manager/suggestion-candidates/override', {
+      await apiClient.post('/system/manager/suggestion-candidates/override', {
         sync_id,
         field: 'status',
         value: 'accepted',

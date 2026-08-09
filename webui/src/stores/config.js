@@ -5,7 +5,7 @@ import apiClient from '../api/client';
  */
 export async function getConfig() {
   try {
-    const response = await apiClient.get('/config');
+    const response = await apiClient.get('/system/settings');
     return response.data || {};
   } catch (error) {
     console.error('Failed to fetch config:', error);
@@ -21,7 +21,7 @@ export async function getConfig() {
  */
 export async function setConfig(configUpdates) {
   try {
-    const response = await apiClient.post('/config', configUpdates);
+    const response = await apiClient.post('/system/settings', configUpdates);
     return response.data || configUpdates;
   } catch (error) {
     console.error('Failed to save config:', error);
@@ -34,7 +34,7 @@ export async function setConfig(configUpdates) {
  */
 export async function getAvailableAlgorithms() {
   try {
-    const response = await apiClient.get('/v1/core/playlists/algorithms');
+    const response = await apiClient.get('/core/playlists/algorithms');
     return response.data || [];
   } catch (error) {
     console.error('Failed to fetch algorithms:', error);

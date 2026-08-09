@@ -8,7 +8,7 @@ function createMetadataQueueStore() {
     // NOTE: apiClient.baseURL is already "/api" (or "http://host:5000/api" in dev).
     // Use a relative path without the /api prefix to avoid a doubled segment.
     try {
-      const resp = await apiClient.get('/metadata/queue');
+      const resp = await apiClient.get('/core/metadata/queue');
       const queue = resp.data?.queue || [];
       update(s => ({ ...s, count: queue.length, items: queue }));
     } catch (e) {

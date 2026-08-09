@@ -42,28 +42,28 @@
 
   async function loadSystemStatus() {
     try {
-      const resp = await apiClient.get('/v1/system/health');
+      const resp = await apiClient.get('/system/health');
       if (resp.status === 200) systemStatus = resp.data;
     } catch (e) { /* ignore */ }
   }
 
   async function loadJobsSummary() {
     try {
-      const resp = await apiClient.get('/v1/system/jobs/summary');
+      const resp = await apiClient.get('/system/jobs/summary');
       if (resp.status === 200) jobsSummary = resp.data;
     } catch (e) { /* ignore */ }
   }
 
   async function loadLibraryStats() {
     try {
-      const resp = await apiClient.get('/v1/core/library/');
+      const resp = await apiClient.get('/core/library/');
       if (resp.status === 200) libraryStats = resp.data;
     } catch (e) { /* ignore */ }
   }
 
   async function loadUpdateStatus() {
     try {
-      const resp = await apiClient.get('/v1/core/library/update-status');
+      const resp = await apiClient.get('/core/library/update-status');
       if (resp.status === 200) {
         updateStatus = resp.data;
         updatingDb = updateStatus?.running || false;
@@ -76,7 +76,7 @@
     updatingDb = true;
     error = null;
     try {
-      const resp = await apiClient.post(`/v1/core/library/update-database?mode=${updateMode}`);
+      const resp = await apiClient.post(`/core/library/update-database?mode=${updateMode}`);
       const data = resp.data;
       if (resp.status !== 200) {
         error = data.error || 'Failed to start update';
@@ -90,7 +90,7 @@
 
   async function cancelUpdate() {
     try {
-      await apiClient.post(`/v1/core/library/update-cancel`);
+      await apiClient.post(`/core/library/update-cancel`);
       updatingDb = false;
       await loadUpdateStatus();
     } catch (e) { /* ignore */ }

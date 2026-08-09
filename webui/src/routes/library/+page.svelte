@@ -22,7 +22,7 @@
   async function loadLibrary() {
     loading = true;
     try {
-      const res = await apiClient.get('/library/index');
+      const res = await apiClient.get('/core/library/index');
       libraryIndex = res.data || [];
     } catch (err) {
       error = err.message;
@@ -91,7 +91,7 @@
       if (tracksNeedingHydration.length > 0) {
           const syncIds = tracksNeedingHydration.map(t => t.sync_id).join(',');
           try {
-              const res = await apiClient.get(`/v1/core/tracks?detail=true&ids=${encodeURIComponent(syncIds)}`);
+              const res = await apiClient.get(`/core/tracks?detail=true&ids=${encodeURIComponent(syncIds)}`);
               if (res.data && res.data.items) {
                   const detailedTracksMap = new Map(res.data.items.map(dt => [dt.sync_id, dt]));
                   // Update tracks in-place
@@ -132,7 +132,7 @@
   async function deleteTrack(trackId, album) {
       if (!confirm("Are you sure you want to delete this track? This action cannot be undone.")) return;
       try {
-          await apiClient.delete(`/library/${trackId}`);
+          await apiClient.delete(`/core/library/${trackId}`);
           updateLocalStateAfterDelete(trackId, album);
       } catch (err) {
           alert(`Failed to delete: ${err.message}`);
@@ -142,7 +142,7 @@
   async function forceDeleteTrack(trackId, album) {
       if (!confirm("⚠️ FORCE DELETE: This will set the system flag to DELETE (0.1). Continue?")) return;
       try {
-          await apiClient.post(`/manager/track/${trackId}/override`, { action: 'delete' });
+          await apiClient.post(`/system/manager/track/${trackId}/override`, { action: 'delete' });
           updateLocalStateAfterDelete(trackId, album);
       } catch (err) {
           alert(`Failed to force delete: ${err.message}`);
@@ -162,7 +162,7 @@
   async function forceUpgradeTrack(trackId) {
       if (!confirm("Force Upgrade? This will mark the track as needing an upgrade.")) return;
       try {
-          await apiClient.post(`/manager/track/${trackId}/override`, { action: 'upgrade' });
+          await apiClient.post(`/system/manager/track/${trackId}/override`, { action: 'upgrade' });
           alert("Marked for upgrade.");
       } catch (err) {
           alert(`Failed: ${err.message}`);
@@ -171,7 +171,7 @@
 
   async function fetchMetadata(trackId) {
        try {
-          const res = await apiClient.post(`/manager/track/${trackId}/fetch_metadata`);
+          const res = await apiClient.post(`/system/manager/track/${trackId}/fetch_metadata`);
           if (res.data.success) {
               alert(`Metadata Fetched:\nTitle: ${res.data.metadata.title}\nArtist: ${res.data.metadata.artist}\nConfidence: ${res.data.confidence}`);
           } else {

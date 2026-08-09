@@ -365,6 +365,7 @@ def setup_logging(level: str = "INFO", log_dir: Optional[str] = None, log_file: 
         # Silence Third-Party Noise
         logging.getLogger("urllib3").setLevel(logging.WARNING)
         logging.getLogger("plexapi").setLevel(logging.WARNING)
+        logging.getLogger("watchdog").setLevel(logging.WARNING)
 
     except Exception as e:
         print(f"Failed to setup file logging: {e}")

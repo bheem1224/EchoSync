@@ -51,7 +51,7 @@
 
     try {
       // 1. Fetch the UI manifest from the backend
-      const resp = await apiClient.get('/v1/system/ui-registry');
+      const resp = await apiClient.get('/system/ui-registry');
 
       if (!resp.ok) {
         if (resp.status === 404) {

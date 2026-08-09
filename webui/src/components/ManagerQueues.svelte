@@ -16,7 +16,7 @@
 
   async function fetchDuplicates() {
     try {
-      const res = await apiClient.get('/v1/system/manager/duplicates');
+      const res = await apiClient.get('/system/manager/duplicates');
       if (res.status === 200) {
         const data = res.data;
         duplicates = data.duplicates || [];
@@ -26,7 +26,7 @@
 
   async function fetchPendingActions() {
     try {
-      const res = await apiClient.get('/v1/system/manager/queue/actions');
+      const res = await apiClient.get('/system/manager/queue/actions');
       if (res.status === 200) {
         const data = res.data;
         pendingActions = data.queue || [];
@@ -58,7 +58,7 @@
 
   async function vetoPendingAction(item) {
     try {
-      await apiClient.post('/v1/system/manager/suggestion-candidates/override', { sync_id: item.sync_id, field: 'admin_exempt_deletion', value: true });
+      await apiClient.post('/system/manager/suggestion-candidates/override', { sync_id: item.sync_id, field: 'admin_exempt_deletion', value: true });
       fetchPendingActions();
     } catch (e) { console.error(e); }
   }

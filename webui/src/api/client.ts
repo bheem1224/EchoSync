@@ -8,7 +8,7 @@ import axios from 'axios';
 const ENV_API_URL = import.meta.env.VITE_API_URL;
 
 // 2. Dynamic Fallback
-let determinedBaseURL = '/api'; // Default for Prod (relative path)
+let determinedBaseURL = '/api/v1'; // Default for Prod (relative path)
 
 if (ENV_API_URL) {
   determinedBaseURL = ENV_API_URL;
@@ -17,10 +17,10 @@ if (ENV_API_URL) {
   // Check if running on client side
   if (typeof window !== 'undefined') {
     // Protocol agnostic: use same protocol as current page (http/https)
-    determinedBaseURL = `${window.location.protocol}//${window.location.hostname}:5000/api`;
+    determinedBaseURL = `${window.location.protocol}//${window.location.hostname}:5000/api/v1`;
   } else {
     // SSR Fallback in Dev
-    determinedBaseURL = 'http://localhost:5000/api';
+    determinedBaseURL = 'http://localhost:5000/api/v1';
   }
 }
 
