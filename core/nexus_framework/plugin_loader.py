@@ -1055,9 +1055,11 @@ class PluginLoader:
                 for attr_name in dir(module):
                     attr_val = getattr(module, attr_name)
                     if isinstance(attr_val, APIRouter):
+                        logger.info(f"Found APIRouter {attr_name} in {module_path}")
                         plugin_routers.append(attr_val)
                     elif type(attr_val).__name__ == 'Blueprint':
                         flask_blueprints.append(attr_val)
+                logger.info(f"Plugin routers collected: {len(plugin_routers)}")
                 
                 if hasattr(self, 'main_app') and self.main_app:
                     if plugin_routers:
