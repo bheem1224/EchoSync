@@ -170,6 +170,19 @@ class JobQueue:
             self._is_running[job.name] = False
             return True
 
+    def unregister_job(self, name: str) -> bool:
+        """
+        Cancel and completely remove a job from the queue.
+        """
+        with self._lock:
+            if name not in self._jobs:
+                return False
+            
+            self.cancel_job(name)
+            self._remove_from_heap(name)
+            self._jobs.pop(name, None)
+            return True
+
     def _finalize_job_after_run(self, job: ScheduledJob, finished_at: float) -> None:
         job.last_finished = finished_at
         job.running = False

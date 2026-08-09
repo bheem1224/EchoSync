@@ -1134,3 +1134,10 @@ def serve_plugin_asset(plugin_id: str, filename: str):
                 return FileResponse(path=str(file_path), filename=file_path.name)
         raise HTTPException(status_code=403, detail='Forbidden')
     raise HTTPException(status_code=404, detail='Not Found')
+
+
+@router.get('/{plugin_id}/static/{filename:path}')
+def serve_plugin_static_asset(plugin_id: str, filename: str):
+    """Alias for serving assets from the static/ directory."""
+    # The underlying safe_join will resolve install_path + 'static/filename'
+    return serve_plugin_asset(plugin_id, f"static/{filename}")
