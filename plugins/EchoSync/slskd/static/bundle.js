@@ -2139,7 +2139,7 @@ function ri(e, t) {
 	});
 	async function h() {
 		try {
-			let e = await (await fetch(`${n()}/providers/download-clients/active`)).json();
+			let e = await (await fetch(`${n()}/download-clients/active`)).json();
 			P(m, e.active_client === "slskd");
 		} catch (e) {
 			console.error("Failed to check active status:", e);
@@ -2147,7 +2147,7 @@ function ri(e, t) {
 	}
 	async function g() {
 		try {
-			await fetch(`${n()}/providers/download-clients/activate`, {
+			await fetch(`${n()}/download-clients/activate`, {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({ client: "slskd" })
