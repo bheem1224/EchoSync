@@ -1049,23 +1049,41 @@ class PluginLoader:
                     logger.warning("Failed to tear down existing routes for this plugin.")
                     logger.debug(f"Raw exception data: {e}", exc_info=True)
 
-                # Collect FastAPI Routers
+                # Collect FastAPI Routers and legacy Flask Blueprints
                 plugin_routers = []
-                for router_attr in ('RouteBlueprint', 'api_router', 'router'):
-                    api_router = getattr(module, router_attr, None)
-                    if isinstance(api_router, APIRouter):
-                        plugin_routers.append(api_router)
+                flask_blueprints = []
+                for attr_name in dir(module):
+                    attr_val = getattr(module, attr_name)
+                    if isinstance(attr_val, APIRouter):
+                        plugin_routers.append(attr_val)
+                    elif type(attr_val).__name__ == 'Blueprint':
+                        flask_blueprints.append(attr_val)
                 
-                if plugin_routers and hasattr(self, 'main_app') and self.main_app:
-                    plugin_app = FastAPI(
-                        title=f"Plugin: {provider_id}",
-                        dependencies=[Depends(enforce_plugin_passport)]
-                    )
-                    for router in plugin_routers:
-                        plugin_app.include_router(router)
+                if hasattr(self, 'main_app') and self.main_app:
+                    if plugin_routers:
+                        plugin_app = FastAPI(
+                            title=f"Plugin: {provider_id}",
+                            dependencies=[Depends(enforce_plugin_passport)]
+                        )
+                        for router in plugin_routers:
+                            plugin_app.include_router(router)
+                        
+                        self.main_app.mount(f"/api/v1/plugins/{plugin_id}", plugin_app)
+                        logger.info(f"Mounted FastAPI sub-application for {plugin_id} at /api/v1/plugins/{plugin_id}")
                     
-                    self.main_app.mount(f"/api/v1/plugins/{plugin_id}", plugin_app)
-                    logger.info(f"Mounted sub-application for {plugin_id} at /api/v1/plugins/{plugin_id}")
+                    elif flask_blueprints:
+                        try:
+                            from flask import Flask
+                            from fastapi.middleware.wsgi import WSGIMiddleware
+                            flask_app = Flask(f"plugin_{plugin_id}")
+                            for bp in flask_blueprints:
+                                bp.url_prefix = ""
+                                flask_app.register_blueprint(bp)
+                            
+                            self.main_app.mount(f"/api/v1/plugins/{plugin_id}", WSGIMiddleware(flask_app))
+                            logger.info(f"Mounted legacy Flask WSGI sub-application for {plugin_id} at /api/v1/plugins/{plugin_id}")
+                        except Exception as bp_err:
+                            logger.error(f"Failed to mount legacy Flask Blueprint for {plugin_id}: {bp_err}", exc_info=True)
 
 
                 # Persist combined loaded_modules to DB (Single-Shot Write)

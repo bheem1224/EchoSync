@@ -4,23 +4,24 @@ from core.nexus_framework.plugin_SDK import sdk
 import threading
 import uuid
 import logging
-from flask import Blueprint, request, jsonify
+from fastapi import APIRouter, Request, HTTPException
+from fastapi.responses import JSONResponse
 from core.tiered_logger import get_logger
 
 
 logger = get_logger("plex_routes")
 
 # Create a single blueprint for all Plex routes
-bp = Blueprint('plex_routes', __name__, url_prefix='/api/plex')
+router = APIRouter()
 
 # --- Settings Logic (from web/routes/plex_settings.py) ---
 
-@bp.get('/settings')
+@router.get('/settings')
 def get_settings():
     """Get Plex server settings (base_url, token status)."""
     from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
     if PluginRegistry.is_plugin_disabled('plex'):
-        return jsonify({'settings': {}}), 200
+        return JSONResponse(content={'settings': {}}, status_code=200)
     try:
         base_url = sdk.config.get('plex.base_url', '')
         server_name = sdk.config.get('plex.server_name', '')
@@ -54,7 +55,7 @@ def get_settings():
             except Exception as e:
                 logger.debug(f"Plex connection check failed: {e}")
         
-        return jsonify({
+        return JSONResponse(content={
             'settings': {
                 'base_url': base_url,
                 'server_name': server_name,
@@ -65,15 +66,15 @@ def get_settings():
         })
     except Exception as e:
         logger.error(f"Error getting Plex settings: {e}", exc_info=True)
-        return jsonify({"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}), 500
+        return JSONResponse(content={"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}, status_code=500)
 
 
-@bp.post('/settings')
-def save_settings():
+@router.post('/settings')
+async def save_settings(request: Request):
     """Save Plex server settings."""
     try:
         from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
-        data = request.get_json(force=True) or {}
+        data = await request.json() or {}
         
         if 'base_url' in data:
             base_url = data['base_url'].strip()
@@ -109,32 +110,32 @@ def save_settings():
             except Exception as e:
                 logger.warning(f"Failed to import Plex managed users after saving settings: {e}")
         
-        return jsonify({'success': True})
+        return {'success': True}
     except Exception as e:
         logger.error(f"Error saving Plex settings: {e}", exc_info=True)
-        return jsonify({"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}), 500
+        return JSONResponse(content={"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}, status_code=500)
 
 
-@bp.post('/activate')
+@router.post('/activate')
 def activate_server():
     """Set Plex as the active media server."""
     try:
         sdk.config.set('active_media_server', 'plex')
         logger.info("Plex set as active media server")
-        return jsonify({
+        return JSONResponse(content={
             'success': True,
             'message': 'Plex is now the active media server'
         })
     except Exception as e:
         logger.error(f"Error activating Plex: {e}", exc_info=True)
-        return jsonify({"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}), 500
+        return JSONResponse(content={"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}, status_code=500)
 
 
-@bp.post('/test-connection')
-def test_connection():
+@router.post('/test-connection')
+async def test_connection(request: Request):
     """Test connection to Plex server."""
     try:
-        payload = request.get_json(silent=True) or {}
+        payload = await request.json() or {}
 
         base_url = str(
             payload.get('base_url')
@@ -155,9 +156,9 @@ def test_connection():
                 token = decrypt_string(token_data.get('access_token'))
         
         if not base_url:
-            return jsonify({'error': 'Server URL is required'}), 400
+            return JSONResponse(content={'error': 'Server URL is required'}, status_code=400)
         if not token:
-            return jsonify({'error': 'Authentication token is required. Please log in first.'}), 400
+            return JSONResponse(content={'error': 'Authentication token is required. Please log in first.'}, status_code=400)
         
         from plexapi.server import PlexServer
         server = PlexServer(base_url, token, timeout=10)
@@ -169,17 +170,17 @@ def test_connection():
         
         logger.info(f"Plex connection successful: {friendly_name} ({version})")
         
-        return jsonify({
+        return JSONResponse(content={
             'connected': True,
             'server_name': friendly_name,
             'version': version,
             'machine_id': machine_id
         })
     except ImportError:
-        return jsonify({'error': 'Plex library not available'}), 500
+        return JSONResponse(content={'error': 'Plex library not available'}, status_code=500)
     except Exception as e:
         logger.error(f"Plex connection test failed: {e}", exc_info=True)
-        return jsonify({"connected": False, "error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Connection test failed"}), 400
+        return JSONResponse(content={"connected": False, "error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Connection test failed"}, status_code=400)
 
 
 # --- OAuth Logic (from providers/plex/oauth_routes.py) ---
@@ -187,8 +188,8 @@ def test_connection():
 plex_oauth_sessions = {}
 plex_oauth_lock = threading.Lock()
 
-@bp.post('/auth/start')
-def start_oauth():
+@router.post('/auth/start')
+async def start_oauth(request: Request):
     """
     Start Plex OAuth flow using PIN-based authentication.
     Returns: {session_id, oauth_url, poll_url}
@@ -233,20 +234,20 @@ def start_oauth():
             tags=["plex", "oauth", "cleanup"],
         )
 
-        return jsonify({
+        return JSONResponse(content={
             'session_id': session_id,
             'oauth_url': oauth_url,
             'poll_url': f'/api/plex/auth/poll/{session_id}'
         })
     except ImportError:
         logger.error("plexapi library not installed")
-        return jsonify({'error': 'Plex library not available'}), 500
+        return JSONResponse(content={'error': 'Plex library not available'}, status_code=500)
     except Exception as e:
         logger.error(f"Error starting Plex OAuth: {e}", exc_info=True)
-        return jsonify({"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}), 500
+        return JSONResponse(content={"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}, status_code=500)
 
 
-@bp.get('/auth/poll/<session_id>')
+@router.get('/auth/poll/<session_id>')
 def poll_oauth(session_id: str):
     """
     Poll for Plex OAuth authorization completion.
@@ -257,7 +258,7 @@ def poll_oauth(session_id: str):
             pin_login = plex_oauth_sessions.get(session_id)
 
         if not pin_login:
-            return jsonify({'error': 'Session not found or expired'}), 404
+            return JSONResponse(content={'error': 'Session not found or expired'}, status_code=404)
 
         # We manually query the Plex PIN API to check if the user authorized it.
         # `pin_login._checkLogin()` handles this cleanly without starting a background thread.
@@ -282,7 +283,7 @@ def poll_oauth(session_id: str):
             # Network-level failure (DNS, timeout, connection refused). Return 503 so the
             # frontend applies backoff rather than hammering a potentially unreachable endpoint.
             logger.warning(f"Plex PIN API unreachable: {e}")
-            return jsonify({'completed': False, 'error': 'Plex authorization service temporarily unavailable'}), 503
+            return JSONResponse(content={'completed': False, 'error': 'Plex authorization service temporarily unavailable'}, status_code=503)
         except Exception as e:
             logger.debug(f"Plex poll API check failed: {e}")
 
@@ -327,26 +328,26 @@ def poll_oauth(session_id: str):
                     logger.warning(f"Failed to import Plex managed users after OAuth: {import_err}")
             except Exception as e:
                 logger.error(f"Failed to securely save Plex token: {e}")
-                return jsonify({'error': 'Failed to securely save token'}), 500
+                return JSONResponse(content={'error': 'Failed to securely save token'}, status_code=500)
 
             with plex_oauth_lock:
                 plex_oauth_sessions.pop(session_id, None)
 
-            return jsonify({
+            return JSONResponse(content={
                 'completed': True,
                 'token': auth_token  # For backwards compatibility in UI until UI is updated
             })
         else:
-            return jsonify({
+            return JSONResponse(content={
                 'completed': False
             })
 
     except Exception as e:
         logger.error(f"Error polling Plex OAuth: {e}", exc_info=True)
-        return jsonify({"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}), 500
+        return JSONResponse(content={"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}, status_code=500)
 
 
-@bp.delete('/auth/cancel/<session_id>')
+@router.delete('/auth/cancel/<session_id>')
 def cancel_oauth(session_id: str):
     """Cancel an ongoing OAuth session."""
     try:
@@ -355,14 +356,14 @@ def cancel_oauth(session_id: str):
             if pin_login:
                 logger.info(f"Plex OAuth session cancelled: {session_id}")
 
-        return jsonify({'success': True})
+        return {'success': True}
     except Exception as e:
         logger.error(f"Error cancelling Plex OAuth: {e}", exc_info=True)
-        return jsonify({"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}), 500
+        return JSONResponse(content={"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}, status_code=500)
 
 from web.auth import require_auth
 
-@bp.post("/sync_users")
+@router.post("/sync_users")
 @require_auth
 def sync_plex_users():
     """Sync Plex admin and managed users into settings database and return the updated list."""
@@ -375,7 +376,7 @@ def sync_plex_users():
 
         
         accounts = sdk.accounts.get_all()
-        return jsonify({
+        return JSONResponse(content={
             'service': 'plex',
             'accounts': accounts,
             'total': len(accounts),
@@ -383,4 +384,4 @@ def sync_plex_users():
         }), 200
     except Exception as e:
         logger.error(f"Error syncing Plex users: {e}", exc_info=True)
-        return jsonify({"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}), 500
+        return JSONResponse(content={"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}, status_code=500)

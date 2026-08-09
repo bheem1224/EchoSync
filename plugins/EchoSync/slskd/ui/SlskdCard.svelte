@@ -24,7 +24,7 @@
 
   async function checkActiveStatus() {
     try {
-      const response = await fetch(`${apiBase}/providers/download-clients/active`);
+      const response = await fetch(`${apiBase}/download-clients/active`);
       const data = await response.json();
       isActive = data.active_client === 'slskd';
     } catch (error) {
@@ -34,7 +34,7 @@
 
   async function activateClient() {
     try {
-      await fetch(`${apiBase}/providers/download-clients/activate`, { 
+      await fetch(`${apiBase}/download-clients/activate`, { 
         method: 'POST', 
         headers: { 'Content-Type': 'application/json' }, 
         body: JSON.stringify({ client: 'slskd' }) 

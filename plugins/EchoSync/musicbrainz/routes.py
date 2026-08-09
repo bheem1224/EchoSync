@@ -18,7 +18,8 @@ import urllib.parse
 import uuid
 
 import logging
-from flask import Blueprint, jsonify, request
+from fastapi import APIRouter, Request, HTTPException
+from fastapi.responses import JSONResponse
 
 from core.nexus_framework.plugin_SDK import sdk
 from core.tiered_logger import get_logger
@@ -27,33 +28,33 @@ from services.storage_service import get_storage_service
 logger = get_logger("musicbrainz_routes")
 storage = get_storage_service()
 
-bp = Blueprint("musicbrainz_routes", __name__, url_prefix="/api/musicbrainz")
+router = APIRouter()
 
 # Second blueprint for the settings-card config API
-config_bp = Blueprint("musicbrainz_config", __name__, url_prefix="/api/plugins/musicbrainz")
+config_router = APIRouter()
 
 
-@config_bp.get("/config")
+@config_router.get("/config")
 def get_config():
     """Return the current MusicBrainz settings-card configuration."""
     try:
         
         token = sdk.config.get('user_token')
         auto_contribute = sdk.config.get('auto_contribute')
-        return jsonify({
+        return JSONResponse(content={
             "token_configured": bool(token),
             "auto_contribute": auto_contribute == "true" if isinstance(auto_contribute, str) else bool(auto_contribute),
         }), 200
     except Exception as e:
         logger.error(f"Error reading MusicBrainz config: {e}", exc_info=True)
-        return jsonify({"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}), 500
+        return JSONResponse(content={"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}, status_code=500)
 
 
-@config_bp.post("/config")
-def save_config():
+@config_router.post("/config")
+async def save_config(request: Request):
     """Persist MusicBrainz settings-card values (user token + auto-contribute flag)."""
     try:
-        payload = request.get_json(force=True) or {}
+        payload = await request.json() or {}
 
         if "user_token" in payload and payload["user_token"].strip():
             from core.security import encrypt_string
@@ -64,14 +65,14 @@ def save_config():
 
         token = sdk.config.get('user_token')
         auto_contribute = sdk.config.get('auto_contribute')
-        return jsonify({
+        return JSONResponse(content={
             "success": True,
             "token_configured": bool(token),
             "auto_contribute": auto_contribute == "true" if isinstance(auto_contribute, str) else bool(auto_contribute)
         }), 200
     except Exception as e:
         logger.error(f"Error saving MusicBrainz config: {e}", exc_info=True)
-        return jsonify({"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}), 500
+        return JSONResponse(content={"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}, status_code=500)
 
 _AUTH_URL = "https://musicbrainz.org/oauth2/authorize"
 _TOKEN_URL = "https://musicbrainz.org/oauth2/token"
@@ -83,13 +84,13 @@ _SCOPES = "profile email submit_isrc tag rating collection"
 
 # ── Account Management ────────────────────────────────────────────────────────
 
-@bp.get("/accounts")
+@router.get("/accounts")
 def list_accounts():
     """List all MusicBrainz accounts with authentication status."""
     try:
         from core.nexus_framework.plugin_loader import PluginRegistry
         if PluginRegistry.is_plugin_disabled("musicbrainz"):
-            return jsonify({"accounts": [], "redirect_uri": ""}), 200
+            return JSONResponse(content={"accounts": [], "redirect_uri": ""}, status_code=200)
 
         db_accounts = sdk.accounts.get_all()
         accounts = [
@@ -111,7 +112,7 @@ def list_accounts():
         client_id = sdk.config.get('client_id')
         client_secret_configured = bool(sdk.config.get('client_secret'))
 
-        return jsonify({
+        return JSONResponse(content={
             "accounts": accounts,
             "redirect_uri": redirect_uri,
             "client_id_configured": bool(client_id),
@@ -119,30 +120,30 @@ def list_accounts():
         }), 200
     except Exception as e:
         logger.error(f"Error listing MusicBrainz accounts: {e}", exc_info=True)
-        return jsonify({"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}), 500
+        return JSONResponse(content={"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}, status_code=500)
 
 
-@bp.post("/accounts")
-def create_account():
+@router.post("/accounts")
+async def create_account(request: Request):
     """Create a new named MusicBrainz account slot.
 
     The account holds the OAuth tokens obtained via the auth flow.
     Body: { account_name (str) }
     """
     try:
-        payload = request.get_json(force=True) or {}
+        payload = await request.json() or {}
         account_name = (payload.get("account_name") or "").strip()
         if not account_name:
-            return jsonify({"error": "account_name is required"}), 400
+            return JSONResponse(content={"error": "account_name is required"}, status_code=400)
 
         account_id = sdk.accounts.ensure_account(
             account_name=account_name,
             display_name=account_name,
         )
         if not account_id:
-            return jsonify({"error": "Failed to create account"}), 500
+            return JSONResponse(content={"error": "Failed to create account"}, status_code=500)
 
-        return jsonify({
+        return JSONResponse(content={
             "account": {
                 "id": account_id,
                 "account_name": account_name,
@@ -153,43 +154,43 @@ def create_account():
         }), 201
     except Exception as e:
         logger.error(f"Error creating MusicBrainz account: {e}", exc_info=True)
-        return jsonify({"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}), 500
+        return JSONResponse(content={"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}, status_code=500)
 
 
-@bp.delete("/accounts/<int:account_id>")
+@router.delete("/accounts/<int:account_id>")
 def delete_account(account_id: int):
     """Delete a MusicBrainz account and its stored tokens."""
     try:
         
         ok = sdk.accounts.delete_account(account_id)
         if ok:
-            return jsonify({"success": True}), 200
-        return jsonify({"error": "Account not found or deletion failed"}), 404
+            return JSONResponse(content={"success": True}, status_code=200)
+        return JSONResponse(content={"error": "Account not found or deletion failed"}, status_code=404)
     except Exception as e:
         logger.error(f"Error deleting MusicBrainz account {account_id}: {e}", exc_info=True)
-        return jsonify({"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}), 500
+        return JSONResponse(content={"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}, status_code=500)
 
 
-@bp.put("/accounts/<int:account_id>/activate")
-def activate_account(account_id: int):
+@router.put("/accounts/<int:account_id>/activate")
+async def activate_account(account_id: int, request: Request):
     """Toggle the active flag on a MusicBrainz account."""
     try:
-        payload = request.get_json(force=True) or {}
+        payload = await request.json() or {}
         is_active = bool(payload.get("is_active", True))
         
         ok = sdk.accounts.toggle_account_active(account_id, is_active)
         if ok:
-            return jsonify({"success": True, "is_active": is_active}), 200
-        return jsonify({"error": "Failed to update account status"}), 500
+            return JSONResponse(content={"success": True, "is_active": is_active}, status_code=200)
+        return JSONResponse(content={"error": "Failed to update account status"}, status_code=500)
     except Exception as e:
         logger.error(f"Error toggling MusicBrainz account {account_id}: {e}", exc_info=True)
-        return jsonify({"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}), 500
+        return JSONResponse(content={"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}, status_code=500)
 
 
 # ── OAuth2 PKCE Flow ──────────────────────────────────────────────────────────
 
-@bp.get("/auth")
-def begin_auth():
+@router.get("/auth")
+async def begin_auth(request: Request):
     """Start an OAuth2 PKCE authorization code flow for a MusicBrainz account.
 
     Query params:
@@ -199,9 +200,9 @@ def begin_auth():
         { auth_url: str } — redirect the browser here to proceed with MusicBrainz login.
     """
     try:
-        raw_id = request.args.get("account_id")
+        raw_id = request.query_params.get("account_id")
         if not raw_id:
-            return jsonify({"error": "account_id is required"}), 400
+            return JSONResponse(content={"error": "account_id is required"}, status_code=400)
         account_id = int(raw_id)
 
         
@@ -209,12 +210,12 @@ def begin_auth():
         # Verify the account exists
         accounts = sdk.accounts.get_all()
         if not any(a.get("id") == account_id for a in accounts):
-            return jsonify({"error": "Account not found"}), 404
+            return JSONResponse(content={"error": "Account not found"}, status_code=404)
 
         # Application credentials must be configured before an auth flow can start
         client_id = sdk.config.get('client_id')
         if not client_id:
-            return jsonify({
+            return JSONResponse(content={
                 "error": (
                     "MusicBrainz client_id is not configured. "
                     "Register your application at https://musicbrainz.org/account/applications "
@@ -223,7 +224,7 @@ def begin_auth():
             }), 400
 
         if not sdk.config.get('client_secret'):
-            return jsonify({"error": "MusicBrainz client_secret is not configured."}), 400
+            return JSONResponse(content={"error": "MusicBrainz client_secret is not configured."}, status_code=400)
 
         # Derive redirect URI from centralized PluginBase helper (OAuth sidecar)
         from .client import MusicBrainzClient
@@ -248,7 +249,7 @@ def begin_auth():
             ttl_seconds=600,
         )
         if not ok:
-            return jsonify({"error": "Failed to store OAuth session"}), 500
+            return JSONResponse(content={"error": "Failed to store OAuth session"}, status_code=500)
 
         storage.cleanup_expired_pkce_sessions()
 
@@ -267,24 +268,24 @@ def begin_auth():
         }
         auth_url = f"{_AUTH_URL}?{urllib.parse.urlencode(params)}"
         logger.info(f"Generated MusicBrainz auth URL for account {account_id}")
-        return jsonify({"auth_url": auth_url}), 200
+        return JSONResponse(content={"auth_url": auth_url}, status_code=200)
 
     except ValueError:
-        return jsonify({"error": "Invalid account_id format"}), 400
+        return JSONResponse(content={"error": "Invalid account_id format"}, status_code=400)
     except Exception as e:
         logger.error(f"Error starting MusicBrainz OAuth: {e}", exc_info=True)
-        return jsonify({"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}), 500
+        return JSONResponse(content={"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}, status_code=500)
 
 
-@bp.get("/callback")
-def oauth_callback():
+@router.get("/callback")
+async def oauth_callback(request: Request):
     """Handle the MusicBrainz OAuth2 callback and exchange the code for tokens."""
-    code = request.args.get("code")
-    state = request.args.get("state")
-    error = request.args.get("error")
+    code = request.query_params.get("code")
+    state = request.query_params.get("state")
+    error = request.query_params.get("error")
 
     if error:
-        desc = request.args.get("error_description", error)
+        desc = request.query_params.get("error_description", error)
         logger.error(f"MusicBrainz OAuth error from provider: {desc}")
         return (
             f"""<html><body style='font-family:sans-serif;padding:24px;'>
@@ -298,7 +299,7 @@ def oauth_callback():
 
     if not code or not state:
         logger.error("MusicBrainz callback missing code or state parameter")
-        return jsonify({"error": "Missing authorization code or state"}), 400
+        return JSONResponse(content={"error": "Missing authorization code or state"}, status_code=400)
 
     # Decode PKCE session ID from state
     try:
@@ -309,12 +310,12 @@ def oauth_callback():
             raise ValueError("No pkce_id in state payload")
     except Exception as e:
         logger.error(f"Failed to decode OAuth state: {e}")
-        return jsonify({"error": f"Invalid state parameter: {e}"}), 400
+        return JSONResponse(content={"error": f"Invalid state parameter: {e}"}, status_code=400)
 
     
     pkce = storage.get_pkce_session(pkce_id)
     if not pkce:
-        return jsonify({"error": "OAuth session not found or expired. Please start the flow again."}), 400
+        return JSONResponse(content={"error": "OAuth session not found or expired. Please start the flow again."}, status_code=400)
 
     account_id = pkce.get("account_id")
     verifier = pkce.get("code_verifier")
@@ -322,14 +323,14 @@ def oauth_callback():
     client_id = pkce.get("client_id")
 
     if not all([account_id, verifier, redirect_uri, client_id]):
-        return jsonify({"error": "Incomplete OAuth session data"}), 400
+        return JSONResponse(content={"error": "Incomplete OAuth session data"}, status_code=400)
 
     account_id = int(account_id)  # narrow type: None already excluded by all() guard above
 
     from core.security import decrypt_string
     raw_secret = sdk.config.get('client_secret')
     if not raw_secret:
-        return jsonify({"error": "client_secret not configured"}), 400
+        return JSONResponse(content={"error": "client_secret not configured"}, status_code=400)
     client_secret = decrypt_string(raw_secret)
 
     # Exchange code for tokens using HTTP Basic auth (client_id:client_secret)
@@ -350,7 +351,7 @@ def oauth_callback():
 
     if resp.status_code != 200:
         logger.error(f"MusicBrainz token exchange failed: {resp.status_code} — {resp.text}")
-        return jsonify({"error": f"Token exchange failed (HTTP {resp.status_code})"}), 400
+        return JSONResponse(content={"error": f"Token exchange failed (HTTP {resp.status_code})"}, status_code=400)
 
     token = resp.json()
     access_token = token.get("access_token")
@@ -360,7 +361,7 @@ def oauth_callback():
     expires_at = int(time.time() + expires_in - 60)
 
     if not access_token:
-        return jsonify({"error": "No access_token in token response"}), 400
+        return JSONResponse(content={"error": "No access_token in token response"}, status_code=400)
 
     from core.security import encrypt_string
     sdk.accounts.save_token(
@@ -394,56 +395,56 @@ def oauth_callback():
         {"Content-Type": "text/html"},
     )
 
-@bp.get("/settings")
+@router.get("/settings")
 def get_settings():
     """Get MusicBrainz server settings (e.g. api_base_url)."""
     try:
         from core.nexus_framework.plugin_SDK import sdk
         api_base_url = sdk.config.get('api_base_url', 'https://musicbrainz.org/ws/2')
-        return jsonify({"settings": {"api_base_url": api_base_url}}), 200
+        return JSONResponse(content={"settings": {"api_base_url": api_base_url}}, status_code=200)
     except Exception as e:
         logger.error(f"Error reading MusicBrainz settings: {e}", exc_info=True)
-        return jsonify({"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}), 500
+        return JSONResponse(content={"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}, status_code=500)
 
-@bp.post("/settings")
-def save_settings():
+@router.post("/settings")
+async def save_settings(request: Request):
     """Save MusicBrainz server settings."""
     try:
         from core.nexus_framework.plugin_SDK import sdk
-        payload = request.get_json(force=True) or {}
+        payload = await request.json() or {}
         settings = payload.get("settings", {})
         if "api_base_url" in settings:
             sdk.config.set('api_base_url', settings["api_base_url"].strip())
-        return jsonify({"success": True}), 200
+        return JSONResponse(content={"success": True}, status_code=200)
     except Exception as e:
         logger.error(f"Error saving MusicBrainz settings: {e}", exc_info=True)
-        return jsonify({"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}), 500
+        return JSONResponse(content={"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}, status_code=500)
 
-@bp.get("/credentials")
+@router.get("/credentials")
 def get_credentials():
     """Get MusicBrainz OAuth credentials status."""
     try:
         from core.nexus_framework.plugin_SDK import sdk
         client_id = sdk.config.get('client_id', '')
         client_secret = sdk.config.get('client_secret', '')
-        return jsonify({"credentials": {"client_id": client_id, "has_secret": bool(client_secret)}}), 200
+        return JSONResponse(content={"credentials": {"client_id": client_id, "has_secret": bool(client_secret)}}, status_code=200)
     except Exception as e:
         logger.error(f"Error reading MusicBrainz credentials: {e}", exc_info=True)
-        return jsonify({"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}), 500
+        return JSONResponse(content={"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}, status_code=500)
 
-@bp.post("/credentials")
-def save_credentials():
+@router.post("/credentials")
+async def save_credentials(request: Request):
     """Save MusicBrainz OAuth credentials."""
     try:
         from core.nexus_framework.plugin_SDK import sdk
         from core.security import encrypt_string
-        payload = request.get_json(force=True) or {}
+        payload = await request.json() or {}
         creds = payload.get("credentials", {})
         if "client_id" in creds:
             sdk.config.set('client_id', creds["client_id"].strip())
         if "client_secret" in creds and creds["client_secret"].strip():
             sdk.config.set('client_secret', encrypt_string(creds["client_secret"].strip()))
-        return jsonify({"success": True}), 200
+        return JSONResponse(content={"success": True}, status_code=200)
     except Exception as e:
         logger.error(f"Error saving MusicBrainz credentials: {e}", exc_info=True)
-        return jsonify({"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}), 500
+        return JSONResponse(content={"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}, status_code=500)

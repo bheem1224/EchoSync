@@ -1,14 +1,15 @@
 """Tidal provider routes."""
 import logging
-from flask import Blueprint, request, jsonify
+from fastapi import APIRouter, Request, HTTPException
+from fastapi.responses import JSONResponse
 from core.tiered_logger import get_logger
 from core.nexus_framework.plugin_SDK import sdk
 
 logger = get_logger("tidal_routes")
-bp = Blueprint("tidal_routes", __name__, url_prefix="/api/plugins/tidal")
+router = APIRouter()
 
 
-@bp.get('')
+@router.get('')
 def list_accounts():
     """List all Tidal accounts."""
     from core.nexus_framework.plugin_loader import PluginRegistry
@@ -16,13 +17,13 @@ def list_accounts():
     plugin_id = 'EchoSync/tidal'
     
     if PluginRegistry.is_plugin_disabled(plugin_id) or PluginRegistry.is_plugin_disabled('tidal'):
-        return jsonify({'accounts': [], 'redirect_uri': ''}), 200
+        return JSONResponse(content={'accounts': [], 'redirect_uri': ''}, status_code=200)
 
     try:
         from core.nexus_framework.plugin_loader import get_plugin
         plugin = get_plugin(plugin_id)
         if not plugin:
-            return jsonify({'error': f'Plugin {plugin_id} not found'}), 404
+            return JSONResponse(content={'error': f'Plugin {plugin_id} not found'}, status_code=404)
             
         # Use the plugin's accounts SDK facade
         db_accounts = plugin.accounts.get_all()
@@ -50,17 +51,17 @@ def list_accounts():
         from core.network_utils import get_lan_ip
         redirect_uri = f"https://{get_lan_ip()}:5001/api/oauth/callback/plugins/tidal"
         
-        return jsonify({
+        return JSONResponse(content={
             'accounts': accounts,
             'redirect_uri': redirect_uri
         })
     except Exception as e:
         logger.error(f"Error getting Tidal accounts: {e}", exc_info=True)
-        return jsonify({"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}), 500
+        return JSONResponse(content={"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}, status_code=500)
 
 
-@bp.post('')
-def create_account():
+@router.post('')
+async def create_account(request: Request):
     """
     Create a new Tidal account with per-account credentials.
     Body: { account_name, client_id, client_secret }
@@ -68,27 +69,27 @@ def create_account():
     from core.nexus_framework.plugin_loader import PluginRegistry
     plugin_id = 'EchoSync/tidal'
     if PluginRegistry.is_plugin_disabled(plugin_id) or PluginRegistry.is_plugin_disabled('tidal'):
-        return jsonify({'error': 'Tidal provider is disabled'}), 403
+        return JSONResponse(content={'error': 'Tidal provider is disabled'}, status_code=403)
     try:
-        payload = request.get_json(force=True) or {}
+        payload = await request.json() or {}
         account_name = (payload.get('account_name') or '').strip()
         client_id = (payload.get('client_id') or '').strip()
         client_secret = (payload.get('client_secret') or '').strip()
         
         if not account_name:
-            return jsonify({'error': 'account_name is required'}), 400
+            return JSONResponse(content={'error': 'account_name is required'}, status_code=400)
         if not client_id or not client_secret:
-            return jsonify({'error': 'client_id and client_secret are required'}), 400
+            return JSONResponse(content={'error': 'client_id and client_secret are required'}, status_code=400)
         
         from core.nexus_framework.plugin_loader import get_plugin
         plugin = get_plugin(plugin_id)
         if not plugin:
-            return jsonify({'error': 'Plugin instance not found'}), 500
+            return JSONResponse(content={'error': 'Plugin instance not found'}, status_code=500)
         
         # Create account in encrypted config.db via SDK
         account_id = plugin.accounts.ensure_account(account_name=account_name, display_name=account_name)
         if not account_id:
-            return jsonify({'error': 'Failed to create account'}), 500
+            return JSONResponse(content={'error': 'Failed to create account'}, status_code=500)
         
         # Global credentials instead of per-account metadata
         
@@ -98,7 +99,7 @@ def create_account():
         
         logger.info(f"Created Tidal account {account_id} with credentials")
         
-        return jsonify({
+        return JSONResponse(content={
             'account': {
                 'id': account_id,
                 'account_name': account_name,
@@ -111,33 +112,33 @@ def create_account():
         }), 201
     except Exception as e:
         logger.error(f"Error creating Tidal account: {e}", exc_info=True)
-        return jsonify({"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}), 500
+        return JSONResponse(content={"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}, status_code=500)
 
 
-@bp.get('/<int:account_id>')
+@router.get('/<int:account_id>')
 def get_account(account_id):
     """Get a specific Tidal account with credentials."""
     from core.nexus_framework.plugin_loader import PluginRegistry
     plugin_id = 'EchoSync/tidal'
     if PluginRegistry.is_plugin_disabled(plugin_id) or PluginRegistry.is_plugin_disabled('tidal'):
-        return jsonify({'error': 'Tidal provider is disabled'}), 403
+        return JSONResponse(content={'error': 'Tidal provider is disabled'}, status_code=403)
     try:
         from core.nexus_framework.plugin_loader import get_plugin
         plugin = get_plugin(plugin_id)
         if not plugin:
-            return jsonify({'error': 'Plugin not found'}), 404
+            return JSONResponse(content={'error': 'Plugin not found'}, status_code=404)
             
         accounts = plugin.accounts.get_all()
         account = next((a for a in accounts if a.get('id') == account_id), None)
         
         if not account:
-            return jsonify({'error': 'Account not found'}), 404
+            return JSONResponse(content={'error': 'Account not found'}, status_code=404)
         
         # Load global credentials via SDK since account_metadata is removed
         client_id = plugin.config.get('client_id')
         client_secret = plugin.secrets.get('client_secret')
         
-        return jsonify({
+        return JSONResponse(content={
             'account': {
                 'id': account.get('id'),
                 'account_name': account.get('account_name') or account.get('display_name') or 'Unnamed',
@@ -151,18 +152,18 @@ def get_account(account_id):
         })
     except Exception as e:
         logger.error(f"Error getting Tidal account: {e}", exc_info=True)
-        return jsonify({"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}), 500
+        return JSONResponse(content={"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}, status_code=500)
 
 
-@bp.put('/<int:account_id>')
-def update_account(account_id):
+@router.put('/<int:account_id>')
+async def update_account(account_id, request: Request):
     """
     Update Tidal account name and/or credentials.
     Body: { account_name?, client_id?, client_secret? }
     """
     from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
     if PluginRegistry.is_plugin_disabled('tidal'):
-        return jsonify({'error': 'Tidal provider is disabled'}), 403
+        return JSONResponse(content={'error': 'Tidal provider is disabled'}, status_code=403)
     try:
         
         # Using global SDK singleton
@@ -170,9 +171,9 @@ def update_account(account_id):
         account = next((a for a in accounts if a.get('id') == account_id), None)
         
         if not account:
-            return jsonify({'error': 'Account not found'}), 404
+            return JSONResponse(content={'error': 'Account not found'}, status_code=404)
         
-        payload = request.get_json(force=True) or {}
+        payload = await request.json() or {}
         
         # Update account name if provided
         if payload.get('account_name'):
@@ -201,7 +202,7 @@ def update_account(account_id):
         accounts = sdk.accounts.get_all()
         account = next((a for a in accounts if a.get('id') == account_id), None)
         
-        return jsonify({
+        return JSONResponse(content={
             'account': {
                 'id': account.get('id'),
                 'account_name': account.get('account_name') or account.get('display_name') or 'Unnamed',
@@ -215,15 +216,15 @@ def update_account(account_id):
         })
     except Exception as e:
         logger.error(f"Error updating Tidal account: {e}", exc_info=True)
-        return jsonify({"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}), 500
+        return JSONResponse(content={"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}, status_code=500)
 
 
-@bp.put('/<int:account_id>/activate')
-def activate_account(account_id):
+@router.put('/<int:account_id>/activate')
+async def activate_account(account_id, request: Request):
     """Activate a Tidal account."""
     from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
     if PluginRegistry.is_plugin_disabled('tidal'):
-        return jsonify({'error': 'Tidal provider is disabled'}), 403
+        return JSONResponse(content={'error': 'Tidal provider is disabled'}, status_code=403)
     try:
         
         # Using global SDK singleton
@@ -231,9 +232,9 @@ def activate_account(account_id):
         account = next((a for a in accounts if a.get('id') == account_id), None)
         
         if not account:
-            return jsonify({'error': 'Account not found'}), 404
+            return JSONResponse(content={'error': 'Account not found'}, status_code=404)
         
-        payload = request.get_json(force=True) or {}
+        payload = await request.json() or {}
         is_active = payload.get('is_active', True)
         
         if is_active:
@@ -241,63 +242,63 @@ def activate_account(account_id):
         else:
             sdk.accounts.toggle_account_active(account_id, False)
         
-        return jsonify({'status': 'ok', 'is_active': is_active})
+        return {'status': 'ok', 'is_active': is_active}
     except Exception as e:
         logger.error(f"Error activating Tidal account: {e}", exc_info=True)
-        return jsonify({"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}), 500
+        return JSONResponse(content={"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}, status_code=500)
 
 
-@bp.delete('/<int:account_id>')
+@router.delete('/<int:account_id>')
 def delete_account(account_id):
     """Delete a Tidal account."""
     from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
     if PluginRegistry.is_plugin_disabled('tidal'):
-        return jsonify({'error': 'Tidal provider is disabled'}), 403
+        return JSONResponse(content={'error': 'Tidal provider is disabled'}, status_code=403)
     try:
         
         # Using global SDK singleton
         deleted = sdk.accounts.delete_account(account_id)
         
         if not deleted:
-            return jsonify({'error': 'Account not found'}), 404
+            return JSONResponse(content={'error': 'Account not found'}, status_code=404)
         
         # Clean up per-account credentials (not applicable anymore)
         pass
         
         logger.info(f"Deleted Tidal account {account_id}")
-        return jsonify({'status': 'ok', 'message': 'Account deleted'})
+        return {'status': 'ok', 'message': 'Account deleted'}
     except Exception as e:
         logger.error(f"Error deleting Tidal account: {e}", exc_info=True)
-        return jsonify({"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}), 500
+        return JSONResponse(content={"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}, status_code=500)
 
 
-@bp.post('/redirect-uri')
-def set_redirect_uri():
+@router.post('/redirect-uri')
+async def set_redirect_uri(request: Request):
     """
     Set global redirect URI for all Tidal accounts.
     Body: { redirect_uri }
     """
     try:
-        payload = request.get_json(force=True) or {}
+        payload = await request.json() or {}
         redirect_uri = payload.get('redirect_uri', '').strip()
         
         if not redirect_uri:
-            return jsonify({'error': 'redirect_uri is required'}), 400
+            return JSONResponse(content={'error': 'redirect_uri is required'}, status_code=400)
         
         from core.nexus_framework.plugin_loader import get_plugin
         plugin = get_plugin('EchoSync/tidal')
         if not plugin:
-            return jsonify({'error': 'Plugin not found'}), 404
+            return JSONResponse(content={'error': 'Plugin not found'}, status_code=404)
             
         plugin.config.set('redirect_uri', redirect_uri)
         
-        return jsonify({'status': 'ok', 'redirect_uri': redirect_uri})
+        return {'status': 'ok', 'redirect_uri': redirect_uri}
     except Exception as e:
         logger.error(f"Error setting redirect URI: {e}", exc_info=True)
-        return jsonify({"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}), 500
+        return JSONResponse(content={"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}, status_code=500)
 
 
-@bp.get('/<int:account_id>/debug')
+@router.get('/<int:account_id>/debug')
 def debug_account(account_id):
     """
     Debug endpoint to inspect what's stored for an account.
@@ -311,7 +312,7 @@ def debug_account(account_id):
         account = next((a for a in accounts if a.get('id') == account_id), None)
         
         if not account:
-            return jsonify({'error': 'Account not found'}), 404
+            return JSONResponse(content={'error': 'Account not found'}, status_code=404)
         
         from core.nexus_framework.plugin_loader import get_plugin
         plugin = get_plugin('EchoSync/tidal')
@@ -323,7 +324,7 @@ def debug_account(account_id):
         raw_metadata = []
         # In a real compliant plugin, you'd only use storage methods.
         
-        return jsonify({
+        return JSONResponse(content={
             'account': account,
             'client_id': client_id,
             'client_secret_present': bool(client_secret),
@@ -333,33 +334,33 @@ def debug_account(account_id):
         })
     except Exception as e:
         logger.error(f"Error debugging account: {e}", exc_info=True)
-        return jsonify({"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}), 500
+        return JSONResponse(content={"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}, status_code=500)
 
 
 # ---------------------------------------------------------------------------
 # OAuth / Auth — consumed by TidalCard.svelte authenticate()
 # ---------------------------------------------------------------------------
 
-@bp.get('/auth')
-def begin_auth():
+@router.get('/auth')
+async def begin_auth(request: Request):
     """Initiate Tidal OAuth device-code flow for the given account_id.
     Query params: account_id (required)
     Returns: { auth_url } to open in a new tab, or { device_code_url } for device flow.
     """
     from core.nexus_framework.plugin_loader import PluginRegistry
     try:
-        account_id = request.args.get('account_id')
+        account_id = request.query_params.get('account_id')
         if not account_id:
-            return jsonify({'error': 'account_id parameter is required'}), 400
+            return JSONResponse(content={'error': 'account_id parameter is required'}, status_code=400)
 
         from core.nexus_framework.plugin_loader import get_plugin
         plugin = get_plugin('EchoSync/tidal')
         if not plugin:
-            return jsonify({'error': 'Tidal plugin not loaded'}), 503
+            return JSONResponse(content={'error': 'Tidal plugin not loaded'}, status_code=503)
 
         client_id = plugin.config.get('client_id')
         if not client_id:
-            return jsonify({'error': 'Tidal client_id not configured'}), 400
+            return JSONResponse(content={'error': 'Tidal client_id not configured'}, status_code=400)
 
         # Build the TIDAL device-auth URL — browser opens this for user login
         # The plugin's own callback/polling handles the rest
@@ -377,7 +378,7 @@ def begin_auth():
             pass  # fall back to the URL we built above
 
         logger.info(f"Generated Tidal auth URL for account {account_id}")
-        return jsonify({'auth_url': auth_url}), 200
+        return JSONResponse(content={'auth_url': auth_url}, status_code=200)
     except Exception as e:
         logger.error(f"Error generating Tidal auth URL: {e}", exc_info=True)
-        return jsonify({"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}), 500
+        return JSONResponse(content={"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}, status_code=500)

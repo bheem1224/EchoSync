@@ -1,7 +1,8 @@
 import logging
-from flask import Blueprint, request, abort, Response, current_app
+from fastapi import APIRouter, Request, HTTPException
+from fastapi.responses import JSONResponse
 
-bp = Blueprint('outbound_gateway_routes', __name__)
+router = APIRouter()
 
 class ExternalGatewayRegistry:
     _routes = set()
@@ -36,7 +37,7 @@ def require_api_key():
 def enforce_gateway_auth():
     require_api_key()
 
-@bp.route('/<plugin_id>/<path:subpath>', methods=['GET', 'POST', 'PUT', 'DELETE', 'PATCH'])
+@router.api_route('/<plugin_id>/<path:subpath>', methods=['GET', 'POST', 'PUT', 'DELETE', 'PATCH'])
 def gateway_proxy(plugin_id, subpath):
     """
     Proxy requests to the internal plugin API if registered.

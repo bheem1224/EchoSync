@@ -2,21 +2,22 @@ from core.nexus_framework.plugin_SDK import sdk
 """Jellyfin provider routes."""
 
 import logging
-from flask import Blueprint, request, jsonify
+from fastapi import APIRouter, Request, HTTPException
+from fastapi.responses import JSONResponse
 
 from core.tiered_logger import get_logger
 
 logger = get_logger("jellyfin_routes")
 
-bp = Blueprint('jellyfin_routes', __name__, url_prefix='/api/jellyfin')
+router = APIRouter()
 
 
-@bp.get('/settings')
+@router.get('/settings')
 def get_settings():
     """Get Jellyfin server settings (base_url, username, password status)."""
     from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
     if PluginRegistry.is_plugin_disabled('jellyfin'):
-        return jsonify({'settings': {}}), 200
+        return JSONResponse(content={'settings': {}}, status_code=200)
     try:
         base_url = sdk.config.get('jellyfin.base_url', '')
         username = sdk.config.get('jellyfin.username', '')
@@ -47,7 +48,7 @@ def get_settings():
             except Exception as e:
                 logger.debug(f"Jellyfin connection check failed: {e}")
         
-        return jsonify({
+        return JSONResponse(content={
             'settings': {
                 'base_url': base_url,
                 'username': username,
@@ -58,17 +59,17 @@ def get_settings():
         })
     except Exception as e:
         logger.error(f"Error getting Jellyfin settings: {e}", exc_info=True)
-        return jsonify({"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}), 500
+        return JSONResponse(content={"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}, status_code=500)
 
 
-@bp.post('/settings')
-def save_settings():
+@router.post('/settings')
+async def save_settings(request: Request):
     """Save Jellyfin server settings."""
     from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
     if PluginRegistry.is_plugin_disabled('jellyfin'):
-        return jsonify({'error': 'Jellyfin provider disabled'}), 403
+        return JSONResponse(content={'error': 'Jellyfin provider disabled'}, status_code=403)
     try:
-        data = request.get_json(force=True) or {}
+        data = await request.json() or {}
         
         if 'base_url' in data:
             base_url = data['base_url'].strip()
@@ -85,28 +86,28 @@ def save_settings():
             sdk.config.set('jellyfin.password', password)
             logger.info(f"Jellyfin password saved")
         
-        return jsonify({'success': True})
+        return {'success': True}
     except Exception as e:
         logger.error(f"Error saving Jellyfin settings: {e}", exc_info=True)
-        return jsonify({"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}), 500
+        return JSONResponse(content={"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}, status_code=500)
 
 
-@bp.post('/activate')
+@router.post('/activate')
 def activate_server():
     """Set Jellyfin as the active media server."""
     try:
         sdk.config.set('active_media_server', 'jellyfin')
         logger.info("Jellyfin set as active media server")
-        return jsonify({
+        return JSONResponse(content={
             'success': True,
             'message': 'Jellyfin is now the active media server'
         })
     except Exception as e:
         logger.error(f"Error activating Jellyfin: {e}", exc_info=True)
-        return jsonify({"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}), 500
+        return JSONResponse(content={"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}, status_code=500)
 
 
-@bp.post('/test-connection')
+@router.post('/test-connection')
 def test_connection():
     """Test connection to Jellyfin server."""
     try:
@@ -115,9 +116,9 @@ def test_connection():
         password = sdk.config.get('jellyfin.password', '').strip()
         
         if not base_url:
-            return jsonify({'error': 'Server URL is required'}), 400
+            return JSONResponse(content={'error': 'Server URL is required'}, status_code=400)
         if not username or not password:
-            return jsonify({'error': 'Username and password are required'}), 400
+            return JSONResponse(content={'error': 'Username and password are required'}, status_code=400)
         
         import requests
         
@@ -159,19 +160,19 @@ def test_connection():
             
             logger.info(f"Jellyfin connection successful: {server_name} version {version}")
             
-            return jsonify({
+            return JSONResponse(content={
                 'connected': True,
                 'version': version,
                 'server_name': server_name,
                 'user_id': user_id
             })
         elif response.status_code == 401:
-            return jsonify({'connected': False, 'error': 'Invalid username or password'}), 400
+            return JSONResponse(content={'connected': False, 'error': 'Invalid username or password'}, status_code=400)
         else:
-            return jsonify({'connected': False, 'error': f'HTTP {response.status_code}'}), 400
+            return JSONResponse(content={'connected': False, 'error': f'HTTP {response.status_code}'}, status_code=400)
             
     except ImportError:
-        return jsonify({'error': 'requests library not available'}), 500
+        return JSONResponse(content={'error': 'requests library not available'}, status_code=500)
     except Exception as e:
         logger.error(f"Jellyfin connection test failed: {e}", exc_info=True)
-        return jsonify({"connected": False, "error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Connection test failed"}), 400
+        return JSONResponse(content={"connected": False, "error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Connection test failed"}, status_code=400)

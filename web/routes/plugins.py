@@ -856,7 +856,8 @@ def get_plugin_settings(plugin_id: str):
             service_id = config_db.get_or_create_service_id(normalized_plugin_id)
             if not service_id:
                 raise HTTPException(status_code=404, detail=f"Plugin {plugin_id} not found")
-        except Exception:
+        except Exception as e:
+            logger.error(f"Error in get_or_create_service_id for {plugin_id}: {e}", exc_info=True)
             raise HTTPException(status_code=404, detail=f"Plugin {plugin_id} not found")
 
         keys_of_interest = ['client_id', 'client_secret', 'base_url', 'server_url', 'token', 'api_key', 'username', 'password', 'slskd_url']
