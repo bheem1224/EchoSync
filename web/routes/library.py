@@ -411,7 +411,7 @@ def stream_track(track_id):
         if not file_path:
             raise HTTPException(status_code=404, detail={"error": "Track not found or file missing"})
 
-        return send_file(file_path)
+        return FileResponse(file_path)
     except Exception as e:
         logger.error(f"Error streaming track {track_id}: {e}")
         raise HTTPException(status_code=500, detail={"error": str(e)})

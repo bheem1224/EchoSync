@@ -578,7 +578,7 @@ class PluginStore:
                     new_manifest = json.load(f)
 
                 # Strict Manifest Parsing (Task 2)
-                required_fields = ["author", "name", "description", "version", "type"]
+                required_fields = ["author", "name", "version"]
                 missing = [field for field in required_fields if not new_manifest.get(field)]
                 if missing:
                     logger.error(f"Manifest validation failed: missing required fields {missing}")
@@ -589,9 +589,9 @@ class PluginStore:
                 manifest_name = new_manifest["name"]
                 # DO NOT lowercase here to avoid filesystem mismatch with registry
                 strict_namespace = f"{manifest_author}.{manifest_name}"
-                manifest_desc = new_manifest["description"]
+                manifest_desc = new_manifest.get("description", "")
                 manifest_version = new_manifest["version"]
-                manifest_type = new_manifest["type"]
+                manifest_type = new_manifest.get("type") or new_manifest.get("category", "provider")
                 
                 # Dynamically calculate target directories based on strict_namespace
                 dest_dir = self.plugins_dir / manifest_author / manifest_name

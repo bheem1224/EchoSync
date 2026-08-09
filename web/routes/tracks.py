@@ -33,7 +33,7 @@ class PaginatedResponse(BaseModel, Generic[T]):
     count: Optional[int] = None
 
 @router.get(
-    "/",
+    "",
     response_model=Union[PaginatedResponse[TrackResponseSchema], PaginatedResponse[TrackSummarySchema]],
     response_model_exclude_unset=True
 )
@@ -61,9 +61,11 @@ async def list_canonical_tracks(
             # the models here, because otherwise FastAPI's Union evaluator will just pick the first
             # schema that succeeds (TrackResponseSchema), ignoring the 'detail' flag.
             if detail:
-                return PaginatedResponse[TrackResponseSchema](items=tracks, limit=limit, offset=offset, count=len(tracks))
+                items = [TrackResponseSchema.model_validate(t) for t in tracks]
+                return PaginatedResponse[TrackResponseSchema](items=items, limit=limit, offset=offset, count=len(tracks))
             else:
-                return PaginatedResponse[TrackSummarySchema](items=tracks, limit=limit, offset=offset, count=len(tracks))
+                items = [TrackSummarySchema.model_validate(t) for t in tracks]
+                return PaginatedResponse[TrackSummarySchema](items=items, limit=limit, offset=offset, count=len(tracks))
 
     except Exception as e:
         logger.error(f"Error listing canonical tracks: {e}", exc_info=True)
@@ -88,8 +90,9 @@ async def get_canonical_track(sync_id: str, detail: bool = Query(False)):
             track = TrackRepository.get_track_by_sync_id(session, sync_id)
             if not track:
                 raise HTTPException(status_code=404, detail="Track not found")
-                
-            return track
+            if detail:
+                return TrackResponseSchema.model_validate(track)
+            return TrackSummarySchema.model_validate(track)
     except HTTPException:
         raise
     except Exception as e:

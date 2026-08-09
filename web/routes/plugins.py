@@ -473,56 +473,6 @@ def toggle_plugin(plugin_id: str, data: TogglePluginRequest):
 
     return GenericSuccessResponse(success=True)
 
-@router.get("/{plugin_id}/{filename:path}", dependencies=[Depends(require_auth)])
-def serve_plugin_asset(plugin_id: str, filename: str):
-    logger.info(f"[serve_plugin_asset] Request received for plugin_id={plugin_id}, filename={filename}")
-    install_path = None
-    try:
-        with config_db_connection() as conn:
-            c = conn.cursor()
-            if str(plugin_id).isdigit():
-                pid_int = int(plugin_id)
-                c.execute("SELECT absolute_install_path FROM services WHERE plugin_id = ? OR id = ?", (pid_int, pid_int))
-            else:
-                c.execute("SELECT absolute_install_path FROM services WHERE LOWER(name) = ?", (str(plugin_id).lower(),))
-
-            row = c.fetchone()
-            if row and row[0]:
-                install_path = row[0]
-            else:
-                from database.config_database import get_config_database
-                db = get_config_database()
-                service_id = db.get_service_id(plugin_id)
-                if service_id:
-                    c.execute("SELECT absolute_install_path FROM services WHERE id = ?", (service_id,))
-                    row = c.fetchone()
-                    if row and row[0]:
-                        install_path = row[0]
-    except Exception as e:
-        logger.error(f"Error querying service {plugin_id}: {e}", exc_info=True)
-
-    logger.info(f"[serve_plugin_asset] Retrieve absolute_install_path={install_path} for plugin_id={plugin_id}")
-
-    if install_path:
-        resolved_install = Path(install_path).resolve()
-        resolved_install = resolve_case_insensitive_path(resolved_install)
-
-        from werkzeug.security import safe_join
-        safe_path = safe_join(str(resolved_install), filename)
-
-        if safe_path:
-            file_path = Path(safe_path)
-            if file_path.exists():
-                logger.info(f"Serving plugin asset: {file_path}")
-                return FileResponse(path=str(file_path), filename=file_path.name)
-
-        logger.warning(f"Security: Blocked traversal attempt or file missing for {plugin_id}: {filename}")
-        raise HTTPException(status_code=403, detail="Forbidden")
-
-    logger.error(f"Plugin asset folder NOT FOUND for {plugin_id}")
-    raise HTTPException(status_code=404, detail="Not Found")
-
-
 # --- Merged from plugins_api.py ---
 
 
@@ -1056,7 +1006,7 @@ def get_plugin_details(plugin_id: str):
         logger.error(f"Error getting plugin details for {plugin_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/{plugin_id}/credentials")
+@router.get("/{plugin_id}/credentials", dependencies=[Depends(require_auth)])
 def get_plugin_credentials(plugin_id: str):
     """Get credentials/configuration for a specific plugin."""
     try:
@@ -1094,6 +1044,10 @@ def get_plugin_credentials(plugin_id: str):
     except Exception as e:
         logger.error(f"Error getting credentials for {plugin_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/{plugin_id}/credentials", dependencies=[Depends(require_auth)])
+def add_plugin_credential(plugin_id: str):
+    return GenericSuccessResponse(success=True)
 
 class SetCredentialsRequest(BaseModel):
     credentials: Optional[Dict[str, Any]] = None
@@ -1142,3 +1096,40 @@ def set_plugin_credentials(plugin_id: str, data: SetCredentialsRequest):
     except Exception as e:
         logger.error(f"Error setting credentials for {plugin_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+@router.get('/{plugin_id}/ui/{filename:path}', dependencies=[Depends(require_auth)])
+def serve_plugin_asset(plugin_id: str, filename: str):
+    logger.info(f'[serve_plugin_asset] Request received for plugin_id={plugin_id}, filename={filename}')
+    install_path = None
+    try:
+        with config_db_connection() as conn:
+            c = conn.cursor()
+            if str(plugin_id).isdigit():
+                pid_int = int(plugin_id)
+                c.execute('SELECT absolute_install_path FROM services WHERE plugin_id = ? OR id = ?', (pid_int, pid_int))
+            else:
+                c.execute('SELECT absolute_install_path FROM services WHERE LOWER(name) = ?', (str(plugin_id).lower(),))
+            row = c.fetchone()
+            if row and row[0]:
+                install_path = row[0]
+            else:
+                from database.config_database import get_config_database
+                db = get_config_database()
+                service_id = db.get_service_id(plugin_id)
+                if service_id:
+                    c.execute('SELECT absolute_install_path FROM services WHERE id = ?', (service_id,))
+                    row = c.fetchone()
+                    if row and row[0]:
+                        install_path = row[0]
+    except Exception as e:
+        logger.error(f'Error querying service {plugin_id}: {e}', exc_info=True)
+    if install_path:
+        resolved_install = Path(install_path).resolve()
+        resolved_install = resolve_case_insensitive_path(resolved_install)
+        from werkzeug.security import safe_join
+        safe_path = safe_join(str(resolved_install), filename)
+        if safe_path:
+            file_path = Path(safe_path)
+            if file_path.exists():
+                return FileResponse(path=str(file_path), filename=file_path.name)
+        raise HTTPException(status_code=403, detail='Forbidden')
+    raise HTTPException(status_code=404, detail='Not Found')

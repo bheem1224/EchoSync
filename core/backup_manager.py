@@ -69,7 +69,7 @@ class BackupManager:
                     "version": getattr(cls, 'version', 'Unknown'),
                     "author": getattr(cls, 'author', 'Unknown'),
                     "category": getattr(cls, 'category', 'provider'),
-                    "channel": config_manager.get_plugin_channel(name.split(".")[-1])
+                    "channel": config_manager.get_plugin_channel(str(name).split(".")[-1])
                 }
             
             with open(staging_dir / "plugins_snapshot.json", "w") as f:

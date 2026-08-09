@@ -89,7 +89,7 @@
       setRowState(taskId, 'saving');
       try {
           const payload = { ...item.proposed_metadata, ...proposedMetadata };
-          await apiClient.put(`/review-queue/${taskId}`, payload);
+          await apiClient.put(`/core/metadata_review/${taskId}`, payload);
 
           tasks = tasks.map((task) =>
             task.id === taskId
@@ -119,7 +119,7 @@
     loading = true;
     error = '';
     try {
-      const response = await apiClient.get('/review-queue');
+      const response = await apiClient.get('/core/metadata_review');
       tasks = Array.isArray(response.data?.tasks) ? response.data.tasks : [];
     } catch (err) {
       console.error('Failed to load review queue:', err);

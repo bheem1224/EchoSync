@@ -38,7 +38,7 @@ function createPreferencesStore() {
 
   async function load() {
     try {
-      const resp = await apiClient.get('/quality-profiles');
+      const resp = await apiClient.get('/system/quality-profiles');
       const profiles = resp.data?.profiles || [];
       set({ loaded: true, profiles });
     } catch (e) {
@@ -58,7 +58,7 @@ function createPreferencesStore() {
 
   async function saveProfiles(profiles) {
     try {
-      await apiClient.post('/quality-profiles', { profiles });
+      await apiClient.post('/system/quality-profiles', { profiles });
       update((s) => ({ ...s, profiles }));
     } catch (e) {
       console.error('Failed to save quality profiles via API, falling back to settings.save', e);
@@ -98,9 +98,9 @@ function createPreferencesStore() {
     } catch (e) {
       console.error('Failed to save single profile via API, falling back to full save', e);
       try {
-        const s = await apiClient.get('/quality-profiles');
+        const s = await apiClient.get('/system/quality-profiles');
         const profiles = s.data?.profiles || [];
-        await apiClient.post('/quality-profiles', { profiles });
+        await apiClient.post('/system/quality-profiles', { profiles });
         update((st) => ({ ...st, profiles }));
       } catch (e2) {
         console.error('Fallback single profile save also failed', e2);

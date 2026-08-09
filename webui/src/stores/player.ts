@@ -139,7 +139,7 @@ function createPlayerStore() {
       }
     }
 
-    playTrack(`/api/v1/core/media/stream/${track.id}`, track);
+    playTrack(`/api/v1/core/library/stream/${track.id}`, track);
   }
 
   function toggle() {
@@ -147,7 +147,7 @@ function createPlayerStore() {
   }
 
   function getStreamUrl(trackId) {
-    return `/api/v1/core/media/stream/${trackId}`;
+    return `/api/v1/core/library/stream/${trackId}`;
   }
 
   return {

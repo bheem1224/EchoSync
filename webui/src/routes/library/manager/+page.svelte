@@ -37,7 +37,7 @@
 
   async function loadProfiles() {
     try {
-      const res = await apiClient.get("/quality-profiles");
+      const res = await apiClient.get("/system/quality-profiles");
       qualityProfiles = res.data?.profiles || [];
     } catch (e) {
       console.error("Failed to load quality profiles", e);

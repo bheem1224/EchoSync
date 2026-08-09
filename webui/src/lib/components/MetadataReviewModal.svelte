@@ -219,7 +219,7 @@
     savingDraft = true;
     dispatch('draftstart', { taskId: task.id });
     try {
-      await apiClient.put(`/review-queue/${task.id}`, { metadata: payload });
+      await apiClient.put(`/core/metadata_review/${task.id}`, { metadata: payload });
       lastPersistedSignature = payloadSignature;
       if (!silent) {
         feedback.addToast('Draft metadata saved', 'success');
@@ -241,7 +241,7 @@
     dispatch('approvestart', { taskId: task.id });
     try {
       const payload = buildPayload();
-      await apiClient.post(`/review-queue/${task.id}/approve`, { metadata: payload });
+      await apiClient.post(`/core/metadata_review/${task.id}/approve`, { metadata: payload });
       feedback.addToast('Metadata approved and file imported', 'success');
       dispatch('approved', { taskId: task.id, metadata: payload });
       dispatch('close');
@@ -323,7 +323,7 @@
 
     musicbrainzLookupLoading = true;
     try {
-      const response = await apiClient.post(`/review-queue/${task.id}/lookup/musicbrainz`, {
+      const response = await apiClient.post(`/core/metadata_review/${task.id}/lookup/musicbrainz`, {
         artist: (proposedMetadata.artist || '').trim(),
         title: (proposedMetadata.title || '').trim()
       });
@@ -370,7 +370,7 @@
 
     acoustidLookupLoading = true;
     try {
-      const response = await apiClient.post(`/review-queue/${task.id}/lookup/acoustid`);
+      const response = await apiClient.post(`/core/metadata_review/${task.id}/lookup/acoustid`);
       
       const isOk = response && (response.status >= 200 && response.status < 300);
       if (!isOk) {
