@@ -2,7 +2,7 @@ from .client import SpotifyClient
 from .routes import router
 
 ProviderClass = SpotifyClient
-RouteBlueprint = bp
+RouteBlueprint = router
 
 __all__ = ['ProviderClass', 'RouteBlueprint']
 

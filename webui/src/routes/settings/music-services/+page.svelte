@@ -22,7 +22,7 @@
         .filter(p => {
           // Keep streaming and relevant services for this page
           return (
-            p.capabilities?.supports_playlists !== 'NONE' ||
+            (p.capabilities?.supports_playlists ?? 'NONE') !== 'NONE' ||
             p.capabilities?.supports_sync ||
             p.service_type === 'streaming' ||
             p.service_type === 'music_service'

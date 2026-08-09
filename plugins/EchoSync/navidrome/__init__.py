@@ -2,6 +2,6 @@ from .client import NavidromeClient
 from .routes import router
 
 ProviderClass = NavidromeClient
-RouteBlueprint = bp
+RouteBlueprint = router
 
 __all__ = ['ProviderClass', 'RouteBlueprint']

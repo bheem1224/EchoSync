@@ -3,8 +3,8 @@ from .routes import router
 from . import oauth_routes
 
 ProviderClass = TidalClient
-RouteBlueprint = bp
-RouteBlueprint2 = oauth_routes.bp
+RouteBlueprint = router
+RouteBlueprint2 = oauth_routes.router
 
 __all__ = ['ProviderClass', 'RouteBlueprint', 'RouteBlueprint2']
 
