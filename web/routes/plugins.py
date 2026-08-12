@@ -1029,7 +1029,13 @@ def get_plugin_credentials(plugin_id: str):
         for key in keys_of_interest:
             val = config_db.get_service_config(service_id, key)
             if val is not None:
-        logger.error(f"Error fetching playlists for {plugin_id}: {e}", exc_info=True)
+                credentials[key] = val
+                
+        return credentials
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching credentials for {plugin_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
