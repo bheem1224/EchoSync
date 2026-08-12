@@ -540,7 +540,7 @@
             }}>
             <option value="">-- Select Source --</option>
             {#each playlistPlugins as p}
-              <option value={p.id}>{p.display_name}</option>
+              <option value={p.plugin_id}>{p.name}</option>
             {/each}
           </select>
         </div>
@@ -557,8 +557,8 @@
           <select id="target" bind:value={targetProvider}>
             <option value="">-- Select Target --</option>
             {#each syncTargets as p}
-              {#if p.id !== sourceProvider}
-                <option value={p.id}>{p.display_name}</option>
+              {#if p.plugin_id !== sourceProvider}
+                <option value={p.plugin_id}>{p.name}</option>
               {/if}
             {/each}
           </select>
