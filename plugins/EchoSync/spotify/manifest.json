@@ -1,5 +1,5 @@
 {
-  "id": "EchoSync.spotify",
+  "id": "EchoSync.Spotify",
   "name": "Spotify",
   "description": "Official EchoSync provider for spotify",
   "version": "2.4.2",
@@ -8,6 +8,6 @@
   "requirements": [],
   "hooks": [],
   "min_echosync_version": "2.4.0",
-  "beta_version": "2.4.3-beta.40",
+  "beta_version": "2.4.3-beta.41",
   "verified_source": "official"
 }
