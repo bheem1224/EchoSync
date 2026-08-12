@@ -51,23 +51,23 @@ def get_active_processes():
 
 
 @router.get("/processes/stream")
-def stream_processes():
+async def stream_processes():
     """
     GET /api/v1/system/tasks/processes/stream
     SSE stream that pushes live process list updates every 2 seconds with
     keepalive heartbeats every 15 seconds.
     """
-    def event_generator():
-        import time
+    async def event_generator():
+        import asyncio
         import json
 
         last_state = None
-        last_heartbeat = time.time()
+        last_heartbeat = asyncio.get_event_loop().time()
         HEARTBEAT_INTERVAL = 15.0
 
         try:
             while True:
-                now = time.time()
+                now = asyncio.get_event_loop().time()
                 processes = supervisor.get_active_processes_with_ids()
                 payload = {"total": len(processes), "processes": processes}
                 state_str = json.dumps(payload, sort_keys=True, default=str)
@@ -80,7 +80,7 @@ def stream_processes():
                     yield ": keepalive\n\n"
                     last_heartbeat = now
 
-                time.sleep(2.0)
+                await asyncio.sleep(2.0)
         except GeneratorExit:
             logger.debug("SSE processes stream client disconnected cleanly.")
         except Exception as e:
@@ -162,6 +162,7 @@ def get_unified_system_health():
             plugin_states = {
                 p_id: status.model_dump()
                 for p_id, status in plugin_state_manager._states.items()
+                if status.state != PluginLifecycleState.UNCONFIGURED
             }
 
         # Calculate overall unified health status

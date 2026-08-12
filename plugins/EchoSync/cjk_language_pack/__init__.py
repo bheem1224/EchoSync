@@ -276,13 +276,12 @@ def _on_pre_provider_search(
 def _is_ingestion_or_sync() -> bool:
     """Return True if the current call stack is within database_update, bulk_import, or PlexClient syncing."""
     try:
-        import sys
-        frame = sys._getframe(2)
-        while frame:
-            filename = frame.f_code.co_filename.replace("\\", "/")
+        import traceback
+        stack = traceback.extract_stack()
+        for frame in reversed(stack):
+            filename = frame.filename.replace("\\", "/")
             if "bulk_operations" in filename or "database_update_worker" in filename or "plex/client" in filename:
                 return True
-            frame = frame.f_back
     except Exception:
         pass
     return False

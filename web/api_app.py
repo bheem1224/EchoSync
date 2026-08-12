@@ -19,6 +19,7 @@ from core.settings import config_manager
 from core.tiered_logger import get_logger
 
 logger = get_logger("api_app")
+from core.task_manager import register_all_system_jobs
 
 # Core routers that have been migrated to FastAPI
 from web.routes.accounts import router as accounts_bp
@@ -112,6 +113,8 @@ async def lifespan(app: FastAPI):
         from core.job_queue import start_job_queue
         from core.backend_services import start_services
         
+        # Ensure scheduled jobs are registered before starting the queue
+        register_all_system_jobs()
         start_job_queue()
         
         def run_backend_services():

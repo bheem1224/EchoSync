@@ -16,7 +16,7 @@ from plexapi.exceptions import NotFound
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timezone
 import time
-import os
+from pathlib import Path
 from core.tiered_logger import get_logger
 from core.user_history import UserTrackInteraction
 
@@ -1234,7 +1234,7 @@ class PlexClient(MediaServerProvider):
 
             from core.db.echo_sync_track import EchosyncMedia
             media = []
-            if file_path and os.path.exists(file_path):
+            if file_path and Path(file_path).exists():
                 media.append(EchosyncMedia(
                     file_path=file_path,
                     file_format=file_format,

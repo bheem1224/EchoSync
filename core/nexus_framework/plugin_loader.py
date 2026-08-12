@@ -356,7 +356,6 @@ class PluginLoader:
             # Note: We need clean_ns to cleanly terminate namespaced processes, but 
             # if we don't have it here, terminating by string ID is the fallback.
             # Usually the supervisor cleans up all children by tracking the plugin_id.
-            plugin_state_manager.set_state(str(plugin_id), PluginLifecycleState.ERROR, "Unloaded")
         except Exception as e:
             logger.warning(f"Failed to kill workers for {plugin_id} during unload.")
 
@@ -422,7 +421,6 @@ class PluginLoader:
             job_queue.kill_jobs_by_plugin(plugin_id)
             supervisor.terminate_owner_processes(str(plugin_id))
             supervisor.terminate_owner_processes(clean_ns)
-            plugin_state_manager.set_state(str(plugin_id), PluginLifecycleState.INITIALIZING, "Hot reload initiated")
             plugin_state_manager.set_state(clean_ns, PluginLifecycleState.INITIALIZING, "Hot reload initiated")
         except Exception as e:
             logger.warning("Failed to kill workers for the target plugin.")
@@ -462,7 +460,6 @@ class PluginLoader:
             if success is False:
                 raise Exception(f"Live-swap failed to load module for {plugin_id}")
             from core.task_manager import plugin_state_manager, PluginLifecycleState
-            plugin_state_manager.set_state(str(plugin_id), PluginLifecycleState.READY, "Hot reload successful")
             plugin_state_manager.set_state(clean_ns, PluginLifecycleState.READY, "Hot reload successful")
             logger.info(f"✅ Successfully live-swapped: {plugin_id}")
         except Exception as e:
@@ -470,7 +467,6 @@ class PluginLoader:
                 from core.task_manager import supervisor, plugin_state_manager, PluginLifecycleState
                 supervisor.terminate_owner_processes(str(plugin_id))
                 supervisor.terminate_owner_processes(clean_ns)
-                plugin_state_manager.set_state(str(plugin_id), PluginLifecycleState.ERROR, f"Hot reload failed: {e}")
                 plugin_state_manager.set_state(clean_ns, PluginLifecycleState.ERROR, f"Hot reload failed: {e}")
             except Exception:
                 pass
@@ -1071,6 +1067,15 @@ class PluginLoader:
                             plugin_app.include_router(router)
                         
                         self.main_app.mount(f"/api/v1/plugins/{plugin_id}", plugin_app)
+                        
+                        # Reorder routes so plugin mounts precede the SPA StaticFiles mount ('/')
+                        mount_route = self.main_app.routes.pop()
+                        insert_idx = len(self.main_app.routes)
+                        for idx, r in enumerate(self.main_app.routes):
+                            if getattr(r, "path", None) == "" and getattr(r, "name", None) == "static":
+                                insert_idx = idx
+                                break
+                        self.main_app.routes.insert(insert_idx, mount_route)
                         logger.info(f"Mounted FastAPI sub-application for {plugin_id} at /api/v1/plugins/{plugin_id}")
                     
                     elif flask_blueprints:
@@ -1083,6 +1088,15 @@ class PluginLoader:
                                 flask_app.register_blueprint(bp)
                             
                             self.main_app.mount(f"/api/v1/plugins/{plugin_id}", WSGIMiddleware(flask_app))
+                            
+                            # Reorder routes so plugin mounts precede the SPA StaticFiles mount ('/')
+                            mount_route = self.main_app.routes.pop()
+                            insert_idx = len(self.main_app.routes)
+                            for idx, r in enumerate(self.main_app.routes):
+                                if getattr(r, "path", None) == "" and getattr(r, "name", None) == "static":
+                                    insert_idx = idx
+                                    break
+                            self.main_app.routes.insert(insert_idx, mount_route)
                             logger.info(f"Mounted legacy Flask WSGI sub-application for {plugin_id} at /api/v1/plugins/{plugin_id}")
                         except Exception as bp_err:
                             logger.error(f"Failed to mount legacy Flask Blueprint for {plugin_id}: {bp_err}", exc_info=True)
@@ -1108,8 +1122,7 @@ class PluginLoader:
 
             except Exception as e:
                 logger.error("An error occurred during framework execution.")
-                logger.debug(f"Raw exception data: {e}", exc_info=True)
-                logger.debug(f"Raw exception data: {e}", exc_info=True)
+                logger.error(f"Raw exception data: {e}", exc_info=True)
                 # Auto-disable on fatal load error
                 try:
                     from database.config_database import get_config_database
@@ -1487,7 +1500,6 @@ class PluginRegistry:
                     plugin_state_manager.set_state(plugin_name, PluginLifecycleState.UNCONFIGURED, "Plugin disabled")
                 
                 plugin_state_manager.set_state(orig_id, PluginLifecycleState.UNCONFIGURED, "Plugin disabled")
-                plugin_state_manager.set_state(str(plugin_id), PluginLifecycleState.UNCONFIGURED, "Plugin disabled")
             except Exception as e:
                 logger.error(f"Error terminating processes/updating state for disabled plugin {plugin_id}: {e}")
 

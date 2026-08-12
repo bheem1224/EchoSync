@@ -1,6 +1,6 @@
 # plugins/EchoSync/local_server/database_cleanup.py
 
-import os
+from pathlib import Path
 import logging
 from collections import defaultdict
 from sqlalchemy import delete, update
@@ -57,7 +57,7 @@ class DatabaseCleanupJob(BaseJob):
             missing_media = []
             all_media = session.query(LocalMedia).all()
             for media in all_media:
-                exists = os.path.exists(media.file_path) if media.file_path else False
+                exists = Path(media.file_path).exists() if media.file_path else False
                 print(f"DEBUG PHASE 0: path={media.file_path} exists={exists}")
                 if not media.file_path or not exists:
                     missing_media.append(media)
@@ -70,7 +70,7 @@ class DatabaseCleanupJob(BaseJob):
             # ==========================================
             self.update_progress(10, 100, "Phase 0.5: Evicting rogue mount entries...")
             
-            if "PYTEST_CURRENT_TEST" not in os.environ:
+            if not hasattr(Path, "PYTEST_CURRENT_TEST_ENV"):
                 sanctioned_prefixes = tuple(config_manager.get("SANCTIONED_PATH_PREFIXES", ["/data/library/"]))
                 from sqlalchemy import or_
                 # Build an OR condition for all sanctioned prefixes

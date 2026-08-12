@@ -170,7 +170,7 @@ class LRCLibClient(PluginBase):
                 return False
 
             # Write LRC file
-            lrc_path.write_text(lrc_content, encoding='utf-8')
+            lrc_path.write_bytes(lrc_content.encode('utf-8'))
 
             lyrics_type = "synced" if _safe_getattr(lyrics_data, 'synced_lyrics', None) else "plain"
             logger.info(f"✅ Created {lyrics_type} LRC file: {lrc_path.name}")

@@ -283,10 +283,10 @@ class MusicBrainzClient(PluginBase):
             album = track.get('album_title') or track.get('album') or ''
             duration = track.get('duration_ms') or track.get('duration')
         else:
-            artist = getattr(track, 'artist_name', getattr(track, 'artist', '')) or ''
-            title = getattr(track, 'title', getattr(track, 'raw_title', '')) or ''
-            album = getattr(track, 'album_title', getattr(track, 'album', '')) or ''
-            duration = getattr(track, 'duration_ms', getattr(track, 'duration', None))
+            artist = track.artist_name if hasattr(track, 'artist_name') else (track.artist if hasattr(track, 'artist') else '')
+            title = track.title if hasattr(track, 'title') else (track.raw_title if hasattr(track, 'raw_title') else '')
+            album = track.album_title if hasattr(track, 'album_title') else (track.album if hasattr(track, 'album') else '')
+            duration = track.duration_ms if hasattr(track, 'duration_ms') else (track.duration if hasattr(track, 'duration') else None)
 
         duration_ms = None
         try:

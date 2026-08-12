@@ -412,6 +412,37 @@ class PluginStore:
             
         return self.download_plugin(plugin_info, channel, force_consent, is_update=True, target_plugin_id=plugin_id)
 
+    def rollback_plugin(self, plugin_id: int, force_consent: bool = False) -> bool:
+        """Rollbacks the plugin to the stable channel and downloads the stable version."""
+        from database.config_database import get_config_database
+        db = get_config_database()
+        
+        conn = db._open_connection()
+        try:
+            c = conn.cursor()
+            c.execute("SELECT name FROM services WHERE plugin_id=?", (plugin_id,))
+            row = c.fetchone()
+            if not row:
+                logger.error(f"Cannot rollback plugin: ID {plugin_id} not found in database.")
+                return False
+            
+            plugin_name = row[0]
+            # Force opt out of beta for this plugin
+            c.execute("UPDATE services SET beta_opt_in = 0 WHERE plugin_id=?", (plugin_id,))
+            conn.commit()
+        finally:
+            conn.close()
+                
+        store_plugins = self.get_all_store_plugins()
+        plugin_info = next((p for p in store_plugins if p.get("id") == plugin_name or p.get("name") == plugin_name), None)
+                
+        if not plugin_info:
+            logger.error(f"Cannot rollback plugin: {plugin_name} not found in store.")
+            return False
+            
+        return self.download_plugin(plugin_info, channel="stable", force_consent=force_consent, is_update=True, target_plugin_id=plugin_id)
+
+
     def download_plugin(self, plugin_info: Dict, channel: str = "stable", force_consent: bool = False, is_update: bool = True, target_plugin_id: int = None) -> bool:
         """
         Direct Artifact Downloader.
@@ -609,45 +640,62 @@ class PluginStore:
 
                 # Security: Pre-Flight Consent Check for Privilege Escalation
                 if not force_consent:
-                    # Compare against what is CURRENTLY in target_dir
-                    # or fall back to the base directory if target_dir (beta) doesn't exist yet
-                    current_path = target_dir if target_dir.exists() else dest_dir
-                    current_manifest_file = current_path / "manifest.json"
-                    
-                    if current_manifest_file.exists():
-                        try:
-                            with open(current_manifest_file, "r") as f:
-                                old_manifest = json.load(f)
-                            with open(manifest_file, "r") as f:
-                                new_manifest = json.load(f)
-                            
-                            old_perms = old_manifest.get("permissions", {})
-                            new_perms = new_manifest.get("permissions", {})
-                            
-                            escalations = {}
-                            
-                            # 1. Check privileged_mode escalation
-                            if new_perms.get("privileged_mode") and not old_perms.get("privileged_mode"):
-                                escalations["privileged_mode"] = True
+                    try:
+                        with open(manifest_file, "r") as f:
+                            new_manifest = json.load(f)
+                        new_perms = new_manifest.get("permissions", {})
+                        
+                        old_perms = {}
+                        if target_plugin_id is not None:
+                            # It's an update, fetch granted permissions from config.db
+                            from database.config_database import get_config_database
+                            db = get_config_database()
+                            conn = db._open_connection()
+                            try:
+                                c = conn.cursor()
+                                c.execute("SELECT permissions, privileged_mode FROM services WHERE plugin_id=?", (target_plugin_id,))
+                                row = c.fetchone()
+                                if row:
+                                    try:
+                                        db_perms = json.loads(row[0]) if row[0] else {}
+                                        if isinstance(db_perms, dict):
+                                            old_perms = db_perms
+                                    except Exception:
+                                        pass
+                                    if row[1]:
+                                        old_perms["privileged_mode"] = True
+                            finally:
+                                conn.close()
                                 
-                            # 2. Check network_domains expansion
-                            old_domains = set(old_perms.get("network_domains", []))
-                            new_domains = set(new_perms.get("network_domains", []))
-                            added_domains = list(new_domains - old_domains)
-                            if added_domains:
-                                escalations["new_domains"] = added_domains
-                                
-                            if escalations:
-                                logger.warning(f"Aborting update for {plugin_id}: Privilege escalation detected. Requires user consent.")
-                                if tmp_dir.exists(): shutil.rmtree(tmp_dir, ignore_errors=True)
-                                raise PrivilegeEscalationError(escalations)
-                        except PrivilegeEscalationError:
-                            raise
-                        except Exception as e:
-                            logger.error("Rollback operation halted: Atomic state restoration failed.")
-                            logger.debug(f"Raw exception data: {e}", exc_info=True)
-                            logger.debug("Rollback operation halted: Atomic state restoration failed.")
-                            logger.debug(f"Raw exception data: {e}", exc_info=True)
+                        escalations = {}
+                        
+                        # 1. Check privileged_mode escalation
+                        if new_perms.get("privileged_mode") and not old_perms.get("privileged_mode"):
+                            escalations["privileged_mode"] = True
+                            
+                        # 2. Check network_domains expansion
+                        old_domains = set(old_perms.get("network_domains", []))
+                        new_domains = set(new_perms.get("network_domains", []))
+                        added_domains = list(new_domains - old_domains)
+                        if added_domains:
+                            escalations["network_domains"] = added_domains
+                            
+                        # 3. Check wasm_fs_access expansion
+                        old_fs = set(old_perms.get("wasm_fs_access", []))
+                        new_fs = set(new_perms.get("wasm_fs_access", []))
+                        added_fs = list(new_fs - old_fs)
+                        if added_fs:
+                            escalations["wasm_fs_access"] = added_fs
+                            
+                        if escalations:
+                            logger.warning(f"Aborting install/update for {plugin_id}: Privilege escalation detected. Requires user consent.")
+                            if tmp_dir.exists(): shutil.rmtree(tmp_dir, ignore_errors=True)
+                            raise PrivilegeEscalationError(escalations)
+                    except PrivilegeEscalationError:
+                        raise
+                    except Exception as e:
+                        logger.error(f"Error checking privileges for {plugin_id}: {e}")
+                        logger.debug(f"Raw exception data: {e}", exc_info=True)
 
                 # Task 4: Inject Verified Source Block and Enforce Target Version
                 try:

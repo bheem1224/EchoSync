@@ -14,7 +14,7 @@ def list_accounts():
     """List all Tidal accounts."""
     from core.nexus_framework.plugin_loader import PluginRegistry
     # Use the namespaced ID
-    plugin_id = 'EchoSync/tidal'
+    plugin_id = 'EchoSync.tidal'
     
     if PluginRegistry.is_plugin_disabled(plugin_id) or PluginRegistry.is_plugin_disabled('tidal'):
         return JSONResponse(content={'accounts': [], 'redirect_uri': ''}, status_code=200)

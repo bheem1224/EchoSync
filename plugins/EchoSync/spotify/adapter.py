@@ -9,16 +9,16 @@ Adapters NEVER own data; all operations go through MusicDatabase.
 
 from typing import List, Optional, Dict, Any
 from core.tiered_logger import get_logger
-from core.db.echo_sync_track import EchosyncTrack as Track
-from core.nexus_framework.plugin_SDK import sdk
+from core.models import Track
+from core.file_handling.storage import get_storage_service
 
 logger = get_logger("spotify_adapter")
 
 # SpotifyAdapter class deprecated - use convert_spotify_track_to_echosync instead
 class SpotifyAdapter:
     def __init__(self, spotify_client=None):
-        # (removed get_music_database import)
-        db = None # deprecated
+        storage = get_storage_service()
+        db = storage.get_music_database()
         super().__init__(db=db, provider_type="spotify")
         self.spotify = spotify_client
 

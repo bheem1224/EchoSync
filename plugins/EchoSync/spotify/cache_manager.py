@@ -5,19 +5,19 @@ from sqlalchemy import Column, String, JSON, DateTime
 from core.tiered_logger import get_logger
 from core.event_bus import event_bus
 from core.matching_engine.text_utils import generate_deterministic_id
-
+from core.file_handling.storage import get_storage_service
 
 logger = get_logger("spotify_cache_manager")
 
 class SpotifyCacheManager:
     """Manages local caching of Spotify playlists to optimize syncs and reduce API calls."""
 
-    def __init__(self, plugin=None):
-        self.plugin = plugin
-        if self.plugin:
-            self.engine = self.plugin.get_database_connection(write_access=True)
+    def __init__(self, sdk=None):
+        self.sdk = sdk
+        if self.sdk:
+            self.engine = self.sdk.get_database_connection(write_access=True)
         else:
-            raise ValueError("SpotifyCacheManager requires plugin instance to acquire isolated DB engine")
+            raise ValueError("SpotifyCacheManager requires SDK instance to acquire isolated DB engine")
 
         self.metadata = MetaData()
         self._ensure_tables()
@@ -218,7 +218,7 @@ class SpotifyCacheManager:
             if not items:
                 return None
             # Import lazily to avoid circular deps at module load time
-            from core.db.echo_sync_track import EchosyncTrack
+            from core.matching_engine.echo_sync_track import EchosyncTrack
             tracks = []
             for item in items:
                 track_obj = item.get('track')

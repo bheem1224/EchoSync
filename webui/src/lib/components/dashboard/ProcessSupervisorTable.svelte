@@ -9,31 +9,52 @@
 
   interface RichProcess extends ProcessOwner {
     registration_id: string;
+    parent_id?: string;
+    category: string;
+    is_killable: boolean;
+    cpu_percent: number;
+    memory_bytes: number;
+    wasm_instance_id?: string;
   }
 
   let processes: RichProcess[] = [];
+  let processesByCategory: Record<string, RichProcess[]> = {};
   let total = 0;
   let loading = true;
   let error = '';
   let lastFetched: Date | null = null;
-  let pollInterval: ReturnType<typeof setInterval> | null = null;
+  let eventSource: EventSource | null = null;
 
   // Per-row kill state: 'idle' | 'confirming' | 'killing' | 'done'
   let killState: Record<string, 'idle' | 'confirming' | 'killing' | 'done'> = {};
   let killError: Record<string, string> = {};
 
-  async function loadProcesses() {
-    try {
-      const data: ProcessListResponse = await fetchProcesses();
-      processes = (data.processes as RichProcess[]) || [];
-      total = data.total || 0;
-      lastFetched = new Date();
-      error = '';
-    } catch (err: any) {
-      error = err?.message || 'Failed to load active processes';
-    } finally {
+  function connectStream() {
+    loading = true;
+    eventSource = new EventSource('/api/v1/system/tasks/processes/stream');
+    eventSource.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        processes = data.processes || [];
+        total = data.total || 0;
+        lastFetched = new Date();
+        error = '';
+        loading = false;
+        
+        processesByCategory = processes.reduce((acc, p) => {
+          const cat = p.category || 'Worker Thread';
+          if (!acc[cat]) acc[cat] = [];
+          acc[cat].push(p);
+          return acc;
+        }, {} as Record<string, RichProcess[]>);
+      } catch (err) {
+        console.error("Failed to parse SSE", err);
+      }
+    };
+    eventSource.onerror = () => {
+      error = "Connection lost. Reconnecting...";
       loading = false;
-    }
+    };
   }
 
   function startKill(regId: string) {
@@ -50,7 +71,6 @@
     try {
       await killProcess(regId);
       killState = { ...killState, [regId]: 'done' };
-      setTimeout(loadProcesses, 800);
     } catch (err: any) {
       killError = {
         ...killError,
@@ -68,6 +88,14 @@
     return `${Math.floor(delta / 3600)}h ${Math.floor((delta % 3600) / 60)}m`;
   }
 
+  function formatBytes(bytes: number) {
+    if (!bytes) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  }
+
   function ownerTypeBadgeClass(type: string): string {
     switch (type) {
       case 'plugin':     return 'badge-plugin';
@@ -78,12 +106,13 @@
   }
 
   onMount(() => {
-    loadProcesses();
-    pollInterval = setInterval(loadProcesses, 3000);
+    connectStream();
   });
 
   onDestroy(() => {
-    if (pollInterval) clearInterval(pollInterval);
+    if (eventSource) {
+      eventSource.close();
+    }
   });
 </script>
 
@@ -98,14 +127,14 @@
       {#if lastFetched}
         <span class="last-fetched">Updated {lastFetched.toLocaleTimeString()}</span>
       {/if}
-      <button class="refresh-btn" on:click={loadProcesses} title="Refresh now">
+      <button class="refresh-btn" on:click={() => { if (eventSource) { eventSource.close(); connectStream(); } }} title="Reconnect Stream">
         <svg xmlns="http://www.w3.org/2000/svg" class="btn-icon" viewBox="0 0 24 24" fill="none"
           stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <polyline points="23 4 23 10 17 10" />
           <polyline points="1 20 1 14 7 14" />
           <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
         </svg>
-        Refresh
+        Reconnect
       </button>
     </div>
   </div>
@@ -144,79 +173,97 @@
             <th>Task</th>
             <th>Owner</th>
             <th>Type</th>
-            <th>PID</th>
-            <th>Thread</th>
-            <th>Running For</th>
+            <th>PID / Thread</th>
+            <th>Memory</th>
+            <th>CPU</th>
             <th class="th-right">Action</th>
           </tr>
         </thead>
         <tbody>
-          {#each processes as proc (proc.registration_id ?? `${proc.owner_id}_${proc.pid}`)}
-            {@const regId = proc.registration_id ?? proc.owner_id}
-            {@const state = killState[regId] ?? 'idle'}
-            {@const err   = killError[regId] ?? ''}
-            <tr class="proc-row"
-              class:row-killing={state === 'killing'}
-              class:row-done={state === 'done'}>
-
-              <!-- Task -->
-              <td class="td-task">
-                <span class="task-name">{proc.task_name}</span>
-              </td>
-
-              <!-- Owner -->
-              <td class="td-owner">
-                <span class="mono-sm">{proc.owner_id}</span>
-              </td>
-
-              <!-- Type -->
-              <td>
-                <span class="type-badge {ownerTypeBadgeClass(proc.owner_type)}">
-                  {proc.owner_type.replace('_', ' ')}
-                </span>
-              </td>
-
-              <!-- PID -->
-              <td class="mono-sm td-dim">{proc.pid ?? '—'}</td>
-
-              <!-- Thread -->
-              <td class="mono-sm td-dim">{proc.thread_id ?? '—'}</td>
-
-              <!-- Duration -->
-              <td>
-                <span class="duration-pill">{formatDuration(proc.started_at)}</span>
-              </td>
-
-              <!-- Kill action -->
-              <td class="td-action">
-                {#if state === 'idle'}
-                  <button class="kill-btn"
-                    on:click={() => startKill(regId)}
-                    title="Safely kill and flush DB sessions">
-                    Kill
-                  </button>
-
-                {:else if state === 'confirming'}
-                  <div class="confirm-row">
-                    <span class="confirm-label">Sure?</span>
-                    <button class="btn-yes" on:click={() => confirmKill(regId)}>Yes, kill</button>
-                    <button class="btn-no"  on:click={() => cancelKill(regId)}>Cancel</button>
-                  </div>
-
-                {:else if state === 'killing'}
-                  <span class="state-killing">
-                    <span class="mini-spin"></span> Killing…
-                  </span>
-
-                {:else if state === 'done'}
-                  <span class="state-done">✓ Killed</span>
-                {/if}
-
-                {#if err}
-                  <div class="kill-err">{err}</div>
-                {/if}
-              </td>
+          {#each Object.entries(processesByCategory) as [categoryName, categoryProcs]}
+            <tr class="category-header">
+              <td colspan="7">{categoryName}</td>
             </tr>
+            {#each categoryProcs as proc (proc.registration_id ?? `${proc.owner_id}_${proc.pid}`)}
+              {@const regId = proc.registration_id ?? proc.owner_id}
+              {@const state = killState[regId] ?? 'idle'}
+              {@const err   = killError[regId] ?? ''}
+              <tr class="proc-row"
+                class:row-killing={state === 'killing'}
+                class:row-done={state === 'done'}>
+  
+                <!-- Task -->
+                <td class="td-task">
+                  <span class="task-name">{proc.task_name}</span>
+                  {#if proc.wasm_instance_id}
+                    <div class="wasm-id">WASM: {proc.wasm_instance_id.substring(0,8)}</div>
+                  {/if}
+                </td>
+  
+                <!-- Owner -->
+                <td class="td-owner">
+                  <span class="mono-sm">{proc.owner_id}</span>
+                </td>
+  
+                <!-- Type -->
+                <td>
+                  <span class="type-badge {ownerTypeBadgeClass(proc.owner_type)}">
+                    {proc.owner_type.replace('_', ' ')}
+                  </span>
+                </td>
+  
+                <!-- PID / Thread -->
+                <td class="mono-sm td-dim">
+                  {#if proc.pid}
+                    PID: {proc.pid}
+                  {/if}
+                  {#if proc.thread_id}
+                    <br/>TID: {proc.thread_id}
+                  {/if}
+                  {#if !proc.pid && !proc.thread_id}
+                    —
+                  {/if}
+                </td>
+  
+                <!-- Memory -->
+                <td class="mono-sm">{formatBytes(proc.memory_bytes)}</td>
+  
+                <!-- CPU -->
+                <td class="mono-sm">{proc.cpu_percent.toFixed(1)}%</td>
+  
+                <!-- Kill action -->
+                <td class="td-action">
+                  {#if !proc.is_killable}
+                    <span class="td-dim text-xs">Core Process</span>
+                  {:else if state === 'idle'}
+                    <button class="kill-btn"
+                      on:click={() => startKill(regId)}
+                      title="Safely kill and flush DB sessions">
+                      Kill
+                    </button>
+  
+                  {:else if state === 'confirming'}
+                    <div class="confirm-row">
+                      <span class="confirm-label">Sure?</span>
+                      <button class="btn-yes" on:click={() => confirmKill(regId)}>Yes, kill</button>
+                      <button class="btn-no"  on:click={() => cancelKill(regId)}>Cancel</button>
+                    </div>
+  
+                  {:else if state === 'killing'}
+                    <span class="state-killing">
+                      <span class="mini-spin"></span> Killing…
+                    </span>
+  
+                  {:else if state === 'done'}
+                    <span class="state-done">✓ Killed</span>
+                  {/if}
+  
+                  {#if err}
+                    <div class="kill-err">{err}</div>
+                  {/if}
+                </td>
+              </tr>
+            {/each}
           {/each}
         </tbody>
       </table>
@@ -342,6 +389,19 @@
   }
   .th-right { text-align: right; }
 
+  .category-header {
+    background: #1f1f22;
+  }
+  .category-header td {
+    padding: 0.5rem 0.75rem;
+    font-weight: 700;
+    color: #a1a1aa;
+    text-transform: uppercase;
+    font-size: 0.7rem;
+    border-bottom: 1px solid #27272a;
+    letter-spacing: 0.05em;
+  }
+
   .proc-row {
     border-bottom: 1px solid #18181b;
     transition: background 0.12s;
@@ -354,11 +414,14 @@
   .proc-table td { padding: 0.6rem 0.75rem; vertical-align: middle; }
 
   .task-name { font-weight: 600; color: #e4e4e7; }
+  .wasm-id { font-size: 0.65rem; color: #a1a1aa; font-family: ui-monospace, monospace; }
   .mono-sm   { font-family: ui-monospace, monospace; font-size: 0.75rem; color: #a1a1aa; }
   .td-dim    { color: #71717a !important; }
   .td-task   { max-width: 200px; }
   .td-owner  { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .td-action { text-align: right; white-space: nowrap; }
+
+  .text-xs { font-size: 0.7rem; }
 
   /* ── Type badges ── */
   .type-badge {
