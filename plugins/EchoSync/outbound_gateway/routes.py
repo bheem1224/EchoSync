@@ -1,5 +1,5 @@
 import logging
-from fastapi import APIRouter, Request, HTTPException
+from fastapi import APIRouter, Request, HTTPException, Depends
 from fastapi.responses import JSONResponse
 
 router = APIRouter()
@@ -26,28 +26,24 @@ class ExternalGatewayRegistry:
 # We want the gateway itself to be mounted at /api/v1/external
 # The plugin_loader will automatically pick up `RouteBlueprint` and since we aren't using `mount_router` here,
 # we need to make sure `plugin_loader.py` can load this correctly, or we just set the url_prefix.
-bp.url_prefix = "/api/v1/external"
+router.prefix = "/api/v1/external"
 
 def require_api_key():
     """Stubbed auth middleware"""
     # Reject everything currently
-    abort(401, description="Unauthorized: API Key invalid or missing (Gateway Auth Not Implemented)")
+    raise HTTPException(status_code=401, detail="Unauthorized: API Key invalid or missing (Gateway Auth Not Implemented)")
 
-@bp.before_request
-def enforce_gateway_auth():
-    require_api_key()
-
-@router.api_route('/<plugin_id>/<path:subpath>', methods=['GET', 'POST', 'PUT', 'DELETE', 'PATCH'])
-def gateway_proxy(plugin_id, subpath):
+@router.api_route('/{plugin_id}/{subpath:path}', methods=['GET', 'POST', 'PUT', 'DELETE', 'PATCH'], dependencies=[Depends(require_api_key)])
+def gateway_proxy(plugin_id: str, subpath: str):
     """
     Proxy requests to the internal plugin API if registered.
     """
     # Check if the route is exposed
     if not ExternalGatewayRegistry.is_registered(plugin_id, subpath):
-        abort(404, description="Route not found or not exposed externally")
+        raise HTTPException(status_code=404, detail="Route not found or not exposed externally")
 
     # Normally we would forward the request using requests or test_client here,
     # but the request will be rejected by the require_api_key anyway right now.
     # We will implement the actual proxy here eventually.
     # For now, simply return a 501 Not Implemented
-    abort(501, description="Proxy forwarding not implemented yet")
+    raise HTTPException(status_code=501, detail="Proxy forwarding not implemented yet")

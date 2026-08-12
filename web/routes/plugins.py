@@ -1029,6 +1029,201 @@ def get_plugin_credentials(plugin_id: str):
         for key in keys_of_interest:
             val = config_db.get_service_config(service_id, key)
             if val is not None:
+        logger.error(f"Error fetching playlists for {plugin_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{plugin_id}/settings")
+def get_plugin_settings(plugin_id: str):
+    """Get settings and schema for a specific plugin."""
+    try:
+        from database.config_database import get_config_database
+        config_db = get_config_database()
+        
+        from core.nexus_framework.plugin_loader import PluginRegistry
+        plugin_cls = PluginRegistry.get_plugin_class(plugin_id)
+        if plugin_cls and hasattr(plugin_cls, 'name') and plugin_cls.name:
+            normalized_plugin_id = plugin_cls.name
+        else:
+            normalized_plugin_id = plugin_id
+
+        try:
+            service_id = config_db.get_or_create_service_id(normalized_plugin_id)
+            if not service_id:
+                raise HTTPException(status_code=404, detail=f"Plugin {plugin_id} not found")
+        except Exception as e:
+            logger.error(f"Error in get_or_create_service_id for {plugin_id}: {e}", exc_info=True)
+            raise HTTPException(status_code=404, detail=f"Plugin {plugin_id} not found")
+
+        keys_of_interest = ['client_id', 'client_secret', 'base_url', 'server_url', 'token', 'api_key', 'username', 'password', 'slskd_url']
+        config = {}
+        for key in keys_of_interest:
+            val = config_db.get_service_config(service_id, key)
+            if val is not None:
+                config[key] = _normalize_sensitive_value_for_ui(key, val)
+        
+        from core.network_utils import get_lan_ip
+        lan_ip = get_lan_ip()
+        callback_id = normalized_plugin_id.split('.')[-1].lower()
+        config['redirect_uri'] = f"https://{lan_ip}:5001/api/oauth/callback/plugins/{callback_id}"
+        
+        schema = _get_mock_schema(callback_id)
+        return {
+            'plugin': plugin_id,
+            'settings': config,
+            'schema': schema
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting settings for {plugin_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/{plugin_id}/settings", dependencies=[Depends(require_auth)])
+async def update_plugin_settings(plugin_id: str, request: Request):
+    """Update settings for a specific plugin."""
+    try:
+        try:
+            payload = await request.json()
+        except Exception:
+            payload = {}
+            
+        logger.info(f"Updating settings for plugin: {plugin_id}")
+        return {"error": "Need to refactor DI for settings update"}
+    except Exception as e:
+        logger.error(f"Error updating settings for {plugin_id}: {type(e).__name__}")
+        raise HTTPException(status_code=500, detail="Failed to update settings")
+
+def _get_mock_schema(provider_name):
+    """Temporary mock schema until providers declare their own."""
+    schemas = {
+        'spotify': [
+            {'key': 'client_id', 'label': 'Client ID', 'type': 'text', 'sensitive': True},
+            {'key': 'client_secret', 'label': 'Client Secret', 'type': 'password', 'sensitive': True},
+            {'key': 'redirect_uri', 'label': 'Redirect URI', 'type': 'text', 'default': 'http://127.0.0.1:8008/api/spotify/callback'},
+        ],
+        'plex': [
+            {'key': 'server_url', 'label': 'Server URL', 'type': 'text', 'default': 'http://localhost:32400'},
+            {'key': 'token', 'label': 'X-Plex-Token', 'type': 'password', 'sensitive': True},
+        ],
+        'soulseek': [
+            {'key': 'username', 'label': 'Username', 'type': 'text'},
+            {'key': 'password', 'label': 'Password', 'type': 'password', 'sensitive': True},
+            {'key': 'slskd_url', 'label': 'slskd URL', 'type': 'text', 'default': 'http://localhost:5030'},
+            {'key': 'api_key', 'label': 'API Key', 'type': 'password', 'sensitive': True},
+        ],
+        'slskd': [
+            {'key': 'username', 'label': 'Username', 'type': 'text'},
+            {'key': 'password', 'label': 'Password', 'type': 'password', 'sensitive': True},
+            {'key': 'slskd_url', 'label': 'slskd URL', 'type': 'text', 'default': 'http://localhost:5030'},
+            {'key': 'api_key', 'label': 'API Key', 'type': 'password', 'sensitive': True},
+        ]
+    }
+    return schemas.get(provider_name, [])
+
+def _enrich_provider_capabilities(provider_dict, provider_name=None):
+    """Enrich a provider dict with capability metadata."""
+    try:
+        from core.nexus_framework.plugin_loader import get_plugin_capabilities as fetch_capabilities
+        name = provider_name or provider_dict.get('name') or provider_dict.get('id')
+        
+        caps = fetch_capabilities(name)
+        provider_dict['metadata_richness'] = caps.metadata.name if hasattr(caps, 'metadata') else 'MEDIUM'
+        provider_dict['supports_streaming'] = caps.supports_streaming if hasattr(caps, 'supports_streaming') else False
+        provider_dict['supports_downloads'] = caps.supports_downloads if hasattr(caps, 'supports_downloads') else False
+        provider_dict['supports_cover_art'] = caps.supports_cover_art if hasattr(caps, 'supports_cover_art') else False
+        provider_dict['supports_library_scan'] = caps.supports_library_scan if hasattr(caps, 'supports_library_scan') else False
+        provider_dict['playlist_support'] = caps.supports_playlists.name if hasattr(caps, 'supports_playlists') and caps.supports_playlists else 'NONE'
+        
+        if hasattr(caps, 'search'):
+            provider_dict['search_capabilities'] = {
+                'tracks': caps.search.tracks if hasattr(caps.search, 'tracks') else False,
+                'artists': caps.search.artists if hasattr(caps.search, 'artists') else False,
+                'albums': caps.search.albums if hasattr(caps.search, 'albums') else False,
+                'playlists': caps.search.playlists if hasattr(caps.search, 'playlists') else False,
+            }
+    except KeyError:
+        provider_dict['metadata_richness'] = 'MEDIUM'
+        provider_dict['supports_streaming'] = False
+        provider_dict['supports_downloads'] = False
+        provider_dict['supports_cover_art'] = False
+        provider_dict['supports_library_scan'] = False
+        provider_dict['playlist_support'] = 'NONE'
+        provider_dict['search_capabilities'] = {
+            'tracks': False, 'artists': False, 'albums': False, 'playlists': False
+        }
+    except Exception:
+        pass
+    
+    return provider_dict
+
+@router.get("/full")
+def list_plugins_route():
+    """Full plugin metadata for diagnostics."""
+    try:
+        plugins = list_plugins()
+        return {
+            'plugins': [p.to_dict() for p in plugins],
+            'total': len(plugins)
+        }
+    except Exception as e:
+        logger.error(f"Error listing plugins: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/by-capability/{capability}")
+def get_plugins_by_capability(capability: str):
+    """Get plugins that support a specific capability."""
+    try:
+        plugins = get_plugins_for_capability(capability)
+        return {
+            'capability': capability,
+            'plugins': [p.to_dict() for p in plugins],
+            'total': len(plugins)
+        }
+    except Exception as e:
+        logger.error(f"Error getting plugins for capability {capability}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/{plugin_id}")
+def get_plugin_details(plugin_id: str):
+    """Get full details for a specific plugin."""
+    try:
+        plugin = get_plugin(plugin_id)
+        if not plugin:
+            raise HTTPException(status_code=404, detail=f"Plugin {plugin_id} not found")
+        
+        plugin_dict = plugin.to_dict() if hasattr(plugin, 'to_dict') else plugin
+        plugin_dict = _enrich_provider_capabilities(plugin_dict, plugin_id)
+        
+        return plugin_dict
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting plugin details for {plugin_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/{plugin_id}/credentials", dependencies=[Depends(require_auth)])
+def get_plugin_credentials(plugin_id: str):
+    """Get credentials/configuration for a specific plugin."""
+    try:
+        from database.config_database import get_config_database
+        config_db = get_config_database()
+        from core.nexus_framework.plugin_loader import PluginRegistry
+        plugin_cls = PluginRegistry.get_plugin_class(plugin_id)
+        if plugin_cls and hasattr(plugin_cls, 'name') and plugin_cls.name:
+            normalized_plugin_id = plugin_cls.name
+        else:
+            normalized_plugin_id = plugin_id
+            
+        service_id = config_db.get_or_create_service_id(normalized_plugin_id)
+        if not service_id:
+            raise HTTPException(status_code=404, detail=f"Plugin {plugin_id} not found")
+
+        keys_of_interest = ['client_id', 'client_secret', 'base_url', 'server_url', 'token', 'api_key', 'username', 'password', 'slskd_url']
+        credentials = {}
+        for key in keys_of_interest:
+            val = config_db.get_service_config(service_id, key)
+            if val is not None:
                 credentials[key] = _normalize_sensitive_value_for_ui(key, val)
 
         from core.network_utils import get_lan_ip
@@ -1045,10 +1240,6 @@ def get_plugin_credentials(plugin_id: str):
     except Exception as e:
         logger.error(f"Error getting credentials for {plugin_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
-@router.post("/{plugin_id}/credentials", dependencies=[Depends(require_auth)])
-def add_plugin_credential(plugin_id: str):
-    return GenericSuccessResponse(success=True)
 
 class SetCredentialsRequest(BaseModel):
     credentials: Optional[Dict[str, Any]] = None

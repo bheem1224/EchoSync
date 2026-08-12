@@ -63,6 +63,11 @@ class ScheduledJob:
         self.sort_index = id(self)
 
     def to_dict(self) -> Dict[str, Any]:
+        import time as _time
+        now = _time.time()
+        duration_s = None
+        if self.running and self.last_started:
+            duration_s = round(now - self.last_started, 1)
         return {
             "name": self.name,
             "category": self.category.value if isinstance(self.category, TaskCategory) else str(self.category),
@@ -75,8 +80,13 @@ class ScheduledJob:
             "plugin": self.plugin,
             "total_successes": self.total_successes,
             "total_failures": self.total_failures,
-            "last_error": self.last_error
+            "last_error": self.last_error,
+            "last_error_time": self.last_error_time,
+            "last_started": self.last_started,
+            "last_finished": self.last_finished,
+            "duration_seconds": duration_s,
         }
+
 
 
 class JobQueue:

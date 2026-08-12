@@ -11,17 +11,26 @@ function createSystemStatusStore() {
   });
 
   let pollInterval = null;
+  // Require 2 consecutive failures before showing the offline banner.
+  // This prevents transient hiccups (single slow request, brief network blip)
+  // from triggering the orange banner unnecessarily.
+  let consecutiveFailures = 0;
+  const FAILURES_BEFORE_OFFLINE = 2;
 
   async function load() {
     try {
       const response = await apiClient.get('/system/health');
+      consecutiveFailures = 0;
       set({
         ...response.data,
         lastUpdated: new Date(),
       });
-    } catch (error) {
-      console.error('Failed to load system status:', error);
-      update(state => ({ ...state, status: 'offline' }));
+    } catch {
+      consecutiveFailures += 1;
+      if (consecutiveFailures >= FAILURES_BEFORE_OFFLINE) {
+        update(state => ({ ...state, status: 'offline' }));
+      }
+      // Below threshold: stay silent — don't set offline yet
     }
   }
 
@@ -36,6 +45,7 @@ function createSystemStatusStore() {
       clearInterval(pollInterval);
       pollInterval = null;
     }
+    consecutiveFailures = 0;
   }
 
   return {

@@ -190,24 +190,44 @@ async def cancel_queue_job(job_name: str, request: Request):
 
 @router.get("/stream", dependencies=[Depends(require_auth)])
 def stream_queue_progress():
-    """SSE endpoint streaming the live status of the job queue."""
+    """SSE endpoint streaming the live status of the job queue with keepalive heartbeats."""
     def event_generator():
         try:
             from core.job_queue import job_queue
             import time
             import json
-            
+
             last_state = None
+            last_heartbeat = time.time()
+            HEARTBEAT_INTERVAL = 15.0  # seconds between keepalive pings
+
             while True:
+                now = time.time()
                 state = job_queue.get_queue_state()
                 state_str = json.dumps(state, sort_keys=True)
+
                 if state_str != last_state:
-                    yield f"event: queue_update\ndata: {state_str}\n\n"
+                    yield f"data: {state_str}\n\n"
                     last_state = state_str
+                    last_heartbeat = now
+                elif now - last_heartbeat >= HEARTBEAT_INTERVAL:
+                    # SSE comment ping — keeps the connection alive through proxies
+                    yield ": keepalive\n\n"
+                    last_heartbeat = now
+
                 time.sleep(1.0)
         except GeneratorExit:
             logger.debug("SSE stream client disconnected cleanly (system queue).")
         except Exception as e:
             logger.error(f"SSE stream error (queue): {e}", exc_info=True)
 
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",  # Disable Nginx proxy buffering
+            "Connection": "keep-alive",
+        }
+    )
+

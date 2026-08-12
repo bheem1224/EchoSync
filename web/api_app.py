@@ -25,7 +25,7 @@ from web.routes.accounts import router as accounts_bp
 from web.routes.auth import router as auth_bp
 from web.routes.plugins import router as core_plugins_bp
 from web.routes.system import router as system_bp
-from web.routes.dashboard import dashboard_bp
+from web.routes.dashboard import dashboard_bp, dashboards_bp
 from web.routes.tracks import router as tracks_bp
 from web.routes.library import router as library_bp
 from web.routes.media import router as media_bp
@@ -80,7 +80,7 @@ async def lifespan(app: FastAPI):
     try:
         from core.nexus_framework.plugin_loader import PluginLoader, PluginRegistry
         app_root = Path(__file__).parent.parent
-        loader = PluginLoader(app_root)
+        loader = PluginLoader(app_root, main_app=app)
         disabled_plugins = config_manager.get_disabled_plugins()
         PluginRegistry.set_disabled_plugins(disabled_plugins)
         loader.load_all()
@@ -174,6 +174,7 @@ def create_app(testing: bool = False) -> FastAPI:
     app.include_router(core_plugins_bp)
     app.include_router(system_bp)
     app.include_router(dashboard_bp)
+    app.include_router(dashboards_bp)
     app.include_router(tracks_bp)
     app.include_router(library_bp)
     app.include_router(media_bp)

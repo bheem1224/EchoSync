@@ -24,6 +24,10 @@ export interface JobInfo {
   total_successes?: number;
   total_failures?: number;
   last_error?: string | null;
+  last_error_time?: number | null;
+  last_started?: number | null;
+  last_finished?: number | null;
+  duration_seconds?: number | null;
 }
 
 export interface TaskQueueSummaryResponse {
@@ -80,6 +84,13 @@ export async function fetchProcesses(): Promise<ProcessListResponse> {
 export async function terminateProcess(registrationId: string): Promise<ProcessTerminateResponse> {
   const response = await apiClient.post<ProcessTerminateResponse>(
     `/system/tasks/processes/${encodeURIComponent(registrationId)}/terminate`
+  );
+  return response.data;
+}
+
+export async function killProcess(registrationId: string): Promise<{ status: string; registration_id: string; message: string }> {
+  const response = await apiClient.post(
+    `/system/tasks/processes/${encodeURIComponent(registrationId)}/kill`
   );
   return response.data;
 }

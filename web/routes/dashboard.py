@@ -8,6 +8,25 @@ from ruamel.yaml.error import YAMLError
 
 logger = get_logger("dashboard_route")
 dashboard_bp = APIRouter(prefix="/api/v1/system/dashboard", tags=["Dashboard"])
+dashboards_bp = APIRouter(prefix="/api/v1/dashboards", tags=["Dashboards"])
+
+@dashboards_bp.get("/{filename}", dependencies=[Depends(require_auth)])
+def get_custom_dashboard_yaml(filename: str):
+    from fastapi.responses import PlainTextResponse
+    import os
+    
+    filename = os.path.basename(filename)
+    filepath = os.path.join("config", "webui", filename)
+    
+    if not os.path.exists(filepath):
+        raise HTTPException(status_code=404, detail="Dashboard not found")
+        
+    try:
+        with open(filepath, "r", encoding="utf-8") as f:
+            return PlainTextResponse(f.read(), media_type="text/yaml")
+    except Exception as e:
+        logger.error(f"Error reading {filename}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to read dashboard")
 
 DASHBOARD_FILE = os.path.join("config", "webui", "dashboard.yaml")
 DEFAULT_DASHBOARD_CONTENT = """# EchoSync Dashboard Configuration

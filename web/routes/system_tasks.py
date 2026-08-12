@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
 
 from core.tiered_logger import get_logger
 from core.task_manager import job_queue, supervisor, plugin_state_manager, get_system_health, PluginLifecycleState
@@ -18,7 +19,7 @@ router = APIRouter(prefix="/api/v1/system/tasks", tags=["System Tasks"])
 @router.get("/queue", response_model=TaskQueueSummaryResponse)
 def get_task_queue_status():
     """
-    GET /api/v1/tasks/queue
+    GET /api/v1/system/tasks/queue
     Returns summary counts and serialized lists of queued, active, and PENDING_BLOCKED jobs.
     """
     try:
@@ -34,28 +35,74 @@ def get_task_queue_status():
         raise HTTPException(status_code=500, detail=f"Failed to retrieve task queue status: {str(e)}")
 
 
-@router.get("/processes", response_model=ProcessListResponse)
+@router.get("/processes")
 def get_active_processes():
     """
-    GET /api/v1/tasks/processes
-    Returns running process/thread owners registered with the ProcessSupervisor.
+    GET /api/v1/system/tasks/processes
+    Returns running process/thread owners registered with the ProcessSupervisor,
+    each enriched with its registration_id so the frontend can issue kill requests.
     """
     try:
-        active_processes = supervisor.get_active_processes()
-        return ProcessListResponse(
-            total=len(active_processes),
-            processes=active_processes
-        )
+        processes = supervisor.get_active_processes_with_ids()
+        return {"total": len(processes), "processes": processes}
     except Exception as e:
         logger.error(f"Error listing active processes: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to retrieve active processes: {str(e)}")
 
 
+@router.get("/processes/stream")
+def stream_processes():
+    """
+    GET /api/v1/system/tasks/processes/stream
+    SSE stream that pushes live process list updates every 2 seconds with
+    keepalive heartbeats every 15 seconds.
+    """
+    def event_generator():
+        import time
+        import json
+
+        last_state = None
+        last_heartbeat = time.time()
+        HEARTBEAT_INTERVAL = 15.0
+
+        try:
+            while True:
+                now = time.time()
+                processes = supervisor.get_active_processes_with_ids()
+                payload = {"total": len(processes), "processes": processes}
+                state_str = json.dumps(payload, sort_keys=True, default=str)
+
+                if state_str != last_state:
+                    yield f"data: {state_str}\n\n"
+                    last_state = state_str
+                    last_heartbeat = now
+                elif now - last_heartbeat >= HEARTBEAT_INTERVAL:
+                    yield ": keepalive\n\n"
+                    last_heartbeat = now
+
+                time.sleep(2.0)
+        except GeneratorExit:
+            logger.debug("SSE processes stream client disconnected cleanly.")
+        except Exception as e:
+            logger.error(f"SSE processes stream error: {e}", exc_info=True)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
+
+
 @router.post("/processes/{registration_id}/terminate", response_model=ProcessTerminateResponse)
 def terminate_process(registration_id: str):
     """
-    POST /api/v1/tasks/processes/{registration_id}/terminate
-    Terminates a specific registered process or thread owner.
+    POST /api/v1/system/tasks/processes/{registration_id}/terminate
+    Terminates a specific registered process or thread owner (legacy, no DB cleanup).
+    Prefer /kill for running jobs that may hold database connections.
     """
     try:
         with supervisor._lock:
@@ -83,10 +130,29 @@ def terminate_process(registration_id: str):
         raise HTTPException(status_code=500, detail=f"Failed to terminate process: {str(e)}")
 
 
+@router.post("/processes/{registration_id}/kill")
+def kill_process_with_cleanup(registration_id: str):
+    """
+    POST /api/v1/system/tasks/processes/{registration_id}/kill
+    Safely terminates a process and flushes any SQLAlchemy DB sessions it holds,
+    preventing database corruption (locked WAL / uncommitted transactions).
+    """
+    try:
+        success, message = supervisor.kill_with_cleanup(registration_id)
+        if not success:
+            raise HTTPException(status_code=404, detail=message)
+        return {"status": "killed", "registration_id": registration_id, "message": message}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error killing process '{registration_id}': {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to kill process: {str(e)}")
+
+
 @router.get("/health", response_model=SystemHealthResponse)
 def get_unified_system_health():
     """
-    GET /api/v1/system/health
+    GET /api/v1/system/tasks/health
     Aggregates health checks and plugin lifecycle states into a unified SystemHealthResponse.
     """
     try:

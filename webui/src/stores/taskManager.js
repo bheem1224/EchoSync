@@ -1,5 +1,6 @@
 import { writable } from 'svelte/store';
 import apiClient from '../api/client';
+import { API_BASE_URL } from '../api/client';
 
 const initialQueueState = {
   running_jobs: [],
@@ -17,14 +18,18 @@ const initialQueueState = {
 function createTaskManagerStore() {
   const { subscribe, set, update } = writable(initialQueueState);
   let eventSource = null;
+  let reconnectTimer = null;
+  let reconnectDelay = 2000; // start at 2s, cap at 30s
 
-  function connect(streamUrl = '/api/v1/system/jobs/stream') {
+  function connect(streamUrl = `${API_BASE_URL}/system/jobs/stream`) {
     disconnect();
 
     try {
-      eventSource = new EventSource(streamUrl);
+      eventSource = new EventSource(streamUrl, { withCredentials: true });
 
+      // Plain `data:` frames (no named event type)
       eventSource.onmessage = (event) => {
+        reconnectDelay = 2000; // reset backoff on successful message
         try {
           const payload = JSON.parse(event.data);
           update((state) => ({
@@ -39,11 +44,18 @@ function createTaskManagerStore() {
         }
       };
 
-      eventSource.onerror = (error) => {
-        console.error('TaskManager SSE connection error:', error);
-        if (eventSource?.readyState === EventSource.CLOSED) {
-          disconnect();
-        }
+      // Named event type (legacy compatibility)
+      eventSource.addEventListener('queue_update', (event) => {
+        eventSource.onmessage(event);
+      });
+
+      eventSource.onerror = () => {
+        disconnect();
+        // Exponential backoff reconnect
+        reconnectTimer = setTimeout(() => {
+          reconnectDelay = Math.min(reconnectDelay * 1.5, 30000);
+          connect(streamUrl);
+        }, reconnectDelay);
       };
     } catch (err) {
       console.error('Failed to connect TaskManager SSE:', err);
@@ -51,6 +63,10 @@ function createTaskManagerStore() {
   }
 
   function disconnect() {
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
     if (eventSource) {
       eventSource.close();
       eventSource = null;
@@ -93,3 +109,4 @@ function createTaskManagerStore() {
 }
 
 export const taskManager = createTaskManagerStore();
+
