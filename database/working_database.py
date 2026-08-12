@@ -454,6 +454,11 @@ class WorkingDatabase:
         finally:
             session.close()
 
+    def count_pending_reviews(self) -> int:
+        """Count how many review tasks are pending."""
+        with self.session_scope() as session:
+            return session.query(ReviewTask).filter(ReviewTask.status == 'pending').count()
+
     def get_system_user_id(self) -> int:
         """Get or create the system user ID for automated flags."""
         with self.session_scope() as session:

@@ -45,6 +45,96 @@ def _ensure_file():
         with open(DASHBOARD_FILE, "w", encoding="utf-8") as f:
             f.write(DEFAULT_DASHBOARD_CONTENT)
 
+@dashboard_bp.get("/command-center", dependencies=[Depends(require_auth)])
+def command_center():
+    """Aggregated command center dashboard data."""
+    try:
+        from services.health_check import get_system_health
+        health_data = get_system_health()
+    except Exception as e:
+        logger.error(f"Error getting health data: {e}")
+        health_data = {"status": "error", "message": "Failed to get health data"}
+
+    try:
+        from web.services.library_service import LibraryAdapter
+        from database.music_database import get_database
+        adapter = LibraryAdapter()
+        lib_overview = adapter.overview()
+        stats = lib_overview.get("stats", {})
+        
+        db = get_database()
+        total_tracks = stats.get("total_tracks", 0)
+        lossless_count = db.count_lossless_files()
+        lossless_ratio = round(lossless_count / total_tracks, 2) if total_tracks > 0 else 0.0
+        
+        library_stats = {
+            "total_tracks": total_tracks,
+            "total_albums": stats.get("total_albums", 0),
+            "total_artists": stats.get("total_artists", 0),
+            "database_size_mb": stats.get("database_size_mb", 0.0),
+            "lossless_ratio": lossless_ratio
+        }
+    except Exception as e:
+        logger.error(f"Error getting library stats: {e}")
+        library_stats = {
+            "total_tracks": 0, "total_albums": 0, "total_artists": 0,
+            "database_size_mb": 0.0, "lossless_ratio": 0.0
+        }
+
+    try:
+        from core.job_queue import list_jobs as jq_list_jobs
+        items = jq_list_jobs()
+        
+        from datetime import datetime, timezone
+        upcoming_jobs = []
+        active_pipeline = []
+        for j in items:
+            if j.get("running"):
+                active_pipeline.append(j)
+                
+            if not j.get("enabled"):
+                continue
+            interval = j.get("interval_seconds") or 0
+            if interval <= 0:
+                continue
+            
+            lr_float = j.get("last_started") or j.get("last_finished")
+            nr_float = j.get("next_run")
+            if not nr_float and lr_float:
+                nr_float = lr_float + interval
+            elif not nr_float:
+                nr_float = datetime.now(timezone.utc).timestamp() + interval
+                
+            lr_iso = datetime.fromtimestamp(lr_float, tz=timezone.utc).isoformat() if lr_float else None
+            nr_iso = datetime.fromtimestamp(nr_float, tz=timezone.utc).isoformat() if nr_float else None
+            
+            upcoming_jobs.append({
+                "job_name": j["name"],
+                "interval_seconds": int(interval),
+                "last_run": lr_iso,
+                "next_run": nr_iso
+            })
+    except Exception as e:
+        logger.error(f"Error getting jobs info: {e}")
+        active_pipeline = []
+        upcoming_jobs = []
+
+    try:
+        from database.working_database import get_working_database
+        wdb = get_working_database()
+        pending_reviews = wdb.count_pending_reviews()
+    except Exception as e:
+        logger.error(f"Error getting pending reviews: {e}")
+        pending_reviews = 0
+
+    return {
+        "health": health_data,
+        "library_stats": library_stats,
+        "active_pipeline": active_pipeline,
+        "upcoming_jobs": upcoming_jobs,
+        "pending_reviews": pending_reviews
+    }
+
 @dashboard_bp.get("", dependencies=[Depends(require_auth)])
 def get_dashboard():
     """Reads dashboard.yaml and returns the parsed structure as standard JSON."""

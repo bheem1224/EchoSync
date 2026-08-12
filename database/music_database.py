@@ -654,6 +654,11 @@ class MusicDatabase:
         with self.session_scope() as session:
             return session.query(Track).count()
 
+    def count_lossless_files(self) -> int:
+        """Return total lossless physical media files stored."""
+        with self.session_scope() as session:
+            return session.query(LocalMedia).filter(LocalMedia.file_format.in_({'flac', 'alac', 'wav', 'dsd', 'dsf', 'dff', 'ape'})).count()
+
     def count_files(self) -> int:
         """Return total physical media files stored.
 

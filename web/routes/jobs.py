@@ -49,11 +49,39 @@ def jobs_summary(request: Request):
         # Compute last_run from last_finished or last_success
         timestamps = [t for j in items for t in (j.get("last_finished"), j.get("last_success")) if t]
         last_run = max(timestamps) if timestamps else None
+        
+        from datetime import datetime, timezone
+        upcoming_jobs = []
+        for j in items:
+            if not j.get("enabled"):
+                continue
+            interval = j.get("interval_seconds") or 0
+            if interval <= 0:
+                continue
+            
+            lr_float = j.get("last_started") or j.get("last_finished")
+            nr_float = j.get("next_run")
+            if not nr_float and lr_float:
+                nr_float = lr_float + interval
+            elif not nr_float:
+                nr_float = datetime.now(timezone.utc).timestamp() + interval
+                
+            lr_iso = datetime.fromtimestamp(lr_float, tz=timezone.utc).isoformat() if lr_float else None
+            nr_iso = datetime.fromtimestamp(nr_float, tz=timezone.utc).isoformat() if nr_float else None
+            
+            upcoming_jobs.append({
+                "job_name": j["name"],
+                "interval_seconds": int(interval),
+                "last_run": lr_iso,
+                "next_run": nr_iso
+            })
+            
         payload = {
             "running_jobs": running_jobs,
             "queued_jobs": queued_jobs,
             "errors": errors,
             "last_run": last_run,
+            "upcoming_jobs": upcoming_jobs
         }
         return payload
     except Exception as e:
@@ -63,6 +91,7 @@ def jobs_summary(request: Request):
             "queued_jobs": 0,
             "errors": ["Failed to build summary"],
             "last_run": None,
+            "upcoming_jobs": []
         }
         raise HTTPException(status_code=500, detail=payload)
 

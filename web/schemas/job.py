@@ -19,3 +19,9 @@ class JobRunRequest(BaseModel):
 
 class JobIntervalRequest(BaseModel):
     interval_seconds: float
+
+class UpcomingJob(BaseModel):
+    job_name: str
+    interval_seconds: int
+    last_run: Optional[str] = None
+    next_run: Optional[str] = None

@@ -1179,14 +1179,20 @@ def get_all_plugins() -> list:
     conn = db._open_connection()
     try:
         c = conn.cursor()
-        c.execute("SELECT name, plugin_id, absolute_install_path, description, version, is_active FROM services")
+        c.execute("SELECT name, plugin_id, absolute_install_path, description, version, is_active, capabilities FROM services")
         rows = c.fetchall()
         
+        import json
         for row in rows:
             name = row['name']
             if name.lower() == 'system':
                 continue
                 
+            try:
+                caps = json.loads(row['capabilities']) if row['capabilities'] else {}
+            except Exception:
+                caps = {}
+
             plugin_info = {
                 "id": name,
                 "plugin_id": row['plugin_id'],
@@ -1195,7 +1201,8 @@ def get_all_plugins() -> list:
                 "type": "community",
                 "version": row['version'] or "Unknown",
                 "abs_path": row['absolute_install_path'],
-                "enabled": bool(row['is_active'])
+                "enabled": bool(row['is_active']),
+                "capabilities": caps
             }
             plugins_map[name] = plugin_info
     except Exception as e:
