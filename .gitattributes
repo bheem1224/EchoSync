@@ -3,3 +3,4 @@
 
 # Force Unix line endings for shell scripts (required for Docker)
 *.sh text eol=lf
+graphify-out/graph.json merge=graphify
