@@ -78,3 +78,7 @@ tests/data/music_library.db
 # Rust & Maturin build artifacts
 target/
 Cargo.lock
+
+#graphify
+graphify-out/
+.agents/
