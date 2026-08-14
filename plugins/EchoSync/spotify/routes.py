@@ -25,11 +25,18 @@ def _get_redirect_uri() -> str:
 # ── Settings ──────────────────────────────────────────────────────────────────
 
 @router.get('/settings')
+@router.get('settings')
 def get_settings():
     """Get Spotify global settings and credentials."""
     try:
-        client_id = sdk.config.get('client_id', '') or ''
-        client_secret = sdk.secrets.get('client_secret', '') or ''
+        client_id = ''
+        client_secret = ''
+        try:
+            client_id = sdk.config.get('client_id', '') or ''
+            client_secret = sdk.secrets.get('client_secret', '') or ''
+        except Exception:
+            pass
+
         redirect_uri = _get_redirect_uri()
 
         # Fallback to database service_config if not yet in plugin sdk namespace
@@ -63,6 +70,7 @@ def get_settings():
 
 
 @router.post('/settings')
+@router.post('settings')
 async def save_settings(request: Request):
     """Save Spotify global settings and credentials."""
     try:

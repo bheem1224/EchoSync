@@ -31,6 +31,8 @@ import types
 
 def generate_plugin_id(name: str) -> int:
     """Generate a consistent 32-bit integer ID from a plugin name."""
+    if isinstance(name, str) and '@' in name:
+        name = name.split('@')[0]
     return zlib.crc32(name.encode('utf-8')) & 0xFFFFFFFF
 
 

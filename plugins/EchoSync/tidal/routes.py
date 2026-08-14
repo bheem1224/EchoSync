@@ -10,6 +10,7 @@ router = APIRouter()
 
 
 @router.get('')
+@router.get('/')
 def list_accounts():
     """List all Tidal accounts."""
     try:
@@ -54,6 +55,7 @@ def list_accounts():
 
 
 @router.post('')
+@router.post('/')
 async def create_account(request: Request):
     """
     Create a new Tidal account with credentials.

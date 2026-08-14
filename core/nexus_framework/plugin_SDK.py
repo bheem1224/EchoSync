@@ -547,14 +547,11 @@ class _SDK:
 
         # Handle plugins.{author}.{plugin_name}
         if caller_mod.startswith('plugins.'):
-            parts = caller_mod.split('.')
+            parts = [p for p in caller_mod.split('.') if p.lower() != 'beta']
             # parts[0] is 'plugins', parts[1] is author, parts[2] is plugin_name
             if len(parts) >= 3:
-                base_id = f"{parts[1]}.{parts[2]}"
-                if '.beta' in caller_mod:
-                    return f"{base_id}@beta"
-                return base_id
-            return parts[1] # fallback for single-part names
+                return f"{parts[1]}.{parts[2]}"
+            return parts[1] if len(parts) > 1 else caller_mod # fallback for single-part names
         
         # Handle core.providers.{name}
         if caller_mod.startswith('core.providers.'):
