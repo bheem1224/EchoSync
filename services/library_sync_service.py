@@ -53,8 +53,20 @@ class LibrarySyncService:
         dirty_or_new: List[str] = []
 
         start_walk = time.time()
+        file_count = 0
+        from core.task_manager.supervisor import supervisor
+
         for root, _, files in os.walk(library_dir):
+            if supervisor.is_current_task_cancelled():
+                logger.info("Library sync cancelled during directory walk.")
+                return
+
             for file in files:
+                file_count += 1
+                if file_count % 100 == 0 and supervisor.is_current_task_cancelled():
+                    logger.info("Library sync cancelled during directory walk.")
+                    return
+
                 if not file.lower().endswith(('.flac', '.mp3', '.m4a', '.ogg', '.opus', '.wav', '.wma', '.aac')):
                     continue
                 
@@ -76,6 +88,10 @@ class LibrarySyncService:
         walk_time = time.time() - start_walk
         logger.info(f"Walk completed in {walk_time:.2f}s. Found {len(dirty_or_new)} dirty/new files.")
 
+        if supervisor.is_current_task_cancelled():
+            logger.info("Library sync cancelled after directory walk.")
+            return
+
         db_paths = set(db_state.keys())
         orphans = list(db_paths - current_disk_paths)
 
@@ -87,6 +103,9 @@ class LibrarySyncService:
                 # Splitting into chunks to avoid SQLite parameter limits
                 chunk_size = 900
                 for i in range(0, len(orphans), chunk_size):
+                    if supervisor.is_current_task_cancelled():
+                        logger.info("Library sync cancelled during orphan pruning.")
+                        return
                     chunk = orphans[i:i + chunk_size]
                     session.execute(delete(LocalMedia).where(LocalMedia.file_path.in_(chunk)))
                 
@@ -100,11 +119,17 @@ class LibrarySyncService:
             logger.info("No new or modified files. Sync complete.")
             return
 
+        if supervisor.is_current_task_cancelled():
+            logger.info("Library sync cancelled before metadata extraction.")
+            return
+
         # Step 4: Targeted Threaded FFI Ingestion
         logger.info(f"Extracting metadata for {len(dirty_or_new)} files...")
         
         raw_dicts = []
         def parse_file(path: str):
+            if supervisor.is_current_task_cancelled():
+                return None
             try:
                 return echosync_core.extract_metadata(path)
             except Exception as e:
@@ -116,18 +141,32 @@ class LibrarySyncService:
             for res in results:
                 if res is not None:
                     raw_dicts.append(res)
+
+        if supervisor.is_current_task_cancelled():
+            logger.info("Library sync cancelled after metadata extraction.")
+            return
                     
         tracks = []
         for raw_dict in raw_dicts:
+            if supervisor.is_current_task_cancelled():
+                logger.info("Library sync cancelled during track parsing.")
+                return
             track = _parse_telemetry_dict(raw_dict)
             if track:
                 tracks.append(track)
+
+        if supervisor.is_current_task_cancelled():
+            logger.info("Library sync cancelled before database upsert.")
+            return
 
         # Step 5: Relational Hydration & Batch UPSERT
         if tracks:
             logger.info(f"Batch upserting {len(tracks)} tracks to database...")
             with self.db.session_factory() as session:
                 TrackRepository.resolve_artists_and_albums(session, tracks)
+                if supervisor.is_current_task_cancelled():
+                    logger.info("Library sync cancelled before committing upsert.")
+                    return
                 affected_rows = TrackRepository.bulk_upsert_tracks(session, tracks)
                 session.commit()
                 logger.info(f"Upserted tracks affecting {affected_rows} rows.")

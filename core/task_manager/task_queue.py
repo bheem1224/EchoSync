@@ -357,6 +357,7 @@ class JobQueue:
         started_at = time.time()
         job.last_started = started_at
         reg_id = None
+        cancel_event = threading.Event()
         try:
             import os
             from core.task_manager.supervisor import supervisor
@@ -370,7 +371,7 @@ class JobQueue:
                 thread_id=threading.get_ident(),
                 task_name=job.name
             )
-            reg_id = supervisor.register_process(owner)
+            reg_id = supervisor.register_process(owner, cancellation_event=cancel_event)
         except Exception:
             pass
 

@@ -609,10 +609,6 @@ def _on_pre_normalize_title(raw_title: str, **kwargs: Any) -> str:
 
         if guillemet_content and guillemet_content.strip():
             plugin_context['cjk_drama'] = guillemet_content.strip()
-            logger.debug(
-                "pre_normalize_title: extracted 《》 drama context %r from %r",
-                plugin_context['cjk_drama'], raw_title,
-            )
             return raw_title
 
         # Priority 2 (fallback): no 《》 guillemets — scan （）or () brackets for
@@ -636,11 +632,6 @@ def _on_pre_normalize_title(raw_title: str, **kwargs: Any) -> str:
                     candidate_drama = re.sub(r'^[\s\-–—·,，、]+|[\s\-–—·,，、]+$', '', candidate_drama)
                     if candidate_drama and _has_cjk(candidate_drama):
                         plugin_context['cjk_drama'] = candidate_drama
-                        logger.debug(
-                            "pre_normalize_title: fallback bracket extraction "
-                            "drama=%r (keyword=%r) from %r",
-                            candidate_drama, kw_match.group(0), raw_title,
-                        )
                         return raw_title
 
         # Priority 3: any other CJK bracket type (【】 「」 etc.) — original behaviour.
@@ -649,10 +640,6 @@ def _on_pre_normalize_title(raw_title: str, **kwargs: Any) -> str:
             drama = next((g for g in match.groups() if g is not None), None)
             if drama and drama.strip():
                 plugin_context['cjk_drama'] = drama.strip()
-                logger.debug(
-                    "pre_normalize_title: extracted CJK bracket drama context %r from %r",
-                    plugin_context['cjk_drama'], raw_title,
-                )
                 return raw_title
 
     # ── ASCII bracket extraction ([bracket] / (parens)) ────────────────────
@@ -671,10 +658,6 @@ def _on_pre_normalize_title(raw_title: str, **kwargs: Any) -> str:
             _has_cjk(drama) or _OST_KEYWORD_RE.search(drama)
         ):
             plugin_context['cjk_drama'] = drama.strip()
-            logger.debug(
-                "pre_normalize_title: extracted ASCII bracket drama context %r from %r",
-                plugin_context['cjk_drama'], raw_title,
-            )
 
     return raw_title
 

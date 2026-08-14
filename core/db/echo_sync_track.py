@@ -190,20 +190,13 @@ class EchosyncTrack:
             if value:
                 val_str = str(value).strip()
                 is_suspicious = False
-                if "\\" in val_str or re.match(r'^[a-zA-Z]:[/\\]', val_str):
+                # Genuine absolute or relative file paths (e.g. /data/music/..., C:\music\..., ./music/...)
+                if re.match(r'^(?:[a-zA-Z]:[/\\]|/(?:data|mnt|app|home|var|tmp|music|storage|media|usr|opt|etc)/|\.{1,2}[/\\])', val_str):
                     is_suspicious = True
-                elif val_str.startswith("/") or val_str.endswith("/"):
+                elif re.search(r'[/\\][^/\\]+\.(mp3|flac|m4a|aac|wav|ogg|wma|opus|aiff|alac)$', val_str, re.IGNORECASE):
                     is_suspicious = True
-                elif re.search(r'\.(mp3|flac|m4a|aac|wav|ogg|wma|opus|aiff|alac)$', val_str, re.IGNORECASE):
+                elif re.search(r'\.(mp3|flac|m4a|aac|wav|ogg|wma|opus|aiff|alac)$', val_str, re.IGNORECASE) and ('/' in val_str or '\\' in val_str):
                     is_suspicious = True
-                elif "/" in val_str:
-                    for m in re.finditer(r'/', val_str):
-                        idx = m.start()
-                        before = val_str[idx - 1] if idx > 0 else ''
-                        after = val_str[idx + 1] if idx < len(val_str) - 1 else ''
-                        if not ((before.isalnum() or before.isspace()) and (after.isalnum() or after.isspace())):
-                            is_suspicious = True
-                            break
 
                 if is_suspicious:
                     from core.tiered_logger import get_logger

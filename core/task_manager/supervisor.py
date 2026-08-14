@@ -67,6 +67,20 @@ class ProcessSupervisor:
         if removed:
             logger.debug(f"Unregistered process '{registration_id}' for owner '{removed.owner_id}'")
 
+    def get_cancellation_event(self, thread_id: Optional[int] = None) -> Optional[threading.Event]:
+        """Look up the cancellation event for a given thread_id (defaults to current thread)."""
+        target_tid = thread_id or threading.get_ident()
+        with self._lock:
+            for reg_id, owner in self._processes.items():
+                if owner.thread_id == target_tid:
+                    return self._cancellation_events.get(reg_id)
+        return None
+
+    def is_current_task_cancelled(self) -> bool:
+        """Returns True if the current executing thread has received a cancellation signal."""
+        event = self.get_cancellation_event()
+        return event.is_set() if event else False
+
     def terminate_owner_processes(self, owner_id: str) -> None:
         """
         Kills all sub-processes/threads registered under owner_id.
