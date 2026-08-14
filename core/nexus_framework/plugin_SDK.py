@@ -538,12 +538,20 @@ class _SDK:
         import inspect
         frame = inspect.currentframe()
         caller_mod = ''
+        fallback_mod = ''
         while frame:
             mod = frame.f_globals.get('__name__', '')
             if mod and not mod.startswith('core.nexus_framework'):
-                caller_mod = mod
-                break
+                if not mod.startswith('importlib') and not mod.startswith('_frozen_importlib'):
+                    if mod.startswith('plugins.'):
+                        caller_mod = mod
+                        break
+                    if not fallback_mod:
+                        fallback_mod = mod
             frame = frame.f_back
+
+        if not caller_mod:
+            caller_mod = fallback_mod or ''
 
         # Handle plugins.{author}.{plugin_name}
         if caller_mod.startswith('plugins.'):
@@ -558,6 +566,48 @@ class _SDK:
             return caller_mod.split('.')[2]
 
         return caller_mod.replace('plugins.', '').replace('core.', '').split('.')[0]
+
+    def get_database_connection(self, write_access: bool = False):
+        """
+        Returns an SQLAlchemy engine connected to the calling plugin's isolated SQLite database.
+        It also securely mounts the core databases (music_library.db, working.db) as attached databases.
+        """
+        import os
+        from sqlalchemy import create_engine, event
+        from database.config_database import get_config_database
+        from core.settings import config_manager
+
+        plugin_name = self._get_plugin_id()
+        db = get_config_database()
+        plugin_id_int = db.get_service_id(plugin_name)
+        if not plugin_id_int:
+            import binascii
+            plugin_id_int = binascii.crc32(plugin_name.lower().encode('utf-8')) & 0xFFFFFFFF
+
+        channel = config_manager.get_plugin_channel(plugin_name) or 'stable'
+        db_file_name = f"{plugin_id_int}@beta.db" if channel == "beta" else f"{plugin_id_int}.db"
+
+        plugin_data_dir = "/data/plugins/data/"
+        os.makedirs(plugin_data_dir, exist_ok=True)
+
+        db_path = os.path.join(plugin_data_dir, db_file_name)
+        engine = create_engine(f"sqlite:///{db_path}")
+
+        @event.listens_for(engine, "connect")
+        def set_sqlite_pragma(dbapi_connection, connection_record):
+            cursor = dbapi_connection.cursor()
+            try:
+                if os.path.exists('/data/music.db'):
+                    cursor.execute("ATTACH DATABASE 'file:/data/music.db?mode=ro' AS music_lib")
+                working_mode = "rw" if write_access else "ro"
+                if os.path.exists('/data/working.db'):
+                    cursor.execute(f"ATTACH DATABASE 'file:/data/working.db?mode={working_mode}' AS working")
+            except Exception:
+                pass
+            finally:
+                cursor.close()
+
+        return engine
 
     @property
     def network(self):

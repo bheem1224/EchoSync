@@ -526,6 +526,15 @@ class ConfigDatabase:
             from core.security import encrypt_string
             import json
             
+            # Resolve to primary key services.id if a plugin_id/name was passed
+            resolved_id = self.get_service_id(service_id)
+            if resolved_id:
+                service_id = resolved_id
+
+            if not service_id:
+                logger.warning(f"Cannot set service config for unknown service: {service_id}")
+                return False
+
             if isinstance(value, (list, dict)):
                 value = json.dumps(value)
                 
@@ -551,6 +560,14 @@ class ConfigDatabase:
         try:
             import contextlib
             import json
+
+            resolved_id = self.get_service_id(service_id)
+            if resolved_id:
+                service_id = resolved_id
+
+            if not service_id:
+                return None
+
             with self._get_connection() as conn:
                 c = conn.cursor()
                 c.execute("SELECT config_value, is_sensitive FROM service_config WHERE service_id=? AND config_key=?", (service_id, key))
@@ -579,6 +596,14 @@ class ConfigDatabase:
         try:
             import contextlib
             import json
+
+            resolved_id = self.get_service_id(service_id)
+            if resolved_id:
+                service_id = resolved_id
+
+            if not service_id:
+                return {}
+
             with self._get_connection() as conn:
                 c = conn.cursor()
                 c.execute("SELECT config_key, config_value, is_sensitive FROM service_config WHERE service_id=?", (service_id,))
@@ -611,7 +636,7 @@ class ConfigDatabase:
         """Resolve a service ID (PK or plugin_id) to its canonical name."""
         with self._get_connection() as conn:
             c = conn.cursor()
-            c.execute("SELECT name FROM services WHERE id=? OR plugin_id=?", (service_id, service_id))
+            c.execute("SELECT name FROM services WHERE id=?", (service_id,))
             row = c.fetchone()
             if not row: return None
             return row['name']
@@ -626,15 +651,15 @@ class ConfigDatabase:
                 row = c.fetchone()
                 if row: return int(row[0])
             else:
-                # 1. Check exact name
-                c.execute("SELECT id FROM services WHERE name=?", (identifier,))
+                # 1. Check exact name (case-insensitive)
+                c.execute("SELECT id FROM services WHERE LOWER(name)=LOWER(?)", (str(identifier),))
                 row = c.fetchone()
                 if row: return int(row[0])
                 
                 # 2. Check by CRC32 of the identifier (e.g. EchoSync.spotify)
                 import binascii
                 crc = binascii.crc32(str(identifier).lower().encode('utf-8')) & 0xFFFFFFFF
-                c.execute("SELECT id FROM services WHERE plugin_id=? OR name=?", (crc, identifier))
+                c.execute("SELECT id FROM services WHERE plugin_id=? OR LOWER(name)=LOWER(?)", (crc, str(identifier)))
                 row = c.fetchone()
                 if row: return int(row[0])
                 

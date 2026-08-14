@@ -569,9 +569,7 @@
   }
 
   function handleGlobalKeydown(e) {
-    const isInput = ['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName) || document.activeElement.isContentEditable;
-    
-    if ((e.ctrlKey && e.key === 'k') || (e.key === '/' && !isInput)) {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
       e.preventDefault();
       if (!inline && mode === 'modal') {
         if (isOpen) closeModal();
