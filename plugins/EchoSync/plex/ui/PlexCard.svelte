@@ -121,6 +121,15 @@
             const pollResp = await fetch(
               `${apiBase}/auth/poll/${oauthSession}`,
             );
+            if (!pollResp.ok) {
+              if (pollResp.status === 404) {
+                clearInterval(pollInterval);
+                pollInterval = null;
+                authenticating = false;
+                oauthSession = null;
+              }
+              return;
+            }
             const pollData = await pollResp.json();
             if (pollData?.completed) {
               clearInterval(pollInterval);
@@ -128,15 +137,14 @@
               authenticating = false;
               oauthSession = null;
               await loadSettings();
+              window.dispatchEvent(
+                new CustomEvent("es-toast", {
+                  detail: { message: "Plex authentication successful!", type: "success" },
+                }),
+              );
             }
           } catch (pollError) {
             console.error("OAuth poll error:", pollError);
-            if (pollError.status === 404) {
-              clearInterval(pollInterval);
-              pollInterval = null;
-              authenticating = false;
-              oauthSession = null;
-            }
           }
         }, 3000);
       }

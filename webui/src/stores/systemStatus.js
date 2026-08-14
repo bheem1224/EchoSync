@@ -11,11 +11,11 @@ function createSystemStatusStore() {
   });
 
   let pollInterval = null;
-  // Require 2 consecutive failures before showing the offline banner.
-  // This prevents transient hiccups (single slow request, brief network blip)
-  // from triggering the orange banner unnecessarily.
+  // Require 4 consecutive failures (20s) before showing the offline banner.
+  // This prevents transient lock contentions during intensive database syncs
+  // from triggering the offline banner prematurely.
   let consecutiveFailures = 0;
-  const FAILURES_BEFORE_OFFLINE = 2;
+  const FAILURES_BEFORE_OFFLINE = 4;
 
   async function load() {
     try {

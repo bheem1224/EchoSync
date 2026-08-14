@@ -30,7 +30,7 @@ export const API_BASE_URL = determinedBaseURL;
 
 const apiClient = axios.create({
   baseURL: API_BASE_URL,
-  timeout: 10000, // Request timeout (10 seconds)
+  timeout: 30000, // Request timeout (30 seconds)
   withCredentials: true, // Ensure HttpOnly cookies are sent with every request
 });
 

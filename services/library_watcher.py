@@ -50,7 +50,7 @@ from watchdog.events import FileSystemEventHandler, FileSystemEvent  # type: ign
 from watchdog.observers import Observer  # type: ignore[import-untyped]
 
 from core.event_bus import event_bus
-from core.db.echo_sync_track import EchosyncTrack
+from core.db.echo_sync_track import EchosyncTrack, EchosyncMedia
 from core.settings import config_manager
 from core.tiered_logger import get_logger
 from database.music_database import get_database
@@ -194,13 +194,17 @@ def _process_new_file(path: Path) -> None:
         # upsert pipeline handles Artist / Album / Track creation.
         # album_title is a required positional field on EchosyncTrack; fall
         # back to empty string when the tag is absent.
+        media_obj = EchosyncMedia(
+            file_path=str(path),
+            file_format=path.suffix.lstrip(".").lower() if path.suffix else None,
+        )
         track_obj = EchosyncTrack(
             raw_title=title,
             artist_name=artist_name,
             album_title=album_title or "",
             duration=duration_ms,
             isrc=isrc,
-            file_path=str(path),
+            media=[media_obj],
         )
 
         try:
@@ -301,6 +305,21 @@ class LibraryWatcherService:
         )
         self._observer.start()
         self._started = True
+        try:
+            from core.task_manager.supervisor import supervisor
+            from core.task_manager.models import ProcessOwner, OwnerType, ProcessCategory
+            self._reg_id = supervisor.register_process(
+                ProcessOwner(
+                    owner_id="core.library_watcher",
+                    owner_type=OwnerType.CORE,
+                    task_name="Library File Watcher",
+                    category=ProcessCategory.WORKER_THREAD,
+                    is_killable=True,
+                    thread_id=getattr(self._observer, 'ident', None)
+                )
+            )
+        except Exception:
+            pass
         logger.info(
             "LibraryWatcherService started — monitoring '%s' (recursive)",
             library_path,
@@ -310,6 +329,14 @@ class LibraryWatcherService:
         """Gracefully stop the observer thread and cancel pending debounce timers."""
         if not self._started:
             return
+
+        if getattr(self, '_reg_id', None):
+            try:
+                from core.task_manager.supervisor import supervisor
+                supervisor.unregister_process(self._reg_id)
+                self._reg_id = None
+            except Exception:
+                pass
 
         if self._handler is not None:
             self._handler.cancel_all()

@@ -318,55 +318,87 @@ class MusicBrainzClient(PluginBase):
         clean_title = normalize_title(title)
         clean_artist = normalize_artist(artist)
 
+        # 3b. Check if track has an AcoustID ID to query MusicBrainz directly
+        acoustid_val = getattr(track, 'acoustid_id', None)
+        if not acoustid_val and isinstance(getattr(track, 'identifiers', None), dict):
+            acoustid_val = track.identifiers.get('acoustid_id') or track.identifiers.get('acoustid')
+        
+        if acoustid_val and isinstance(acoustid_val, str) and len(acoustid_val) > 10:
+            logger.debug(f"[MusicBrainz Client] Trying AcoustID query on MusicBrainz: acoustid:{acoustid_val}")
+            results = self._search_metadata_query(query=f'acoustid:{acoustid_val}', limit=1)
+            if results:
+                top = results[0]
+                mbid = top.get("recording_id") or top.get("mbid")
+                if mbid:
+                    fetched = self.get_track(mbid)
+                    if isinstance(fetched, EchosyncTrack):
+                        return fetched
+
         safe_title = self._escape_lucene(clean_title)
         safe_artist = self._escape_lucene(clean_artist)
         
-        baseline_query = f'artist:"{safe_artist}" AND recording:"{safe_title}"'
+        is_numeric_artist = clean_artist.isdigit()
         
-        fallback_query = baseline_query
-        if album:
-            clean_album = self._escape_lucene(album.strip())
-            if clean_album:
-                fallback_query += f' AND release:"{clean_album}"'
-                
-        strict_query = fallback_query
-        if duration_ms:
-            min_ms = max(0, duration_ms - 5000)
-            max_ms = duration_ms + 5000
-            strict_query += f' AND dur:[{min_ms} TO {max_ms}]'
+        # Clean leading year from album name (e.g. "2018 - Album Name" -> "Album Name")
+        clean_album_str = re.sub(r'^\d{4}\s*[-_]\s*', '', album.strip()) if album else ''
+        safe_album = self._escape_lucene(clean_album_str) if clean_album_str else ''
 
-        # Attempt 1: Strict Query (Artist + Title + Album + Duration)
-        logger.debug(f"[MusicBrainz Client] Attempt 1 (Strict): '{strict_query}'")
-        results = self._search_metadata_query(query=strict_query, limit=1)
-        
-        # Attempt 2: Fallback Query (Artist + Title + Album)
-        if not results and strict_query != fallback_query:
-            logger.debug(f"[MusicBrainz Client] Strict query failed. Attempt 2 (Fallback): '{fallback_query}'")
-            results = self._search_metadata_query(query=fallback_query, limit=1)
+        results = []
+
+        if not is_numeric_artist and safe_artist:
+            baseline_query = f'artist:"{safe_artist}" AND recording:"{safe_title}"'
             
-        # Attempt 3: Baseline Query (Artist + Title)
-        if not results and fallback_query != baseline_query:
-            logger.debug(f"[MusicBrainz Client] Fallback query failed. Attempt 3 (Baseline): '{baseline_query}'")
-            results = self._search_metadata_query(query=baseline_query, limit=1)
+            fallback_query = baseline_query
+            if safe_album:
+                fallback_query += f' AND release:"{safe_album}"'
+                    
+            strict_query = fallback_query
+            if duration_ms:
+                min_ms = max(0, duration_ms - 5000)
+                max_ms = duration_ms + 5000
+                strict_query += f' AND dur:[{min_ms} TO {max_ms}]'
 
-        # Legacy Fallback 1: Strip parenthetical/bracketed phrases from the title and search again
-        if not results:
-            fallback_title = re.sub(r'[\(\[\{].*?[\)\]\}]', '', clean_title).strip()
-            fallback_title = re.sub(r'\s+', ' ', fallback_title)
-            if fallback_title and fallback_title != clean_title:
-                safe_fallback_title = self._escape_lucene(fallback_title)
-                logger.debug(f"[MusicBrainz Client] Baseline query failed. Trying Legacy Fallback 1 (stripped brackets): title='{fallback_title}'")
-                legacy_query = f'artist:"{safe_artist}" AND recording:"{safe_fallback_title}"'
+            # Attempt 1: Strict Query (Artist + Title + Album + Duration)
+            logger.debug(f"[MusicBrainz Client] Attempt 1 (Strict): '{strict_query}'")
+            results = self._search_metadata_query(query=strict_query, limit=1)
+            
+            # Attempt 2: Fallback Query (Artist + Title + Album)
+            if not results and strict_query != fallback_query:
+                logger.debug(f"[MusicBrainz Client] Strict query failed. Attempt 2 (Fallback): '{fallback_query}'")
+                results = self._search_metadata_query(query=fallback_query, limit=1)
+                
+            # Attempt 3: Baseline Query (Artist + Title)
+            if not results and fallback_query != baseline_query:
+                logger.debug(f"[MusicBrainz Client] Fallback query failed. Attempt 3 (Baseline): '{baseline_query}'")
+                results = self._search_metadata_query(query=baseline_query, limit=1)
+
+            # Legacy Fallback 1: Strip parenthetical/bracketed phrases from the title and search again
+            if not results:
+                fallback_title = re.sub(r'[\(\[\{].*?[\)\]\}]', '', clean_title).strip()
+                fallback_title = re.sub(r'\s+', ' ', fallback_title)
+                if fallback_title and fallback_title != clean_title:
+                    safe_fallback_title = self._escape_lucene(fallback_title)
+                    logger.debug(f"[MusicBrainz Client] Baseline query failed. Trying Legacy Fallback 1 (stripped brackets): title='{fallback_title}'")
+                    legacy_query = f'artist:"{safe_artist}" AND recording:"{safe_fallback_title}"'
+                    results = self._search_metadata_query(query=legacy_query, limit=1)
+
+            # Legacy Fallback 2: Search for clean_title alone with artist as loose parameter
+            if not results:
+                loose_title = re.sub(r'[\(\[\{].*?[\)\]\}]', '', clean_title).strip() or clean_title
+                loose_title = re.sub(r'\s+', ' ', loose_title)
+                safe_loose_title = self._escape_lucene(loose_title)
+                logger.debug(f"[MusicBrainz Client] Legacy Fallback 1 failed or skipped. Trying Legacy Fallback 2 (loose artist): title='{loose_title}', artist='{clean_artist}'")
+                legacy_query = f'recording:"{safe_loose_title}" AND artist:{safe_artist}'
                 results = self._search_metadata_query(query=legacy_query, limit=1)
 
-        # Legacy Fallback 2: Search for clean_title (or fallback_title if stripped) alone with artist as loose parameter
-        if not results:
-            loose_title = re.sub(r'[\(\[\{].*?[\)\]\}]', '', clean_title).strip() or clean_title
-            loose_title = re.sub(r'\s+', ' ', loose_title)
-            safe_loose_title = self._escape_lucene(loose_title)
-            logger.debug(f"[MusicBrainz Client] Legacy Fallback 1 failed or skipped. Trying Legacy Fallback 2 (loose artist): title='{loose_title}', artist='{clean_artist}'")
-            legacy_query = f'recording:"{safe_loose_title}" AND artist:{safe_artist}'
-            results = self._search_metadata_query(query=legacy_query, limit=1)
+        # Fallback without artist (e.g. if artist was numeric track number or unknown, or artist queries yielded no match)
+        if not results and safe_title:
+            if safe_album:
+                logger.debug(f"[MusicBrainz Client] Trying Release + Recording fallback: recording='{safe_title}', release='{safe_album}'")
+                results = self._search_metadata_query(query=f'recording:"{safe_title}" AND release:"{safe_album}"', limit=1)
+            if not results:
+                logger.debug(f"[MusicBrainz Client] Trying Recording-only fallback: recording='{safe_title}'")
+                results = self._search_metadata_query(query=f'recording:"{safe_title}"', limit=1)
 
         if results:
             top = results[0]

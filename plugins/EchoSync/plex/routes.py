@@ -196,12 +196,10 @@ async def start_oauth(request: Request):
     """
     try:
         from plexapi.myplex import MyPlexPinLogin
+        from database.config_database import get_config_database
 
         pin_login = MyPlexPinLogin(oauth=True)
         session_id = str(uuid.uuid4())
-
-        with plex_oauth_lock:
-            plex_oauth_sessions[session_id] = pin_login
 
         # We don't want to use pin_login.run() because it blocks the thread
         # and starts an internal polling loop. Instead we initialize the code
@@ -213,7 +211,29 @@ async def start_oauth(request: Request):
         forward_url = f"{origin}/settings/music-services" if origin else "http://127.0.0.1:5173/settings/music-services"
         oauth_url = pin_login.oauthUrl(forward_url)
 
-        logger.info(f"Plex OAuth session started: {session_id} with pin id: {pin_login._id}")
+        pin_id = str(pin_login._id)
+        client_id = pin_login._headers().get('X-Plex-Client-Identifier', 'Echosync')
+
+        with plex_oauth_lock:
+            plex_oauth_sessions[session_id] = pin_login
+
+        # Persist session to database so polling survives worker recycling / reloads
+        try:
+            db = get_config_database()
+            db.store_pkce_session(
+                pkce_id=session_id,
+                service='plex',
+                account_id=0,
+                code_verifier=pin_id,
+                code_challenge='',
+                redirect_uri=forward_url,
+                client_id=client_id,
+                ttl_seconds=900
+            )
+        except Exception as db_err:
+            logger.warning(f"Failed to persist Plex OAuth session to DB: {db_err}")
+
+        logger.info(f"Plex OAuth session started: {session_id} with pin id: {pin_id}")
 
         # Register a one-shot cleanup job with the central scheduler so the session
         # is expired after 15 minutes without spawning a raw background thread.
@@ -223,6 +243,10 @@ async def start_oauth(request: Request):
                 if _session_id in plex_oauth_sessions:
                     plex_oauth_sessions.pop(_session_id, None)
                     logger.info(f"Plex OAuth session cleaned up: {_session_id}")
+            try:
+                get_config_database().delete_pkce_session(_session_id)
+            except Exception:
+                pass
 
         from core.job_queue import job_queue
         job_queue.register_job(
@@ -237,7 +261,7 @@ async def start_oauth(request: Request):
         return JSONResponse(content={
             'session_id': session_id,
             'oauth_url': oauth_url,
-            'poll_url': f'/api/plex/auth/poll/{session_id}'
+            'poll_url': f'/api/v1/plugins/3021005569/auth/poll/{session_id}'
         })
     except ImportError:
         logger.error("plexapi library not installed")
@@ -254,14 +278,32 @@ def poll_oauth(session_id: str):
     Returns: {completed, token?, error?}
     """
     try:
+        from database.config_database import get_config_database
+        
+        pin_login = None
         with plex_oauth_lock:
             pin_login = plex_oauth_sessions.get(session_id)
 
-        if not pin_login:
+        pin_id = None
+        client_id = 'Echosync'
+
+        if pin_login:
+            pin_id = str(pin_login._id)
+            client_id = pin_login._headers().get('X-Plex-Client-Identifier', 'Echosync')
+        else:
+            # Fallback to persistent DB session
+            try:
+                db_session = get_config_database().get_pkce_session(session_id)
+                if db_session:
+                    pin_id = db_session.get('code_verifier')
+                    client_id = db_session.get('client_id') or 'Echosync'
+            except Exception as e:
+                logger.debug(f"DB session lookup failed: {e}")
+
+        if not pin_id:
             return JSONResponse(content={'error': 'Session not found or expired'}, status_code=404)
 
         # We manually query the Plex PIN API to check if the user authorized it.
-        # `pin_login._checkLogin()` handles this cleanly without starting a background thread.
         import requests
         is_logged_in = False
         auth_token = None
@@ -269,10 +311,10 @@ def poll_oauth(session_id: str):
         try:
             headers = {
                 'Accept': 'application/json',
-                'X-Plex-Client-Identifier': pin_login._headers().get('X-Plex-Client-Identifier', 'Echosync')
+                'X-Plex-Client-Identifier': client_id
             }
             # Explicitly request the PIN status from Plex
-            resp = requests.get(f"https://plex.tv/api/v2/pins/{pin_login._id}", headers=headers, timeout=5)
+            resp = requests.get(f"https://plex.tv/api/v2/pins/{pin_id}", headers=headers, timeout=5)
             resp_data = resp.json()
             logger.debug(f"Plex PIN status response: {resp_data}")
 

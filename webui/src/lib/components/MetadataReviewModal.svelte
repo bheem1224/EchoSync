@@ -236,18 +236,19 @@
   }
 
   async function approveAndImport() {
-    if (!task?.id || approving || savingDraft) return;
+    if (!task?.id || approving) return;
+    clearAutosaveTimer();
     approving = true;
     dispatch('approvestart', { taskId: task.id });
     try {
       const payload = buildPayload();
-      await apiClient.post(`/core/metadata_review/${task.id}/approve`, { metadata: payload });
+      await apiClient.post(`/core/metadata_review/${task.id}/approve`, { metadata: payload }, { timeout: 60000 });
       feedback.addToast('Metadata approved and file imported', 'success');
       dispatch('approved', { taskId: task.id, metadata: payload });
       dispatch('close');
     } catch (error) {
       console.error('Failed to approve and import:', error);
-      feedback.addToast('Failed to approve and import file', 'error');
+      feedback.addToast(error?.response?.data?.detail || 'Failed to approve and import file', 'error');
     } finally {
       approving = false;
       dispatch('approveend', { taskId: task.id });
@@ -267,8 +268,10 @@
   
   function applyMetadataUpdate(newMetadata) {
     if (!newMetadata || typeof newMetadata !== 'object') {
-      return;
+      return { changed: false, fieldsChanged: [], nextState: proposedMetadata };
     }
+
+    clearAutosaveTimer();
 
     const normalizedLookupMetadata = {
       ...newMetadata,
@@ -297,7 +300,7 @@
       comments: newMetadata.comments ?? proposedMetadata.comments
     };
 
-    proposedMetadata = {
+    const nextState = {
       ...proposedMetadata,
       ...normalizedLookupMetadata,
       mbid: normalizedLookupMetadata.mbid || '',
@@ -307,7 +310,16 @@
       isrc: normalizedLookupMetadata.isrc || ''
     };
 
+    const fieldsChanged = [];
+    for (const key of ['title', 'artist', 'album', 'year', 'track_number', 'disc_number', 'mbid', 'acoustid', 'isrc']) {
+      if (String(nextState[key] || '').trim() !== String(proposedMetadata[key] || '').trim()) {
+        fieldsChanged.push(key);
+      }
+    }
+
+    proposedMetadata = nextState;
     queueAutosave();
+    return { changed: fieldsChanged.length > 0, fieldsChanged, nextState };
   }
 
   function getLookupMetadata(response) {
@@ -321,12 +333,17 @@
       return;
     }
 
+    clearAutosaveTimer();
     musicbrainzLookupLoading = true;
     try {
-      const response = await apiClient.post(`/core/metadata_review/${task.id}/lookup/musicbrainz`, {
-        artist: (proposedMetadata.artist || '').trim(),
-        title: (proposedMetadata.title || '').trim()
-      });
+      const response = await apiClient.post(
+        `/core/metadata_review/${task.id}/lookup/musicbrainz`,
+        {
+          artist: (proposedMetadata.artist || '').trim(),
+          title: (proposedMetadata.title || '').trim()
+        },
+        { timeout: 60000 }
+      );
       
       const isOk = response && (response.status >= 200 && response.status < 300);
       if (!isOk) {
@@ -343,20 +360,29 @@
 
       const updatedMetadata = getLookupMetadata(response);
       if (updatedMetadata) {
-        applyMetadataUpdate(updatedMetadata);
-        feedback.addToast('MusicBrainz metadata loaded', 'success');
+        const { changed, fieldsChanged, nextState } = applyMetadataUpdate(updatedMetadata);
+        if (changed) {
+          const summary = fieldsChanged.map(f => f.replace('_', ' ')).join(', ');
+          feedback.addToast(`MusicBrainz: Updated ${summary} for "${nextState.title || 'track'}"`, 'success');
+        } else {
+          feedback.addToast('MusicBrainz: Verified metadata (already matches proposed values)', 'success');
+        }
       } else {
         feedback.addToast('MusicBrainz lookup returned no metadata', 'error');
       }
     } catch (error) {
       console.error('MusicBrainz lookup failed:', error);
-      const status = error?.response?.status;
-      if (status === 404) {
-        feedback.addToast('No match found on MusicBrainz.', 'error');
-      } else if (status === 500 || status === 503) {
-        feedback.addToast('Provider lookup failed or is temporarily unavailable.', 'error');
+      if (error?.code === 'ECONNABORTED' || error?.message?.includes('timeout')) {
+        feedback.addToast('MusicBrainz lookup timed out after 60s. The service may be busy.', 'error');
       } else {
-        feedback.addToast('MusicBrainz lookup failed', 'error');
+        const status = error?.response?.status;
+        if (status === 404) {
+          feedback.addToast('No match found on MusicBrainz for this track/artist.', 'error');
+        } else if (status === 500 || status === 503) {
+          feedback.addToast('Provider lookup failed or is temporarily unavailable.', 'error');
+        } else {
+          feedback.addToast(error?.response?.data?.detail || 'MusicBrainz lookup failed', 'error');
+        }
       }
     } finally {
       musicbrainzLookupLoading = false;
@@ -368,9 +394,14 @@
       return;
     }
 
+    clearAutosaveTimer();
     acoustidLookupLoading = true;
     try {
-      const response = await apiClient.post(`/core/metadata_review/${task.id}/lookup/acoustid`);
+      const response = await apiClient.post(
+        `/core/metadata_review/${task.id}/lookup/acoustid`,
+        {},
+        { timeout: 60000 }
+      );
       
       const isOk = response && (response.status >= 200 && response.status < 300);
       if (!isOk) {
@@ -387,25 +418,32 @@
 
       const updatedMetadata = getLookupMetadata(response);
       if (updatedMetadata) {
-        applyMetadataUpdate(updatedMetadata);
+        const { changed, fieldsChanged, nextState } = applyMetadataUpdate(updatedMetadata);
         const isMatch = response?.data?.acoustid_match;
         if (isMatch === false) {
-          feedback.addToast('No AcoustID match yet. Fingerprint captured for later submission.', 'success');
+          feedback.addToast('AcoustID: Fingerprint generated & stored (no catalog match found yet)', 'info');
+        } else if (changed) {
+          const summary = fieldsChanged.map(f => f.replace('_', ' ')).join(', ');
+          feedback.addToast(`AcoustID: Matched fingerprint and updated ${summary}`, 'success');
         } else {
-          feedback.addToast('AcoustID metadata loaded', 'success');
+          feedback.addToast('AcoustID: Fingerprint match verified (matches current metadata)', 'success');
         }
       } else {
         feedback.addToast('AcoustID scan returned no metadata', 'error');
       }
     } catch (error) {
       console.error('AcoustID lookup failed:', error);
-      const status = error?.response?.status;
-      if (status === 404) {
-        feedback.addToast('No match found on AcoustID.', 'error');
-      } else if (status === 500 || status === 503) {
-        feedback.addToast('Provider lookup failed or is temporarily unavailable.', 'error');
+      if (error?.code === 'ECONNABORTED' || error?.message?.includes('timeout')) {
+        feedback.addToast('AcoustID fingerprinting timed out.', 'error');
       } else {
-        feedback.addToast('AcoustID lookup failed', 'error');
+        const status = error?.response?.status;
+        if (status === 404) {
+          feedback.addToast('No match found on AcoustID.', 'error');
+        } else if (status === 500 || status === 503) {
+          feedback.addToast('Provider lookup failed or is temporarily unavailable.', 'error');
+        } else {
+          feedback.addToast(error?.response?.data?.detail || 'AcoustID lookup failed', 'error');
+        }
       }
     } finally {
       acoustidLookupLoading = false;

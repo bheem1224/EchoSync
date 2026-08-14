@@ -420,7 +420,7 @@ class WorkingDatabase:
             self.database_path.parent.mkdir(parents=True, exist_ok=True)
             engine_url = f"sqlite:///{self.database_path}"
 
-        connect_args = {"check_same_thread": False} if engine_url.startswith("sqlite") else {}
+        connect_args = {"timeout": 30.0, "check_same_thread": False} if engine_url.startswith("sqlite") else {}
 
         self.engine = create_engine(
             engine_url,

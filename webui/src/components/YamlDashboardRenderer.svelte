@@ -70,11 +70,19 @@
       let rawYaml = yamlSource;
 
       if (!rawYaml && yamlUrl) {
-        const res = await apiClient.get(yamlUrl);
-        if (res.status !== 200) {
-          throw new Error(`[YamlDashboardRenderer] Failed to fetch ${yamlUrl}: ${res.status} ${res.statusText}`);
+        if (yamlUrl.startsWith('/api/')) {
+          const res = await apiClient.get(yamlUrl.replace(/^\/api\/v1/, ''));
+          if (res.status !== 200) {
+            throw new Error(`[YamlDashboardRenderer] Failed to fetch ${yamlUrl}: ${res.status}`);
+          }
+          rawYaml = res.data;
+        } else {
+          const res = await fetch(yamlUrl);
+          if (!res.ok) {
+            throw new Error(`[YamlDashboardRenderer] Failed to fetch ${yamlUrl}: ${res.status} ${res.statusText}`);
+          }
+          rawYaml = await res.text();
         }
-        rawYaml = res.data;
       }
 
       if (!rawYaml) {

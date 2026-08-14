@@ -224,5 +224,23 @@ class ProcessSupervisor:
         return result
 
 
-# Global ProcessSupervisor singleton
+    # Global ProcessSupervisor singleton
 supervisor = ProcessSupervisor()
+
+# Register core system workers
+try:
+    from core.task_manager.models import ProcessOwner, OwnerType, ProcessCategory
+    import threading
+
+    supervisor.register_process(
+        ProcessOwner(
+            owner_id="core.scheduler",
+            owner_type=OwnerType.CORE,
+            task_name="Task Scheduler Daemon",
+            category=ProcessCategory.CORE_SYSTEM,
+            is_killable=False,
+            thread_id=threading.main_thread().ident
+        )
+    )
+except Exception:
+    pass

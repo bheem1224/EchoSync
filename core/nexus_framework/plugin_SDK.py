@@ -1125,38 +1125,18 @@ class PluginBase(ABC):
         artist_str = _coerce_to_str(artist)
         album_str = _coerce_to_str(album)
         
-        # Debug log raw inputs before processing
-        from core.tiered_logger import get_logger
-        logger = get_logger("provider_base")
-        logger.debug(
-            "Factory raw inputs: title=%r artist=%r album=%r",
-            title, artist, album
-        )
-        logger.debug(
-            "Factory after coercion: title_str=%r artist_str=%r album_str=%r",
-            title_str, artist_str, album_str
-        )
-        
         # Extract edition info from title (remaster, live, remix, etc.)
         clean_title, edition = text_utils.extract_edition(title_str) if title_str else (None, None)
-        
 
         # Normalize text fields (handle None inputs)
         normalized_title = text_utils.normalize_title(clean_title) if clean_title else None
         normalized_artist = text_utils.normalize_artist(artist_str) if artist_str else None
         normalized_album = text_utils.normalize_album(album_str) if album_str else None
         
-        # Debug log to trace normalization issues
-        from core.tiered_logger import get_logger
-        logger = get_logger("provider_base")
-        logger.debug(
-            "Factory normalization: title='%s'→'%s' artist='%s'→'%s' album='%s'→'%s'",
-            title_str, normalized_title, artist_str, normalized_artist, album_str, normalized_album
-        )
-        
         # Validate required fields after normalization
         if not normalized_title or not normalized_title.strip():
-            logger.warning(f"Skipping track creation - normalized title is empty (original: '{title_str}')")
+            from core.tiered_logger import get_logger
+            get_logger("provider_base").debug(f"Skipping track creation - normalized title is empty (original: '{title_str}')")
             return None
         
         if not normalized_artist or not normalized_artist.strip():

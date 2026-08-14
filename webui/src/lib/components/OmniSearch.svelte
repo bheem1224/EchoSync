@@ -398,7 +398,11 @@
             clearLibrary();
             results.external = [];
 
-            const response = await apiClient.get(`/core/search/?q=${encodeURIComponent(term)}&types=tracks,albums,artists`);
+            const searchUrl = `${API_BASE_URL}/core/search/?q=${encodeURIComponent(term)}&types=tracks,albums,artists`;
+            const response = await fetch(searchUrl, {
+                headers,
+                signal
+            });
 
             if (!response.ok) {
                 throw new Error(`Search failed: ${response.statusText}`);
@@ -442,7 +446,9 @@
         results.plugins = [];
       }
     } catch (err) {
-      console.error("OmniSearch performSearch error:", err);
+      if (err.name !== 'AbortError') {
+        console.error("OmniSearch performSearch error:", err);
+      }
     } finally {
       isSearching = false;
     }

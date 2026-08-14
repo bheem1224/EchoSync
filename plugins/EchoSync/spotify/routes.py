@@ -28,15 +28,20 @@ def _get_redirect_uri() -> str:
 def get_settings():
     """Get Spotify global settings and credentials."""
     try:
-        from core.nexus_framework.plugin_loader import PluginRegistry
-        if PluginRegistry.is_plugin_disabled('spotify'):
-            return JSONResponse(content={'settings': {}}, status_code=200)
-
         client_id = sdk.config.get('client_id', '') or ''
         client_secret = sdk.secrets.get('client_secret', '') or ''
         redirect_uri = _get_redirect_uri()
 
-        # Fallback to storage if not yet in plugin sdk namespace
+        # Fallback to database service_config if not yet in plugin sdk namespace
+        if not client_id or not client_secret:
+            from database.config_database import get_config_database
+            db = get_config_database()
+            svc_id = db.get_service_id(2391116200) or db.get_service_id('Spotify') or db.get_service_id('EchoSync.Spotify')
+            if svc_id:
+                client_id = client_id or db.get_service_config(svc_id, 'client_id') or ''
+                client_secret = client_secret or db.get_service_config(svc_id, 'client_secret') or ''
+
+        # Legacy storage fallback
         if not client_id or not client_secret:
             from core.file_handling.storage import get_storage_service
             storage = get_storage_service()
@@ -73,6 +78,18 @@ async def save_settings(request: Request):
         if redirect_uri:
             sdk.config.set('redirect_uri', redirect_uri)
 
+        # Also mirror into database service_config
+        from database.config_database import get_config_database
+        db = get_config_database()
+        svc_id = db.get_service_id(2391116200) or db.get_service_id('Spotify') or db.get_service_id('EchoSync.Spotify')
+        if svc_id:
+            if client_id:
+                db.set_service_config(svc_id, 'client_id', client_id, is_sensitive=False)
+            if client_secret:
+                db.set_service_config(svc_id, 'client_secret', client_secret, is_sensitive=True)
+            if redirect_uri:
+                db.set_service_config(svc_id, 'redirect_uri', redirect_uri, is_sensitive=False)
+
         # Also mirror into storage for legacy callers
         from core.file_handling.storage import get_storage_service
         storage = get_storage_service()
@@ -97,10 +114,6 @@ async def save_settings(request: Request):
 def list_accounts():
     """List all Spotify accounts."""
     try:
-        from core.nexus_framework.plugin_loader import PluginRegistry
-        if PluginRegistry.is_plugin_disabled('spotify'):
-            return JSONResponse(content={'accounts': []}, status_code=200)
-
         db_accounts = sdk.accounts.get_all()
         accounts = []
         for a in db_accounts:
@@ -176,9 +189,6 @@ def delete_account(account_id: int):
 @router.get('/auth')
 def begin_auth(account_id: Optional[int] = None):
     """Start OAuth flow for Spotify. Returns an auth URL to redirect the user to."""
-    from core.nexus_framework.plugin_loader import PluginRegistry
-    if PluginRegistry.is_plugin_disabled('spotify'):
-        return JSONResponse(content={'error': 'Spotify provider is disabled'}, status_code=403)
     try:
         if not account_id:
             return JSONResponse(content={'error': 'account_id parameter is required'}, status_code=400)
@@ -186,6 +196,14 @@ def begin_auth(account_id: Optional[int] = None):
         client_id = sdk.config.get('client_id')
         client_secret = sdk.secrets.get('client_secret')
         redirect_uri = _get_redirect_uri()
+
+        if not client_id or not client_secret:
+            from database.config_database import get_config_database
+            db = get_config_database()
+            svc_id = db.get_service_id(2391116200) or db.get_service_id('Spotify') or db.get_service_id('EchoSync.Spotify')
+            if svc_id:
+                client_id = client_id or db.get_service_config(svc_id, 'client_id')
+                client_secret = client_secret or db.get_service_config(svc_id, 'client_secret')
 
         if not client_id or not client_secret:
             from core.file_handling.storage import get_storage_service
