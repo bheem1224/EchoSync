@@ -1819,7 +1819,7 @@ function Mr(e, t, n) {
 		}, !1);
 	}
 	if (o === 0) {
-		var l = r.length === 0 && n !== null;
+		var l = r.length === 0 && n !== null && e.pending.size === 0;
 		if (l) {
 			var u = n, d = u.parentNode;
 			un(d), d.append(u), e.items.clear();
