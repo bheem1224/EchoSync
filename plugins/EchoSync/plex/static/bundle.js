@@ -2194,9 +2194,17 @@ function si(e, t) {
 			let e = await (await fetch(`${n()}/auth/start`, { method: "POST" })).json();
 			e?.oauth_url && e?.session_id && (d = e.session_id, window.open(e.oauth_url, "PlexOAuth", "width=600,height=700,menubar=no,status=no"), f = setInterval(async () => {
 				try {
-					(await (await fetch(`${n()}/auth/poll/${d}`)).json())?.completed && (clearInterval(f), f = null, F(u, !1), d = null, await g());
+					let e = await fetch(`${n()}/auth/poll/${d}`);
+					if (!e.ok) {
+						e.status === 404 && (clearInterval(f), f = null, F(u, !1), d = null);
+						return;
+					}
+					(await e.json())?.completed && (clearInterval(f), f = null, F(u, !1), d = null, await g(), window.dispatchEvent(new CustomEvent("es-toast", { detail: {
+						message: "Plex authentication successful!",
+						type: "success"
+					} })));
 				} catch (e) {
-					console.error("OAuth poll error:", e), e.status === 404 && (clearInterval(f), f = null, F(u, !1), d = null);
+					console.error("OAuth poll error:", e);
 				}
 			}, 3e3));
 		} catch (e) {
