@@ -218,6 +218,20 @@ def _musicbrainz_text_search(metadata_provider, track: Any) -> Optional[Echosync
                     return enriched_track
                 else:
                     logger.debug("[MusicBrainz Search] enriched_track has empty musicbrainz_id")
+            elif isinstance(enriched_track, list) and len(enriched_track) > 0:
+                first_match = enriched_track[0]
+                if isinstance(first_match, dict):
+                    mb_id = first_match.get("id") or first_match.get("musicbrainz_id")
+                    if mb_id:
+                        ret_track = EchosyncTrack(
+                            raw_title=first_match.get("title") or title,
+                            artist_name=first_match.get("artist") or artist,
+                            album_title=first_match.get("album", ""),
+                            identifiers={"musicbrainz": mb_id}
+                        )
+                        ret_track.musicbrainz_id = mb_id
+                        logger.debug(f"[MusicBrainz Search] Converted dict to EchosyncTrack with mb_id: '{mb_id}'")
+                        return ret_track
             else:
                 logger.debug(f"[MusicBrainz Search] enriched_track is not EchosyncTrack instance (type: {type(enriched_track).__name__})")
         except Exception as e:
@@ -372,9 +386,15 @@ def get_review_queue():
 @router.put("/{task_id}")
 def update_review_queue_item(task_id: int, payload: UpdateReviewQueueRequest, _=Depends(require_auth)):
     """Update track_data JSON blob or save progress incrementally for a review task."""
-    metadata = payload.metadata or payload.track_data or payload.model_dump(exclude_unset=True)
-    if not metadata:
-        raise HTTPException(status_code=400, detail="Missing JSON payload")
+    metadata = payload.metadata
+    if metadata is None:
+        metadata = payload.track_data
+    if metadata is None:
+        metadata = payload.model_dump(exclude_unset=True)
+        
+    if metadata is None:
+        metadata = {}
+
     if not isinstance(metadata, dict):
         raise HTTPException(status_code=400, detail="Invalid metadata payload")
 

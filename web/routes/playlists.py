@@ -1285,7 +1285,7 @@ def list_playlists(request: Request):
     return {"items": [], "total": 0}
 
 @router.post("/analyze")
-def analyze_playlists(payload_obj: PlaylistAnalyzeSchema):
+def analyze_playlists(payload_obj: Optional[PlaylistAnalyzeSchema] = None):
     """Analyze playlists: fetch real tracks from source provider and check against database using WeightedMatchingEngine."""
     payload = payload_obj.model_dump(exclude_unset=True) if payload_obj else {}
     source = payload.get("source")
@@ -1309,7 +1309,7 @@ def analyze_playlists(payload_obj: PlaylistAnalyzeSchema):
 
 
 @router.post("/analyze/start")
-def start_analyze_job(payload_obj: PlaylistAnalyzeSchema):
+def start_analyze_job(payload_obj: Optional[PlaylistAnalyzeSchema] = None):
     """Start playlist analysis as a background job and return a job_id to poll."""
     payload = payload_obj.model_dump(exclude_unset=True) if payload_obj else {}
     source = payload.get('source')

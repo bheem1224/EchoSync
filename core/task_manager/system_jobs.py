@@ -298,15 +298,7 @@ def register_external_identifier_sync_job(interval_seconds: int = 21600, enabled
                 
                 logger.info(f"Running external identifier sync for {active_server}")
                 try:
-                    worker = DatabaseUpdateWorker(
-                        media_client=provider,
-                        database_path=None,
-                        full_refresh=False,
-                        server_type=active_server,
-                        force_sequential=True,
-                        identifiers_only=True
-                    )
-                    worker.run()
+                    logger.warning(f"External identifier sync for {active_server} is currently suspended pending migration to LibrarySyncService.")
                 except Exception as e:
                     logger.error(f"External identifier sync worker failed for {active_server}: {e}", exc_info=True)
 
