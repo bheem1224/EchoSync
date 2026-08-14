@@ -13,7 +13,7 @@ from core.nexus_framework.plugin_SDK import PluginBase
 from core.nexus_framework.plugin_SDK import SyncServiceProvider, ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
 
 from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
-from core.matching_engine.echo_sync_track import EchosyncTrack
+from core.db.echo_sync_track import EchosyncTrack
 from core.request_manager import RequestManager, RetryConfig, RateLimitConfig
 from core.caching.plugin_cache import plugin_cache
 

@@ -1,7 +1,7 @@
 from .client import SpotifyClient
-from .routes import bp
+from .routes import router, bp
 
 ProviderClass = SpotifyClient
-RouteBlueprint = bp
+RouteBlueprint = router
 
-__all__ = ['ProviderClass', 'RouteBlueprint']
+__all__ = ['ProviderClass', 'RouteBlueprint', 'router', 'bp']

@@ -59,7 +59,7 @@ export async function loadPluginViews() {
         throw new Error(`registry fetch failed: ${res.status} ${res.statusText}`);
       }
 
-      const data = await res.json();
+      const data = res.data;
       const rawViews = Array.isArray(data?.views) ? data.views : [];
 
       /** @type {PluginView[]} */

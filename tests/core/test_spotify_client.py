@@ -1,7 +1,7 @@
 
 import pytest
 from unittest.mock import MagicMock, patch
-from plugins.EchoSync.spotify.client import SpotifyClient
+from plugins.EchoSync.Spotify.client import SpotifyClient
 
 @pytest.fixture
 def spotify_client():
@@ -53,8 +53,8 @@ def test_existing_token_scope_does_not_invalidate(monkeypatch):
         return limited_token
     def fake_save_token(self, token_info):
         pass
-    monkeypatch.setattr('plugins.EchoSync.spotify.client.ConfigCacheHandler.get_cached_token', fake_get_cached_token)
-    monkeypatch.setattr('plugins.EchoSync.spotify.client.ConfigCacheHandler.save_token_to_cache', fake_save_token)
+    monkeypatch.setattr('plugins.EchoSync.Spotify.client.ConfigCacheHandler.get_cached_token', fake_get_cached_token)
+    monkeypatch.setattr('plugins.EchoSync.Spotify.client.ConfigCacheHandler.save_token_to_cache', fake_save_token)
 
     # fake SpotifyOAuth to capture the requested scope and use our dummy token
     created = {}
@@ -68,7 +68,7 @@ def test_existing_token_scope_does_not_invalidate(monkeypatch):
             return limited_token
 
     # patch the reference used inside spotify.client module
-    monkeypatch.setattr('plugins.EchoSync.spotify.client.SpotifyOAuth', FakeSpotifyOAuth)
+    monkeypatch.setattr('plugins.EchoSync.Spotify.client.SpotifyOAuth', FakeSpotifyOAuth)
 
     # patch account manager to provide dummy credentials
     with patch('core.account_manager.AccountManager.get_account', return_value={'client_id': 'fake', 'client_secret': 'fake'}):
@@ -100,8 +100,8 @@ def test_cached_scope_used_even_if_oauth_invalidates(monkeypatch):
         return limited_token
     def fake_save_token2(token_info):
         pass
-    monkeypatch.setattr('plugins.EchoSync.spotify.client.ConfigCacheHandler.get_cached_token', fake_get_cached_token2)
-    monkeypatch.setattr('plugins.EchoSync.spotify.client.ConfigCacheHandler.save_token_to_cache', fake_save_token2)
+    monkeypatch.setattr('plugins.EchoSync.Spotify.client.ConfigCacheHandler.get_cached_token', fake_get_cached_token2)
+    monkeypatch.setattr('plugins.EchoSync.Spotify.client.ConfigCacheHandler.save_token_to_cache', fake_save_token2)
 
     # simulate SpotifyOAuth dropping the token during validation
     created = {}
@@ -115,7 +115,7 @@ def test_cached_scope_used_even_if_oauth_invalidates(monkeypatch):
         def refresh_access_token(self, refresh_token):
             return None
 
-    monkeypatch.setattr('plugins.EchoSync.spotify.client.SpotifyOAuth', FakeSpotifyOAuth2)
+    monkeypatch.setattr('plugins.EchoSync.Spotify.client.SpotifyOAuth', FakeSpotifyOAuth2)
 
     with patch('core.account_manager.AccountManager.get_account', return_value={'client_id': 'fake', 'client_secret': 'fake'}):
         with patch('core.account_manager.AccountManager.get_account_token', return_value=limited_token):
@@ -141,7 +141,7 @@ def test_setup_client_prefers_account_creds(monkeypatch):
         def refresh_access_token(self, refresh_token):
             return None
 
-    monkeypatch.setattr('plugins.EchoSync.spotify.client.SpotifyOAuth', FakeSpotifyOAuth3)
+    monkeypatch.setattr('plugins.EchoSync.Spotify.client.SpotifyOAuth', FakeSpotifyOAuth3)
     # no global credentials present
     monkeypatch.setattr('core.account_manager.AccountManager.get_service_config', lambda svc, key: None)
     # return an account with its own creds

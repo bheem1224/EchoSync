@@ -48,7 +48,11 @@ async def list_canonical_tracks(
         from sqlalchemy.orm import selectinload
         db = get_database()
         with db.get_session() as session:
-            query = session.query(Track).options(selectinload(Track.media))
+            query = session.query(Track).options(
+                selectinload(Track.media_files),
+                selectinload(Track.artist),
+                selectinload(Track.album)
+            )
             
             if ids:
                 sync_ids = [s.strip() for s in ids.split(",") if s.strip()]

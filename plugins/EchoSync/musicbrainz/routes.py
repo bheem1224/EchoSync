@@ -157,7 +157,7 @@ async def create_account(request: Request):
         return JSONResponse(content={"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}, status_code=500)
 
 
-@router.delete("/accounts/<int:account_id>")
+@router.delete("/accounts/{account_id}")
 def delete_account(account_id: int):
     """Delete a MusicBrainz account and its stored tokens."""
     try:
@@ -171,7 +171,7 @@ def delete_account(account_id: int):
         return JSONResponse(content={"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}, status_code=500)
 
 
-@router.put("/accounts/<int:account_id>/activate")
+@router.put("/accounts/{account_id}/activate")
 async def activate_account(account_id: int, request: Request):
     """Toggle the active flag on a MusicBrainz account."""
     try:

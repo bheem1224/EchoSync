@@ -894,9 +894,31 @@ async def update_plugin_settings(plugin_id: str, request: Request):
             payload = {}
             
         logger.info(f"Updating settings for plugin: {plugin_id}")
-        return {"error": "Need to refactor DI for settings update"}
+        from database.config_database import get_config_database
+        config_db = get_config_database()
+        
+        from core.nexus_framework.plugin_loader import PluginRegistry
+        plugin_cls = PluginRegistry.get_plugin_class(plugin_id)
+        if plugin_cls and hasattr(plugin_cls, 'name') and plugin_cls.name:
+            normalized_plugin_id = plugin_cls.name
+        else:
+            normalized_plugin_id = plugin_id
+
+        service_id = config_db.get_or_create_service_id(normalized_plugin_id)
+        if not service_id:
+            raise HTTPException(status_code=404, detail=f"Plugin {plugin_id} not found")
+
+        sensitive_keys = {'client_secret', 'token', 'api_key', 'password'}
+        for key, val in payload.items():
+            if val is not None:
+                is_sens = key in sensitive_keys
+                config_db.set_service_config(service_id, key, val, is_sensitive=is_sens)
+
+        return {"success": True, "message": f"Settings updated for {plugin_id}"}
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error updating settings for {plugin_id}: {type(e).__name__}")
+        logger.error(f"Error updating settings for {plugin_id}: {type(e).__name__} - {e}")
         raise HTTPException(status_code=500, detail="Failed to update settings")
 
 def _get_mock_schema(provider_name):

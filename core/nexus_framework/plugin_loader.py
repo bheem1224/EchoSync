@@ -1034,12 +1034,17 @@ class PluginLoader:
                 # Tear down existing FastAPI mounts for this plugin
                 try:
                     if hasattr(self, 'main_app') and self.main_app:
-                        mount_path = f"/api/v1/plugins/{plugin_id}"
+                        target_paths = {
+                            f"/api/v1/plugins/{plugin_id}",
+                            f"/api/v1/plugins/{clean_ns.lower()}",
+                            f"/api/plugins/{plugin_id}",
+                            f"/api/plugins/{clean_ns.lower()}",
+                        }
                         # Iterate backwards to safely remove mounts
                         for i in range(len(self.main_app.routes) - 1, -1, -1):
                             route = self.main_app.routes[i]
                             # Use duck typing to find the Mount
-                            if getattr(route, 'path', None) == mount_path and route.__class__.__name__ == 'Mount':
+                            if getattr(route, 'path', None) in target_paths and route.__class__.__name__ == 'Mount':
                                 del self.main_app.routes[i]
                 except Exception as e:
                     logger.warning("Failed to tear down existing routes for this plugin.")
@@ -1058,6 +1063,10 @@ class PluginLoader:
                 logger.info(f"Plugin routers collected: {len(plugin_routers)}")
                 
                 if hasattr(self, 'main_app') and self.main_app:
+                    mount_prefixes = [f"/api/v1/plugins/{plugin_id}", f"/api/plugins/{plugin_id}"]
+                    if clean_ns and clean_ns.lower() != str(plugin_id).lower():
+                        mount_prefixes.extend([f"/api/v1/plugins/{clean_ns.lower()}", f"/api/plugins/{clean_ns.lower()}"])
+
                     if plugin_routers:
                         plugin_app = FastAPI(
                             title=f"Plugin: {provider_id}",
@@ -1066,17 +1075,17 @@ class PluginLoader:
                         for router in plugin_routers:
                             plugin_app.include_router(router)
                         
-                        self.main_app.mount(f"/api/v1/plugins/{plugin_id}", plugin_app)
-                        
-                        # Reorder routes so plugin mounts precede the SPA StaticFiles mount ('/')
-                        mount_route = self.main_app.routes.pop()
-                        insert_idx = len(self.main_app.routes)
-                        for idx, r in enumerate(self.main_app.routes):
-                            if getattr(r, "path", None) == "" and getattr(r, "name", None) == "static":
-                                insert_idx = idx
-                                break
-                        self.main_app.routes.insert(insert_idx, mount_route)
-                        logger.info(f"Mounted FastAPI sub-application for {plugin_id} at /api/v1/plugins/{plugin_id}")
+                        for pfx in mount_prefixes:
+                            self.main_app.mount(pfx, plugin_app)
+                            # Reorder routes so plugin mounts precede the SPA StaticFiles mount ('/')
+                            mount_route = self.main_app.routes.pop()
+                            insert_idx = len(self.main_app.routes)
+                            for idx, r in enumerate(self.main_app.routes):
+                                if getattr(r, "path", None) == "" and getattr(r, "name", None) == "static":
+                                    insert_idx = idx
+                                    break
+                            self.main_app.routes.insert(insert_idx, mount_route)
+                        logger.info(f"Mounted FastAPI sub-application for {plugin_id} at {mount_prefixes}")
                     
                     elif flask_blueprints:
                         try:
@@ -1087,17 +1096,17 @@ class PluginLoader:
                                 bp.url_prefix = ""
                                 flask_app.register_blueprint(bp)
                             
-                            self.main_app.mount(f"/api/v1/plugins/{plugin_id}", WSGIMiddleware(flask_app))
-                            
-                            # Reorder routes so plugin mounts precede the SPA StaticFiles mount ('/')
-                            mount_route = self.main_app.routes.pop()
-                            insert_idx = len(self.main_app.routes)
-                            for idx, r in enumerate(self.main_app.routes):
-                                if getattr(r, "path", None) == "" and getattr(r, "name", None) == "static":
-                                    insert_idx = idx
-                                    break
-                            self.main_app.routes.insert(insert_idx, mount_route)
-                            logger.info(f"Mounted legacy Flask WSGI sub-application for {plugin_id} at /api/v1/plugins/{plugin_id}")
+                            for pfx in mount_prefixes:
+                                self.main_app.mount(pfx, WSGIMiddleware(flask_app))
+                                # Reorder routes so plugin mounts precede the SPA StaticFiles mount ('/')
+                                mount_route = self.main_app.routes.pop()
+                                insert_idx = len(self.main_app.routes)
+                                for idx, r in enumerate(self.main_app.routes):
+                                    if getattr(r, "path", None) == "" and getattr(r, "name", None) == "static":
+                                        insert_idx = idx
+                                        break
+                                self.main_app.routes.insert(insert_idx, mount_route)
+                            logger.info(f"Mounted legacy Flask WSGI sub-application for {plugin_id} at {mount_prefixes}")
                         except Exception as bp_err:
                             logger.error(f"Failed to mount legacy Flask Blueprint for {plugin_id}: {bp_err}", exc_info=True)
 

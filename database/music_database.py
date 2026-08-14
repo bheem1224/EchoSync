@@ -384,7 +384,7 @@ def _sqlite_pragmas(dbapi_connection, _connection_record) -> None:
         pass
     # give other connections a bit longer before raising "database is locked" (MUST be before WAL)
     try:
-        cursor.execute("PRAGMA busy_timeout=5000")
+        cursor.execute("PRAGMA busy_timeout=30000")
     except Exception:
         pass
     # use WAL mode so long-running writes don't block readers (fixes UI freeze during updates)

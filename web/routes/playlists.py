@@ -19,30 +19,30 @@ import time
 import uuid
 
 from pydantic import BaseModel
-from typing import List, Optional, Any, Dict
+from typing import List, Optional, Any, Dict, Union
 
 class PlaylistAnalyzeSchema(BaseModel):
-    source: Optional[str] = None
-    target: Optional[str] = None
-    target_source: Optional[str] = None
+    source: Optional[Union[str, int]] = None
+    target: Optional[Union[str, int]] = None
+    target_source: Optional[Union[str, int]] = None
     playlists: Optional[List[Any]] = None
-    quality_profile: Optional[str] = "Auto"
+    quality_profile: Optional[Union[str, Dict[str, Any]]] = "Auto"
 
 class PlaylistSyncSchema(BaseModel):
-    target: Optional[str] = None
-    target_source: Optional[str] = None
+    target: Optional[Union[str, int]] = None
+    target_source: Optional[Union[str, int]] = None
     playlist_name: Optional[str] = None
     matches: Optional[List[Any]] = None
     download_missing: Optional[bool] = False
-    source: Optional[str] = "unknown"
+    source: Optional[Union[str, int]] = "unknown"
 
 class PlaylistDownloadMissingSchema(BaseModel):
     missing: Optional[List[Any]] = None
 
 class PlaylistSyncScheduleSchema(BaseModel):
-    source: Optional[str] = None
-    target: Optional[str] = None
-    target_source: Optional[str] = None
+    source: Optional[Union[str, int]] = None
+    target: Optional[Union[str, int]] = None
+    target_source: Optional[Union[str, int]] = None
     playlists: Optional[List[Any]] = None
     interval: Optional[int] = 3600
     download_missing: Optional[bool] = False
@@ -1288,9 +1288,9 @@ def list_playlists(request: Request):
 def analyze_playlists(payload_obj: Optional[PlaylistAnalyzeSchema] = None):
     """Analyze playlists: fetch real tracks from source provider and check against database using WeightedMatchingEngine."""
     payload = payload_obj.model_dump(exclude_unset=True) if payload_obj else {}
-    source = payload.get("source")
-    target = payload.get("target")
-    target_source = payload.get("target_source") or target
+    source = str(payload.get("source")) if payload.get("source") is not None else None
+    target = str(payload.get("target")) if payload.get("target") is not None else None
+    target_source = str(payload.get("target_source")) if payload.get("target_source") is not None else target
     playlists = payload.get("playlists") or []
     quality_profile = payload.get("quality_profile", "Auto")
 
@@ -1312,9 +1312,9 @@ def analyze_playlists(payload_obj: Optional[PlaylistAnalyzeSchema] = None):
 def start_analyze_job(payload_obj: Optional[PlaylistAnalyzeSchema] = None):
     """Start playlist analysis as a background job and return a job_id to poll."""
     payload = payload_obj.model_dump(exclude_unset=True) if payload_obj else {}
-    source = payload.get('source')
-    target = payload.get('target')
-    target_source = payload.get('target_source') or target
+    source = str(payload.get('source')) if payload.get('source') is not None else None
+    target = str(payload.get('target')) if payload.get('target') is not None else None
+    target_source = str(payload.get('target_source')) if payload.get('target_source') is not None else target
     playlists = payload.get('playlists') or []
     quality_profile = payload.get('quality_profile', 'Auto')
 

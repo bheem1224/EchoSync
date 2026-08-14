@@ -115,8 +115,8 @@ async def create_account(request: Request):
         return JSONResponse(content={"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}, status_code=500)
 
 
-@router.get('/<int:account_id>')
-def get_account(account_id):
+@router.get('/{account_id}')
+def get_account(account_id: int):
     """Get a specific Tidal account with credentials."""
     from core.nexus_framework.plugin_loader import PluginRegistry
     plugin_id = 'EchoSync/tidal'
@@ -155,8 +155,8 @@ def get_account(account_id):
         return JSONResponse(content={"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}, status_code=500)
 
 
-@router.put('/<int:account_id>')
-async def update_account(account_id, request: Request):
+@router.put('/{account_id}')
+async def update_account(account_id: int, request: Request):
     """
     Update Tidal account name and/or credentials.
     Body: { account_name?, client_id?, client_secret? }
@@ -219,8 +219,8 @@ async def update_account(account_id, request: Request):
         return JSONResponse(content={"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}, status_code=500)
 
 
-@router.put('/<int:account_id>/activate')
-async def activate_account(account_id, request: Request):
+@router.put('/{account_id}/activate')
+async def activate_account(account_id: int, request: Request):
     """Activate a Tidal account."""
     from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
     if PluginRegistry.is_plugin_disabled('tidal'):
@@ -248,8 +248,8 @@ async def activate_account(account_id, request: Request):
         return JSONResponse(content={"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}, status_code=500)
 
 
-@router.delete('/<int:account_id>')
-def delete_account(account_id):
+@router.delete('/{account_id}')
+def delete_account(account_id: int):
     """Delete a Tidal account."""
     from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
     if PluginRegistry.is_plugin_disabled('tidal'):
@@ -298,8 +298,8 @@ async def set_redirect_uri(request: Request):
         return JSONResponse(content={"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}, status_code=500)
 
 
-@router.get('/<int:account_id>/debug')
-def debug_account(account_id):
+@router.get('/{account_id}/debug')
+def debug_account(account_id: int):
     """
     Debug endpoint to inspect what's stored for an account.
     """

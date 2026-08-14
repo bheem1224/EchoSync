@@ -247,7 +247,7 @@ async def start_oauth(request: Request):
         return JSONResponse(content={"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}, status_code=500)
 
 
-@router.get('/auth/poll/<session_id>')
+@router.get('/auth/poll/{session_id}')
 def poll_oauth(session_id: str):
     """
     Poll for Plex OAuth authorization completion.
@@ -347,7 +347,7 @@ def poll_oauth(session_id: str):
         return JSONResponse(content={"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}, status_code=500)
 
 
-@router.delete('/auth/cancel/<session_id>')
+@router.delete('/auth/cancel/{session_id}')
 def cancel_oauth(session_id: str):
     """Cancel an ongoing OAuth session."""
     try:
