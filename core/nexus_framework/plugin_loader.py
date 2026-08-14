@@ -578,7 +578,20 @@ class PluginLoader:
                     continue
                 else:
                     disabled_plugins = config_manager.get_disabled_plugins() or []
-                    is_disabled = (name in disabled_plugins) or (str(p_id) in disabled_plugins)
+                    disabled_ids = set()
+                    for d in disabled_plugins:
+                        d_str = str(d).strip()
+                        if not d_str:
+                            continue
+                        if d_str.isdigit():
+                            disabled_ids.add(int(d_str))
+                        else:
+                            clean_d = d_str.lower().replace("echosync.", "").replace("echosync/", "").strip()
+                            disabled_ids.add(generate_plugin_id(d_str.lower()))
+                            disabled_ids.add(generate_plugin_id(clean_d))
+                            disabled_ids.add(generate_plugin_id(f"echosync.{clean_d}"))
+
+                    is_disabled = (p_id is not None and int(p_id) in disabled_ids)
                     target_active = 0 if is_disabled else 1
                     c.execute("UPDATE services SET is_active = ? WHERE id = ?", (target_active, db_id))
 

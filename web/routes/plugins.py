@@ -756,6 +756,8 @@ def get_plugin_playlists(plugin_id: str):
                 all_playlists = []
 
                 for account in accounts:
+                    if not account.get('is_active', True):
+                        continue
                     try:
                         account_id = account['id']
                         account_name = account.get('display_name') or account.get('account_name') or f"Account {account_id}"

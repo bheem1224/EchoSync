@@ -252,9 +252,7 @@ class SpotifyClient(SyncServiceProvider):
         try:
             creds = {'client_id': None, 'client_secret': None, 'redirect_uri': None}
 
-            # first, if we were given an account_id, see if that account record
-            # itself contains credentials.  this supports multi‑account setups
-            # where each Spotify account may have its own client credentials.
+            # 1. Check account object if account_id is provided
             if self.account_id is not None:
                 try:
                     from core.account_manager import AccountManager
@@ -264,23 +262,58 @@ class SpotifyClient(SyncServiceProvider):
                         creds['client_secret'] = account.get('client_secret') or creds['client_secret']
                         creds['redirect_uri'] = account.get('redirect_uri') or creds['redirect_uri']
                 except Exception:
-                    # if anything goes wrong, we'll fall back to global values
                     pass
 
+            # 2. Check Plugin SDK config & secrets namespace
+            if not creds['client_id']:
+                try:
+                    creds['client_id'] = self.sdk.config.get('client_id') or None
+                except Exception:
+                    pass
+            if not creds['client_secret']:
+                try:
+                    creds['client_secret'] = self.sdk.secrets.get('client_secret') or None
+                except Exception:
+                    pass
+            if not creds['redirect_uri']:
+                try:
+                    creds['redirect_uri'] = self.sdk.config.get('redirect_uri') or None
+                except Exception:
+                    pass
+
+            # 3. Check Database service_config (canonical ID 2391116200, EchoSync.Spotify, Spotify, spotify)
+            try:
+                from database.config_database import get_config_database
+                db = get_config_database()
+                for lookup_key in [2391116200, 'EchoSync.Spotify', 'EchoSync.spotify', 'Spotify', 'spotify']:
+                    if creds['client_id'] and creds['client_secret']:
+                        break
+                    svc_id = db.get_service_id(lookup_key)
+                    if svc_id:
+                        if not creds['client_id']:
+                            creds['client_id'] = db.get_service_config(svc_id, 'client_id')
+                        if not creds['client_secret']:
+                            creds['client_secret'] = db.get_service_config(svc_id, 'client_secret')
+                        if not creds['redirect_uri']:
+                            creds['redirect_uri'] = db.get_service_config(svc_id, 'redirect_uri')
+            except Exception:
+                pass
+
+            # 4. Fallback to legacy storage service
             from core.file_handling.storage import get_storage_service
             storage = get_storage_service()
-            # if we still haven't obtained values from the account, read global
-            # service configuration (old single‑account path).
             if not creds['client_id']:
                 creds['client_id'] = storage.get_service_config('spotify', 'client_id')
             if not creds['client_secret']:
-                # StorageService automatically decrypts sensitive config
                 creds['client_secret'] = storage.get_service_config('spotify', 'client_secret')
             if not creds['redirect_uri']:
                 creds['redirect_uri'] = storage.get_service_config('spotify', 'redirect_uri')
 
+            if not creds['redirect_uri']:
+                from core.network_utils import get_lan_ip
+                creds['redirect_uri'] = f"https://{get_lan_ip()}:5001/api/oauth/callback/plugins/spotify"
+
             if not creds['client_id'] or not creds['client_secret']:
-                # do not log secrets, include account id for diagnostics
                 logger.warning(
                     f"Spotify credentials not configured (account_id={self.account_id})"
                 )
@@ -511,7 +544,26 @@ class SpotifyClient(SyncServiceProvider):
 
     def is_configured(self) -> bool:
         if self.sp is not None:
-             return True
+            return True
+        
+        # Check SDK config/secrets
+        try:
+            if self.sdk.config.get('client_id') and self.sdk.secrets.get('client_secret'):
+                return True
+        except Exception:
+            pass
+
+        # Check DB service_config
+        try:
+            from database.config_database import get_config_database
+            db = get_config_database()
+            for lookup_key in [2391116200, 'EchoSync.Spotify', 'EchoSync.spotify', 'Spotify', 'spotify']:
+                svc_id = db.get_service_id(lookup_key)
+                if svc_id and db.get_service_config(svc_id, 'client_id') and db.get_service_config(svc_id, 'client_secret'):
+                    return True
+        except Exception:
+            pass
+
         # Check storage if we can potentially configure it
         from core.file_handling.storage import get_storage_service
         storage = get_storage_service()

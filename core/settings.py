@@ -773,15 +773,61 @@ class ConfigManager:
         self.set('disabled_plugins', disabled_list)
 
     def disable_plugin(self, provider_id: str) -> bool:
-        """Add a provider/plugin to the disabled list."""
+        """Add a provider/plugin to the disabled list in canonical numeric string format."""
         disabled = self.get_disabled_plugins()
         pid_str = str(provider_id).strip()
-        if pid_str not in disabled:
-            disabled.append(pid_str)
-            self.set('disabled_plugins', disabled)
-            logger.info(f"Plugin {provider_id} has been disabled.")
-            return True
-        return False
+        from core.nexus_framework.plugin_loader import generate_plugin_id
+
+        canon_id = int(pid_str) if pid_str.isdigit() else generate_plugin_id(pid_str.lower())
+        canon_id_str = str(canon_id)
+
+        target_ids = {canon_id}
+        target_names = {pid_str.lower()}
+        clean_name = pid_str.lower().replace("echosync.", "").replace("echosync/", "").strip()
+        target_names.add(clean_name)
+        target_names.add(f"echosync.{clean_name}")
+        target_ids.add(generate_plugin_id(clean_name))
+        target_ids.add(generate_plugin_id(f"echosync.{clean_name}"))
+
+        try:
+            from database.config_database import get_config_database
+            db = get_config_database()
+            with db._open_connection() as conn:
+                c = conn.cursor()
+                if pid_str.isdigit():
+                    c.execute("SELECT name, plugin_id FROM services WHERE plugin_id=? OR id=?", (int(pid_str), int(pid_str)))
+                else:
+                    c.execute("SELECT name, plugin_id FROM services WHERE lower(name)=lower(?)", (pid_str,))
+                row = c.fetchone()
+                if row:
+                    r_name = row['name'].lower()
+                    r_clean = r_name.replace("echosync.", "").replace("echosync/", "").strip()
+                    target_names.update({r_name, r_clean, f"echosync.{r_clean}"})
+                    if row['plugin_id']:
+                        target_ids.add(row['plugin_id'])
+                        target_ids.add(generate_plugin_id(r_clean))
+                        target_ids.add(generate_plugin_id(f"echosync.{r_clean}"))
+        except Exception:
+            pass
+
+        # Filter out existing unnormalized variants and append canonical ID
+        new_disabled = []
+        for item in disabled:
+            item_str = str(item).strip()
+            item_clean = item_str.lower().replace("echosync.", "").replace("echosync/", "").strip()
+            item_ids = {
+                int(item_str) if item_str.isdigit() else generate_plugin_id(item_str.lower()),
+                generate_plugin_id(item_clean),
+                generate_plugin_id(f"echosync.{item_clean}")
+            }
+            if item_str.lower() in target_names or item_clean in target_names or (item_ids & target_ids):
+                continue
+            new_disabled.append(item)
+
+        new_disabled.append(canon_id_str)
+        self.set('disabled_plugins', new_disabled)
+        logger.info(f"Plugin {provider_id} (canonical ID: {canon_id_str}) has been disabled.")
+        return True
 
     def enable_plugin(self, provider_id: str) -> bool:
         """Remove a provider/plugin from the disabled list (matches by name, id, or canonical id)."""
@@ -792,12 +838,14 @@ class ConfigManager:
         pid_str = str(provider_id).strip()
         from core.nexus_framework.plugin_loader import generate_plugin_id
         
-        target_ids = set()
+        canon_id = int(pid_str) if pid_str.isdigit() else generate_plugin_id(pid_str.lower())
+        target_ids = {canon_id}
         target_names = {pid_str.lower()}
-        if pid_str.isdigit():
-            target_ids.add(int(pid_str))
-        else:
-            target_ids.add(generate_plugin_id(pid_str.lower()))
+        clean_name = pid_str.lower().replace("echosync.", "").replace("echosync/", "").strip()
+        target_names.add(clean_name)
+        target_names.add(f"echosync.{clean_name}")
+        target_ids.add(generate_plugin_id(clean_name))
+        target_ids.add(generate_plugin_id(f"echosync.{clean_name}"))
             
         try:
             from database.config_database import get_config_database
@@ -810,9 +858,13 @@ class ConfigManager:
                     c.execute("SELECT name, plugin_id FROM services WHERE lower(name)=lower(?)", (pid_str,))
                 row = c.fetchone()
                 if row:
-                    target_names.add(row['name'].lower())
+                    r_name = row['name'].lower()
+                    r_clean = r_name.replace("echosync.", "").replace("echosync/", "").strip()
+                    target_names.update({r_name, r_clean, f"echosync.{r_clean}"})
                     if row['plugin_id']:
                         target_ids.add(row['plugin_id'])
+                        target_ids.add(generate_plugin_id(r_clean))
+                        target_ids.add(generate_plugin_id(f"echosync.{r_clean}"))
         except Exception:
             pass
 
@@ -820,8 +872,13 @@ class ConfigManager:
         removed = False
         for item in disabled:
             item_str = str(item).strip()
-            item_id = int(item_str) if item_str.isdigit() else generate_plugin_id(item_str.lower())
-            if item_str.lower() in target_names or item_id in target_ids:
+            item_clean = item_str.lower().replace("echosync.", "").replace("echosync/", "").strip()
+            item_ids = {
+                int(item_str) if item_str.isdigit() else generate_plugin_id(item_str.lower()),
+                generate_plugin_id(item_clean),
+                generate_plugin_id(f"echosync.{item_clean}")
+            }
+            if item_str.lower() in target_names or item_clean in target_names or (item_ids & target_ids):
                 removed = True
                 continue
             new_disabled.append(item)
