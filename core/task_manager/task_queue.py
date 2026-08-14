@@ -118,6 +118,12 @@ class JobQueue:
         except Exception as e:
             logger.error(f"Failed to remove music session registry: {e}")
 
+        try:
+            from core.task_manager.supervisor import release_system_memory
+            release_system_memory()
+        except Exception as e:
+            logger.debug(f"Failed to trim system memory: {e}")
+
     def _remove_from_heap(self, name: str):
         self._heap = [job for job in self._heap if job.name != name]
         heapq.heapify(self._heap)

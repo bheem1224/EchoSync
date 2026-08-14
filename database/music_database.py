@@ -377,9 +377,9 @@ def _sqlite_pragmas(dbapi_connection, _connection_record) -> None:
     cursor = dbapi_connection.cursor()
     # ensure foreign keys are enforced
     cursor.execute("PRAGMA foreign_keys=ON")
-    # allocate ~64MB cache
+    # allocate ~8MB cache
     try:
-        cursor.execute("PRAGMA cache_size=-64000")
+        cursor.execute("PRAGMA cache_size=-8000")
     except Exception:
         pass
     # give other connections a bit longer before raising "database is locked" (MUST be before WAL)

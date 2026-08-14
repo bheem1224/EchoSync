@@ -238,8 +238,21 @@ class ProcessSupervisor:
         return result
 
 
-    # Global ProcessSupervisor singleton
+# Global ProcessSupervisor singleton
 supervisor = ProcessSupervisor()
+
+
+def release_system_memory() -> None:
+    """Force Python GC collection and release glibc malloc arenas back to the OS kernel."""
+    import gc
+    import ctypes
+    gc.collect()
+    if sys.platform.startswith("linux"):
+        try:
+            ctypes.CDLL("libc.so.6").malloc_trim(0)
+        except Exception:
+            pass
+
 
 # Register core system workers
 try:
@@ -258,3 +271,4 @@ try:
     )
 except Exception:
     pass
+

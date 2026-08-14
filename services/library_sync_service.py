@@ -136,7 +136,7 @@ class LibrarySyncService:
                 logger.debug(f"Failed to extract metadata from {path}: {e}")
                 return None
         
-        with ThreadPoolExecutor(max_workers=os.cpu_count()) as executor:
+        with ThreadPoolExecutor(max_workers=min(2, os.cpu_count() or 1)) as executor:
             results = list(executor.map(parse_file, dirty_or_new))
             for res in results:
                 if res is not None:
@@ -197,5 +197,12 @@ class LibrarySyncService:
                 time.sleep(0.01)
 
             logger.info(f"Upserted tracks affecting {total_affected_rows} rows.")
+
+        # Release system memory / trigger glibc malloc_trim
+        try:
+            from core.task_manager.supervisor import release_system_memory
+            release_system_memory()
+        except Exception:
+            pass
 
         logger.info("Library sync complete.")

@@ -344,6 +344,10 @@ def _sqlite_pragmas(dbapi_connection, _connection_record) -> None:
     cursor = dbapi_connection.cursor()
     cursor.execute("PRAGMA foreign_keys=ON")
     try:
+        cursor.execute("PRAGMA cache_size=-8000")
+    except Exception:
+        pass
+    try:
         cursor.execute("PRAGMA busy_timeout=30000")
     except Exception:
         pass
