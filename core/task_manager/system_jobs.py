@@ -142,12 +142,22 @@ def register_database_update_job(interval_seconds: int = 21600, enabled: bool = 
             # Step 2: Run active media servers
             try:
                 active_servers = []
-                # Same fix as external_identifier_sync: avoid get_active_services_by_type which
-                # instantiates plugins prematurely and breaks is_configured() via stack inspection.
+                from database.config_database import get_config_database
+                config_db = get_config_database()
                 for p_id in PluginRegistry.get_plugins_by_type('mediaserver', exclude_disabled=True):
                     plugin_cls = PluginRegistry.get_plugin_class(p_id)
+                    if not plugin_cls:
+                        continue
                     caps = getattr(plugin_cls, 'capabilities', None)
-                    if caps and getattr(caps, 'supports_library_scan', False):
+                    if not caps or not getattr(caps, 'supports_library_scan', False):
+                        continue
+
+                    p_name = getattr(plugin_cls, 'name', '') or str(p_id)
+                    svc_id = config_db.get_or_create_service_id(p_name)
+                    has_acc = bool(config_db.get_accounts(service_id=svc_id))
+                    has_url = bool(config_db.get_service_config(svc_id, 'server_url') or config_db.get_service_config(svc_id, 'url') or config_db.get_service_config(svc_id, 'host'))
+
+                    if has_acc or has_url:
                         active_servers.append(p_id)
             except Exception as e:
                 logger.error(f"Failed to get active media servers: {e}")
@@ -169,6 +179,11 @@ def register_database_update_job(interval_seconds: int = 21600, enabled: bool = 
                     logger.error(f"Media server '{active_server}' not available")
                     continue
                 
+                # Check if configured
+                if hasattr(provider, 'is_configured') and not provider.is_configured():
+                    logger.debug(f"Media server '{active_server}' is not configured; skipping.")
+                    continue
+
                 # Ensure connection
                 try:
                     can_connect = True

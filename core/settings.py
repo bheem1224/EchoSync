@@ -775,19 +775,59 @@ class ConfigManager:
     def disable_plugin(self, provider_id: str) -> bool:
         """Add a provider/plugin to the disabled list."""
         disabled = self.get_disabled_plugins()
-        if provider_id not in disabled:
-            disabled.append(provider_id)
+        pid_str = str(provider_id).strip()
+        if pid_str not in disabled:
+            disabled.append(pid_str)
             self.set('disabled_plugins', disabled)
             logger.info(f"Plugin {provider_id} has been disabled.")
             return True
         return False
 
     def enable_plugin(self, provider_id: str) -> bool:
-        """Remove a provider/plugin from the disabled list."""
+        """Remove a provider/plugin from the disabled list (matches by name, id, or canonical id)."""
         disabled = self.get_disabled_plugins()
-        if provider_id in disabled:
-            disabled.remove(provider_id)
-            self.set('disabled_plugins', disabled)
+        if not disabled:
+            return False
+            
+        pid_str = str(provider_id).strip()
+        from core.nexus_framework.plugin_loader import generate_plugin_id
+        
+        target_ids = set()
+        target_names = {pid_str.lower()}
+        if pid_str.isdigit():
+            target_ids.add(int(pid_str))
+        else:
+            target_ids.add(generate_plugin_id(pid_str.lower()))
+            
+        try:
+            from database.config_database import get_config_database
+            db = get_config_database()
+            with db._open_connection() as conn:
+                c = conn.cursor()
+                if pid_str.isdigit():
+                    c.execute("SELECT name, plugin_id FROM services WHERE plugin_id=? OR id=?", (int(pid_str), int(pid_str)))
+                else:
+                    c.execute("SELECT name, plugin_id FROM services WHERE lower(name)=lower(?)", (pid_str,))
+                row = c.fetchone()
+                if row:
+                    target_names.add(row['name'].lower())
+                    if row['plugin_id']:
+                        target_ids.add(row['plugin_id'])
+        except Exception:
+            pass
+
+        new_disabled = []
+        removed = False
+        for item in disabled:
+            item_str = str(item).strip()
+            item_id = int(item_str) if item_str.isdigit() else generate_plugin_id(item_str.lower())
+            if item_str.lower() in target_names or item_id in target_ids:
+                removed = True
+                continue
+            new_disabled.append(item)
+
+        if removed:
+            self.set('disabled_plugins', new_disabled)
             logger.info(f"Plugin {provider_id} has been enabled.")
             return True
         return False

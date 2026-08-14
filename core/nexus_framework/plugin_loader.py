@@ -1555,7 +1555,7 @@ class PluginRegistry:
         from core.settings import config_manager
         disabled = config_manager.get_disabled_plugins()
         if disabled:
-            disabled_ids = [generate_plugin_id(d.lower()) for d in disabled]
+            disabled_ids = [int(d) if str(d).isdigit() else generate_plugin_id(str(d).lower()) for d in disabled]
             if plugin_id in disabled_ids:
                 return True
                 
@@ -1565,9 +1565,9 @@ class PluginRegistry:
     def set_disabled_plugins(cls, disabled_list: List[str]) -> None:
         if disabled_list is None:
             disabled_list = []
-        cls._disabled_plugins = set(name.lower() for name in disabled_list)
+        cls._disabled_plugins = set(int(d) if str(d).isdigit() else generate_plugin_id(str(d).lower()) for d in disabled_list)
         if disabled_list:
-            logger.info(f"Disabled plugins: {', '.join(disabled_list)}")
+            logger.info(f"Disabled plugins: {', '.join(str(d) for d in disabled_list)}")
 
     @classmethod
     def get_disabled_plugins(cls) -> List[str]:

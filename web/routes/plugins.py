@@ -424,51 +424,97 @@ def uninstall_plugin_route(data: UninstallPluginRequest):
 
 
 class TogglePluginRequest(BaseModel):
-    enabled: bool
+    enabled: Optional[bool] = None
 
 @router.post("/{plugin_id}/toggle", response_model=GenericSuccessResponse, dependencies=[Depends(require_auth)])
-def toggle_plugin(plugin_id: str, data: TogglePluginRequest):
-    enabled = data.enabled
+def toggle_plugin(plugin_id: str, data: Optional[TogglePluginRequest] = None):
     from core.settings import config_manager
-
-    if enabled:
-        config_manager.enable_plugin(plugin_id)
+    from core.nexus_framework.plugin_loader import PluginRegistry, PluginLoader
+    from core.state import system_state
+    from database.config_database import get_config_database
+    
+    enabled_val = data.enabled if data is not None else None
+    
+    # 1. Resolve DB records for this plugin
+    db = get_config_database()
+    db_id = None
+    db_name = None
+    db_plugin_id = None
+    current_is_active = 1
+    
+    plugin_id_str = str(plugin_id).strip()
+    plugin_id_int = int(plugin_id_str) if plugin_id_str.isdigit() else None
+    
+    with config_db_connection() as conn:
+        c = conn.cursor()
+        if plugin_id_int is not None:
+            c.execute("SELECT id, name, plugin_id, is_active FROM services WHERE id=? OR plugin_id=?", (plugin_id_int, plugin_id_int))
+        else:
+            c.execute("SELECT id, name, plugin_id, is_active FROM services WHERE lower(name)=lower(?)", (plugin_id_str,))
+        row = c.fetchone()
+        if row:
+            db_id = row['id']
+            db_name = row['name']
+            db_plugin_id = row['plugin_id']
+            current_is_active = row['is_active']
+            
+    if db_plugin_id is None and plugin_id_int is not None:
+        db_plugin_id = plugin_id_int
+    if db_name is None and not plugin_id_str.isdigit():
+        db_name = plugin_id_str
+        
+    # Determine target enabled state
+    if enabled_val is None:
+        target_enabled = not bool(current_is_active)
     else:
-        config_manager.disable_plugin(plugin_id)
+        target_enabled = bool(enabled_val)
+        
+    target_active = 1 if target_enabled else 0
+    
+    # 2. Update services table in config.db so get_all_plugins() returns correct enabled state
+    with config_db_connection() as conn:
+        c = conn.cursor()
+        if db_id is not None:
+            c.execute("UPDATE services SET is_active=? WHERE id=?", (target_active, db_id))
+        elif db_plugin_id is not None:
+            c.execute("UPDATE services SET is_active=? WHERE plugin_id=?", (target_active, db_plugin_id))
+        elif db_name is not None:
+            c.execute("UPDATE services SET is_active=? WHERE lower(name)=lower(?)", (target_active, db_name))
+        conn.commit()
 
+    # 3. Update config_manager persistent disabled_plugins & in-memory PluginRegistry
+    if target_enabled:
+        config_manager.enable_plugin(plugin_id_str)
+        if db_name:
+            config_manager.enable_plugin(db_name)
+        if db_plugin_id:
+            config_manager.enable_plugin(str(db_plugin_id))
+        PluginRegistry.enable_plugin(db_plugin_id or plugin_id_str)
+    else:
+        config_manager.disable_plugin(db_name or plugin_id_str)
+        PluginRegistry.disable_plugin(db_plugin_id or plugin_id_str)
+        
     config_manager.save_settings(config_manager.get_settings())
 
+    # 4. Trigger hot reload or update lifecycle state
     try:
-        from core.nexus_framework.plugin_loader import PluginLoader
-        from database.config_database import get_config_database
-        db = get_config_database()
-        
-        plugin_id_int = db.get_service_id(plugin_id)
-        if not plugin_id_int:
-            try:
-                plugin_id_int = int(plugin_id)
-            except (ValueError, TypeError):
-                pass
-                
-        db_plugin_id = None
-        if plugin_id_int is not None:
-            with config_db_connection() as conn:
-                c = conn.cursor()
-                c.execute("SELECT plugin_id FROM services WHERE id=? OR plugin_id=?", (plugin_id_int, plugin_id_int))
-                row = c.fetchone()
-                if row:
-                    db_plugin_id = row['plugin_id']
-                    
-        if db_plugin_id:
+        if target_enabled and db_plugin_id:
             app_root = Path(__file__).parent.parent.parent
             loader = PluginLoader(app_root)
             loader.reload_plugin(db_plugin_id)
-            logger.info(f"Hot-reloaded plugin {plugin_id} (id: {db_plugin_id}) after toggle")
-        else:
-            logger.warning(f"Could not resolve {plugin_id} to an actual plugin_id for hot-reload")
+            logger.info(f"Hot-reloaded plugin {plugin_id} (id: {db_plugin_id}) after enable toggle")
+        elif not target_enabled:
+            from core.nexus_framework.plugin_state_manager import plugin_state_manager, PluginLifecycleState
+            from core.task_manager.supervisor import supervisor
+            target_ident = db_name or plugin_id_str
+            supervisor.terminate_owner_processes(target_ident)
+            if db_plugin_id:
+                supervisor.terminate_owner_processes(str(db_plugin_id))
+                plugin_state_manager.set_state(str(db_plugin_id), PluginLifecycleState.UNCONFIGURED, "Plugin disabled")
+            plugin_state_manager.set_state(target_ident, PluginLifecycleState.UNCONFIGURED, "Plugin disabled")
+            logger.info(f"Plugin {plugin_id} disabled and state marked UNCONFIGURED")
     except Exception as e:
-        logger.warning(f"Hot-reload failed for {plugin_id}, marking restart pending: {e}")
-        from core.state import system_state
+        logger.warning(f"Hot-reload/state change failed for {plugin_id}: {e}")
         system_state.restart_pending = True
 
     return GenericSuccessResponse(success=True)
@@ -644,48 +690,6 @@ def set_active_download_client(data: ActivateClientRequest):
         raise
     except Exception as e:
         logger.error(f"Error setting active download client: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-class ToggleRequest(BaseModel):
-    enabled: Optional[bool] = None
-
-@router.post("/{plugin_id}/toggle", dependencies=[Depends(require_auth)])
-def toggle_plugin(plugin_id: str, data: ToggleRequest):
-    """Toggle a plugin's enabled/disabled status."""
-    try:
-        from core.settings import config_manager
-        from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
-        
-        enabled = data.enabled
-        
-        current_disabled = config_manager.get_disabled_plugins()
-        is_currently_disabled = plugin_id.lower() in [d.lower() for d in current_disabled]
-        
-        if enabled is None:
-            new_enabled = is_currently_disabled
-        else:
-            new_enabled = enabled
-            
-        if new_enabled:
-            new_disabled = [d for d in current_disabled if d.lower() != plugin_id.lower()]
-            PluginRegistry.enable_plugin(plugin_id)
-        else:
-            if not is_currently_disabled:
-                new_disabled = current_disabled + [plugin_id]
-            else:
-                new_disabled = current_disabled
-            PluginRegistry.disable_plugin(plugin_id)
-            
-        config_manager.set_disabled_plugins(new_disabled)
-        
-        return {
-            'success': True,
-            'enabled': new_enabled,
-            'plugin': plugin_id,
-            'restart_required': True
-        }
-    except Exception as e:
-        logger.error(f"Error toggling plugin {plugin_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

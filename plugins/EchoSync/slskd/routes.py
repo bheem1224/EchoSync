@@ -34,36 +34,34 @@ router = APIRouter()
 @router.get("/download-clients/active")
 def get_active_download_client():
     """Proxy: return the currently active download client."""
-    def _safe_get(obj, attr, default):
-        return obj.__getattribute__(attr) if hasattr(obj, attr) else default
-        
     try:
-        from core.nexus_framework.plugin_loader import PluginRegistry
-        clients = PluginRegistry.get_download_clients()
-        active = next((c for c in clients if _safe_get(c, 'is_active', False)), None)
-        if active:
-            name = _safe_get(active, 'name', 'slskd')
-            return {"active": True, "name": name, "provider": name}
-        return {"active": False, "name": None}
+        from core.settings import config_manager
+        active_name = config_manager.get_active_download_client() or "slskd"
+        is_active = (active_name.lower() == "slskd")
+        return {
+            "active": is_active,
+            "active_client": active_name,
+            "name": active_name,
+            "provider": active_name
+        }
     except Exception as e:
         logger.error(f"Failed to get active download client: {e}")
-        return {"active": False, "error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal error checking client"}
+        return {"active": False, "active_client": None, "error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal error checking client"}
 
 
 class ActivateClientRequest(BaseModel):
-    provider: str = "slskd"
+    provider: Optional[str] = None
+    client: Optional[str] = None
 
 @router.post("/download-clients/activate")
-def activate_download_client(data: ActivateClientRequest):
+def activate_download_client(data: Optional[ActivateClientRequest] = None):
     """Proxy: activate this plugin as the active download client."""
     try:
-        # Forward to the core plugins_api activate endpoint
-        from web.routes.plugins import activate_download_client as core_activate
-        # Since core_activate takes a Request in FastAPI, we might need to mock it or just set it directly
         from core.settings import config_manager
-        config_manager.set_active_download_client(data.provider)
+        target = (data.provider or data.client or "slskd") if data else "slskd"
+        config_manager.set_active_download_client(target)
         config_manager.save_settings(config_manager.get_settings())
-        return {"success": True}
+        return {"success": True, "active_client": target}
     except Exception as e:
         logger.error(f"Failed to activate download client: {e}")
         raise HTTPException(status_code=500, detail=str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error")
@@ -131,13 +129,13 @@ class TestConnectionRequest(BaseModel):
     api_key: Optional[str] = None
 
 @router.post("/connection/test")
-def test_connection(data: TestConnectionRequest):
+def test_connection(data: Optional[TestConnectionRequest] = None):
     """Test connection to slskd server."""
     from core.nexus_framework.plugin_SDK import sdk
     try:
-        slskd_url = data.slskd_url or sdk.config.get('slskd_url', '')
+        slskd_url = (data.slskd_url if data and data.slskd_url else None) or sdk.config.get('slskd_url', '')
         slskd_url = slskd_url.rstrip('/') if slskd_url else ''
-        api_key = data.api_key or sdk.secrets.get('api_key') or ''
+        api_key = (data.api_key if data and data.api_key else None) or sdk.secrets.get('api_key') or ''
 
         if not slskd_url:
             raise HTTPException(status_code=400, detail="slskd URL not configured")

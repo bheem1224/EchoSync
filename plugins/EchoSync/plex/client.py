@@ -1048,14 +1048,14 @@ class PlexClient(MediaServerProvider):
         
         return text, None
     
-    def _convert_track_to_echosync(self, plex_track: PlexTrack, deep: bool = True) -> Optional[EchosyncTrack]:
+    def _convert_track_to_echosync(self, plex_track: PlexTrack, deep: bool = False) -> Optional[EchosyncTrack]:
         """Convert Plex track to EchosyncTrack.
 
         Args:
             plex_track: The plexapi Track object.
-            deep: When True (default), call plex_track.artist() and
+            deep: When True, call plex_track.artist() and
                   plex_track.album() which each fire a /metadata/{key}
-                  HTTP round-trip.  When False (bulk mode), use only
+                  HTTP round-trip.  When False (default / bulk mode), use only
                   the cheap XML attributes already present in the batch
                   payload (grandparentTitle, parentTitle, originalTitle).
                   Deep metadata hydration is deferred to the Retroactive
@@ -1083,9 +1083,6 @@ class PlexClient(MediaServerProvider):
             original_title = _safe_getattr(plex_track, 'originalTitle', None)
             if original_title and original_title.strip():
                 artist = original_title.strip()
-                logger.debug(
-                    f"Using originalTitle (track artist) for '{title}': artist='{artist}'"
-                )
 
             # Step 2: Extract album artist (TPE2)
             album_artist = None
@@ -1094,25 +1091,16 @@ class PlexClient(MediaServerProvider):
                 try:
                     artist_obj = plex_track.artist()
                     album_artist = _safe_getattr(artist_obj, 'title', None) if artist_obj else None
-                    logger.debug(f"Extracted album_artist for '{title}': album_artist={album_artist}")
                 except (NotFound, AttributeError, Exception) as e:
                     logger.debug(f"Failed to get artist via plex_track.artist() for '{title}': {e}")
 
             # Step 3: cheap XML attribute (always available in batch payload)
             if not album_artist:
                 album_artist = _safe_getattr(plex_track, 'grandparentTitle', None)
-                if album_artist:
-                    logger.debug(f"Using grandparentTitle for '{title}': album_artist={album_artist}")
-                else:
-                    logger.warning(f"Failed to extract album_artist for track '{title}'")
 
             # Fallback for track artist if missing
             if not artist:
                 artist = album_artist
-                if artist:
-                    logger.debug(f"Falling back to album_artist for track artist '{title}': artist={artist}")
-                else:
-                    logger.warning(f"Failed to extract artist for track '{title}'")
             
             album = None
             if deep:
@@ -1142,11 +1130,8 @@ class PlexClient(MediaServerProvider):
             album_base, album_version = self._extract_version_suffix(album)
             
             if title_version and album_version and title_version.lower() == album_version.lower():
-                logger.debug(f"Removing matching version suffix '{title_version}' from title '{title}'")
                 title = title_base
             elif album and title.lower().endswith(f"({album.lower()})"):
-                # Fallback to original logic for exact album name matches
-                logger.debug(f"Removing album name '{album}' from title '{title}'")
                 title = title[: -(len(album) + 2)].strip()  # Remove " (Album Name)"
 
             # Extract other metadata
@@ -1185,13 +1170,6 @@ class PlexClient(MediaServerProvider):
             if not plex_track_id or plex_track_id == 'None':
                 logger.warning(f"Track '{title}' by '{artist}' has no ratingKey - cannot save to database")
                 return None
-            
-            logger.debug(
-                "Plex track data before factory: title='%s' artist='%s' album='%s' "
-                "duration=%s year=%s track#=%s disc#=%s bitrate=%s format=%s id=%s",
-                title, artist, album, duration_ms, year, track_number, disc_number,
-                bitrate, file_format, plex_track_id
-            )
             
             # Direct instantiation of EchosyncTrack
             # Extract technical metadata

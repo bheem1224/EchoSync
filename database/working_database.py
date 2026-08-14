@@ -351,6 +351,10 @@ def _sqlite_pragmas(dbapi_connection, _connection_record) -> None:
         cursor.execute("PRAGMA journal_mode=WAL")
     except Exception:
         pass
+    try:
+        cursor.execute("PRAGMA synchronous=NORMAL")
+    except Exception:
+        pass
     cursor.close()
 
 

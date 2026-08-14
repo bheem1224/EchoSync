@@ -142,6 +142,9 @@ class LibrarySyncService:
                 if res is not None:
                     raw_dicts.append(res)
 
+        # Clear file paths list to free memory
+        dirty_or_new.clear()
+
         if supervisor.is_current_task_cancelled():
             logger.info("Library sync cancelled after metadata extraction.")
             return
@@ -155,20 +158,44 @@ class LibrarySyncService:
             if track:
                 tracks.append(track)
 
+        # Clear raw dicts list to free memory
+        raw_dicts.clear()
+
         if supervisor.is_current_task_cancelled():
             logger.info("Library sync cancelled before database upsert.")
             return
 
-        # Step 5: Relational Hydration & Batch UPSERT
+        # Step 5: Relational Hydration & Batch UPSERT in Chunks
         if tracks:
-            logger.info(f"Batch upserting {len(tracks)} tracks to database...")
-            with self.db.session_factory() as session:
-                TrackRepository.resolve_artists_and_albums(session, tracks)
+            CHUNK_SIZE = 250
+            total_tracks = len(tracks)
+            total_chunks = (total_tracks + CHUNK_SIZE - 1) // CHUNK_SIZE
+            logger.info(f"Batch upserting {total_tracks} tracks to database in {total_chunks} chunks (chunk size {CHUNK_SIZE})...")
+
+            total_affected_rows = 0
+            for chunk_idx in range(total_chunks):
                 if supervisor.is_current_task_cancelled():
-                    logger.info("Library sync cancelled before committing upsert.")
+                    logger.info("Library sync cancelled during chunked upsert.")
                     return
-                affected_rows = TrackRepository.bulk_upsert_tracks(session, tracks)
-                session.commit()
-                logger.info(f"Upserted tracks affecting {affected_rows} rows.")
+
+                start_i = chunk_idx * CHUNK_SIZE
+                end_i = min(start_i + CHUNK_SIZE, total_tracks)
+                chunk = tracks[start_i:end_i]
+
+                with self.db.session_factory() as session:
+                    TrackRepository.resolve_artists_and_albums(session, chunk)
+                    if supervisor.is_current_task_cancelled():
+                        logger.info("Library sync cancelled before committing chunk upsert.")
+                        return
+                    affected = TrackRepository.bulk_upsert_tracks(session, chunk)
+                    session.commit()
+                    total_affected_rows += (affected or 0)
+
+                logger.info(f"Upserted chunk {chunk_idx + 1}/{total_chunks} ({len(chunk)} tracks)...")
+
+                # Explicitly yield GIL and allow the event loop to process web requests & other transactions
+                time.sleep(0.01)
+
+            logger.info(f"Upserted tracks affecting {total_affected_rows} rows.")
 
         logger.info("Library sync complete.")
