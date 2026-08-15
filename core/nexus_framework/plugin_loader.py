@@ -361,28 +361,63 @@ class PluginLoader:
         except Exception as e:
             logger.warning(f"Failed to kill workers for {plugin_id} during unload.")
 
-        # 3. Purge Memory (Strict DB-Driven Unload)
+        # 3. Purge Memory (Comprehensive Memory & Namespace Unload)
         try:
+            modules_to_purge = set()
             from database.config_database import get_config_database
             db = get_config_database()
             conn = db._open_connection()
             try:
                 c = conn.cursor()
-                c.execute("SELECT loaded_modules FROM services WHERE plugin_id=?", (plugin_id,))
+                c.execute("SELECT loaded_modules, name, absolute_install_path FROM services WHERE plugin_id=?", (plugin_id,))
                 row = c.fetchone()
-                if row and row[0]:
-                    import json
-                    loaded_modules = json.loads(row[0])
-                    logger.debug(f"Purging {len(loaded_modules)} tracked modules for {plugin_id} from sys.modules")
-                    for mod_ns in loaded_modules:
-                        if mod_ns in sys.modules:
-                            del sys.modules[mod_ns]
-                else:
-                    logger.warning(f"No loaded_modules array found for plugin_id {plugin_id}, skipping strict purge.")
+                if row:
+                    if row[0]:
+                        import json
+                        try:
+                            modules_to_purge.update(json.loads(row[0]))
+                        except Exception:
+                            pass
+                    
+                    p_name = (row[1] or '').split('@')[0]
+                    clean_name = p_name.lower().replace('echosync.', '').replace('echosync/', '').strip()
+                    ns_prefixes = {
+                        f"plugins.{p_name.lower()}",
+                        f"plugins.echosync.{clean_name}",
+                        f"echosync.{clean_name}",
+                        f"plugins.{clean_name}",
+                        p_name.lower(),
+                        clean_name
+                    }
+                    
+                    p_path = Path(row[2]) if row[2] else None
+                    resolved_p_path = str(p_path.resolve()) if p_path and p_path.exists() else None
+
+                    for mod_name, mod_obj in list(sys.modules.items()):
+                        mod_lower = mod_name.lower()
+                        if any(mod_lower == pfx or mod_lower.startswith(f"{pfx}.") for pfx in ns_prefixes):
+                            modules_to_purge.add(mod_name)
+                            continue
+                        if resolved_p_path:
+                            mod_file = getattr(mod_obj, '__file__', None)
+                            if mod_file:
+                                try:
+                                    if str(Path(mod_file).resolve()).startswith(resolved_p_path):
+                                        modules_to_purge.add(mod_name)
+                                except Exception:
+                                    pass
             finally:
                 conn.close()
+
+            logger.info(f"Purging {len(modules_to_purge)} modules for plugin {plugin_id} from sys.modules")
+            for mod_ns in modules_to_purge:
+                sys.modules.pop(mod_ns, None)
+
+            import importlib
+            importlib.invalidate_caches()
+            PluginRegistry.unregister(plugin_id)
         except Exception as e:
-            logger.error(f"Failed to fetch or parse loaded_modules during unload: {e}")
+            logger.error(f"Failed during memory purge during unload: {e}")
 
     def reload_plugin(self, plugin_id: int):
         """Perform a true Zero-Downtime hot reload of a plugin."""
@@ -428,8 +463,9 @@ class PluginLoader:
             logger.warning("Failed to kill workers for the target plugin.")
             logger.debug(f"Raw exception data: {e}", exc_info=True)
 
-        # 3. Purge Memory (Strict DB-Driven Unload)
+        # 3. Purge Memory (Comprehensive Memory & Namespace Unload)
         try:
+            modules_to_purge = set()
             conn = db._open_connection()
             try:
                 c = conn.cursor()
@@ -437,17 +473,46 @@ class PluginLoader:
                 row = c.fetchone()
                 if row and row[0]:
                     import json
-                    loaded_modules = json.loads(row[0])
-                    logger.debug(f"Purging {len(loaded_modules)} tracked modules for {plugin_id} from sys.modules")
-                    for mod_ns in loaded_modules:
-                        if mod_ns in sys.modules:
-                            del sys.modules[mod_ns]
-                else:
-                    logger.warning(f"No loaded_modules array found for plugin_id {plugin_id}, skipping strict purge.")
+                    try:
+                        modules_to_purge.update(json.loads(row[0]))
+                    except Exception:
+                        pass
             finally:
                 conn.close()
+
+            clean_name = clean_ns.lower().replace('echosync.', '').replace('echosync/', '').strip()
+            ns_prefixes = {
+                f"plugins.{clean_ns.lower()}",
+                f"plugins.echosync.{clean_name}",
+                f"echosync.{clean_name}",
+                f"plugins.{clean_name}",
+                clean_ns.lower(),
+                clean_name
+            }
+            resolved_plugin_dir = str(plugin_dir.resolve())
+
+            for mod_name, mod_obj in list(sys.modules.items()):
+                mod_lower = mod_name.lower()
+                if any(mod_lower == pfx or mod_lower.startswith(f"{pfx}.") for pfx in ns_prefixes):
+                    modules_to_purge.add(mod_name)
+                    continue
+                mod_file = getattr(mod_obj, '__file__', None)
+                if mod_file:
+                    try:
+                        if str(Path(mod_file).resolve()).startswith(resolved_plugin_dir):
+                            modules_to_purge.add(mod_name)
+                    except Exception:
+                        pass
+
+            logger.info(f"Purging {len(modules_to_purge)} modules for {plugin_id} from sys.modules")
+            for mod_ns in modules_to_purge:
+                sys.modules.pop(mod_ns, None)
+
+            import importlib
+            importlib.invalidate_caches()
+            PluginRegistry.unregister(plugin_id)
         except Exception as e:
-            logger.error(f"Failed to fetch or parse loaded_modules during reload: {e}")
+            logger.error(f"Failed during memory purge during reload: {e}")
 
         # 4. Reload Package
         try:
@@ -1434,6 +1499,18 @@ class PluginRegistry:
         cls._plugins[plugin_id] = plugin_cls
         cls._plugin_sources[plugin_id] = source_type
         logger.debug(f"Registered plugin '{name}' (source: {source_type})")
+
+    @classmethod
+    def unregister(cls, plugin_id: int):
+        """Unregister a plugin class and remove from registry."""
+        if isinstance(plugin_id, str):
+            if plugin_id.isdigit():
+                plugin_id = int(plugin_id)
+            else:
+                plugin_id = generate_plugin_id(plugin_id.lower())
+        cls._plugins.pop(plugin_id, None)
+        cls._plugin_sources.pop(plugin_id, None)
+        logger.debug(f"Unregistered plugin ID '{plugin_id}' from PluginRegistry")
 
     @classmethod
     def get_plugin_class(cls, plugin_id: int) -> Optional[Type[PluginBase]]:
