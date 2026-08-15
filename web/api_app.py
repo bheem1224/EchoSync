@@ -11,7 +11,7 @@ import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
 from fastapi import FastAPI, Request, Depends
-from fastapi.responses import JSONResponse, FileResponse
+from fastapi.responses import JSONResponse, FileResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
@@ -170,6 +170,33 @@ def create_app(testing: bool = False) -> FastAPI:
             allow_methods=["*"],
             allow_headers=["*"],
         )
+
+    @app.middleware("http")
+    async def plugin_mount_slash_normalizer(request: Request, call_next):
+        path_lower = request.url.path.lower().rstrip('/')
+        from core.nexus_framework.plugin_loader import PluginRegistry
+        if path_lower in PluginRegistry._mounted_subapps:
+            sub_app = PluginRegistry._mounted_subapps[path_lower]
+            scope = dict(request.scope)
+            scope["path"] = "/"
+            scope["raw_path"] = b"/"
+            scope["root_path"] = request.url.path
+            status_code = 200
+            headers = []
+            body_chunks = []
+            async def send(message):
+                nonlocal status_code, headers, body_chunks
+                if message["type"] == "http.response.start":
+                    status_code = message["status"]
+                    headers = message.get("headers", [])
+                elif message["type"] == "http.response.body":
+                    body_chunks.append(message.get("body", b""))
+            await sub_app(scope, request.receive, send)
+            res = Response(content=b"".join(body_chunks), status_code=status_code)
+            for k, v in headers:
+                res.headers[k.decode("latin1")] = v.decode("latin1")
+            return res
+        return await call_next(request)
 
     # Mount migrated routers
     app.include_router(accounts_bp)

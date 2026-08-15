@@ -1157,14 +1157,19 @@ class PluginLoader:
                         )
                         for router in plugin_routers:
                             plugin_app.include_router(router)
-
-                        # Auto-mirror '/' routes on plugin_app for '' (no trailing slash support)
-                        for route in list(plugin_app.routes):
-                            if getattr(route, 'path', None) == '/':
-                                plugin_app.add_api_route('', route.endpoint, methods=route.methods, include_in_schema=False, response_model=getattr(route, 'response_model', None))
+                            for route in getattr(router, 'routes', []):
+                                if getattr(route, 'path', None) == '/':
+                                    plugin_app.add_api_route(
+                                        '',
+                                        route.endpoint,
+                                        methods=route.methods,
+                                        include_in_schema=False,
+                                        response_model=getattr(route, 'response_model', None)
+                                    )
                         
                         for pfx in mount_prefixes:
                             self.main_app.mount(pfx, plugin_app)
+                            PluginRegistry._mounted_subapps[pfx.lower().rstrip('/')] = plugin_app
                             # Reorder routes so plugin mounts precede the SPA StaticFiles mount ('/')
                             mount_route = self.main_app.routes.pop()
                             insert_idx = len(self.main_app.routes)
@@ -1321,6 +1326,7 @@ class PluginRegistry:
     _plugin_sources: Dict[int, str] = {}  # metadata: plugin_id -> source_type
     _disabled_plugins: set = set()
     _quality_options: Dict[int, List[Dict[str, Any]]] = {}
+    _mounted_subapps: Dict[str, Any] = {}
 
     @classmethod
     def get_all(cls) -> Dict[int, Dict[str, Any]]:
