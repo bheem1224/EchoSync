@@ -17,7 +17,6 @@ from core.tiered_logger import get_logger
 from core.settings import config_manager
 from core.task_manager.task_queue import job_queue
 from database.music_database import get_database
-from database.config_database import get_config_database
 from database.working_database import get_working_database, Account, UserRating
 from core.personalized_playlists import get_personalized_playlists_service
 from services.library_hygiene import DuplicateHygieneService

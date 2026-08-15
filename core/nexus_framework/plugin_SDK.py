@@ -97,7 +97,20 @@ class _AccountsSDKFacade:
         token = get_config_database().get_account_token(account_id)
         if not token: return None
         
-        caller_mod = inspect.currentframe().f_back.f_globals.get('__name__', '')
+        # Find actual calling module from stack frames
+        caller_mod = ''
+        frame = inspect.currentframe()
+        while frame:
+            mod = frame.f_globals.get('__name__', '')
+            if mod and not mod.startswith('core.nexus_framework') and not mod.startswith('inspect') and not mod.startswith('spotipy'):
+                caller_mod = mod
+                break
+            frame = frame.f_back
+
+        # Core system and routes have host access
+        if not caller_mod or caller_mod.startswith('core.') or caller_mod.startswith('web.') or caller_mod.startswith('services.'):
+            return token
+
         # Extract the plugin ID from the caller's module path, ignoring 'beta'
         parts = [p for p in caller_mod.split('.') if p.lower() != 'beta']
         if parts and parts[0] == 'plugins' and len(parts) >= 3:
@@ -121,8 +134,8 @@ class _AccountsSDKFacade:
         except Exception:
             pass
 
-        owner_lower = account_owner_plugin_id.lower()
-        caller_lower = caller_plugin_id.lower()
+        owner_lower = account_owner_plugin_id.lower().replace('echosync.', '').replace('echosync/', '').strip()
+        caller_lower = caller_plugin_id.lower().replace('echosync.', '').replace('echosync/', '').strip()
         
         if (caller_lower == owner_lower or 
             caller_lower.endswith(f".{owner_lower}") or 

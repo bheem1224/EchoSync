@@ -7,7 +7,6 @@ import contextlib
 from typing import Any, Dict, Optional, List, Generator
 from pathlib import Path
 
-from core.settings import config_manager
 from core.tiered_logger import get_logger
 
 logger = get_logger("config_database")
@@ -20,6 +19,7 @@ class ConfigDatabase:
         if db_path:
             self.database_path = Path(db_path)
         else:
+            from core.settings import config_manager
             uri = config_manager.get("database.config_uri")
             if uri:
                 # We assume the config_database.py wrapper is heavily SQLite-dependent right now,
@@ -646,30 +646,44 @@ class ConfigDatabase:
         if identifier is None: return None
         with self._get_connection() as conn:
             c = conn.cursor()
-            if isinstance(identifier, (int, str)) and str(identifier).isdigit():
-                c.execute("SELECT id FROM services WHERE id=? OR plugin_id=?", (int(identifier), int(identifier)))
+            id_str = str(identifier).strip()
+            if id_str.isdigit():
+                c.execute("SELECT id FROM services WHERE id=? OR plugin_id=?", (int(id_str), int(id_str)))
                 row = c.fetchone()
                 if row: return int(row[0])
-            else:
-                # 1. Check exact name (case-insensitive)
-                c.execute("SELECT id FROM services WHERE LOWER(name)=LOWER(?)", (str(identifier),))
-                row = c.fetchone()
-                if row: return int(row[0])
-                
-                # 2. Check by CRC32 of the identifier (e.g. EchoSync.spotify)
-                import binascii
-                crc = binascii.crc32(str(identifier).lower().encode('utf-8')) & 0xFFFFFFFF
-                c.execute("SELECT id FROM services WHERE plugin_id=? OR LOWER(name)=LOWER(?)", (crc, str(identifier)))
-                row = c.fetchone()
-                if row: return int(row[0])
-                
-                # 3. Suffix matching/normalized translation bridge
-                norm_name = str(identifier).lower().replace(' ', '_').replace('-', '_')
-                c.execute("SELECT id, name FROM services")
-                for r in c.fetchall():
-                    row_name = r['name'].lower().replace(' ', '_').replace('-', '_')
-                    if row_name == norm_name or norm_name.endswith(f".{row_name}") or row_name.endswith(f".{norm_name}"):
-                        return int(r['id'])
+            
+            # 1. Check exact name (case-insensitive)
+            c.execute("SELECT id FROM services WHERE LOWER(name)=LOWER(?)", (id_str,))
+            row = c.fetchone()
+            if row: return int(row[0])
+            
+            # 2. Check canonical variations & CRC32
+            import binascii
+            clean_name = id_str.lower().replace('echosync.', '').replace('echosync/', '').strip()
+            variations = {
+                id_str.lower(),
+                clean_name,
+                f"echosync.{clean_name}",
+                f"echosync/{clean_name}",
+            }
+            crc_list = [binascii.crc32(v.encode('utf-8')) & 0xFFFFFFFF for v in variations]
+            
+            placeholders = ','.join('?' * len(crc_list))
+            name_placeholders = ','.join('?' * len(variations))
+            c.execute(
+                f"SELECT id FROM services WHERE plugin_id IN ({placeholders}) OR LOWER(name) IN ({name_placeholders})",
+                (*crc_list, *variations)
+            )
+            row = c.fetchone()
+            if row: return int(row[0])
+            
+            # 3. Suffix matching/normalized translation bridge
+            norm_name = clean_name.replace(' ', '_').replace('-', '_')
+            c.execute("SELECT id, name FROM services")
+            for r in c.fetchall():
+                row_name = r['name'].lower().replace('echosync.', '').replace('echosync/', '').replace(' ', '_').replace('-', '_')
+                if row_name == norm_name or row_name.endswith(f".{norm_name}") or norm_name.endswith(f".{row_name}"):
+                    return int(r['id'])
             return None
 
     def get_accounts(self, service_id: Optional[int] = None, is_active: Optional[bool] = None) -> List[Dict[str, Any]]:

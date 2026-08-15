@@ -36,30 +36,39 @@ class ConfigCacheHandler(CacheHandler):
                 logger.debug("No account_id specified, cannot load token")
                 return None
             
-            # Access the plugin instance via registry or pass it in
-            # For simplicity, we use the registry here as this is often called by Spotipy
-            from core.nexus_framework.plugin_loader import get_plugin
-            plugin = get_plugin('EchoSync/spotify')
-            if not plugin:
-                return None
-                
-            token_data = plugin.accounts.get_token(self.account_id)
+            from database.config_database import get_config_database
+            db = get_config_database()
+            token_data = db.get_account_token(self.account_id)
             
+            if not token_data:
+                try:
+                    from core.nexus_framework.plugin_SDK import sdk
+                    token_data = sdk.accounts.get_token(self.account_id)
+                except Exception:
+                    token_data = None
+
             if not token_data:
                 logger.debug(f"No token data found in storage for account {self.account_id}")
                 return None
             
-            # StorageService.get_account_token returns decrypted tokens
             access_token = token_data.get('access_token')
             refresh_token = token_data.get('refresh_token')
             expires_at = token_data.get('expires_at')
             scope = token_data.get('scope', "user-library-read user-read-private playlist-read-private playlist-read-collaborative user-read-email playlist-modify-public playlist-modify-private")
             
+            if access_token == 'REDACTED':
+                access_token = None
+            if refresh_token == 'REDACTED':
+                refresh_token = None
+
             logger.debug(
                 f"Loaded token data for account {self.account_id}: access={bool(access_token)}, "
                 f"refresh={bool(refresh_token)}, expires={expires_at}, scope={scope}"
             )
             
+            if not access_token and not refresh_token:
+                return None
+
             # Return full token info - Spotipy will handle refresh if needed
             return {
                 'access_token': access_token,
@@ -87,10 +96,8 @@ class ConfigCacheHandler(CacheHandler):
                 logger.warning(f"No token_info provided to save for account {self.account_id}")
                 return
             
-            from core.nexus_framework.plugin_loader import get_plugin
-            plugin = get_plugin('EchoSync/spotify')
-            if not plugin:
-                return
+            from database.config_database import get_config_database
+            db = get_config_database()
             
             access_token = token_info.get('access_token')
             refresh_token = token_info.get('refresh_token')
@@ -103,14 +110,14 @@ class ConfigCacheHandler(CacheHandler):
             
             # If no refresh token provided, try to preserve existing one
             if not refresh_token:
-                existing_token = plugin.accounts.get_token(self.account_id)
-                if existing_token and existing_token.get('refresh_token'):
+                existing_token = db.get_account_token(self.account_id)
+                if existing_token and existing_token.get('refresh_token') and existing_token.get('refresh_token') != 'REDACTED':
                     refresh_token = existing_token.get('refresh_token')
                     logger.debug(f"Preserving existing refresh_token for account {self.account_id}")
 
             logger.debug(f"Saving token for account {self.account_id}: access={bool(access_token)}, refresh={bool(refresh_token)}, expires={expires_at}")
             
-            success = plugin.accounts.save_token(
+            success = db.save_account_token(
                 account_id=self.account_id,
                 access_token=access_token,
                 refresh_token=refresh_token if refresh_token else None,
@@ -122,7 +129,8 @@ class ConfigCacheHandler(CacheHandler):
             if success:
                 logger.info(f"Successfully persisted Spotify tokens for account {self.account_id}")
                 try:
-                    plugin.accounts.mark_authenticated(self.account_id)
+                    db.mark_account_authenticated(self.account_id)
+                    db.toggle_account_active(self.account_id, True)
                 except Exception as e:
                     logger.debug(f"Failed to mark account as authenticated: {e}")
             else:
