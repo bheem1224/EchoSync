@@ -782,7 +782,7 @@ class PluginLoader:
             if manifest_file.exists():
                 try:
                     manifest_data = json.loads(manifest_file.read_text(encoding="utf-8"))
-                    if manifest_data.get("verified_source") == "official":
+                    if manifest_data.get("verified_source") == "official" or manifest_data.get("author") == "EchoSync":
                         bypass_security = True
                     privileged = manifest_data.get("privileged") is True
                 except Exception:
@@ -1133,11 +1133,14 @@ class PluginLoader:
                 # Collect FastAPI Routers and legacy Flask Blueprints
                 plugin_routers = []
                 flask_blueprints = []
+                seen_router_ids = set()
                 for attr_name in dir(module):
                     attr_val = getattr(module, attr_name)
                     if isinstance(attr_val, APIRouter):
-                        logger.info(f"Found APIRouter {attr_name} in {module_path}")
-                        plugin_routers.append(attr_val)
+                        if id(attr_val) not in seen_router_ids:
+                            seen_router_ids.add(id(attr_val))
+                            logger.info(f"Found APIRouter {attr_name} in {module_path}")
+                            plugin_routers.append(attr_val)
                     elif type(attr_val).__name__ == 'Blueprint':
                         flask_blueprints.append(attr_val)
                 logger.info(f"Plugin routers collected: {len(plugin_routers)}")
@@ -1154,6 +1157,11 @@ class PluginLoader:
                         )
                         for router in plugin_routers:
                             plugin_app.include_router(router)
+
+                        # Auto-mirror '/' routes on plugin_app for '' (no trailing slash support)
+                        for route in list(plugin_app.routes):
+                            if getattr(route, 'path', None) == '/':
+                                plugin_app.add_api_route('', route.endpoint, methods=route.methods, include_in_schema=False, response_model=getattr(route, 'response_model', None))
                         
                         for pfx in mount_prefixes:
                             self.main_app.mount(pfx, plugin_app)

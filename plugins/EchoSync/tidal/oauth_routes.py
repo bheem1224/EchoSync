@@ -13,7 +13,7 @@ import time
 
 logger = get_logger("tidal_oauth")
 storage = get_storage_service()
-router = APIRouter(prefix="/api/tidal")
+router = APIRouter()
 
 
 @router.get('/auth')

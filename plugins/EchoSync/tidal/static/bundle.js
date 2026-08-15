@@ -2367,7 +2367,7 @@ function Ti(e, t) {
 	});
 	async function f() {
 		try {
-			let e = await (await fetch(`${n()}`)).json();
+			let e = await (await fetch(`${n()}/accounts`)).json();
 			e && (P(r, e.accounts || []), P(i, e.redirect_uri || ""), P(a, !!Y(i)));
 		} catch (e) {
 			console.error("Failed to load Tidal accounts:", e);
@@ -2418,7 +2418,7 @@ function Ti(e, t) {
 				client_id: Y(l).client_id,
 				client_secret: Y(l).client_secret
 			};
-			Y(c) === "add" ? await fetch(`${n()}`, {
+			Y(c) === "add" ? await fetch(`${n()}/accounts`, {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify(e)

@@ -9,8 +9,8 @@ logger = get_logger("tidal_routes")
 router = APIRouter()
 
 
-@router.get('')
 @router.get('/')
+@router.get('/accounts')
 def list_accounts():
     """List all Tidal accounts."""
     try:
@@ -54,8 +54,8 @@ def list_accounts():
         return JSONResponse(content={"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}, status_code=500)
 
 
-@router.post('')
 @router.post('/')
+@router.post('/accounts')
 async def create_account(request: Request):
     """
     Create a new Tidal account with credentials.

@@ -33,7 +33,7 @@
 
   async function loadAccounts() {
     try {
-      const response = await fetch(`${apiBase}`);
+      const response = await fetch(`${apiBase}/accounts`);
       const data = await response.json();
       if (data) {
         accounts = data.accounts || [];
@@ -133,7 +133,7 @@
       };
       
       if (modalMode === 'add') {
-        await fetch(`${apiBase}`, { 
+        await fetch(`${apiBase}/accounts`, { 
           method: 'POST', 
           headers: { 'Content-Type': 'application/json' }, 
           body: JSON.stringify(accountData) 

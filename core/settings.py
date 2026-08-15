@@ -653,6 +653,24 @@ class ConfigManager:
             pass
         return "beta" if self.get('ui.beta_plugin_ui', False) else "stable"
 
+    def get_active_download_client(self) -> Optional[str]:
+        """Get the configured active download client name."""
+        return self.get("active_download_client")
+
+    def set_active_download_client(self, client_name: Optional[str]) -> bool:
+        """Set and persist the active download client name."""
+        self.set("active_download_client", client_name)
+        return True
+
+    def get_active_media_server(self) -> str:
+        """Get the configured active media server name."""
+        return self.get("active_media_server", "plex")
+
+    def set_active_media_server(self, server_name: str) -> bool:
+        """Set and persist the active media server name."""
+        self.set("active_media_server", server_name)
+        return True
+
     def get_settings(self) -> Dict[str, Any]:
         """Return the full non-secret configuration (alias for get_all)."""
         return self.get_all()

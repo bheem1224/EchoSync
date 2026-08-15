@@ -13,14 +13,22 @@ config_router = APIRouter()
 def get_config():
     """Return the current AcoustID settings-card configuration."""
     try:
-        
-        # The legacy key was stored under service 'acoustid' as 'api_key'
-        api_key = sdk.config.get('api_key')
+        api_key = sdk.config.get('api_key') or sdk.secrets.get('api_key')
+        if not api_key:
+            from database.config_database import get_config_database
+            db = get_config_database()
+            svc_id = db.get_service_id(2136125342) or db.get_service_id('EchoSync.Acoustid') or db.get_service_id('EchoSync.acoustid') or db.get_service_id('acoustid')
+            if svc_id:
+                api_key = db.get_service_config(svc_id, 'api_key')
+        if not api_key:
+            from core.settings import config_manager
+            api_key = config_manager.get('acoustid.api_key')
+
         auto_contribute = sdk.config.get('auto_contribute')
         return JSONResponse(content={
             "api_key_configured": bool(api_key),
             "auto_contribute": auto_contribute == "true" if isinstance(auto_contribute, str) else bool(auto_contribute),
-        }), 200
+        })
     except Exception as e:
         logger.error(f"Error reading AcoustID config: {e}", exc_info=True)
         return JSONResponse(content={"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}, status_code=500)
@@ -33,18 +41,31 @@ async def save_config(request: Request):
         
         if "api_key" in payload and payload["api_key"].strip():
             from core.security import encrypt_string
-            sdk.config.set('api_key', encrypt_string(payload["api_key"].strip()))
+            enc_key = encrypt_string(payload["api_key"].strip())
+            sdk.config.set('api_key', enc_key)
+            from database.config_database import get_config_database
+            db = get_config_database()
+            svc_id = db.get_service_id(2136125342) or db.get_service_id('EchoSync.Acoustid') or db.get_service_id('EchoSync.acoustid') or db.get_service_id('acoustid')
+            if svc_id:
+                db.set_service_config(svc_id, 'api_key', enc_key, is_sensitive=True)
 
         if "auto_contribute" in payload:
             sdk.config.set('auto_contribute', str(bool(payload["auto_contribute"])).lower())
 
-        api_key = sdk.config.get('api_key')
+        api_key = sdk.config.get('api_key') or sdk.secrets.get('api_key')
+        if not api_key:
+            from database.config_database import get_config_database
+            db = get_config_database()
+            svc_id = db.get_service_id(2136125342) or db.get_service_id('EchoSync.Acoustid') or db.get_service_id('EchoSync.acoustid') or db.get_service_id('acoustid')
+            if svc_id:
+                api_key = db.get_service_config(svc_id, 'api_key')
+
         auto_contribute = sdk.config.get('auto_contribute')
         return JSONResponse(content={
             "success": True, 
             "api_key_configured": bool(api_key),
             "auto_contribute": auto_contribute == "true" if isinstance(auto_contribute, str) else bool(auto_contribute)
-        }), 200
+        })
     except Exception as e:
         logger.error(f"Error saving AcoustID config: {e}", exc_info=True)
         return JSONResponse(content={"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}, status_code=500)

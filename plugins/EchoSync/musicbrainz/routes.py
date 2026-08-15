@@ -38,13 +38,19 @@ config_router = APIRouter()
 def get_config():
     """Return the current MusicBrainz settings-card configuration."""
     try:
-        
-        token = sdk.config.get('user_token')
+        token = sdk.config.get('user_token') or sdk.secrets.get('user_token')
+        if not token:
+            from database.config_database import get_config_database
+            db = get_config_database()
+            svc_id = db.get_service_id(2070622029) or db.get_service_id('EchoSync.Musicbrainz') or db.get_service_id('EchoSync.musicbrainz') or db.get_service_id('musicbrainz')
+            if svc_id:
+                token = db.get_service_config(svc_id, 'user_token')
+
         auto_contribute = sdk.config.get('auto_contribute')
         return JSONResponse(content={
             "token_configured": bool(token),
             "auto_contribute": auto_contribute == "true" if isinstance(auto_contribute, str) else bool(auto_contribute),
-        }), 200
+        })
     except Exception as e:
         logger.error(f"Error reading MusicBrainz config: {e}", exc_info=True)
         return JSONResponse(content={"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}, status_code=500)
@@ -58,18 +64,31 @@ async def save_config(request: Request):
 
         if "user_token" in payload and payload["user_token"].strip():
             from core.security import encrypt_string
-            sdk.config.set('user_token', encrypt_string(payload["user_token"].strip()))
+            enc_token = encrypt_string(payload["user_token"].strip())
+            sdk.config.set('user_token', enc_token)
+            from database.config_database import get_config_database
+            db = get_config_database()
+            svc_id = db.get_service_id(2070622029) or db.get_service_id('EchoSync.Musicbrainz') or db.get_service_id('EchoSync.musicbrainz') or db.get_service_id('musicbrainz')
+            if svc_id:
+                db.set_service_config(svc_id, 'user_token', enc_token, is_sensitive=True)
 
         if "auto_contribute" in payload:
             sdk.config.set('auto_contribute', str(bool(payload["auto_contribute"])).lower())
 
-        token = sdk.config.get('user_token')
+        token = sdk.config.get('user_token') or sdk.secrets.get('user_token')
+        if not token:
+            from database.config_database import get_config_database
+            db = get_config_database()
+            svc_id = db.get_service_id(2070622029) or db.get_service_id('EchoSync.Musicbrainz') or db.get_service_id('EchoSync.musicbrainz') or db.get_service_id('musicbrainz')
+            if svc_id:
+                token = db.get_service_config(svc_id, 'user_token')
+
         auto_contribute = sdk.config.get('auto_contribute')
         return JSONResponse(content={
             "success": True,
             "token_configured": bool(token),
             "auto_contribute": auto_contribute == "true" if isinstance(auto_contribute, str) else bool(auto_contribute)
-        }), 200
+        })
     except Exception as e:
         logger.error(f"Error saving MusicBrainz config: {e}", exc_info=True)
         return JSONResponse(content={"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}, status_code=500)
@@ -117,7 +136,10 @@ def list_accounts():
             "redirect_uri": redirect_uri,
             "client_id_configured": bool(client_id),
             "client_secret_configured": client_secret_configured,
-        }), 200
+        })
+    except Exception as e:
+        logger.error(f"Error listing MusicBrainz accounts: {e}", exc_info=True)
+        return JSONResponse(content={"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}, status_code=500)
     except Exception as e:
         logger.error(f"Error listing MusicBrainz accounts: {e}", exc_info=True)
         return JSONResponse(content={"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}, status_code=500)
@@ -221,7 +243,7 @@ async def begin_auth(request: Request):
                     "Register your application at https://musicbrainz.org/account/applications "
                     "then save the credentials on the Metadata settings page."
                 )
-            }), 400
+            }, status_code=400)
 
         if not sdk.config.get('client_secret'):
             return JSONResponse(content={"error": "MusicBrainz client_secret is not configured."}, status_code=400)
@@ -287,14 +309,13 @@ async def oauth_callback(request: Request):
     if error:
         desc = request.query_params.get("error_description", error)
         logger.error(f"MusicBrainz OAuth error from provider: {desc}")
-        return (
-            f"""<html><body style='font-family:sans-serif;padding:24px;'>
+        return HTMLResponse(
+            content=f"""<html><body style='font-family:sans-serif;padding:24px;'>
             <h2>MusicBrainz Authentication Failed</h2>
             <p><strong>Error:</strong> {desc}</p>
             <p>Please close this window, check your application settings, and try again.</p>
             </body></html>""",
-            400,
-            {"Content-Type": "text/html"},
+            status_code=400
         )
 
     if not code or not state:
@@ -385,14 +406,13 @@ async def oauth_callback(request: Request):
         logger.warning(f"Failed to fetch MusicBrainz user profile after auth: {e}")
 
     logger.info(f"MusicBrainz account {account_id} authenticated successfully")
-    return (
-        """<html><body style='font-family:sans-serif;padding:24px;text-align:center;'>
+    return HTMLResponse(
+        content="""<html><body style='font-family:sans-serif;padding:24px;text-align:center;'>
         <h2 style='color:#21ba45;'>&#10003; MusicBrainz Authenticated!</h2>
         <p>You may close this window and return to Echosync.</p>
         <script>setTimeout(function(){ window.close(); }, 2000);</script>
         </body></html>""",
-        200,
-        {"Content-Type": "text/html"},
+        status_code=200
     )
 
 @router.get("/settings")

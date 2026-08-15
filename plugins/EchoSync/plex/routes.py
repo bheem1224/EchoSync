@@ -422,7 +422,7 @@ def sync_plex_users():
             'accounts': accounts,
             'total': len(accounts),
             'success': True,
-        }), 200
+        })
     except Exception as e:
         logger.error(f"Error syncing Plex users: {e}", exc_info=True)
         return JSONResponse(content={"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}, status_code=500)
