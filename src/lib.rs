@@ -84,7 +84,10 @@ fn track_metadata_to_pydict<'py>(py: Python<'py>, meta: &TrackMetadata) -> PyRes
 /// Extract audiophile metadata and stream properties using lofty.
 #[pyfunction]
 pub fn extract_metadata<'py>(py: Python<'py>, path: String) -> PyResult<PyObject> {
-    match MetadataExtractor::extract(&path) {
+    let extract_result = py.allow_threads(|| {
+        MetadataExtractor::extract(&path)
+    });
+    match extract_result {
         Ok(meta) => {
             let dict = track_metadata_to_pydict(py, &meta)?;
             Ok(dict.into_py(py))
@@ -95,20 +98,20 @@ pub fn extract_metadata<'py>(py: Python<'py>, path: String) -> PyResult<PyObject
 
 /// Atomic file move with EXDEV cross-device link fallback.
 #[pyfunction]
-pub fn safe_move_file(src: String, dst: String) -> PyResult<()> {
-    FsOperations::safe_move(&src, &dst).map_err(|e| e.into())
+pub fn safe_move_file(py: Python<'_>, src: String, dst: String) -> PyResult<()> {
+    py.allow_threads(|| FsOperations::safe_move(&src, &dst)).map_err(|e| e.into())
 }
 
 /// High-speed copy file.
 #[pyfunction]
-pub fn copy_file(src: String, dst: String) -> PyResult<u64> {
-    FsOperations::copy_file(&src, &dst).map_err(|e| e.into())
+pub fn copy_file(py: Python<'_>, src: String, dst: String) -> PyResult<u64> {
+    py.allow_threads(|| FsOperations::copy_file(&src, &dst)).map_err(|e| e.into())
 }
 
 /// Delete file safely.
 #[pyfunction]
-pub fn delete_file(path: String) -> PyResult<()> {
-    FsOperations::delete_file(&path).map_err(|e| e.into())
+pub fn delete_file(py: Python<'_>, path: String) -> PyResult<()> {
+    py.allow_threads(|| FsOperations::delete_file(&path)).map_err(|e| e.into())
 }
 
 /// Telemetry Yielding Pattern (Event Bus Prep)
