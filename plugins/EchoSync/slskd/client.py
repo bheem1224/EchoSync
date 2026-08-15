@@ -833,11 +833,13 @@ class SlskdProvider(DownloaderProvider):
     def search(
         self,
         query: str,
-        basic_filters: Dict[str, Any] = None,
+        type: Optional[str] = "track",
         limit: int = 10,
+        basic_filters: Dict[str, Any] = None,
         quality_profile: Optional[Dict[str, Any]] = None,
         includes: Optional[List[str]] = None,
         excludes: Optional[List[str]] = None,
+        **kwargs,
     ) -> List[EchosyncTrack]:
         """Synchronous wrapper for atomic search"""
         try:

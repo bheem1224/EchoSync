@@ -157,10 +157,8 @@ class SearchAdapter:
                                     item_dict = item.to_dict()
                                 elif isinstance(item, dict):
                                     item_dict = dict(item)
-                                else:
-                                    continue
-                                
-                                item_dict["plugin_id"] = provider.plugin_id_int
+                                item_dict["plugin_id"] = plugin_id
+                                item_dict["plugin"] = provider.name
                                 item_dict["type"] = kind
                                 item_dict["confidence"] = getattr(item_dict, "confidence", 1.0)
                                 
@@ -487,7 +485,8 @@ class SearchAdapter:
                         "source": source,
                         "is_local": is_local,
                         "external_url": external_url,
-                        "plugin": provider_name
+                        "plugin": provider_name,
+                        "plugin_id": plugin_id
                     }
                     if local_artist_id:
                         entry["artist_id"] = local_artist_id

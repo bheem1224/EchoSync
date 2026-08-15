@@ -14,7 +14,23 @@
     onselect = null 
   } = $props();
 
-  const getPluginName = (id) => Object.values($plugins?.items ?? []).find(p => p.id === id)?.name || $plugins?.find?.(p => p.id === id)?.name || 'Unknown Plugin';
+  const getPluginName = (id) => {
+    if (!id) return 'Unknown';
+    const idStr = String(id).toLowerCase();
+    const cleanId = idStr.replace(/^echosync\./i, '');
+    const allPlugins = Object.values($plugins?.items ?? []);
+    const found = allPlugins.find(p => 
+      String(p.id).toLowerCase() === idStr ||
+      String(p.plugin_id) === String(id) ||
+      p.name?.toLowerCase() === idStr ||
+      p.name?.toLowerCase().replace(/^echosync\./i, '') === cleanId ||
+      String(p.id).toLowerCase().replace(/^echosync\./i, '') === cleanId
+    );
+    if (found && found.name) {
+      return found.name.replace(/^echosync\./i, '').toUpperCase();
+    }
+    return cleanId.replace(/_/g, ' ').toUpperCase();
+  };
 
   // ── Component State ───────────────────────────────────────────────────
   let query = $state("");
@@ -719,8 +735,8 @@
                   <div class="result-meta flex items-center gap-2">
                     {#if item.source === 'local'}
                       <span class="badge badge-primary">LOCAL LIBRARY</span>
-                    {:else if item.plugin_id}
-                      <span class="badge badge-secondary">{getPluginName(item.plugin_id)}</span>
+                    {:else if item.plugin_id || item.plugin || item.source}
+                      <span class="badge badge-secondary">{getPluginName(item.plugin_id || item.plugin || item.source)}</span>
                     {/if}
                     <div class="result-actions flex items-center">
                       <button class="action-btn play-btn flex items-center justify-center" title="Play" on:click|stopPropagation={() => handleAction(item, 'play')}>
@@ -769,8 +785,8 @@
                   <div class="result-meta flex items-center gap-2">
                     {#if item.source === 'local'}
                       <span class="badge badge-primary">LOCAL LIBRARY</span>
-                    {:else if item.plugin_id}
-                      <span class="badge badge-secondary">{getPluginName(item.plugin_id)}</span>
+                    {:else if item.plugin_id || item.plugin || item.source}
+                      <span class="badge badge-secondary">{getPluginName(item.plugin_id || item.plugin || item.source)}</span>
                     {/if}
                     <div class="result-actions flex items-center">
                       {#if item.is_local}
