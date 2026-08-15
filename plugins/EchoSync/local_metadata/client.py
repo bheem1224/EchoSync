@@ -14,7 +14,7 @@ class LocalMetadataProvider(PluginBase):
     capabilities = ProviderCapabilities(
         name='EchoSync.local_metadata',
         supports_playlists=PlaylistSupport.NONE,
-        search=SearchCapabilities(tracks=False),
+        search=SearchCapabilities(tracks=False, albums=False, artists=False),
         metadata=MetadataRichness.MEDIUM,
         supports_metadata_fetch=True
     )

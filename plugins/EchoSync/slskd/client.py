@@ -834,14 +834,14 @@ class SlskdProvider(DownloaderProvider):
         self,
         query: str,
         type: Optional[str] = "track",
-        limit: int = 10,
-        basic_filters: Dict[str, Any] = None,
-        quality_profile: Optional[Dict[str, Any]] = None,
-        includes: Optional[List[str]] = None,
-        excludes: Optional[List[str]] = None,
         **kwargs,
     ) -> List[EchosyncTrack]:
         """Synchronous wrapper for atomic search"""
+        limit = kwargs.get("limit", 10)
+        basic_filters = kwargs.get("basic_filters")
+        quality_profile = kwargs.get("quality_profile")
+        includes = kwargs.get("includes")
+        excludes = kwargs.get("excludes")
         try:
             loop = asyncio.new_event_loop()
             try:

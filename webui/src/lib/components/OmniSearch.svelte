@@ -258,6 +258,8 @@
   function handleInput() {
     activeIndex = -1;
     clearTimeout(searchTimer);
+    activeSearchAbortController?.abort();
+    activeSearchAbortController = new AbortController();
     
     // Keystroke Token Parser
     const { cleanQuery, pluginFilter, settingsContext } = parseInput(evaluatedQuery);
@@ -298,9 +300,7 @@
   }
 
   async function performSearch(cleanQuery = null, pluginFilter = null) {
-    if (activeSearchAbortController) {
-      activeSearchAbortController.abort();
-    }
+    activeSearchAbortController?.abort();
     activeSearchAbortController = new AbortController();
     const signal = activeSearchAbortController.signal;
 
@@ -343,7 +343,7 @@
             if (pluginFilter) {
               url += `&plugins=${encodeURIComponent(pluginFilter)}`;
             }
-            const res = await apiClient.get(url);
+            const res = await apiClient.get(url, { signal });
             results.external = res.data?.results || [];
         } else {
             results.external = [];
@@ -354,7 +354,7 @@
       }
       else if (prefix === '#') {
         if (term.trim()) {
-            const res = await apiClient.get(`/system/manager/search?q=${encodeURIComponent(term)}`);
+            const res = await apiClient.get(`/system/manager/search?q=${encodeURIComponent(term)}`, { signal });
             results.library.tracks = res.data?.tracks || [];
             results.library.albums = res.data?.albums || [];
             results.library.artists = res.data?.artists || [];
@@ -367,7 +367,7 @@
       }
       else if (prefix === '@') {
         if (term.trim()) {
-            const res = await apiClient.get(`/system/manager/search?q=${encodeURIComponent(term)}&types=artists`);
+            const res = await apiClient.get(`/system/manager/search?q=${encodeURIComponent(term)}&types=artists`, { signal });
             results.library.artists = res.data?.artists || [];
             results.library.albums = [];
             results.library.tracks = [];
@@ -383,7 +383,7 @@
         const value = valueParts.join(':').trim();
         if (key && value) {
             if (key.toLowerCase() === 'isrc') {
-                const res = await apiClient.get(`/core/metadata/isrc/${encodeURIComponent(value)}`);
+                const res = await apiClient.get(`/core/metadata/isrc/${encodeURIComponent(value)}`, { signal });
                 if (res.data?.result) {
                     results.external = [{
                         ...res.data.result,
@@ -394,7 +394,7 @@
                     }];
                 }
             } else {
-                const res = await apiClient.get(`/system/manager/search?q=${encodeURIComponent(value)}&field=${encodeURIComponent(key)}`);
+                const res = await apiClient.get(`/system/manager/search?q=${encodeURIComponent(value)}&field=${encodeURIComponent(key)}`, { signal });
                 results.library.tracks = res.data?.tracks || [];
                 results.library.albums = res.data?.albums || [];
                 results.library.artists = res.data?.artists || [];
