@@ -377,6 +377,7 @@ class SlskdProvider(DownloaderProvider):
         self,
         responses_data: List[Dict[str, Any]],
         quality_profile: Optional[Dict[str, Any]] = None,
+        cancel_event: Optional[Any] = None,
     ) -> List[TrackResult]:
         """Process search responses into TrackResult objects with provider-side pre-filtering.
 
@@ -394,11 +395,20 @@ class SlskdProvider(DownloaderProvider):
         fake_flac_min_bytes_per_second = int(advanced_filters.get('fake_flac_min_bytes_per_second', 70000))
         fake_flac_min_kbps = int(advanced_filters.get('fake_flac_min_kbps', 500))
 
+        index = 0
         for response_data in responses_data:
+            if cancel_event and cancel_event.is_set():
+                return []
             username = response_data.get('username', '')
             files = response_data.get('files', [])
 
             for file_data in files:
+                index += 1
+                if cancel_event and cancel_event.is_set():
+                    return []
+                if index % 500 == 0:
+                    time.sleep(0.005)  # Yield GIL
+
                 filename = file_data.get('filename', '')
                 size = file_data.get('size', 0)
 
@@ -469,6 +479,7 @@ class SlskdProvider(DownloaderProvider):
         quality_profile: Optional[Dict[str, Any]] = None,
         includes: Optional[List[str]] = None,
         excludes: Optional[List[str]] = None,
+        cancel_event: Optional[Any] = None,
     ) -> List[EchosyncTrack]:
         """
         Atomic Search: Post -> Poll -> Parse -> Delete.
@@ -489,6 +500,7 @@ class SlskdProvider(DownloaderProvider):
             return await self._do_async_search(
                 query, basic_filters, timeout, quality_profile,
                 includes=includes, excludes=excludes,
+                cancel_event=cancel_event,
             )
 
     async def _check_soulseek_connected(self) -> bool:
@@ -539,6 +551,7 @@ class SlskdProvider(DownloaderProvider):
         quality_profile: Optional[Dict[str, Any]] = None,
         includes: Optional[List[str]] = None,
         excludes: Optional[List[str]] = None,
+        cancel_event: Optional[Any] = None,
     ) -> List[EchosyncTrack]:
         """Internal async search implementation (called under semaphore lock)."""
         if not self.base_url:
@@ -547,6 +560,9 @@ class SlskdProvider(DownloaderProvider):
 
         search_id = None
         try:
+            if cancel_event and cancel_event.is_set():
+                return []
+
             logger.info(f"Starting atomic search for: '{query}'")
 
             # Guard: slskd must be connected to the Soulseek network.
@@ -603,6 +619,10 @@ class SlskdProvider(DownloaderProvider):
             logger.info(f"Polling for search completion (5s intervals for 45s, then 30s intervals, timeout: {timeout}s)...")
             
             for poll_count in range(int(timeout / main_phase_interval) + 10):  # Safety upper bound
+                if cancel_event and cancel_event.is_set():
+                    logger.info("Search cancelled by client event during polling")
+                    return []
+
                 # Determine polling interval based on elapsed time
                 if elapsed_time < initial_phase_duration:
                     poll_interval = initial_phase_interval
@@ -656,14 +676,22 @@ class SlskdProvider(DownloaderProvider):
                 logger.info(f"Search complete but no responses received")
                 
             # 3. Parse Results
-            track_results = self._process_search_responses(all_responses, quality_profile=quality_profile)
+            track_results = self._process_search_responses(all_responses, quality_profile=quality_profile, cancel_event=cancel_event)
             logger.info(f"Search yielded {len(track_results)} raw candidates")
+
+            if cancel_event and cancel_event.is_set():
+                return []
 
             # 4. Apply Coarse Filters (Extensions, Min Bitrate, Duration)
             valid_tracks = []
             allowed_extensions = basic_filters.get('allowed_extensions') if basic_filters else None
             min_bitrate = basic_filters.get('min_bitrate', 0) if basic_filters else 0
-            for tr in track_results:
+            for idx, tr in enumerate(track_results):
+                if cancel_event and cancel_event.is_set():
+                    return []
+                if idx > 0 and idx % 500 == 0:
+                    time.sleep(0.005)  # Yield GIL
+
                 # Extension Check
                 if allowed_extensions:
                     ext = Path(tr.filename).suffix.lower().lstrip('.')
@@ -834,9 +862,12 @@ class SlskdProvider(DownloaderProvider):
         self,
         query: str,
         type: Optional[str] = "track",
+        cancel_event: Optional[Any] = None,
         **kwargs,
     ) -> List[EchosyncTrack]:
         """Synchronous wrapper for atomic search"""
+        if cancel_event is None:
+            cancel_event = kwargs.get("cancel_event")
         limit = kwargs.get("limit", 10)
         basic_filters = kwargs.get("basic_filters")
         quality_profile = kwargs.get("quality_profile")
@@ -851,6 +882,7 @@ class SlskdProvider(DownloaderProvider):
                         quality_profile=quality_profile,
                         includes=includes,
                         excludes=excludes,
+                        cancel_event=cancel_event,
                     )
                 )
                 return results[:limit]

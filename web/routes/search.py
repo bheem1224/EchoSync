@@ -1,3 +1,4 @@
+import threading
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
 import asyncio
@@ -19,17 +20,31 @@ async def aggregate_search(request: Request):
     search_types = [t for t in types_param.split(",") if t] or None
 
     adapter = SearchAdapter()
+    cancel_event = threading.Event()
 
     async def generate():
         try:
             # We wrap the synchronous generator to avoid blocking the event loop
-            for source, results in adapter.aggregate_stream(q, plugin_names=plugin_names, search_types=search_types):
+            for source, results in adapter.aggregate_stream(
+                q,
+                plugin_names=plugin_names,
+                search_types=search_types,
+                cancel_event=cancel_event,
+            ):
+                if await request.is_disconnected():
+                    cancel_event.set()
+                    break
                 yield f"data: {json.dumps({'source': source, 'results': results})}\n\n"
                 await asyncio.sleep(0.01)
             yield "data: {\"status\": \"done\"}\n\n"
+        except (asyncio.CancelledError, GeneratorExit):
+            cancel_event.set()
         except Exception as e:
             from core.tiered_logger import get_logger
             get_logger("search_route").error(f"Error in aggregate_search stream generator: {e}")
+            cancel_event.set()
+        finally:
+            cancel_event.set()
 
     return StreamingResponse(generate(), media_type="text/event-stream")
 

@@ -1,7 +1,7 @@
 """Search adapter that selects search-capable providers and aggregates results."""
 
 import asyncio
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional, Tuple, Any
 
 from core.nexus_framework.plugin_loader import get_plugin_capabilities
 from core.nexus_framework.plugin_SDK import MediaServerProvider
@@ -40,7 +40,8 @@ class SearchAdapter:
         query: str,
         plugin_ids: Optional[List[int]] = None,
         plugin_names: Optional[List[str]] = None,
-        search_types: Optional[List[str]] = None
+        search_types: Optional[List[str]] = None,
+        cancel_event: Optional[Any] = None
     ):
         """Aggregate search results from providers and yield them as chunks."""
         import queue
@@ -53,6 +54,9 @@ class SearchAdapter:
 
         async def async_worker():
             try:
+                if cancel_event and cancel_event.is_set():
+                    return
+
                 # 1. Local Database Query
                 local_results = []
                 try:
@@ -100,6 +104,9 @@ class SearchAdapter:
                 except Exception as e:
                     get_logger("search_adapter").error(f"Local search failed: {e}")
 
+                if cancel_event and cancel_event.is_set():
+                    return
+
                 # Yield local results instantly
                 q.put(("local", local_results))
 
@@ -116,6 +123,8 @@ class SearchAdapter:
                 # 2. Discover external providers capable of search
                 search_providers = []
                 for plugin_id in PluginRegistry.list_plugins():
+                    if cancel_event and cancel_event.is_set():
+                        return
                     try:
                         provider = PluginRegistry.create_instance(plugin_id)
                         caps = get_plugin_capabilities(plugin_id)
@@ -134,9 +143,13 @@ class SearchAdapter:
                     search_providers.append((provider, caps, plugin_id))
 
                 async def query_provider(provider, caps, plugin_id):
+                    if cancel_event and cancel_event.is_set():
+                        return provider.name, []
                     try:
                         provider_results = []
                         for kind in (search_types or ["tracks"]):
+                            if cancel_event and cancel_event.is_set():
+                                break
                             search_cap_keys = {
                                 "tracks": "tracks",
                                 "artists": "artists",
@@ -147,12 +160,29 @@ class SearchAdapter:
                                 continue
                             
                             search_type_singular = kind[:-1] if kind.endswith("s") else kind
+                            
+                            search_kwargs = {"type": search_type_singular, "limit": 10}
+                            try:
+                                import inspect
+                                sig = inspect.signature(provider.search)
+                                has_var_kw = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
+                                if "cancel_event" in sig.parameters or has_var_kw:
+                                    search_kwargs["cancel_event"] = cancel_event
+                            except Exception:
+                                pass
+
                             # run blocking search in thread
-                            raw_items = await asyncio.to_thread(provider.search, query, type=search_type_singular, limit=10)
+                            raw_items = await asyncio.to_thread(
+                                provider.search,
+                                query,
+                                **search_kwargs
+                            )
                             if not raw_items:
                                 continue
                                 
                             for item in raw_items:
+                                if cancel_event and cancel_event.is_set():
+                                    break
                                 if hasattr(item, 'to_dict'):
                                     item_dict = item.to_dict()
                                 elif isinstance(item, dict):
@@ -206,7 +236,11 @@ class SearchAdapter:
                 tasks = [query_provider(provider, caps, plugin_id) for provider, caps, plugin_id in search_providers]
                 
                 for task in asyncio.as_completed(tasks):
+                    if cancel_event and cancel_event.is_set():
+                        break
                     provider_name, items = await task
+                    if cancel_event and cancel_event.is_set():
+                        break
                     
                     # Deduplicate and sort chunk items
                     valid_items = []
@@ -231,6 +265,8 @@ class SearchAdapter:
                     # Sort chunk items by metadata_quality_score descending
                     valid_items.sort(key=lambda x: x.get("metadata_quality_score", 50), reverse=True)
                     
+                    if cancel_event and cancel_event.is_set():
+                        break
                     q.put((provider_name, valid_items))
             except Exception as e:
                 get_logger("search_adapter").error(f"Error in aggregate_stream: {e}")
@@ -246,11 +282,20 @@ class SearchAdapter:
 
         try:
             while True:
-                chunk = q.get()
+                if cancel_event and cancel_event.is_set():
+                    break
+                try:
+                    chunk = q.get(timeout=0.2)
+                except queue.Empty:
+                    if not t.is_alive():
+                        break
+                    continue
                 if chunk is None:
                     break
                 yield chunk
         except GeneratorExit:
+            if cancel_event:
+                cancel_event.set()
             return
         except Exception as e:
             get_logger("search_adapter").error(f"Error in aggregate_stream yield loop: {e}")
