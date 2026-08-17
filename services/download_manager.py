@@ -30,6 +30,7 @@ from core.settings import config_manager
 from time_utils import utc_now
 from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
 from core.nexus_framework.plugin_SDK import PluginBase
+from core.task_manager.supervisor import supervisor
 from database.music_database import get_database, Track, Artist, Album
 from database.working_database import get_working_database, DownloadQueue
 
@@ -48,6 +49,7 @@ class DownloadManager:
         self.work_db = get_working_database()
         self.matcher = WeightedMatchingEngine(PROFILE_DOWNLOAD_SEARCH)
         self._shutdown = False
+        self._stop_requested = False
         self._loop_task = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._provider: Optional[PluginBase] = None
@@ -517,17 +519,19 @@ class DownloadManager:
         if not queued_ids:
             return
 
-        # Create all search tasks concurrently using waterfall provider strategy
-        # Each task will try providers in priority order until finding a suitable match
-        tasks = []
-        for download_id in queued_ids:
-            logger.debug(f"Queuing download for processing: {download_id}")
-            task = asyncio.create_task(self._execute_waterfall_search_and_download(download_id, providers))
-            tasks.append(task)
+        # Define strict concurrency semaphore (max 2 concurrent acquisitions)
+        semaphore = asyncio.Semaphore(2)
+
+        async def _throttled_download(download_id):
+            async with semaphore:
+                return await self._execute_waterfall_search_and_download(download_id, providers)
+
+        # Dispatch tasks via asyncio.gather with concurrency throttling
+        tasks = [asyncio.create_task(_throttled_download(did)) for did in queued_ids]
         
         # Wait for all searches to complete
         if tasks:
-            logger.info(f"Started {len(tasks)} search tasks with {len(providers)} providers in waterfall priority order")
+            logger.info(f"Started {len(tasks)} search tasks (throttled to 2 concurrent) with {len(providers)} providers in waterfall priority order")
             results = await asyncio.gather(*tasks, return_exceptions=True)
             failed = sum(1 for r in results if isinstance(r, Exception))
             if failed > 0:
@@ -630,6 +634,13 @@ class DownloadManager:
                 # Try all strategies for this provider
                 sniper_winner: Optional[EchosyncTrack] = None
                 for strategy_idx, strategy in enumerate(strategies, 1):
+                    # Cooperative Cancellation Check: terminate early if requested
+                    reg_id = getattr(self, '_current_reg_id', None)
+                    if (supervisor and supervisor.is_process_cancelled(reg_id)) or getattr(self, '_stop_requested', False) or getattr(self, '_shutdown', False):
+                        logger.info(f"Download {download_id} aborted by cancellation request.")
+                        self._update_status(download_id, "cancelled")
+                        return
+
                     query = strategy["query"]
                     strategy_tolerance = strategy["duration_tolerance_ms"]
                     strategy_name = strategy["name"]
@@ -1103,14 +1114,20 @@ class DownloadManager:
             username = identifiers.get('username') if isinstance(identifiers, dict) else None
             plugin_item_id = identifiers.get('plugin_item_id') if isinstance(identifiers, dict) else None
 
-            # Include quality-relevant fields so we only collapse exact duplicate
+            # Include quality-relevant fields from media[0] so we only collapse exact duplicate
             # observations of the same file result across fallback strategies.
             size = identifiers.get('size') if isinstance(identifiers, dict) else None
             bitrate = identifiers.get('bitrate') if isinstance(identifiers, dict) else None
             duration = getattr(candidate, 'duration', None)
-            file_format = getattr(candidate, 'file_format', None)
-            sample_rate = getattr(candidate, 'sample_rate', None)
-            bit_depth = getattr(candidate, 'bit_depth', None)
+
+            first_media = candidate.media[0] if getattr(candidate, 'media', None) else None
+            file_format = first_media.file_format if first_media else None
+            sample_rate = first_media.sample_rate if first_media else None
+            bit_depth = first_media.bit_depth if first_media else None
+            if size is None and first_media and first_media.file_size_bytes:
+                size = first_media.file_size_bytes
+            if bitrate is None and first_media and first_media.bitrate:
+                bitrate = first_media.bitrate
 
             dedupe_key = (
                 username,
@@ -1250,13 +1267,18 @@ class DownloadManager:
             
             matching = []
             for track in candidates:
+                if not getattr(track, 'media', None):
+                    continue
+                media = track.media[0]
+                track_format = media.file_format.lower() if media.file_format else None
+
                 # Check format match
-                if track.file_format and track.file_format.lower() != format_type:
+                if track_format and track_format != format_type:
                     continue
                 
                 # Check size constraints
-                if track.file_size_bytes:
-                    size_mb = track.file_size_bytes / (1024 * 1024)
+                if media.file_size_bytes:
+                    size_mb = media.file_size_bytes / (1024 * 1024)
                     if min_size_mb > 0 and size_mb < min_size_mb:
                         continue
                     if max_size_mb > 0 and size_mb > max_size_mb:
@@ -1269,17 +1291,17 @@ class DownloadManager:
                     
                     # Only enforce bit depth if profile has it configured (non-empty list)
                     if bit_depths:  # Profile has bit depth requirements
-                        if not track.bit_depth or str(track.bit_depth) not in bit_depths:
+                        if not media.bit_depth or str(media.bit_depth) not in bit_depths:
                             # Reject: either no bit depth metadata or not in allowed list
                             continue
                     
                     # Only enforce sample rate if profile has it configured (non-empty list)
                     if sample_rates:  # Profile has sample rate requirements
-                        if not track.sample_rate:
+                        if not media.sample_rate:
                             # Reject: no sample rate metadata
                             continue
                         # Convert to kHz string for comparison
-                        sample_rate_khz = str(int(track.sample_rate / 1000))
+                        sample_rate_khz = str(int(media.sample_rate / 1000))
                         if sample_rate_khz not in sample_rates:
                             # Reject: sample rate not in allowed list
                             continue
@@ -1323,7 +1345,10 @@ class DownloadManager:
             # Fallback: just filter by format
             filtered = []
             for track in candidates:
-                if track.file_format and track.file_format.lower() in formats:
+                if not getattr(track, 'media', None):
+                    continue
+                media = track.media[0]
+                if media.file_format and media.file_format.lower() in formats:
                     filtered.append(track)
             return filtered
         
@@ -1336,10 +1361,13 @@ class DownloadManager:
         
         filtered = []
         for track in candidates:
-            if not track.file_format:
+            if not getattr(track, 'media', None):
+                continue
+            media = track.media[0]
+            if not media.file_format:
                 continue
             
-            format_type = track.file_format.lower()
+            format_type = media.file_format.lower()
             if format_type not in formats:
                 continue
             
@@ -1353,8 +1381,8 @@ class DownloadManager:
             min_size_mb = fmt_config.get('min_size_mb', 0)
             max_size_mb = fmt_config.get('max_size_mb', 0)
             
-            if track.file_size_bytes:
-                size_mb = track.file_size_bytes / (1024 * 1024)
+            if media.file_size_bytes:
+                size_mb = media.file_size_bytes / (1024 * 1024)
                 if min_size_mb > 0 and size_mb < min_size_mb:
                     continue
                 if max_size_mb > 0 and size_mb > max_size_mb:
@@ -1367,16 +1395,16 @@ class DownloadManager:
                 
                 # Only enforce bit depth if profile has it configured (non-empty list)
                 if bit_depths:  # Profile has bit depth requirements
-                    if not track.bit_depth or str(track.bit_depth) not in bit_depths:
+                    if not media.bit_depth or str(media.bit_depth) not in bit_depths:
                         # Reject: either no bit depth metadata or not in allowed list
                         continue
                 
                 # Only enforce sample rate if profile has it configured (non-empty list)
                 if sample_rates:  # Profile has sample rate requirements
-                    if not track.sample_rate:
+                    if not media.sample_rate:
                         # Reject: no sample rate metadata
                         continue
-                    sample_rate_khz = str(int(track.sample_rate / 1000))
+                    sample_rate_khz = str(int(media.sample_rate / 1000))
                     if sample_rate_khz not in sample_rates:
                         # Reject: sample rate not in allowed list
                         continue
@@ -1386,13 +1414,14 @@ class DownloadManager:
                 min_bitrate_kbps = fmt_config.get('min_bitrate', 0)
                 max_bitrate_kbps = fmt_config.get('max_bitrate', 999999)
                 
-                # Extract bitrate from identifiers or track metadata
-                bitrate_kbps = 0
-                if track.identifiers and 'bitrate' in track.identifiers:
+                # Extract bitrate from media or identifiers
+                bitrate_kbps = media.bitrate or 0
+                if not bitrate_kbps and track.identifiers and 'bitrate' in track.identifiers:
                     bitrate_kbps = track.identifiers.get('bitrate', 0) or 0
-                    # Convert to kbps if in different unit
-                    if bitrate_kbps > 10000:  # Likely in bps
-                        bitrate_kbps = bitrate_kbps // 1000
+                
+                # Convert to kbps if in bps
+                if bitrate_kbps > 10000:
+                    bitrate_kbps = bitrate_kbps // 1000
                 
                 if min_bitrate_kbps > 0 and bitrate_kbps > 0 and bitrate_kbps < min_bitrate_kbps:
                     logger.debug(f"Rejecting {format_type} ({bitrate_kbps}kbps) - below minimum {min_bitrate_kbps}kbps")
@@ -1405,7 +1434,10 @@ class DownloadManager:
             filtered.append(track)
         
         # Sort by size (prefer larger files for better quality)
-        filtered.sort(key=lambda t: t.file_size_bytes or 0, reverse=True)
+        filtered.sort(
+            key=lambda t: (t.media[0].file_size_bytes if (getattr(t, 'media', None) and t.media and t.media[0].file_size_bytes) else 0),
+            reverse=True
+        )
         
         return filtered
 
@@ -1419,13 +1451,16 @@ class DownloadManager:
             return None
 
         def candidate_key(candidate: EchosyncTrack) -> Tuple[int, int, int, int, int, int]:
-            bitrate = int(candidate.identifiers.get('bitrate', 0) or 0)
-            free_slots = int(candidate.identifiers.get('free_upload_slots', 0) or 0)
-            upload_speed = int(candidate.identifiers.get('upload_speed', 0) or 0)
-            queue_length = int(candidate.identifiers.get('queue_length', 0) or 0)
-            size = int(candidate.media[0].get("size", 0) if getattr(candidate, "media", []) else 0 or candidate.identifiers.get('size', 0) or 0)
+            identifiers = getattr(candidate, 'identifiers', None) or {}
+            first_media = candidate.media[0] if getattr(candidate, 'media', None) else None
+            
+            bitrate = (first_media.bitrate if first_media and first_media.bitrate else None) or int(identifiers.get('bitrate', 0) or 0)
+            free_slots = int(identifiers.get('free_upload_slots', 0) or 0)
+            upload_speed = int(identifiers.get('upload_speed', 0) or 0)
+            queue_length = int(identifiers.get('queue_length', 0) or 0)
+            size = (first_media.file_size_bytes if first_media and first_media.file_size_bytes else None) or int(identifiers.get('size', 0) or 0)
             size_rank = size if prefer_larger_files else -size
-            plugin_item_id = candidate.identifiers.get('plugin_item_id', '') or ''
+            plugin_item_id = identifiers.get('plugin_item_id', '') or ''
             return (
                 bitrate,
                 free_slots,

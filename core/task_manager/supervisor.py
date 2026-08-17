@@ -81,6 +81,15 @@ class ProcessSupervisor:
         event = self.get_cancellation_event()
         return event.is_set() if event else False
 
+    def is_process_cancelled(self, registration_id: Optional[str] = None) -> bool:
+        """Returns True if the specified registration_id (or current task) has received a cancellation signal."""
+        if registration_id:
+            with self._lock:
+                event = self._cancellation_events.get(registration_id)
+                if event:
+                    return event.is_set()
+        return self.is_current_task_cancelled()
+
     def terminate_owner_processes(self, owner_id: str) -> None:
         """
         Kills all sub-processes/threads registered under owner_id.
@@ -137,6 +146,8 @@ class ProcessSupervisor:
                 logger.info(f"[kill_with_cleanup] Set cooperative cancellation flag for {task_label}")
             else:
                 logger.warning(f"[kill_with_cleanup] No cancellation event provided for worker thread {task_label}. Relying solely on DB session release.")
+            if owner.pid:
+                self._kill_process(owner.pid, owner.task_name)
                 
         elif owner.category == ProcessCategory.OS_SUBPROCESS:
             if owner.pid:

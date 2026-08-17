@@ -620,7 +620,14 @@ class SlskdProvider(DownloaderProvider):
             
             for poll_count in range(int(timeout / main_phase_interval) + 10):  # Safety upper bound
                 if cancel_event and cancel_event.is_set():
-                    logger.info("Search cancelled by client event during polling")
+                    logger.info("Search aborted by cancellation request")
+                    if search_id:
+                        try:
+                            await self._make_request('DELETE', f'searches/{search_id}')
+                            logger.debug(f"Atomic cleanup: Deleted search {search_id}")
+                            search_id = None
+                        except Exception as e:
+                            logger.warning(f"Failed to delete search {search_id} on cancellation: {e}")
                     return []
 
                 # Determine polling interval based on elapsed time

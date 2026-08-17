@@ -135,11 +135,13 @@ class TestDownloadManagerPrefilterBypass:
         status_updates = []
         manager._update_status = lambda download_id, status, provider_id=None: status_updates.append((download_id, status, provider_id))
 
+        from core.db.echo_sync_track import EchosyncMedia
         candidate = EchosyncTrack(
             raw_title="Song",
             artist_name="Artist",
             album_title="Album",
             quality_tags="flac",
+            media=[EchosyncMedia(file_format="flac", bitrate=1000, file_size_bytes=50_000_000)],
         )
         candidate.identifiers["username"] = "peerA"
         candidate.identifiers["plugin_item_id"] = "Artist/Album/01 - Song.flac"
