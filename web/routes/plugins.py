@@ -578,15 +578,18 @@ def _build_active_plex_user_map():
 
 
 def _match_plex_user_for_account(plex_user_map: dict, account_name: str):
-    """Return the Plex user_id for a source account name."""
+    """Return the Plex user_id for a source account name using exact and token-boundary matching."""
+    import re
     normalized = (account_name or '').strip().lower()
     if not normalized:
         return None
     if normalized in plex_user_map:
         return plex_user_map[normalized]
     for plex_name, uid in plex_user_map.items():
-        if plex_name and plex_name in normalized:
-            return uid
+        if plex_name:
+            pattern = r"(?:\b|_)" + re.escape(plex_name) + r"(?:'s|\b|_)"
+            if re.search(pattern, normalized, re.IGNORECASE):
+                return uid
     return None
 
 @router.get("")
@@ -710,6 +713,75 @@ def rollback_plugin(plugin_id: str):
     except Exception as e:
         logger.error(f"Error rolling back plugin {plugin_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{plugin_id}/accounts")
+def get_plugin_accounts(plugin_id: str):
+    """Fetch active accounts / profiles for a specific plugin."""
+    try:
+        from core.nexus_framework.plugin_loader import PluginRegistry
+        from database.config_database import get_config_database
+        from services.storage_service import get_storage_service
+
+        config_db = get_config_database()
+        storage = get_storage_service()
+
+        plugin_cls = PluginRegistry.get_plugin_class(plugin_id)
+        short_name = (plugin_cls.name.split('.')[-1].lower() if plugin_cls and hasattr(plugin_cls, 'name') and plugin_cls.name else str(plugin_id)).lower()
+
+        accounts_list = []
+        if short_name == 'plex' or 'plex' in str(plugin_id).lower():
+            PlexClient = PluginRegistry.get_plugin_class('plex') or plugin_cls
+            if PlexClient:
+                try:
+                    client = PlexClient()
+                    if client.ensure_connection() and client.server:
+                        myplex = client.server.myPlexAccount()
+                        accounts_list.append({
+                            'id': str(myplex.id),
+                            'user_id': str(myplex.id),
+                            'account_name': myplex.username,
+                            'display_name': myplex.title or myplex.username,
+                            'name': myplex.title or myplex.username,
+                            'username': myplex.username,
+                            'is_admin': True,
+                        })
+                        for user in myplex.users():
+                            accounts_list.append({
+                                'id': str(user.id),
+                                'user_id': str(user.id),
+                                'account_name': user.username,
+                                'display_name': user.title or user.username,
+                                'name': user.title or user.username,
+                                'username': user.username,
+                                'is_admin': False,
+                            })
+                except Exception as e:
+                    logger.warning(f"Error fetching Plex accounts from server: {e}")
+
+        # Fallback to database accounts if empty
+        if not accounts_list:
+            service_id = config_db.get_or_create_service_id(plugin_id)
+            db_accounts = config_db.get_accounts(service_id=service_id, is_active=True)
+            for acc in db_accounts:
+                accounts_list.append({
+                    'id': acc.get('user_id') or str(acc.get('id')),
+                    'user_id': acc.get('user_id') or str(acc.get('id')),
+                    'account_name': acc.get('account_name'),
+                    'display_name': acc.get('display_name') or acc.get('account_name'),
+                    'name': acc.get('display_name') or acc.get('account_name'),
+                    'username': acc.get('account_name'),
+                    'is_admin': False,
+                })
+
+        return {
+            'plugin': short_name,
+            'items': accounts_list,
+            'total': len(accounts_list),
+        }
+    except Exception as e:
+        logger.error(f"Error fetching accounts for plugin {plugin_id}: {e}")
+        return {'plugin': str(plugin_id), 'items': [], 'total': 0, 'error': str(e)}
 
 
 @router.get("/{plugin_id}/playlists")

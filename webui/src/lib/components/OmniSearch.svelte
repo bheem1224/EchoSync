@@ -203,6 +203,44 @@
     { prefix: "@ ", label: "@", desc: "Search Artists Only" }
   ];
 
+  // ── Source-Based Grouping State ───────────────────────────────────────
+  let expandedProviders = $state(new Set());
+
+  function toggleProviderExpansion(providerKey) {
+    const next = new Set(expandedProviders);
+    if (next.has(providerKey)) {
+      next.delete(providerKey);
+    } else {
+      next.add(providerKey);
+    }
+    expandedProviders = next;
+  }
+
+  let groupedExternalResults = $derived.by(() => {
+    const groups = {};
+    for (const item of results.external) {
+      const key = item.source || item.plugin || item.plugin_id || 'unknown';
+      if (!groups[key]) {
+        groups[key] = {
+          key,
+          name: getPluginName(item.plugin_id || item.plugin || item.source),
+          items: []
+        };
+      }
+      groups[key].items.push(item);
+    }
+    return Object.values(groups);
+  });
+
+  const visibleExternalResults = $derived.by(() => {
+    const list = [];
+    for (const group of groupedExternalResults) {
+      const items = expandedProviders.has(group.key) ? group.items : group.items.slice(0, 3);
+      list.push(...items);
+    }
+    return list;
+  });
+
   // ── Derived State ─────────────────────────────────────────────────────
   const evaluatedQuery = $derived((forcedPrefix + query).trimStart());
   const showGuide = $derived((isFocused || (mode === 'modal' && isOpen)) && query === "" && forcedPrefix === "");
@@ -215,7 +253,7 @@
     ...results.library.albums.map(r => ({ ...r, type: 'album' })),
     ...results.library.tracks.map(r => ({ ...r, type: 'track' })),
     ...results.plugins.map(r => ({ ...r, type: 'plugin' })),
-    ...results.external.map(r => ({ ...r, type: 'external' }))
+    ...visibleExternalResults.map(r => ({ ...r, type: 'external' }))
   ]);
 
   // ── Floating @ Plugin Menu Helpers ────────────────────────────────────
@@ -538,6 +576,7 @@
       external: [],
       library: { artists: [], albums: [], tracks: [] }
     };
+    expandedProviders = new Set();
   }
 
   function clearLibrary() {
@@ -601,7 +640,7 @@
       else if (t === 'album') offset += results.library.albums.length;
       else if (t === 'track') offset += results.library.tracks.length;
       else if (t === 'plugin') offset += results.plugins.length;
-      else if (t === 'external') offset += results.external.length;
+      else if (t === 'external') offset += visibleExternalResults.length;
     }
     return -1;
   };
@@ -869,62 +908,81 @@
         {#if results.external.length > 0}
           <div class="result-section">
             <h3 class="section-title">Discovery Results</h3>
-            <div class="section-items">
-              {#each results.external as item}
-                <div class="result-card">
-                  <div class="result-info">
-                    <div class="result-main">
-                      {#if item.cover_art}
-                        <img src={item.cover_art} alt={item.title} class="cover-art" />
-                      {:else}
-                        <div class="cover-placeholder" aria-hidden="true">🎵</div>
-                      {/if}
-                      <div>
-                        <strong class="result-title">{item.title || item.name || 'Unknown'}</strong>
-                        <p class="result-artist">
-                          {#if item.artist_id}
-                            <a href="/library?artist_id={item.artist_id}" class="artist-link">{item.artist || item.artist_name || ''}</a>
+            {#each groupedExternalResults as group (group.key)}
+              <div class="provider-group mb-4">
+                <div class="flex items-center justify-between text-xs font-semibold uppercase tracking-wider text-muted mb-2 px-2">
+                  <span>{group.name}</span>
+                  <span class="text-[10px] opacity-60">{group.items.length} {group.items.length === 1 ? 'match' : 'matches'}</span>
+                </div>
+
+                <div class="section-items space-y-1">
+                  {#each (expandedProviders.has(group.key) ? group.items : group.items.slice(0, 3)) as item (item.id || item.uri || item.title)}
+                    <div class="result-card">
+                      <div class="result-info">
+                        <div class="result-main">
+                          {#if item.cover_art}
+                            <img src={item.cover_art} alt={item.title} class="cover-art" />
                           {:else}
-                            <a href="/library?q={encodeURIComponent(item.artist || item.artist_name || '')}" class="artist-link">{item.artist || item.artist_name || ''}</a>
+                            <div class="cover-placeholder" aria-hidden="true">🎵</div>
                           {/if}
-                        </p>
+                          <div>
+                            <strong class="result-title">{item.title || item.name || 'Unknown'}</strong>
+                            <p class="result-artist">
+                              {#if item.artist_id}
+                                <a href="/library?artist_id={item.artist_id}" class="artist-link">{item.artist || item.artist_name || ''}</a>
+                              {:else}
+                                <a href="/library?q={encodeURIComponent(item.artist || item.artist_name || '')}" class="artist-link">{item.artist || item.artist_name || ''}</a>
+                              {/if}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                      <div class="result-meta flex items-center gap-2">
+                        {#if item.source === 'local'}
+                          <span class="badge badge-primary">LOCAL LIBRARY</span>
+                        {:else if item.plugin_id || item.plugin || item.source}
+                          <span class="badge badge-secondary">{getPluginName(item.plugin_id || item.plugin || item.source)}</span>
+                        {/if}
+                        <div class="result-actions flex items-center">
+                          {#if item.is_local}
+                            <button class="action-btn play-btn flex items-center justify-center" title="Play" on:click|stopPropagation={() => handleAction(item, 'play')}>
+                              <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+                            </button>
+                            {#if item.artist_id}
+                              <a href="/library?artist_id={item.artist_id}" class="library-btn-link">
+                                <button class="action-btn library-btn" title="View in Library">
+                                  <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+                                </button>
+                              </a>
+                            {:else}
+                              <a href="/library?q={encodeURIComponent(item.artist || item.artist_name || '')}" class="library-btn-link">
+                                <button class="action-btn library-btn" title="View in Library">
+                                  <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+                                </button>
+                              </a>
+                            {/if}
+                          {:else}
+                            <button class="action-btn download-btn" title="Download" on:click={() => handleAction(item, 'download')}>
+                              <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                            </button>
+                          {/if}
+                        </div>
                       </div>
                     </div>
-                  </div>
-                  <div class="result-meta flex items-center gap-2">
-                    {#if item.source === 'local'}
-                      <span class="badge badge-primary">LOCAL LIBRARY</span>
-                    {:else if item.plugin_id || item.plugin || item.source}
-                      <span class="badge badge-secondary">{getPluginName(item.plugin_id || item.plugin || item.source)}</span>
-                    {/if}
-                    <div class="result-actions flex items-center">
-                      {#if item.is_local}
-                        <button class="action-btn play-btn flex items-center justify-center" title="Play" on:click|stopPropagation={() => handleAction(item, 'play')}>
-                          <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
-                        </button>
-                        {#if item.artist_id}
-                          <a href="/library?artist_id={item.artist_id}" class="library-btn-link">
-                            <button class="action-btn library-btn" title="View in Library">
-                              <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
-                            </button>
-                          </a>
-                        {:else}
-                          <a href="/library?q={encodeURIComponent(item.artist || item.artist_name || '')}" class="library-btn-link">
-                            <button class="action-btn library-btn" title="View in Library">
-                              <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
-                            </button>
-                          </a>
-                        {/if}
-                      {:else}
-                        <button class="action-btn download-btn" title="Download" on:click={() => handleAction(item, 'download')}>
-                          <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                        </button>
-                      {/if}
-                    </div>
-                  </div>
+                  {/each}
                 </div>
-              {/each}
-            </div>
+
+                {#if group.items.length > 3}
+                  <button 
+                    type="button"
+                    class="mt-2 text-xs font-medium text-primary hover:underline px-2 py-1 flex items-center gap-1 bg-transparent border-none cursor-pointer"
+                    on:click|stopPropagation={() => toggleProviderExpansion(group.key)}
+                  >
+                    {expandedProviders.has(group.key) ? 'Show Less' : `+${group.items.length - 3} More from ${group.name}`}
+                  </button>
+                {/if}
+              </div>
+            {/each}
           </div>
         {/if}
       </div>
@@ -1123,31 +1181,48 @@
                     {#if results.external.length > 0}
                       <div class="mb-1">
                         <div class="text-muted text-[10px] font-bold px-5 py-2 uppercase tracking-widest bg-black/20">Discovery Results</div>
-                        {#each results.external as ext, i}
-                          <div 
-                            class="w-full text-left px-5 py-3 text-sm text-slate-200 hover:bg-white/10 transition-colors border-none bg-transparent flex items-center justify-between group"
-                            class:active-item={activeIndex === getFlattenedIndex('external', i)}
-                          >
-                            <button class="flex-1 text-left border-none bg-transparent cursor-pointer flex items-center gap-4 min-w-0" on:click={() => handleSelect(ext, 'external')}>
-                                {#if ext.cover_art}
-                                  <img src={ext.cover_art} alt={ext.title} class="w-10 h-10 rounded object-cover shadow-lg border border-white/5 group-hover:border-accent/40" class:active-border={activeIndex === getFlattenedIndex('external', i)} />
-                                {:else}
-                                  <div class="w-10 h-10 rounded bg-white/5 flex items-center justify-center text-xs border border-white/5 group-hover:border-accent/40" class:active-border={activeIndex === getFlattenedIndex('external', i)}>🎵</div>
+                        {#each groupedExternalResults as group (group.key)}
+                          <div class="provider-group mb-2">
+                            <div class="flex items-center justify-between text-[11px] font-semibold uppercase tracking-wider text-muted px-5 py-1.5 bg-black/10">
+                              <span>{group.name}</span>
+                              <span class="text-[9px] opacity-60">{group.items.length} {group.items.length === 1 ? 'match' : 'matches'}</span>
+                            </div>
+                            {#each (expandedProviders.has(group.key) ? group.items : group.items.slice(0, 3)) as ext (ext.id || ext.uri || ext.title)}
+                              <div 
+                                class="w-full text-left px-5 py-3 text-sm text-slate-200 hover:bg-white/10 transition-colors border-none bg-transparent flex items-center justify-between group"
+                                class:active-item={flattenedResults[activeIndex] === ext}
+                              >
+                                <button class="flex-1 text-left border-none bg-transparent cursor-pointer flex items-center gap-4 min-w-0" on:click={() => handleSelect(ext, 'external')}>
+                                    {#if ext.cover_art}
+                                      <img src={ext.cover_art} alt={ext.title} class="w-10 h-10 rounded object-cover shadow-lg border border-white/5 group-hover:border-accent/40" class:active-border={flattenedResults[activeIndex] === ext} />
+                                    {:else}
+                                      <div class="w-10 h-10 rounded bg-white/5 flex items-center justify-center text-xs border border-white/5 group-hover:border-accent/40" class:active-border={flattenedResults[activeIndex] === ext}>🎵</div>
+                                    {/if}
+                                    <div class="flex flex-col min-w-0 flex-1">
+                                      <span class="font-medium truncate group-hover:text-accent transition-colors" class:active-text={flattenedResults[activeIndex] === ext}>{ext.title || ext.name}</span>
+                                      <span class="text-xs text-muted truncate">{ext.artist || ext.artist_name || ''}</span>
+                                      <span class="text-[9px] text-muted flex gap-1 mt-1">
+                                        {#each ext.sources || [] as src}
+                                          <span class="bg-white/5 px-1.5 py-0.5 rounded border border-white/5 font-mono uppercase tracking-tighter">{src}</span>
+                                        {/each}
+                                      </span>
+                                    </div>
+                                </button>
+                                
+                                {#if ext.ownership_state === 'missing'}
+                                  <button class="ml-4 px-4 py-2 text-[11px] font-bold bg-accent text-black rounded-lg hover:scale-105 active:scale-95 transition-all shadow-[0_0_15px_rgba(15,239,136,0.3)] flex items-center gap-1.5 border-none cursor-pointer" on:click|stopPropagation={() => handleAction(ext, 'download')}>
+                                    📥 Download
+                                  </button>
                                 {/if}
-                                <div class="flex flex-col min-w-0 flex-1">
-                                  <span class="font-medium truncate group-hover:text-accent transition-colors" class:active-text={activeIndex === getFlattenedIndex('external', i)}>{ext.title || ext.name}</span>
-                                  <span class="text-xs text-muted truncate">{ext.artist || ext.artist_name || ''}</span>
-                                  <span class="text-[9px] text-muted flex gap-1 mt-1">
-                                    {#each ext.sources || [] as src}
-                                      <span class="bg-white/5 px-1.5 py-0.5 rounded border border-white/5 font-mono uppercase tracking-tighter">{src}</span>
-                                    {/each}
-                                  </span>
-                                </div>
-                            </button>
-                            
-                            {#if ext.ownership_state === 'missing'}
-                              <button class="ml-4 px-4 py-2 text-[11px] font-bold bg-accent text-black rounded-lg hover:scale-105 active:scale-95 transition-all shadow-[0_0_15px_rgba(15,239,136,0.3)] flex items-center gap-1.5 border-none cursor-pointer" on:click|stopPropagation={() => handleAction(ext, 'download')}>
-                                📥 Download
+                              </div>
+                            {/each}
+                            {#if group.items.length > 3}
+                              <button 
+                                type="button"
+                                class="mt-1 mb-2 ml-5 text-xs font-medium text-primary hover:underline px-2 py-1 flex items-center gap-1 bg-transparent border-none cursor-pointer"
+                                on:click|stopPropagation={() => toggleProviderExpansion(group.key)}
+                              >
+                                {expandedProviders.has(group.key) ? 'Show Less' : `+${group.items.length - 3} More from ${group.name}`}
                               </button>
                             {/if}
                           </div>
@@ -1314,27 +1389,44 @@
           {#if results.external.length > 0}
             <div class="mb-1">
               <div class="text-muted text-[10px] font-bold px-4 py-2 uppercase tracking-widest bg-black/20">Discovery Results</div>
-              {#each results.external as ext}
-                <div class="w-full text-left px-4 py-2 text-sm text-slate-200 hover:bg-white/10 transition-colors border-none bg-transparent flex items-center justify-between">
-                  <button class="flex-1 text-left border-none bg-transparent cursor-pointer flex items-center gap-3" on:click={() => handleSelect(ext, 'external')}>
-                      {#if ext.cover_art}
-                        <img src={ext.cover_art} alt={ext.title} class="w-8 h-8 rounded object-cover shadow" />
-                      {:else}
-                        <div class="w-8 h-8 rounded bg-white/5 flex items-center justify-center text-xs">🎵</div>
+              {#each groupedExternalResults as group (group.key)}
+                <div class="provider-group mb-2">
+                  <div class="flex items-center justify-between text-[10px] font-semibold uppercase tracking-wider text-muted px-4 py-1 bg-black/10">
+                    <span>{group.name}</span>
+                    <span class="text-[9px] opacity-60">{group.items.length} {group.items.length === 1 ? 'match' : 'matches'}</span>
+                  </div>
+                  {#each (expandedProviders.has(group.key) ? group.items : group.items.slice(0, 3)) as ext (ext.id || ext.uri || ext.title)}
+                    <div class="w-full text-left px-4 py-2 text-sm text-slate-200 hover:bg-white/10 transition-colors border-none bg-transparent flex items-center justify-between">
+                      <button class="flex-1 text-left border-none bg-transparent cursor-pointer flex items-center gap-3" on:click={() => handleSelect(ext, 'external')}>
+                          {#if ext.cover_art}
+                            <img src={ext.cover_art} alt={ext.title} class="w-8 h-8 rounded object-cover shadow" />
+                          {:else}
+                            <div class="w-8 h-8 rounded bg-white/5 flex items-center justify-center text-xs">🎵</div>
+                          {/if}
+                          <div class="flex flex-col">
+                            <span>{ext.title || ext.name} <span class="text-xs text-muted ml-1">— {ext.artist || ext.artist_name || ''}</span></span>
+                            <span class="text-[10px] text-muted flex gap-1 mt-0.5">
+                              {#each ext.sources || [] as src}
+                                <span class="bg-white/5 px-1 py-0.5 rounded">{src}</span>
+                              {/each}
+                            </span>
+                          </div>
+                      </button>
+                      
+                      {#if ext.ownership_state === 'missing'}
+                        <button class="ml-4 px-3 py-1.5 text-[10px] font-bold bg-accent text-black rounded hover:scale-105 active:scale-95 transition-all shadow-lg flex items-center gap-1 border-none cursor-pointer" on:click|stopPropagation={() => handleAction(ext, 'download')}>
+                          📥 Download
+                        </button>
                       {/if}
-                      <div class="flex flex-col">
-                        <span>{ext.title || ext.name} <span class="text-xs text-muted ml-1">— {ext.artist || ext.artist_name || ''}</span></span>
-                        <span class="text-[10px] text-muted flex gap-1 mt-0.5">
-                          {#each ext.sources || [] as src}
-                            <span class="bg-white/5 px-1 py-0.5 rounded">{src}</span>
-                          {/each}
-                        </span>
-                      </div>
-                  </button>
-                  
-                  {#if ext.ownership_state === 'missing'}
-                    <button class="ml-4 px-3 py-1.5 text-[10px] font-bold bg-accent text-black rounded hover:scale-105 active:scale-95 transition-all shadow-lg flex items-center gap-1 border-none cursor-pointer" on:click|stopPropagation={() => handleAction(ext, 'download')}>
-                      📥 Download
+                    </div>
+                  {/each}
+                  {#if group.items.length > 3}
+                    <button 
+                      type="button"
+                      class="mt-1 mb-2 ml-4 text-xs font-medium text-primary hover:underline px-2 py-1 flex items-center gap-1 bg-transparent border-none cursor-pointer"
+                      on:click|stopPropagation={() => toggleProviderExpansion(group.key)}
+                    >
+                      {expandedProviders.has(group.key) ? 'Show Less' : `+${group.items.length - 3} More from ${group.name}`}
                     </button>
                   {/if}
                 </div>

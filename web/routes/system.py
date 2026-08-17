@@ -381,7 +381,10 @@ def get_all_system_accounts():
                         )
                         media_users.append({
                             'id': admin_id,
+                            'user_id': str(myplex.id),
                             'name': myplex.title or myplex.username,
+                            'account_name': myplex.username,
+                            'display_name': myplex.title or myplex.username,
                             'is_admin': True,
                             'linked_account_ids': []
                         })
@@ -394,7 +397,10 @@ def get_all_system_accounts():
                             )
                             media_users.append({
                                 'id': u_id,
+                                'user_id': str(user.id),
                                 'name': user.title or user.username,
+                                'account_name': user.username,
+                                'display_name': user.title or user.username,
                                 'is_admin': False,
                                 'linked_account_ids': []
                             })

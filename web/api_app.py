@@ -42,7 +42,7 @@ from web.routes.system_tasks import router as system_tasks_bp
 from web.routes.local_server import router as local_server_bp
 
 # Batch 3B routers
-from web.routes.downloads import router as downloads_bp
+from web.routes.downloads import router as downloads_bp, core_router as core_downloads_bp
 from web.routes.suggestions import router as suggestions_bp
 from web.routes.media_server import router as media_server_bp
 from web.routes.webhooks import router as webhooks_bp
@@ -218,6 +218,7 @@ def create_app(testing: bool = False) -> FastAPI:
     app.include_router(local_server_bp)
     
     app.include_router(downloads_bp)
+    app.include_router(core_downloads_bp)
     app.include_router(suggestions_bp)
     app.include_router(media_server_bp)
     app.include_router(webhooks_bp)

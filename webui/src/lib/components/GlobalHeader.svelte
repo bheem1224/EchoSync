@@ -1,24 +1,19 @@
 <script>
   import { metadataQueue } from '../../stores/metadataQueue';
-  import { jobs } from '../../stores/jobs';
-  import DownloadQueueDrawer from './DownloadQueueDrawer.svelte';
+  import { isDownloadDrawerOpen, toggleDownloadDrawer } from '../../stores/ui';
+  import { activeDownloadCount } from '../../stores/downloads';
 
   export let toggleNotificationDrawer = () => {};
-  let queueDrawerOpen = false;
-
-  function toggleQueueDrawer() {
-    queueDrawerOpen = !queueDrawerOpen;
-  }
 </script>
 
-<header class="sticky top-0 z-40 border-b border-gray-800 bg-gray-900 text-white">
-  <div class="mx-auto flex h-16 w-full items-center justify-between px-4 sm:px-6 lg:px-8">
-    <h1 class="text-xl font-bold tracking-tight">Echosync</h1>
+<header class="sticky top-0 z-40 border-b border-border-subtle bg-surface/80 backdrop-blur-md text-text-primary">
+  <div class="mx-auto flex h-14 w-full items-center justify-between px-4 sm:px-6 lg:px-8">
+    <h1 class="text-lg font-bold tracking-tight text-text-primary">EchoSync</h1>
 
     <div class="flex items-center gap-2 sm:gap-3">
       <button
         type="button"
-        class="relative inline-flex h-10 w-10 items-center justify-center rounded-full text-gray-200 transition hover:bg-gray-800 hover:text-white active:scale-95"
+        class="relative inline-flex h-9 w-9 items-center justify-center rounded-full text-text-muted transition hover:bg-surface-hover hover:text-text-primary active:scale-95"
         on:click={toggleNotificationDrawer}
         aria-label="Open notifications"
         title="Notifications"
@@ -28,31 +23,28 @@
         </svg>
 
         {#if $metadataQueue.count > 0}
-          <span class="absolute right-2 top-2 h-2.5 w-2.5 rounded-full bg-red-500"></span>
-          <span class="absolute right-2 top-2 h-2.5 w-2.5 animate-ping rounded-full bg-red-500"></span>
+          <span class="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-red-500"></span>
+          <span class="absolute right-1.5 top-1.5 h-2 w-2 animate-ping rounded-full bg-red-500"></span>
         {/if}
       </button>
 
       <button
         type="button"
-        class="relative inline-flex h-10 w-10 items-center justify-center rounded-full text-gray-200 transition hover:bg-gray-800 hover:text-white active:scale-95"
-        on:click={toggleQueueDrawer}
-        aria-label="Open download queue"
-        title="Download Queue"
+        class="relative inline-flex h-9 w-9 items-center justify-center rounded-full text-text-muted transition hover:bg-surface-hover hover:text-text-primary active:scale-95"
+        on:click={toggleDownloadDrawer}
+        aria-label="Open download manager"
+        title="Download Manager (Ctrl+J)"
       >
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" class="h-5 w-5">
-          <path stroke-linecap="round" stroke-linejoin="round" d="M3 7.5A2.5 2.5 0 015.5 5h13A2.5 2.5 0 0121 7.5v9A2.5 2.5 0 0118.5 19h-13A2.5 2.5 0 013 16.5v-9z" />
-          <path stroke-linecap="round" stroke-linejoin="round" d="M12 8.5v6m0 0l-2.25-2.25M12 14.5l2.25-2.25" />
+          <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
         </svg>
 
-        {#if $jobs.active.length > 0}
-          <span class="absolute -right-1 -top-1 inline-flex min-h-5 min-w-5 items-center justify-center rounded-full bg-indigo-500 px-1 text-[10px] font-semibold leading-none text-white">
-            {$jobs.active.length}
+        {#if $activeDownloadCount > 0}
+          <span class="absolute -right-1 -top-1 inline-flex min-h-4 min-w-4 items-center justify-center rounded-full bg-indigo-500 px-1 text-[10px] font-bold leading-none text-white animate-pulse">
+            {$activeDownloadCount}
           </span>
         {/if}
       </button>
     </div>
   </div>
 </header>
-
-<DownloadQueueDrawer bind:isOpen={queueDrawerOpen} />

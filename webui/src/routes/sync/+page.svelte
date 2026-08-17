@@ -22,6 +22,8 @@
   let analysisStarted = false;
   let downloadingMissing = false;
   let selectedQuality = '';
+  let availableTargetAccounts = [];
+  let overrideTargetUserId = null;
   
   // Sync config modal state
   let syncConfigModalOpen = false;
@@ -53,6 +55,75 @@
     { value: 86400, label: '24 hours' },
     { value: 604800, label: '1 week' },
   ];
+
+  function getPluginName(pluginId) {
+    if (!pluginId) return '';
+    const idStr = String(pluginId).toLowerCase();
+    const item = Object.values($plugins?.items || {}).find(p => 
+      String(p.plugin_id || '').toLowerCase() === idStr || 
+      String(p.id || '').toLowerCase() === idStr ||
+      String(p.name || '').toLowerCase() === idStr
+    );
+    if (item?.name) return item.name;
+    if (item?.title) return item.title;
+
+    const knownNames = {
+      '2391116200': 'Spotify',
+      'spotify': 'Spotify',
+      '3021005569': 'Plex',
+      'plex': 'Plex',
+      '3782485548': 'Tidal',
+      'tidal': 'Tidal',
+      '3934388657': 'MusicBrainz',
+      'musicbrainz': 'MusicBrainz',
+      '1910609384': 'AcoustID',
+      'acoustid': 'AcoustID',
+      '2305548545': 'Jellyfin',
+      'jellyfin': 'Jellyfin',
+      '4010168341': 'Navidrome',
+      'navidrome': 'Navidrome',
+      '2021666874': 'Slskd',
+      'slskd': 'Slskd',
+      'local': 'Local Library',
+      'local_server': 'Local Server',
+    };
+    if (knownNames[idStr]) return knownNames[idStr];
+
+    return String(pluginId);
+  }
+
+  async function fetchTargetAccounts() {
+    availableTargetAccounts = [];
+    if (!targetProvider) return;
+    try {
+      try {
+        const res = await apiClient.get(`/system/plugins/${targetProvider}/accounts`);
+        if (res.data?.items && Array.isArray(res.data.items) && res.data.items.length > 0) {
+          availableTargetAccounts = res.data.items;
+          return;
+        } else if (Array.isArray(res.data) && res.data.length > 0) {
+          availableTargetAccounts = res.data;
+          return;
+        }
+      } catch (e) {
+        // Fallback to /system/accounts
+      }
+
+      const res = await apiClient.get('/system/accounts');
+      if (res.data?.media_users && res.data.media_users.length > 0) {
+        availableTargetAccounts = res.data.media_users;
+      } else if (res.data?.music_accounts) {
+        const filtered = res.data.music_accounts.filter(a => 
+          String(a.service).toLowerCase() === String(targetProvider).toLowerCase()
+        );
+        if (filtered.length > 0) {
+          availableTargetAccounts = filtered;
+        }
+      }
+    } catch (err) {
+      console.warn('[Sync] Failed to fetch target accounts:', err);
+    }
+  }
 
   $: qualityProfiles = $preferences.profiles || [];
   $: if (qualityProfiles.length > 0 && !selectedQuality) {
@@ -135,7 +206,13 @@
 
   async function runAnalysis() {
     if (!sourceProvider || !targetProvider || selectedPlaylists.length === 0) {
-      analysisError = 'Select a source, target, and at least one playlist to analyze.';
+      if (!sourceProvider) {
+        analysisError = 'Please select a source service.';
+      } else if (!targetProvider) {
+        analysisError = 'Please select a target service.';
+      } else {
+        analysisError = 'Please select at least one playlist to analyze.';
+      }
       return;
     }
     analysisLoading = true;
@@ -151,6 +228,12 @@
             const detail = { id: p.id, name: p.name, track_count: p.track_count };
             if (p.account_id !== undefined) {
               detail.account_id = p.account_id;
+            }
+            if (p.source_account_name !== undefined) {
+              detail.source_account_name = p.source_account_name;
+            }
+            if (p.target_user_id !== undefined) {
+              detail.target_user_id = p.target_user_id;
             }
             return detail;
           });
@@ -181,6 +264,12 @@
             if (!d) return false;
             if (d.status === 'finished') {
               analysisResult = d.result || null;
+              if (analysisResult) {
+                const autoTargetId = analysisResult.target_user_id || analysisResult.summary?.target_user_id;
+                if (autoTargetId) {
+                  overrideTargetUserId = autoTargetId;
+                }
+              }
               return true;
             }
             if (d.status === 'failed') {
@@ -248,27 +337,22 @@
   }
   
   async function confirmSync() {
-    if (!analysisResult?.summary?.matched_pairs) return;
+    if (!analysisResult?.summary?.matched_pairs && !analysisResult?.matches) {
+      analysisError = 'No tracks from the selected playlist(s) matched your target library. Nothing to sync.';
+      return;
+    }
     syncInProgress = true;
     analysisError = '';
     
     try {
-      // If a single playlist is selected, pull its source_account_name
-      let sourceAccountName = undefined;
-      let targetUserId = undefined;
-      let syncPlaylistName = 'Multi-Playlist Sync';
+      const selectedItems = selectedPlaylists.map(i => playlists[i]).filter(Boolean);
+      
+      const sourceAccountNames = [...new Set(selectedItems.map(p => p.source_account_name).filter(Boolean))];
+      const targetUserIds = [...new Set(selectedItems.map(p => p.target_user_id).filter(Boolean))];
 
-      if (selectedPlaylists.length === 1) {
-        const playlistIndex = selectedPlaylists[0];
-        const p = playlists[playlistIndex];
-        if (p) {
-          syncPlaylistName = p.name;
-          sourceAccountName = p.source_account_name;
-          targetUserId = p.target_user_id;
-        } else {
-          syncPlaylistName = 'Synced Playlist';
-        }
-      }
+      let sourceAccountName = sourceAccountNames.length === 1 ? sourceAccountNames[0] : (selectedItems[0]?.source_account_name || undefined);
+      let targetUserId = targetUserIds.length === 1 ? targetUserIds[0] : (selectedItems[0]?.target_user_id || undefined);
+      let syncPlaylistName = selectedItems.length === 1 ? (selectedItems[0]?.name || 'Synced Playlist') : (selectedItems[0]?.name ? `${selectedItems[0].name} (+${selectedItems.length - 1} more)` : 'Multi-Playlist Sync');
 
       // Increase timeout proportional to number of selected playlists
       const syncTimeoutMs = Math.max(10000, selectedPlaylists.length * 10000);
@@ -279,8 +363,8 @@
           target_source: targetProvider,
           playlist_name: syncPlaylistName,
           source_account_name: sourceAccountName,
-          target_user_id: targetUserId,
-          matches: analysisResult.summary.matched_pairs,
+          target_user_id: overrideTargetUserId || targetUserId,
+          matches: analysisResult.summary?.matched_pairs || analysisResult.matches || [],
           download_missing: syncDownloadMissing,
         },
         { timeout: syncTimeoutMs }
@@ -449,15 +533,34 @@
     }
   }
 
-  function openAnalysisModal() {
+  async function openAnalysisModal() {
     if (!sourceProvider || !targetProvider || selectedPlaylists.length === 0) {
-      error = 'Please select a source, target, and at least one playlist.';
+      if (!sourceProvider) {
+        error = 'Please select a source service.';
+      } else if (!targetProvider) {
+        error = 'Please select a target service.';
+      } else {
+        error = 'Please select at least one playlist to sync.';
+      }
       return;
     }
     // Clear stale page-level messages from a previous sync run
     error = '';
     success = '';
     analysisModalOpen = true;
+
+    // Auto-resolve initial target user ID from selected playlist if available
+    const initialTargetUserId = playlists.find((_, index) => selectedPlaylists.includes(index))?.target_user_id || null;
+    overrideTargetUserId = initialTargetUserId;
+
+    await fetchTargetAccounts();
+
+    // If still null after accounts loaded, preselect admin or first account
+    if (!overrideTargetUserId && availableTargetAccounts.length > 0) {
+      const adminAcc = availableTargetAccounts.find(a => a.is_admin);
+      overrideTargetUserId = adminAcc ? (adminAcc.user_id || adminAcc.id) : (availableTargetAccounts[0].user_id || availableTargetAccounts[0].id);
+    }
+
     runAnalysis();
   }
 
@@ -466,6 +569,8 @@
     analysisResult = null;
     analysisError = '';
     analysisStarted = false;
+    availableTargetAccounts = [];
+    overrideTargetUserId = null;
     // Also clear any lingering sync-progress state so re-opening always shows a fresh analysis
     if (syncEventPollingId) {
       clearInterval(syncEventPollingId);
@@ -691,7 +796,20 @@
       <div>
         <p class="eyebrow">Playlist Sync</p>
         <h2>{syncProgressEvent ? 'Sync' : 'Analysis'}</h2>
-        <p class="sub">{syncProgressEvent ? `Syncing tracks to ${selectedTargetLabel || targetProvider}...` : `Source: ${sourceProvider} → Target: ${selectedTargetLabel || targetProvider}`}</p>
+        <p class="sub">{syncProgressEvent ? `Syncing tracks to ${getPluginName(targetProvider)}...` : `Source: ${getPluginName(analysisResult?.source || sourceProvider)} → Target: ${getPluginName(analysisResult?.target || targetProvider)}`}</p>
+        {#if !syncProgressEvent && availableTargetAccounts.length > 0}
+          <div class="target-account-selector my-2 flex items-center gap-2">
+            <span class="text-xs text-muted">Syncing to Profile:</span>
+            <select class="select select-sm select-bordered" bind:value={overrideTargetUserId}>
+              <option value="" disabled selected>-- Select Target Profile --</option>
+              {#each availableTargetAccounts as acc}
+                <option value={acc.user_id || acc.id}>
+                  {acc.display_name || acc.account_name || acc.username || acc.name} {acc.is_admin ? '(Admin)' : ''}
+                </option>
+              {/each}
+            </select>
+          </div>
+        {/if}
       </div>
       <button class="close-btn active:scale-95 transition-all duration-200" on:click={closeAnalysisModal}>×</button>
     </header>
@@ -736,8 +854,11 @@
             <button class="btn active:scale-95 transition-all duration-200" on:click={runAnalysis} disabled={analysisLoading}>
               {analysisLoading ? 'Analyzing…' : (analysisStarted ? 'Re-run Analysis' : 'Begin Analysis')}
             </button>
-            <button class="btn btn--accent active:scale-95 transition-all duration-200" on:click={openSyncConfigModal}
-              disabled={!analysisResult?.summary?.can_sync}>
+            <button 
+              class="btn btn--accent active:scale-95 transition-all duration-200" 
+              on:click={confirmSync} 
+              disabled={!overrideTargetUserId || !(analysisResult?.summary?.matched_pairs?.length > 0 || analysisResult?.matches?.length > 0)}
+            >
               ⇄ Sync
             </button>
             <button class="btn btn--primary active:scale-95 transition-all duration-200" on:click={downloadMissingTracks}
@@ -888,7 +1009,7 @@
         <label for="schedule-source">Source Service:</label>
         <select id="schedule-source" bind:value={scheduleForm.source}>
           {#each playlistPlugins as p}
-            <option value={p.id}>{p.name}</option>
+            <option value={p.plugin_id}>{p.name}</option>
           {/each}
         </select>
       </div>
@@ -897,7 +1018,7 @@
         <label for="schedule-target">Target Service:</label>
         <select id="schedule-target" bind:value={scheduleForm.target}>
           {#each syncTargets as p}
-            <option value={p.id}>{p.name}</option>
+            <option value={p.plugin_id}>{p.name}</option>
           {/each}
         </select>
       </div>
@@ -1265,6 +1386,24 @@
     color: var(--muted);
     font-size: 13px;
     margin: 4px 0 0 0;
+  }
+
+  .target-account-selector {
+    margin-top: 8px;
+  }
+
+  .target-account-selector select {
+    background: rgba(15, 23, 42, 0.8);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 6px;
+    color: var(--text);
+    padding: 4px 8px;
+    font-size: 12px;
+    outline: none;
+  }
+
+  .target-account-selector select:focus {
+    border-color: var(--accent);
   }
   .modal__body {
     display: flex;

@@ -203,6 +203,63 @@ def test_add_tracks_to_managed_playlist_falls_back_via_substring_account_name(mo
     server.switchUser.assert_called_once_with('simi')
 
 
+def test_add_tracks_to_managed_playlist_quarantine_aborts_on_unresolved_user():
+    """Unresolved managed user MUST raise RuntimeError and never write to admin library."""
+    client = PlexClient(account_id=7)
+    client.ensure_connection = lambda: True
+    client.music_library = MagicMock()
+
+    myplex_account = MagicMock()
+    myplex_account.uuid = 'admin-uuid'
+    myplex_account.id = 123
+    myplex_account.username = 'admin'
+    myplex_account.users.return_value = []  # No managed users
+
+    server = MagicMock()
+    server.myPlexAccount.return_value = myplex_account
+    client.server = server
+
+    with pytest.raises(RuntimeError, match="Could not safely resolve Plex managed user"):
+        client.add_tracks_to_managed_playlist(
+            'Quarantined Playlist',
+            ['300'],
+            source_account_name="Unknown Account",
+            target_user_id="nonexistent-id",
+        )
+
+
+def test_add_tracks_to_managed_playlist_token_boundary_prevents_false_positive():
+    """'Jordan's Spotify' must NOT falsely match managed user 'Dan'."""
+    client = PlexClient(account_id=7)
+    client.ensure_connection = lambda: True
+    client.music_library = MagicMock()
+
+    dan_user = MagicMock()
+    dan_user.id = 'dan-id'
+    dan_user.uuid = None
+    dan_user.username = 'dan'
+    dan_user.title = 'Dan'
+    dan_user.email = None
+
+    myplex_account = MagicMock()
+    myplex_account.uuid = 'admin-uuid'
+    myplex_account.id = 123
+    myplex_account.username = 'admin'
+    myplex_account.users.return_value = [dan_user]
+
+    server = MagicMock()
+    server.myPlexAccount.return_value = myplex_account
+    client.server = server
+
+    with pytest.raises(RuntimeError, match="Could not safely resolve Plex managed user"):
+        client.add_tracks_to_managed_playlist(
+            'Jordan Mix',
+            ['400'],
+            source_account_name="Jordan's Spotify",
+            target_user_id=None,
+        )
+
+
 def test_fetch_user_history_switches_to_managed_user_context(monkeypatch):
     client = PlexClient(account_id=7)
     client.ensure_connection = lambda: True

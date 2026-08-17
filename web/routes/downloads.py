@@ -11,6 +11,7 @@ from core.job_queue import list_jobs as jq_list_jobs
 
 logger = get_logger("downloads_route")
 router = APIRouter(prefix="/api/v1/system/downloads", tags=["Downloads"])
+core_router = APIRouter(prefix="/api/v1/core/downloads", tags=["Downloads"])
 
 
 # ---------------------------------------------------------------------------
@@ -27,6 +28,7 @@ class QueueItem(BaseModel):
     retry_count: int
     current_speed: float
     progress_percent: float
+    cancellation_reason: Optional[str] = None
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
 
@@ -54,52 +56,74 @@ def _to_ui_status(raw_status: str) -> str:
         return "COMPLETED"
     if status in {"failed_no_results", "not_found"}:
         return "NOT_FOUND"
+    if status == "paused":
+        return "PAUSED"
+    if status == "cancelled":
+        return "CANCELLED"
     if status.startswith("failed"):
         return "FAILED"
     return (raw_status or "UNKNOWN").upper()
 
 
+def _format_item(download) -> dict:
+    track_data = download.echo_sync_track or {}
+    return {
+        "id": download.id,
+        "title": track_data.get("title", "Unknown"),
+        "artist": track_data.get("artist", track_data.get("artist_name", "Unknown")),
+        "album": track_data.get("album_title", track_data.get("album", "")),
+        "status": _to_ui_status(download.status),
+        "provider_id": download.provider_id,
+        "retry_count": download.retry_count,
+        "current_speed": track_data.get("current_speed", 0.0),
+        "progress_percent": track_data.get("progress_percent", 0.0),
+        "cancellation_reason": track_data.get("cancellation_reason"),
+        "created_at": download.created_at.isoformat() if download.created_at else None,
+        "updated_at": download.updated_at.isoformat() if download.updated_at else None,
+    }
+
+
 # ---------------------------------------------------------------------------
-# Routes
+# Handlers
 # ---------------------------------------------------------------------------
 
-@router.get("/queue", response_model=QueueResponse)
-def get_queue():
-    """Return all downloads in the queue with their current status."""
+def _get_queue_impl():
     try:
         with get_working_database().session_scope() as session:
-            downloads = session.query(DownloadQueue).all()
-            
-            queue_items = []
-            for download in downloads:
-                # Deserialize the EchosyncTrack from JSON
-                track_data = download.echo_sync_track
-                
-                queue_items.append({
-                    "id": download.id,
-                    "title": track_data.get("title", "Unknown"),
-                    "artist": track_data.get("artist", "Unknown"),
-                    "album": track_data.get("album_title", ""),
-                    "status": _to_ui_status(download.status),
-                    "provider_id": download.provider_id,
-                    "retry_count": download.retry_count,
-                    "current_speed": track_data.get("current_speed", 0.0),
-                    "progress_percent": track_data.get("progress_percent", 0.0),
-                    "created_at": download.created_at.isoformat() if download.created_at else None,
-                    "updated_at": download.updated_at.isoformat() if download.updated_at else None,
-                })
-            
+            downloads = session.query(DownloadQueue).order_by(DownloadQueue.created_at.desc()).all()
+            queue_items = [_format_item(d) for d in downloads]
             return {"total": len(queue_items), "items": queue_items}
     except Exception as e:
         logger.error(f"Error fetching download queue: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/run")
-def run_downloads():
-    """Trigger the download manager to process queued downloads immediately."""
+def _get_active_impl():
     try:
-        # Check if download_manager job is already running
+        with get_working_database().session_scope() as session:
+            active_statuses = ["queued", "searching", "downloading", "in_progress", "paused"]
+            downloads = session.query(DownloadQueue).filter(DownloadQueue.status.in_(active_statuses)).order_by(DownloadQueue.created_at.asc()).all()
+            queue_items = [_format_item(d) for d in downloads]
+            return {"total": len(queue_items), "items": queue_items}
+    except Exception as e:
+        logger.error(f"Error fetching active downloads: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+def _get_history_impl():
+    try:
+        with get_working_database().session_scope() as session:
+            history_statuses = ["completed", "failed", "failed_no_results", "not_found", "cancelled"]
+            downloads = session.query(DownloadQueue).filter(DownloadQueue.status.in_(history_statuses)).order_by(DownloadQueue.updated_at.desc()).limit(100).all()
+            queue_items = [_format_item(d) for d in downloads]
+            return {"total": len(queue_items), "items": queue_items}
+    except Exception as e:
+        logger.error(f"Error fetching download history: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+def _run_downloads_impl():
+    try:
         jobs = jq_list_jobs()
         download_job = next((j for j in jobs if j.get("name") == "download_manager"), None)
         
@@ -120,19 +144,14 @@ def run_downloads():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.delete("/{download_id}")
-def delete_download(download_id: int):
-    """Remove a specific download from the queue."""
+def _delete_download_impl(download_id: int):
     try:
         with get_working_database().session_scope() as session:
             download = session.query(DownloadQueue).filter(DownloadQueue.id == download_id).first()
-            
             if not download:
                 raise HTTPException(status_code=404, detail="DownloadQueue not found")
-            
             session.delete(download)
             session.commit()
-            
             logger.info(f"Deleted download {download_id} from queue")
             return {"success": True, "message": f"DownloadQueue {download_id} removed"}
     except HTTPException:
@@ -142,14 +161,11 @@ def delete_download(download_id: int):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.delete("/queue")
-def clear_queue():
-    """Clear all downloads from the queue."""
+def _clear_queue_impl():
     try:
         with get_working_database().session_scope() as session:
             count = session.query(DownloadQueue).delete()
             session.commit()
-            
             logger.info(f"Cleared {count} downloads from queue")
             return {"success": True, "message": f"Cleared {count} downloads", "count": count}
     except Exception as e:
@@ -157,26 +173,22 @@ def clear_queue():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/{download_id}/search")
-def search_download(download_id: int):
-    """Trigger search and download for a specific queue item."""
+def _search_or_retry_download_impl(download_id: int):
     try:
         with get_working_database().session_scope() as session:
             download = session.query(DownloadQueue).filter(DownloadQueue.id == download_id).first()
-            
             if not download:
                 raise HTTPException(status_code=404, detail="DownloadQueue not found")
             
-            # Mark as queued (in case it's in failed state) and trigger processing
             download.status = "queued"
+            download.retry_count = (download.retry_count or 0) + 1
             download.updated_at = utc_now()
             session.commit()
         
-        # Trigger the download manager to process immediately
         dm = get_download_manager()
         dm.process_downloads_now()
         
-        logger.info(f"Triggered search for download {download_id}")
+        logger.info(f"Triggered search/retry for download {download_id}")
         return {"success": True, "message": f"Search triggered for download {download_id}"}
     except HTTPException:
         raise
@@ -185,19 +197,50 @@ def search_download(download_id: int):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.delete("/batch")
-def delete_batch(payload: BatchDeleteRequest):
-    """Delete multiple downloads by IDs."""
+def _pause_download_impl(download_id: int):
+    try:
+        with get_working_database().session_scope() as session:
+            download = session.query(DownloadQueue).filter(DownloadQueue.id == download_id).first()
+            if not download:
+                raise HTTPException(status_code=404, detail="DownloadQueue not found")
+            
+            download.status = "paused"
+            download.updated_at = utc_now()
+            session.commit()
+            return {"success": True, "message": f"Download {download_id} paused"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error pausing download {download_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+def _cancel_download_impl(download_id: int):
+    try:
+        with get_working_database().session_scope() as session:
+            download = session.query(DownloadQueue).filter(DownloadQueue.id == download_id).first()
+            if not download:
+                raise HTTPException(status_code=404, detail="DownloadQueue not found")
+            
+            download.status = "cancelled"
+            download.updated_at = utc_now()
+            session.commit()
+            return {"success": True, "message": f"Download {download_id} cancelled"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error cancelling download {download_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+def _delete_batch_impl(payload: BatchDeleteRequest):
     try:
         ids = payload.ids
-        
         if not ids:
             raise HTTPException(status_code=400, detail="No IDs provided")
-        
         with get_working_database().session_scope() as session:
             count = session.query(DownloadQueue).filter(DownloadQueue.id.in_(ids)).delete(synchronize_session=False)
             session.commit()
-            
             logger.info(f"Deleted {count} downloads from queue (batch)")
             return {"success": True, "message": f"Deleted {count} downloads", "count": count}
     except HTTPException:
@@ -205,3 +248,22 @@ def delete_batch(payload: BatchDeleteRequest):
     except Exception as e:
         logger.error(f"Error batch deleting downloads: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
+# Route Bindings
+# ---------------------------------------------------------------------------
+
+for r in (router, core_router):
+    r.add_api_route("/queue", _get_queue_impl, methods=["GET"], response_model=QueueResponse)
+    r.add_api_route("/active", _get_active_impl, methods=["GET"], response_model=QueueResponse)
+    r.add_api_route("/history", _get_history_impl, methods=["GET"], response_model=QueueResponse)
+    r.add_api_route("/run", _run_downloads_impl, methods=["POST"])
+    r.add_api_route("/{download_id}/retry", _search_or_retry_download_impl, methods=["POST"])
+    r.add_api_route("/{download_id}/search", _search_or_retry_download_impl, methods=["POST"])
+    r.add_api_route("/{download_id}/pause", _pause_download_impl, methods=["POST"])
+    r.add_api_route("/{download_id}/cancel", _cancel_download_impl, methods=["POST"])
+    r.add_api_route("/{download_id}", _delete_download_impl, methods=["DELETE"])
+    r.add_api_route("/queue", _clear_queue_impl, methods=["DELETE"])
+    r.add_api_route("/batch", _delete_batch_impl, methods=["DELETE"])
+

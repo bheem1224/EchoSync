@@ -16,6 +16,7 @@ from plexapi.exceptions import NotFound
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timezone
 import time
+import re
 from pathlib import Path
 from core.tiered_logger import get_logger
 from core.user_history import UserTrackInteraction
@@ -381,8 +382,29 @@ class PlexClient(MediaServerProvider):
         normalized = str(value).strip()
         return normalized.casefold() if normalized else None
 
+    def _is_admin_user(self, target_identity: Optional[str]) -> bool:
+        """Check if target identity matches the admin account."""
+        if not self.server or not target_identity:
+            return False
+        try:
+            myplex_account = self.server.myPlexAccount()
+            admin_ids = {
+                self._normalize_plex_identity(val)
+                for val in [
+                    _safe_getattr(myplex_account, 'uuid', None),
+                    _safe_getattr(myplex_account, 'id', None),
+                    _safe_getattr(myplex_account, 'username', None),
+                    _safe_getattr(myplex_account, 'title', None),
+                    _safe_getattr(myplex_account, 'email', None),
+                ]
+                if val is not None
+            }
+            return self._normalize_plex_identity(target_identity) in admin_ids
+        except Exception:
+            return False
+
     def _resolve_managed_user(self, target_user_id: Optional[str] = None, source_account_name: Optional[str] = None):
-        """Resolve a Plex managed user using stored IDs first, then display-name fallbacks."""
+        """Resolve a Plex managed user using stored IDs first, then explicit config.db mappings, then token-boundary fallbacks."""
         if not self.server:
             return None
 
@@ -415,21 +437,61 @@ class PlexClient(MediaServerProvider):
             logger.warning(f"Failed to enumerate managed Plex users: {e}")
             return None
 
-        for user in users:
-            identities = {
-                normalized
-                for normalized in [
-                    self._normalize_plex_identity(_safe_getattr(user, 'id', None)),
-                    self._normalize_plex_identity(_safe_getattr(user, 'uuid', None)),
-                    self._normalize_plex_identity(_safe_getattr(user, 'username', None)),
-                    self._normalize_plex_identity(_safe_getattr(user, 'title', None)),
-                    self._normalize_plex_identity(_safe_getattr(user, 'email', None)),
-                ]
-                if normalized
-            }
-            if normalized_target_id and normalized_target_id in identities:
-                return user
+        # Step 1: Match by direct target_user_id across user identities
+        if normalized_target_id:
+            for user in users:
+                identities = {
+                    normalized
+                    for normalized in [
+                        self._normalize_plex_identity(_safe_getattr(user, 'id', None)),
+                        self._normalize_plex_identity(_safe_getattr(user, 'uuid', None)),
+                        self._normalize_plex_identity(_safe_getattr(user, 'username', None)),
+                        self._normalize_plex_identity(_safe_getattr(user, 'title', None)),
+                        self._normalize_plex_identity(_safe_getattr(user, 'email', None)),
+                    ]
+                    if normalized
+                }
+                if normalized_target_id in identities:
+                    return user
 
+        # Step 2: Query explicit mappings in config.db account_mappings table
+        if source_account_name:
+            try:
+                from database.config_database import get_config_database
+                config_db = get_config_database()
+                if config_db:
+                    plex_service_id = config_db.get_or_create_service_id('plex')
+                    all_accounts = config_db.get_accounts(is_active=True)
+                    
+                    source_account_ids = []
+                    for acc in all_accounts:
+                        if acc.get('service_id') != plex_service_id:
+                            dname = (acc.get('display_name') or '').strip().lower()
+                            aname = (acc.get('account_name') or '').strip().lower()
+                            if normalized_source_name in (dname, aname):
+                                source_account_ids.append(acc['id'])
+                    
+                    for s_id in source_account_ids:
+                        mappings = config_db.get_account_mappings(source_account_id=s_id)
+                        for m in mappings:
+                            mapped_acc = config_db.get_account(m['mapped_account_id'])
+                            if mapped_acc and mapped_acc.get('service_id') == plex_service_id:
+                                mapped_uid = self._normalize_plex_identity(mapped_acc.get('user_id'))
+                                if mapped_uid:
+                                    for user in users:
+                                        u_identities = {
+                                            self._normalize_plex_identity(_safe_getattr(user, attr, None))
+                                            for attr in ('id', 'uuid', 'username', 'title', 'email')
+                                        }
+                                        if mapped_uid in u_identities:
+                                            logger.info(
+                                                f"Resolved managed Plex user '{_safe_getattr(user, 'title', user)}' via config.db account_mappings."
+                                            )
+                                            return user
+            except Exception as map_err:
+                logger.debug(f"Error querying config.db explicit account mappings: {map_err}")
+
+        # Step 3: Heuristic fallback using exact token boundary matching
         if normalized_source_name:
             for user in users:
                 display_candidates = [
@@ -441,12 +503,11 @@ class PlexClient(MediaServerProvider):
                     ]
                     if normalized
                 ]
-                # Check if any Plex user identity is contained within the source account name
-                # e.g. 'simi' in "simi's spotify" should match managed user 'Simi'
                 for candidate in display_candidates:
-                    if candidate in normalized_source_name:
+                    pattern = r"(?:\b|_)" + re.escape(candidate) + r"(?:'s|\b|_)"
+                    if re.search(pattern, normalized_source_name, re.IGNORECASE):
                         logger.info(
-                            f"Resolved managed Plex user by display-name fallback for source account '{source_account_name}'"
+                            f"Resolved managed Plex user '{_safe_getattr(user, 'title', user)}' by token-boundary match for source account '{source_account_name}'"
                         )
                         return user
 
@@ -502,32 +563,30 @@ class PlexClient(MediaServerProvider):
         # --- Managed Account Routing Logic ---
         target_server = self.server
         if target_user_id or source_account_name:
-            try:
-                matched_user = self._resolve_managed_user(
-                    target_user_id=target_user_id,
-                    source_account_name=source_account_name,
-                )
+            matched_user = self._resolve_managed_user(
+                target_user_id=target_user_id,
+                source_account_name=source_account_name,
+            )
 
-                if matched_user:
-                    logger.info(
-                        f"Routing playlist '{playlist_name}' to managed user '{matched_user.title}' using Plex user_id '{target_user_id}'"
-                    )
-                    switched_server = self._switch_to_user_server(matched_user)
-                    if switched_server:
-                        target_server = switched_server
-                    else:
-                        logger.info(
-                            f"Managed user '{matched_user.title}' resolved but Plex returned no switched server. "
-                            f"Defaulting playlist '{playlist_name}' to main account."
-                        )
+            if matched_user:
+                logger.info(
+                    f"Routing playlist '{playlist_name}' to managed user '{_safe_getattr(matched_user, 'title', matched_user)}' using Plex user_id '{target_user_id}'"
+                )
+                switched_server = self._switch_to_user_server(matched_user)
+                if switched_server:
+                    target_server = switched_server
                 else:
-                    logger.info(
-                        f"No managed user found for Plex user_id '{target_user_id}' and source account '{source_account_name}'. "
-                        f"Defaulting playlist '{playlist_name}' to main account."
+                    raise RuntimeError(
+                        f"Could not safely resolve Plex managed user for '{source_account_name}' (target ID: {target_user_id}). "
+                        f"Server context switch failed. Sync aborted to prevent admin library pollution."
                     )
-            except Exception as routing_err:
-                logger.warning(
-                    f"Failed to route to managed account for Plex user_id '{target_user_id}': {routing_err}. Defaulting to main account."
+            elif self._is_admin_user(target_user_id):
+                logger.info(f"Target user ID '{target_user_id}' corresponds to primary/admin Plex account. Using main server.")
+                target_server = self.server
+            else:
+                raise RuntimeError(
+                    f"Could not safely resolve Plex managed user for '{source_account_name}' (target ID: {target_user_id}). "
+                    f"Sync aborted to prevent admin library pollution."
                 )
 
         management_tag = "managed by Echosync"
