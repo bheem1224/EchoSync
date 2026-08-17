@@ -144,6 +144,24 @@ def _get_provider_for_account(provider_id, acc_id=None):
         return None, None
 
 
+def _normalize_provider_short_name(provider_id: Any) -> str:
+    """Normalize provider identifier (numeric string/int, full plugin name) to canonical short name (e.g. 'plex', 'spotify')."""
+    if not provider_id:
+        return ""
+    from core.nexus_framework.plugin_loader import PluginRegistry
+    try:
+        p_cls = PluginRegistry.get_plugin_class(provider_id)
+        if p_cls and hasattr(p_cls, "name") and p_cls.name:
+            return p_cls.name.lower().split(".")[-1]
+    except Exception:
+        pass
+
+    p_str = str(provider_id).lower()
+    if p_str.startswith("echosync."):
+        return p_str.split(".")[-1]
+    return p_str
+
+
 def _extract_track_field(track, key):
     if isinstance(track, dict):
         return track.get(key)
@@ -425,6 +443,8 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
     from core.matching_engine.scoring_profile import ExactSyncProfile
     from sqlalchemy import text
 
+    target_source_canonical = _normalize_provider_short_name(target_source) if target_source else target_source
+
     source_provider, default_acc = _get_provider_for_account(source, None)
     if source_provider is None:
         source_name = str(source).title()
@@ -541,12 +561,12 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                             tier2_mode = True
 
                     external_ids_map = {}
-                    if target_source and candidates:
+                    if target_source_canonical and candidates:
                         candidate_ids = [row[0] for row in candidates]
                         try:
-                            external_ids_map = db.get_external_identifier_map(target_source, candidate_ids)
+                            external_ids_map = db.get_external_identifier_map(target_source_canonical, candidate_ids)
                         except Exception as ext_err:
-                            logger.debug(f"External identifier lookup failed for target '{target_source}': {ext_err}")
+                            logger.debug(f"External identifier lookup failed for target '{target_source_canonical}': {ext_err}")
 
                     best_match = None
                     best_match_track_id = None
@@ -595,7 +615,7 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                             _artist_alias_map = {}
 
                     for candidate_row in candidates:
-                        candidate_target_id = external_ids_map.get(candidate_row[0]) if target_source else None
+                        candidate_target_id = external_ids_map.get(candidate_row[0]) if target_source_canonical else None
                         raw_title_candidate = candidate_row[1]
                         edition_candidate = candidate_row[3]
                         sort_title_candidate = None
@@ -865,14 +885,14 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                             result = matching_engine.calculate_title_duration_match(
                                 source_track,
                                 candidate_track,
-                                target_source=target_source,
+                                target_source=target_source_canonical,
                                 target_identifier=candidate_target_id,
                             )
                         else:
                             result = matching_engine.calculate_match(
                                 source_track,
                                 candidate_track,
-                                target_source=target_source,
+                                target_source=target_source_canonical,
                                 target_identifier=candidate_target_id,
                             )
 
@@ -1076,7 +1096,7 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                                     result = matching_engine.calculate_title_duration_match(
                                         source_track,
                                         candidate_track,
-                                        target_source=target_source,
+                                        target_source=target_source_canonical,
                                         target_identifier=candidate_target_id,
                                     )
 
@@ -1192,7 +1212,7 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                     "download_status": "-",
                     "matched_track_id": best_match_track_id,
                     "match_score": best_score,
-                    "target_source": target_source,
+                    "target_source": target_source_canonical or target_source,
                     "target_identifier": best_match_target_id,
                     "target_exists": bool(best_match_target_id),
                     "source_track": source_track.to_dict() if hasattr(source_track, "to_dict") else None,
@@ -1271,7 +1291,7 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
             "downloaded": 0,
             "quality_profile": quality_profile,
             "source": source,
-            "target": target_source,
+            "target": target_source_canonical or target_source,
             "matched_pairs": matched_pairs,
             "can_sync": len(matched_pairs) > 0,
         },
@@ -1437,14 +1457,15 @@ def trigger_sync(payload_obj: PlaylistSyncSchema):
     logger.info(f"Sync mode detected: {sync_mode} ({source} → {target})")
 
     # For non-Plex targets, return not implemented
-    if target == "plex":
+    canonical_target = _normalize_provider_short_name(target)
+    if canonical_target == "plex" or target == "plex":
         # Local-server sync: add tracks to managed playlist with overwrite
         source_account_name = payload.get("source_account_name")
         target_user_id = payload.get("target_user_id")
-        return _sync_to_plex(payload, source, target, playlist_name, matches, download_missing, sync_mode, source_account_name, target_user_id)
-    elif target in tier_to_tier_providers:
+        return _sync_to_plex(payload, source, canonical_target, playlist_name, matches, download_missing, sync_mode, source_account_name, target_user_id)
+    elif target in tier_to_tier_providers or canonical_target in tier_to_tier_providers:
         # Tier-to-tier sync: add tracks to target provider's playlist
-        return _sync_to_tier(payload, source, target, playlist_name, matches, download_missing, sync_mode)
+        return _sync_to_tier(payload, source, canonical_target, playlist_name, matches, download_missing, sync_mode)
     else:
         return {"accepted": False, "error": f"Sync to {target} not implemented"}
 
@@ -1799,9 +1820,11 @@ async def download_missing_tracks(request: Request):
 
         if success_count > 0:
             try:
-                download_manager.process_downloads_now()
+                from core.task_manager.task_queue import task_queue
+                # Enqueue/trigger the asynchronous background download runner
+                task_queue.trigger_job_by_name("download_queue_runner")
             except Exception as e:
-                logger.warning(f"Queued downloads but immediate processing trigger failed: {e}")
+                logger.warning(f"Queued downloads but background trigger failed: {e}")
         
         return {
             "accepted": True,

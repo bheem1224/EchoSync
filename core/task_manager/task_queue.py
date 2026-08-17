@@ -304,6 +304,17 @@ class JobQueue:
             heapq.heappush(self._heap, job)
             return True
 
+    def trigger_job_by_name(self, name: str, params: Optional[Dict[str, Any]] = None) -> bool:
+        """Trigger a job immediately by name or known aliases."""
+        alias_map = {
+            "download_queue_runner": "download_manager",
+        }
+        target_name = alias_map.get(name, name)
+        res = self.execute_job_now(target_name, params=params)
+        if not res and target_name != name:
+            res = self.execute_job_now(name, params=params)
+        return res
+
     def get_queue_state(self) -> Dict[str, Any]:
         """
         Return serializable representation of full queue state for SSE telemetry.
@@ -429,11 +440,17 @@ class JobQueue:
 
 
 job_queue = JobQueue()
+task_queue = job_queue
 
 
 def list_jobs() -> List[Dict[str, Any]]:
     """Top-level helper function to return all registered jobs as dictionaries."""
     return job_queue.list_jobs()
+
+
+def trigger_job_by_name(name: str, params: Optional[Dict[str, Any]] = None) -> bool:
+    """Top-level helper function to trigger a job immediately by name."""
+    return job_queue.trigger_job_by_name(name, params=params)
 
 
 def update_job_interval(name: str, interval_seconds: float) -> bool:

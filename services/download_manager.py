@@ -1669,30 +1669,15 @@ class DownloadManager:
             logger.error(f"Error purging existing tracks from queue: {e}")
 
     def process_downloads_now(self):
-        """Run one processing cycle.  Safe to call from any sync context.
+        """Run one processing cycle. Safe to call from any sync or async context.
 
         When the async auto-start loop is active (``self._loop`` set by
         ``start_background_task``), the cycle is submitted to that loop so it
-        does not conflict with the running Task.  Otherwise a fresh event loop
-        is created via ``asyncio.run()`` — this is the normal path taken by the
-        JobQueue and HTTP route triggers.
+        does not conflict with the running Task. If called from within an active
+        event loop without a background daemon loop, a Task is scheduled on that loop.
+        Otherwise a fresh event loop is created via ``asyncio.run()``.
         """
-        if self._loop and self._loop.is_running():
-            # Auto-start mode: submit into the existing event loop.
-            async def _manual_pass():
-                requeued = self._requeue_retryable_failed_items(limit=50)
-                if requeued > 0:
-                    logger.info(f"Manual run: re-queued {requeued} retryable failed items")
-                await self._process_queued_items()
-                await self._check_active_downloads()
-                logger.info("Manual download processing completed")
-
-            asyncio.run_coroutine_threadsafe(_manual_pass(), self._loop)
-            logger.info("DownloadQueue processing triggered on existing event loop")
-            return
-
-        # No persistent loop — run a self-contained one-shot cycle.
-        async def _one_pass():
+        async def _cycle():
             requeued = self._requeue_retryable_failed_items(limit=50)
             if requeued > 0:
                 logger.info(f"Manual run: re-queued {requeued} retryable failed items")
@@ -1702,8 +1687,32 @@ class DownloadManager:
             await self._check_active_downloads()
             logger.info("DownloadQueue processing cycle complete")
 
+        # 1. Background daemon loop is running on a dedicated thread:
+        if self._loop and self._loop.is_running():
+            try:
+                running_loop = asyncio.get_running_loop()
+            except RuntimeError:
+                running_loop = None
+
+            if running_loop is self._loop:
+                return self._loop.create_task(_cycle())
+            else:
+                asyncio.run_coroutine_threadsafe(_cycle(), self._loop)
+                logger.info("DownloadQueue processing triggered on background event loop")
+                return
+
+        # 2. Called from within an active running event loop (e.g. async FastAPI route):
         try:
-            asyncio.run(_one_pass())
+            current_loop = asyncio.get_running_loop()
+            if current_loop and current_loop.is_running():
+                logger.info("DownloadQueue processing scheduled on current running event loop")
+                return current_loop.create_task(_cycle())
+        except RuntimeError:
+            pass
+
+        # 3. Non-async / sync thread context with no active loop:
+        try:
+            asyncio.run(_cycle())
         except Exception as e:
             logger.error(f"DownloadQueue processing cycle failed: {e}", exc_info=True)
 

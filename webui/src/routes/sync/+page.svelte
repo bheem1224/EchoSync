@@ -325,7 +325,7 @@
   }
   
   function openSyncConfigModal() {
-    if (!analysisResult?.summary?.can_sync) {
+    if (!analysisResult?.summary?.can_sync && !(analysisResult?.summary?.found_in_library > 0) && !(analysisResult?.tracks?.some(t => t.matched_track_id))) {
       analysisError = 'No matched tracks to sync.';
       return;
     }
@@ -337,7 +337,18 @@
   }
   
   async function confirmSync() {
-    if (!analysisResult?.summary?.matched_pairs && !analysisResult?.matches) {
+    const validMatches = (analysisResult?.summary?.matched_pairs?.length > 0)
+      ? analysisResult.summary.matched_pairs
+      : (analysisResult?.tracks || [])
+          .filter(t => t.matched_track_id)
+          .map(t => ({
+            track_id: t.matched_track_id,
+            target_identifier: t.target_identifier || t.matched_track_id,
+            title: t.title,
+            artist: t.artist
+          }));
+
+    if (validMatches.length === 0) {
       analysisError = 'No tracks from the selected playlist(s) matched your target library. Nothing to sync.';
       return;
     }
@@ -364,7 +375,7 @@
           playlist_name: syncPlaylistName,
           source_account_name: sourceAccountName,
           target_user_id: overrideTargetUserId || targetUserId,
-          matches: analysisResult.summary?.matched_pairs || analysisResult.matches || [],
+          matches: validMatches,
           download_missing: syncDownloadMissing,
         },
         { timeout: syncTimeoutMs }
@@ -376,7 +387,7 @@
         syncProgressEvent = { 
           type: 'in-progress', 
           data: { 
-            total: analysisResult.summary.found_in_library,
+            total: analysisResult?.summary?.found_in_library || validMatches.length,
             message: 'Starting sync...'
           } 
         };
@@ -390,6 +401,7 @@
         analysisError = response.data.error || 'Sync failed to start';
       }
     } catch (err) {
+      console.error('[Sync] Sync error:', err);
       analysisError = err.response?.data?.error || err.message || 'Sync failed';
     } finally {
       syncInProgress = false;
@@ -857,7 +869,11 @@
             <button 
               class="btn btn--accent active:scale-95 transition-all duration-200" 
               on:click={confirmSync} 
-              disabled={!overrideTargetUserId || !(analysisResult?.summary?.matched_pairs?.length > 0 || analysisResult?.matches?.length > 0)}
+              disabled={!overrideTargetUserId || !(
+                (analysisResult?.summary?.matched_pairs?.length ?? 0) > 0 ||
+                (analysisResult?.summary?.found_in_library ?? 0) > 0 ||
+                (analysisResult?.tracks?.some(t => t.matched_track_id) ?? false)
+              )}
             >
               ⇄ Sync
             </button>
