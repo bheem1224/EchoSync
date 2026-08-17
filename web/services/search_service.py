@@ -48,7 +48,7 @@ class SearchAdapter:
         import threading
         import asyncio
         from core.nexus_framework.plugin_loader import PluginRegistry, get_plugin_capabilities
-        from core.nexus_framework.plugin_SDK import MediaServerProvider
+        from core.nexus_framework.plugin_SDK import MediaServerProvider, DownloaderProvider
 
         q = queue.Queue()
 
@@ -131,43 +131,76 @@ class SearchAdapter:
                     except Exception:
                         continue
                     
-                    search_cap_keys = ["tracks", "artists", "albums", "playlists"]
-                    if not any(getattr(caps.search, k, False) for k in (search_types or ["tracks"]) if k in search_cap_keys):
+                    is_explicitly_targeted = False
+                    if plugin_ids and plugin_id in plugin_ids:
+                        is_explicitly_targeted = True
+                    if plugin_names is not None:
+                        prov_names_lower = [p.lower().replace("echosync.", "") for p in plugin_names] + [p.lower() for p in plugin_names]
+                        if provider.name.lower() in prov_names_lower or provider.name.lower().replace("echosync.", "") in prov_names_lower:
+                            is_explicitly_targeted = True
+
+                    is_downloader = isinstance(provider, DownloaderProvider) or getattr(caps, "supports_downloads", False)
+                    # Only invoke download client providers if plugin_names or plugin_ids explicitly includes them
+                    if is_downloader and not is_explicitly_targeted:
                         continue
+
+                    if not is_downloader:
+                        search_cap_keys = ["tracks", "artists", "albums", "playlists"]
+                        if not any(getattr(caps.search, k, False) for k in (search_types or ["tracks"]) if k in search_cap_keys):
+                            continue
+
                     if plugin_ids and plugin_id not in plugin_ids:
                         continue
-                    if plugin_names is not None:
-                        prov_names_lower = [p.lower() for p in plugin_names]
-                        if provider.name.lower() not in prov_names_lower:
-                            continue
-                    search_providers.append((provider, caps, plugin_id))
+                    if plugin_names is not None and not is_explicitly_targeted:
+                        continue
 
-                async def query_provider(provider, caps, plugin_id):
+                    search_providers.append((provider, caps, plugin_id, is_downloader))
+
+                async def query_provider(provider, caps, plugin_id, is_downloader):
                     if cancel_event and cancel_event.is_set():
                         return provider.name, []
                     try:
                         provider_results = []
-                        for kind in (search_types or ["tracks"]):
+                        kinds_to_search = ["tracks"] if is_downloader else (search_types or ["tracks"])
+                        
+                        active_quality_profile = None
+                        if is_downloader:
+                            try:
+                                from core.settings import config_manager
+                                profiles = config_manager.get_quality_profiles() if hasattr(config_manager, "get_quality_profiles") else []
+                                if isinstance(profiles, list) and profiles:
+                                    active_quality_profile = next((p for p in profiles if isinstance(p, dict) and p.get("is_default")), profiles[0])
+                            except Exception:
+                                active_quality_profile = None
+
+                        for kind in kinds_to_search:
                             if cancel_event and cancel_event.is_set():
                                 break
-                            search_cap_keys = {
-                                "tracks": "tracks",
-                                "artists": "artists",
-                                "albums": "albums",
-                                "playlists": "playlists",
-                            }
-                            if not getattr(caps.search, search_cap_keys[kind], False):
-                                continue
+                            if not is_downloader:
+                                search_cap_keys = {
+                                    "tracks": "tracks",
+                                    "artists": "artists",
+                                    "albums": "albums",
+                                    "playlists": "playlists",
+                                }
+                                if not getattr(caps.search, search_cap_keys.get(kind, "tracks"), False):
+                                    continue
                             
                             search_type_singular = kind[:-1] if kind.endswith("s") else kind
                             
                             search_kwargs = {"type": search_type_singular, "limit": 10}
+                            if is_downloader and active_quality_profile:
+                                search_kwargs["quality_profile"] = active_quality_profile
+
                             try:
                                 import inspect
                                 sig = inspect.signature(provider.search)
                                 has_var_kw = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
                                 if "cancel_event" in sig.parameters or has_var_kw:
                                     search_kwargs["cancel_event"] = cancel_event
+                                if "quality_profile" in sig.parameters or has_var_kw:
+                                    if active_quality_profile and "quality_profile" not in search_kwargs:
+                                        search_kwargs["quality_profile"] = active_quality_profile
                             except Exception:
                                 pass
 
@@ -233,7 +266,7 @@ class SearchAdapter:
                         get_logger("search_adapter").error(f"Search failed for {provider.name}: {e}")
                         return provider.name, []
 
-                tasks = [query_provider(provider, caps, plugin_id) for provider, caps, plugin_id in search_providers]
+                tasks = [query_provider(provider, caps, plugin_id, is_downloader) for provider, caps, plugin_id, is_downloader in search_providers]
                 
                 for task in asyncio.as_completed(tasks):
                     if cancel_event and cancel_event.is_set():

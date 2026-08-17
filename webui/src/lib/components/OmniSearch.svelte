@@ -15,19 +15,20 @@
   } = $props();
 
   const getPluginName = (id) => {
-    if (!id) return 'Unknown';
-    const idStr = String(id).toLowerCase();
-    const cleanId = idStr.replace(/^echosync\./i, '');
+    if (!id) return '';
+    const idStr = String(id).trim();
+    const cleanId = idStr.toLowerCase().replace(/^echosync\./i, '');
     const allPlugins = Object.values($plugins?.items ?? []);
     const found = allPlugins.find(p => 
-      String(p.id).toLowerCase() === idStr ||
-      String(p.plugin_id) === String(id) ||
-      p.name?.toLowerCase() === idStr ||
+      String(p.id).toLowerCase() === idStr.toLowerCase() ||
+      String(p.plugin_id) === idStr ||
+      p.name?.toLowerCase() === idStr.toLowerCase() ||
       p.name?.toLowerCase().replace(/^echosync\./i, '') === cleanId ||
       String(p.id).toLowerCase().replace(/^echosync\./i, '') === cleanId
     );
-    if (found && found.name) {
-      return found.name.replace(/^echosync\./i, '').toUpperCase();
+    if (found && (found.name || found.id)) {
+      const name = found.name || found.id;
+      return name.replace(/^echosync\./i, '').toUpperCase();
     }
     return cleanId.replace(/_/g, ' ').toUpperCase();
   };
@@ -42,6 +43,11 @@
   let activeIndex = $state(-1);
   let inputRef = $state();
   let activeSearchAbortController = null;
+
+  // ── Floating @ Plugin Menu State ──────────────────────────────────────
+  let showPluginMenu = $state(false);
+  let pluginSuggestions = $state([]);
+  let selectedPluginIndex = $state(0);
 
   function formatDuration(ms) {
     if (!ms) return '-:--';
@@ -212,6 +218,61 @@
     ...results.external.map(r => ({ ...r, type: 'external' }))
   ]);
 
+  // ── Floating @ Plugin Menu Helpers ────────────────────────────────────
+  function updatePluginSuggestions() {
+    if (!inputRef) {
+      showPluginMenu = false;
+      return;
+    }
+    const cursorPos = inputRef.selectionStart ?? query.length;
+    const textBeforeCursor = query.slice(0, cursorPos);
+    const atMatch = textBeforeCursor.match(/(?:^|\s)@([a-zA-Z0-9_\-\.]*)$/);
+    if (atMatch) {
+      const partial = atMatch[1].toLowerCase();
+      const allPlugins = Object.values($plugins?.items ?? []);
+      pluginSuggestions = allPlugins.filter(p => {
+        if (p.disabled || p.enabled === false) return false;
+        const name = (p.name || '').toLowerCase();
+        const id = (p.id || '').toLowerCase();
+        const cleanId = id.replace(/^echosync\./i, '');
+        const cleanName = name.replace(/^echosync\./i, '');
+        return !partial || name.includes(partial) || id.includes(partial) || cleanId.includes(partial) || cleanName.includes(partial);
+      });
+      if (pluginSuggestions.length > 0) {
+        showPluginMenu = true;
+        selectedPluginIndex = 0;
+      } else {
+        showPluginMenu = false;
+      }
+    } else {
+      showPluginMenu = false;
+    }
+  }
+
+  function insertPluginToken(plugin) {
+    const rawName = plugin.name || plugin.id || '';
+    const shortName = rawName.replace(/^echosync\./i, '').toLowerCase();
+    const cursorPos = inputRef?.selectionStart ?? query.length;
+    const textBeforeCursor = query.slice(0, cursorPos);
+    const textAfterCursor = query.slice(cursorPos);
+
+    const newBeforeCursor = textBeforeCursor.replace(/(?:^|\s)@([a-zA-Z0-9_\-\.]*)$/, (match) => {
+      return match.startsWith(' ') ? ` @${shortName} ` : `@${shortName} `;
+    });
+
+    query = newBeforeCursor + textAfterCursor;
+    showPluginMenu = false;
+
+    setTimeout(() => {
+      if (inputRef) {
+        inputRef.focus();
+        const newPos = newBeforeCursor.length;
+        inputRef.setSelectionRange(newPos, newPos);
+      }
+      handleInput();
+    }, 0);
+  }
+
   // ── Token Search Parser ────────────────────────────────────────────────
   function parseInput(rawQuery) {
     let cleanQuery = rawQuery;
@@ -225,22 +286,16 @@
       return { cleanQuery: "", pluginFilter: null, settingsContext: false };
     }
 
-    // 2. Intercept @plugin_name token
-    const pluginMatch = rawQuery.match(/^@([a-zA-Z0-9_\-\.]+)\s*(.*)/);
-    if (pluginMatch) {
-      const pluginCandidate = pluginMatch[1];
-      const allPluginsList = Object.values($plugins?.items ?? []);
-      const isKnown = allPluginsList.some(p => p.name.toLowerCase() === pluginCandidate.toLowerCase() || String(p.id) === pluginCandidate);
-      const common = ['spotify', 'tidal', 'plex', 'jellyfin', 'navidrome', 'slskd', 'soulseek'];
-      
-      if (isKnown || common.includes(pluginCandidate.toLowerCase())) {
-        pluginFilter = pluginCandidate;
-        cleanQuery = pluginMatch[2];
-      }
+    // 2. Global @<target> token extraction anywhere in the query string
+    const tokenRegex = /(?:^|\s)@([a-zA-Z0-9_\-\.]+)(?:\s|$)/;
+    const match = rawQuery.match(tokenRegex);
+    if (match) {
+      pluginFilter = match[1].toLowerCase();
+      cleanQuery = rawQuery.replace(tokenRegex, ' ').trim();
     }
 
     // 3. Intercept #settings token
-    const settingsMatch = rawQuery.match(/^#settings\s*(.*)/);
+    const settingsMatch = cleanQuery.match(/^#settings\s*(.*)/);
     if (settingsMatch) {
       settingsContext = true;
       cleanQuery = settingsMatch[1];
@@ -253,6 +308,7 @@
   function applyPrefix(prefix) {
     query = prefix;
     inputRef?.focus();
+    updatePluginSuggestions();
   }
 
   function handleInput() {
@@ -260,6 +316,8 @@
     clearTimeout(searchTimer);
     activeSearchAbortController?.abort();
     activeSearchAbortController = new AbortController();
+
+    updatePluginSuggestions();
     
     // Keystroke Token Parser
     const { cleanQuery, pluginFilter, settingsContext } = parseInput(evaluatedQuery);
@@ -336,7 +394,7 @@
         clearLibrary();
         results.settings = [];
       }
-      else if (prefix === '?' || pluginFilter) {
+      else if (prefix === '?') {
         // Discovery search: append pluginFilter if token parser detected it
         if (term.trim() || pluginFilter) {
             let url = `/search/discovery?q=${encodeURIComponent(term)}`;
@@ -404,7 +462,7 @@
         results.settings = [];
       }
       else {
-        if (term.trim()) {
+        if (term.trim() || pluginFilter) {
             const csrfToken = getCookie('echo_csrf');
             const headers = {};
             if (csrfToken) {
@@ -414,7 +472,10 @@
             clearLibrary();
             results.external = [];
 
-            const searchUrl = `${API_BASE_URL}/core/search/?q=${encodeURIComponent(term)}&types=tracks,albums,artists`;
+            let searchUrl = `${API_BASE_URL}/core/search/?q=${encodeURIComponent(term)}&types=tracks,albums,artists`;
+            if (pluginFilter) {
+                searchUrl += `&plugins=${encodeURIComponent(pluginFilter)}`;
+            }
             const response = await fetch(searchUrl, {
                 headers,
                 signal
@@ -485,6 +546,28 @@
 
   // ── Keyboard / Select Handlers ────────────────────────────────────────
   function handleKeydown(e) {
+    if (showPluginMenu && pluginSuggestions.length > 0) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        selectedPluginIndex = (selectedPluginIndex + 1) % pluginSuggestions.length;
+        return;
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        selectedPluginIndex = (selectedPluginIndex - 1 + pluginSuggestions.length) % pluginSuggestions.length;
+        return;
+      } else if (e.key === 'Enter' || e.key === 'Tab') {
+        e.preventDefault();
+        if (selectedPluginIndex >= 0 && selectedPluginIndex < pluginSuggestions.length) {
+          insertPluginToken(pluginSuggestions[selectedPluginIndex]);
+        }
+        return;
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        showPluginMenu = false;
+        return;
+      }
+    }
+
     if (e.key === 'Escape') {
       if (!inline && mode === 'modal') {
         closeModal();
@@ -502,7 +585,8 @@
       if (activeIndex >= 0 && activeIndex < flattenedResults.length) {
         handleSelect(flattenedResults[activeIndex], flattenedResults[activeIndex].type);
       } else if (inline) {
-        performSearch();
+        const { cleanQuery, pluginFilter } = parseInput(evaluatedQuery);
+        performSearch(cleanQuery, pluginFilter);
       }
     }
   }
@@ -631,6 +715,8 @@
           bind:value={query}
           on:input={handleInput}
           on:keydown={handleKeydown}
+          on:click={updatePluginSuggestions}
+          on:keyup={updatePluginSuggestions}
           placeholder="Search for tracks, albums, or plugins..."
           class="hero-search-input"
           autocomplete="off"
@@ -654,10 +740,33 @@
         {:else}
           <button
             class="search-submit-btn"
-            on:click={() => performSearch()}
+            on:click={() => {
+              const { cleanQuery, pluginFilter } = parseInput(evaluatedQuery);
+              performSearch(cleanQuery, pluginFilter);
+            }}
           >
             Search
           </button>
+        {/if}
+
+        {#if showPluginMenu && pluginSuggestions.length > 0}
+          <div class="plugin-autocomplete-menu">
+            <div class="menu-header">Available Providers</div>
+            {#each pluginSuggestions as plugin, idx}
+              <button
+                type="button"
+                class="plugin-menu-item"
+                class:selected={idx === selectedPluginIndex}
+                on:mousedown|preventDefault={() => insertPluginToken(plugin)}
+              >
+                <span class="plugin-token-badge">@{ (plugin.name || plugin.id).replace(/^echosync\./i, '').toLowerCase() }</span>
+                <span class="plugin-menu-name">{ plugin.name || plugin.id }</span>
+                {#if plugin.description}
+                  <span class="plugin-menu-desc">{plugin.description}</span>
+                {/if}
+              </button>
+            {/each}
+          </div>
         {/if}
       </div>
 
@@ -842,6 +951,8 @@
                 bind:value={query}
                 on:input={handleInput}
                 on:keydown={handleKeydown}
+                on:click={updatePluginSuggestions}
+                on:keyup={updatePluginSuggestions}
                 type="text" 
                 placeholder="Search library, settings, plugins... (Esc to close)"
                 class="w-full pl-14 pr-14 py-3 text-lg bg-transparent text-white focus:outline-none transition-all placeholder:text-muted/60"
@@ -860,6 +971,26 @@
                   <div class="w-5 h-5 border-2 border-white/10 border-t-accent rounded-full animate-spin"></div>
                 {/if}
               </div>
+
+              {#if showPluginMenu && pluginSuggestions.length > 0}
+                <div class="plugin-autocomplete-menu modal-menu">
+                  <div class="menu-header">Available Providers</div>
+                  {#each pluginSuggestions as plugin, idx}
+                    <button
+                      type="button"
+                      class="plugin-menu-item"
+                      class:selected={idx === selectedPluginIndex}
+                      on:mousedown|preventDefault={() => insertPluginToken(plugin)}
+                    >
+                      <span class="plugin-token-badge">@{ (plugin.name || plugin.id).replace(/^echosync\./i, '').toLowerCase() }</span>
+                      <span class="plugin-menu-name">{ plugin.name || plugin.id }</span>
+                      {#if plugin.description}
+                        <span class="plugin-menu-desc">{plugin.description}</span>
+                      {/if}
+                    </button>
+                  {/each}
+                </div>
+              {/if}
             </div>
 
             <div class="max-h-[60vh] overflow-y-auto pb-2 custom-scrollbar">
@@ -1526,6 +1657,86 @@
   .active-item { background: rgba(255, 255, 255, 0.08) !important; }
   .active-border { border-color: var(--accent) !important; box-shadow: 0 0 10px rgba(15, 239, 136, 0.2); }
   .active-text { color: var(--accent) !important; }
+
+  .plugin-autocomplete-menu {
+    position: absolute;
+    top: calc(100% + 8px);
+    left: 0;
+    right: 0;
+    max-height: 260px;
+    overflow-y: auto;
+    background: rgba(18, 20, 29, 0.96);
+    backdrop-filter: blur(16px);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 12px;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.6);
+    z-index: 100;
+    padding: 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .plugin-autocomplete-menu.modal-menu {
+    left: 16px;
+    right: 16px;
+    top: calc(100% + 4px);
+  }
+
+  .menu-header {
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: rgba(255, 255, 255, 0.45);
+    padding: 6px 10px 4px 10px;
+  }
+
+  .plugin-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    border-radius: 8px;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    text-align: left;
+    transition: background 0.15s ease;
+    width: 100%;
+  }
+
+  .plugin-menu-item:hover,
+  .plugin-menu-item.selected {
+    background: rgba(255, 255, 255, 0.1);
+  }
+
+  .plugin-token-badge {
+    font-family: monospace;
+    font-size: 0.8rem;
+    font-weight: 600;
+    background: rgba(99, 102, 241, 0.2);
+    color: #a5b4fc;
+    border: 1px solid rgba(99, 102, 241, 0.35);
+    padding: 2px 8px;
+    border-radius: 6px;
+  }
+
+  .plugin-menu-name {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: #f1f5f9;
+  }
+
+  .plugin-menu-desc {
+    font-size: 0.75rem;
+    color: rgba(255, 255, 255, 0.45);
+    margin-left: auto;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 250px;
+  }
 
   @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
   @keyframes zoomIn { from { transform: scale(0.95); opacity: 0; } to { transform: scale(1); opacity: 1; } }

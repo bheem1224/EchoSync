@@ -1,0 +1,32 @@
+{
+  "output": {
+    "filePath": "repomix-output.xml",
+    "style": "xml",
+    "removeComments": true,
+    "removeEmptyLines": true,
+    "showLineNumbers": false,
+    "calculateTokens": true
+  },
+  "include": [
+    "core/**",
+    "plugins/**",
+    "tests/**",
+    "webui/**",
+    "web/**",
+    "api/**",
+    "database/**",
+    "src/**",
+    "services/**",
+    "utils/**",
+    "migrations/**"
+  ],
+  "ignore": {
+    "customPatterns": [
+      "**/node_modules/**",
+      "**/.git/**",
+      "**/__pycache__/**",
+      "**/*.svelte",
+      "graphify-out/**"
+    ]
+  }
+}
