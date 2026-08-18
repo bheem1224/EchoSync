@@ -57,7 +57,7 @@
       "hooks": [],
       "min_echosync_version": "2.4.0",
       "ui_manifest": "ui_manifest.json",
-      "beta_version": "2.4.3-beta.101",
+      "beta_version": "2.4.3-beta.102",
       "plugin_id": "slskd",
       "source_url": "https://github.com/bheem1224/EchoSync/tree/main/plugins/EchoSync/slskd",
       "download_url": "https://raw.githubusercontent.com/bheem1224/EchoSync/main/plugins/EchoSync/slskd/releases/v2.4.2.zip",
