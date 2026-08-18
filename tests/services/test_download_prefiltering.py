@@ -81,10 +81,12 @@ class TestDownloadManagerQualityProfileForwarding:
         assert captured["quality_profile"] == quality_profile
 
 
-class TestDownloadManagerPrefilterBypass:
+class TestDownloadManagerMatchingAndFallback:
     @pytest.mark.asyncio
-    async def test_execute_waterfall_search_skips_matcher_for_prefiltered_provider(self):
+    async def test_execute_waterfall_search_scores_via_matching_engine(self):
         manager = object.__new__(DownloadManager)
+        manager._deduplicate_candidates = lambda cands: cands
+        manager._enrich_candidate_metadata = lambda c: c
 
         target_track = EchosyncTrack(
             raw_title="Song",
@@ -119,6 +121,7 @@ class TestDownloadManagerPrefilterBypass:
                 return False
 
         manager.work_db = SimpleNamespace(session_scope=lambda: FakeSessionScope(queued_download))
+        manager._track_exists_in_library = lambda *args, **kwargs: False
         manager._get_quality_profile = lambda requested_profile_id: {
             "formats": [{"type": "flac", "priority": 1, "min_bitrate": 320}],
             "prefer_larger_files": True,
@@ -130,7 +133,16 @@ class TestDownloadManagerPrefilterBypass:
         ]
         manager._get_priority_tiers = lambda profile: [(1, ["flac"])]
         manager._filter_by_formats = lambda candidates, formats: candidates
-        manager._get_matching_engine = lambda: (_ for _ in ()).throw(AssertionError("matcher should not be used"))
+
+        class FakeMatchResult:
+            def __init__(self, score):
+                self.confidence_score = score
+
+        class FakeMatcher:
+            def calculate_match(self, target, candidate):
+                return FakeMatchResult(95.0)
+
+        manager._get_matching_engine = lambda profile=None: FakeMatcher()
 
         status_updates = []
         manager._update_status = lambda download_id, status, provider_id=None: status_updates.append((download_id, status, provider_id))
@@ -160,9 +172,8 @@ class TestDownloadManagerPrefilterBypass:
 
         manager._invoke_provider_search = fake_search
 
-        class PrefilterProvider:
+        class Provider:
             name = "slskd"
-            supports_pre_filtering = True
 
             async def _async_download(self, username, filename, size):
                 assert username == "peerA"
@@ -170,8 +181,127 @@ class TestDownloadManagerPrefilterBypass:
                 assert size == 50_000_000
                 return "provider-download-id"
 
-        provider = PrefilterProvider()
+        provider = Provider()
 
         await manager._execute_waterfall_search_and_download(42, [provider])
 
         assert status_updates == [(42, "downloading", "provider-download-id")]
+
+    @pytest.mark.asyncio
+    async def test_execute_waterfall_search_falls_back_to_second_candidate(self):
+        manager = object.__new__(DownloadManager)
+        manager._deduplicate_candidates = lambda cands: cands
+        manager._enrich_candidate_metadata = lambda c: c
+
+        target_track = EchosyncTrack(
+            raw_title="Song",
+            artist_name="Artist",
+            album_title="Album",
+            duration=180000,
+        )
+        queued_download = SimpleNamespace(echo_sync_track=target_track.to_dict())
+
+        class FakeQuery:
+            def __init__(self, item):
+                self._item = item
+
+            def get(self, _download_id):
+                return self._item
+
+        class FakeSession:
+            def __init__(self, item):
+                self._item = item
+
+            def query(self, _model):
+                return FakeQuery(self._item)
+
+        class FakeSessionScope:
+            def __init__(self, item):
+                self._item = item
+
+            def __enter__(self):
+                return FakeSession(self._item)
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        manager.work_db = SimpleNamespace(session_scope=lambda: FakeSessionScope(queued_download))
+        manager._track_exists_in_library = lambda *args, **kwargs: False
+        manager._get_quality_profile = lambda requested_profile_id: {
+            "formats": [{"type": "flac", "priority": 1, "min_bitrate": 320}],
+            "prefer_larger_files": True,
+        }
+        manager._extract_allowed_formats = lambda profile: ["flac"]
+        manager._get_min_bitrate = lambda profile: 320
+        manager._generate_search_strategies = lambda track, tolerance: [
+            {"query": "Artist Song", "duration_tolerance_ms": tolerance, "name": "artist+title"}
+        ]
+        manager._get_priority_tiers = lambda profile: [(1, ["flac"])]
+        manager._filter_by_formats = lambda candidates, formats: candidates
+
+        class FakeMatchResult:
+            def __init__(self, score):
+                self.confidence_score = score
+
+        class FakeMatcher:
+            def calculate_match(self, target, candidate):
+                # Give peerA higher score (95) and peerB lower score (85)
+                score = 95.0 if candidate.identifiers["username"] == "peerA" else 85.0
+                return FakeMatchResult(score)
+
+        manager._get_matching_engine = lambda profile=None: FakeMatcher()
+
+        status_updates = []
+        manager._update_status = lambda download_id, status, provider_id=None: status_updates.append((download_id, status, provider_id))
+
+        from core.db.echo_sync_track import EchosyncMedia
+        candidateA = EchosyncTrack(
+            raw_title="Song A",
+            artist_name="Artist",
+            album_title="Album",
+            quality_tags="flac",
+            media=[EchosyncMedia(file_format="flac", bitrate=1000, file_size_bytes=50_000_000)],
+        )
+        candidateA.identifiers["username"] = "peerA"
+        candidateA.identifiers["plugin_item_id"] = "Artist/Album/01 - Song A.flac"
+        candidateA.identifiers["size"] = 50_000_000
+
+        candidateB = EchosyncTrack(
+            raw_title="Song B",
+            artist_name="Artist",
+            album_title="Album",
+            quality_tags="flac",
+            media=[EchosyncMedia(file_format="flac", bitrate=1000, file_size_bytes=45_000_000)],
+        )
+        candidateB.identifiers["username"] = "peerB"
+        candidateB.identifiers["plugin_item_id"] = "Artist/Album/01 - Song B.flac"
+        candidateB.identifiers["size"] = 45_000_000
+
+        async def fake_search(
+            provider, query, strategy_filters, quality_profile,
+            target_track=None, strategy_name="", perfect_match_threshold=90,
+            includes=None, excludes=None,
+        ):
+            return [candidateA, candidateB], False
+
+        manager._invoke_provider_search = fake_search
+
+        attempted_downloads = []
+
+        class Provider:
+            name = "slskd"
+
+            async def _async_download(self, username, filename, size):
+                attempted_downloads.append(username)
+                if username == "peerA":
+                    # Simulate peer connection failure on the top candidate
+                    raise ConnectionError("Peer offline")
+                return "fallback-download-id"
+
+        provider = Provider()
+
+        await manager._execute_waterfall_search_and_download(42, [provider])
+
+        # Verify peerA was tried first, then fell back to peerB successfully
+        assert attempted_downloads == ["peerA", "peerB"]
+        assert status_updates == [(42, "downloading", "fallback-download-id")]

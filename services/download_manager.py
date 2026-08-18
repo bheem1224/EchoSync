@@ -681,10 +681,7 @@ class DownloadManager:
             # ============================================================================
             # WATERFALL PROVIDER SEARCH
             # ============================================================================
-            # Track best candidate across all providers
-            best_candidate = None
-            best_score = 0.0
-            winning_provider_name = None
+            scored_candidates: List[Tuple[EchosyncTrack, float, PluginBase]] = []
             perfect_match_threshold = 90  # Score >= 90 triggers immediate break
 
             # Iterate through providers in priority order
@@ -761,9 +758,11 @@ class DownloadManager:
                         enriched_results = [self._enrich_candidate_metadata(c) for c in search_results]
                         provider_candidates.extend(enriched_results)
 
+                matcher = self._get_matching_engine(quality_profile)
+
                 # ── Fast-path: sniper winner bypasses full dedup + scoring ────────────
                 if sniper_winner is not None:
-                    match_result = self._get_matching_engine(quality_profile).calculate_match(
+                    match_result = matcher.calculate_match(
                         target_track, sniper_winner
                     )
                     provider_best_candidate = sniper_winner
@@ -772,16 +771,11 @@ class DownloadManager:
                         f"  Sniper winner confirmed: score={provider_best_score:.1f} "
                         f"from {provider.name}"
                     )
+                    if provider_best_score >= 70.0:
+                        scored_candidates.append((provider_best_candidate, provider_best_score, provider))
                     if provider_best_score >= perfect_match_threshold:
-                        best_candidate = provider_best_candidate
-                        best_score = provider_best_score
-                        winning_provider_name = provider.name
                         break  # Exit provider loop — perfect match secured
-                    if provider_best_score > best_score:
-                        best_candidate = provider_best_candidate
-                        best_score = provider_best_score
-                        winning_provider_name = provider.name
-                    continue  # Skip the slow scoring path below
+                    continue
 
                 # ── Slow-path: deduplicate + full priority-tier scoring ────────────────
                 # Deduplicate candidates for this provider
@@ -792,13 +786,10 @@ class DownloadManager:
                     logger.info(f"  No candidates found on {provider.name}, trying next provider...")
                     continue
 
-                # Run matching engine on this provider's candidates
-                # Quality Profile Cascading - Try each priority tier
+                # Run matching engine on this provider's candidates across priority tiers
                 priority_tiers = self._get_priority_tiers(quality_profile)
-                provider_best_candidate = None
-                provider_best_score = 0.0
-                prefer_larger_files = bool(quality_profile and quality_profile.get('prefer_larger_files'))
-                
+                provider_tier_candidates: List[Tuple[EchosyncTrack, float, PluginBase]] = []
+
                 for priority_num, priority_formats in priority_tiers:
                     # Filter by priority formats
                     tier_candidates = self._filter_by_formats(provider_candidates, priority_formats)
@@ -807,133 +798,124 @@ class DownloadManager:
                     if not tier_candidates:
                         continue
 
-                    # Check granular capabilities instead of legacy boolean
-                    caps = getattr(provider, 'capabilities', None)
-                    pre_filters = getattr(caps, 'pre_filters', []) if caps else []
-                    has_pre_filter = getattr(provider, 'supports_pre_filtering', False) or len(pre_filters) > 0
-
-                    if has_pre_filter:
-                        # Verify the provider actually supports the filters needed for quality profile
-                        missing_filters = [
-                            f for f in ['format', 'bitrate'] 
-                            if quality_profile and quality_profile.get(f"preferred_{f}") and f not in pre_filters
-                        ] if pre_filters else []
-                        
-                        if not missing_filters:
-                            provider_best_candidate = self._select_prefiltered_candidate(
-                                tier_candidates,
-                                prefer_larger_files,
-                            )
-                            if provider_best_candidate:
-                                provider_best_score = float(perfect_match_threshold)
-                                logger.info(
-                                    f"    Prefilter bypass on {provider.name}: selected candidate from priority {priority_num} without deep matching"
-                                )
-                                break
-                    
-                    # Get matching engine and score candidates
-                    matcher = self._get_matching_engine(quality_profile)
-                    candidate = matcher.select_best_download_candidate(target_track, tier_candidates)
-                    
-                    if candidate:
-                        # We need to get the score from the matching engine
-                        # Since select_best_download_candidate doesn't return score,
-                        # we calculate it here
+                    # Score candidates via WeightedMatchingEngine (no pre-filter bypass)
+                    for candidate in tier_candidates:
                         match_result = matcher.calculate_match(target_track, candidate)
-                        provider_best_score = match_result.confidence_score
-                        provider_best_candidate = candidate
-                        logger.info(f"    Got match on priority {priority_num}: score={provider_best_score:.1f}")
-                        break
+                        if match_result.confidence_score >= 70.0:
+                            provider_tier_candidates.append((candidate, match_result.confidence_score, provider))
 
-                if provider_best_candidate and provider_best_score > 0:
-                    logger.info(f"  Best match from {provider.name}: score={provider_best_score:.1f}")
-                    
+                    if provider_tier_candidates:
+                        provider_tier_candidates.sort(key=lambda x: x[1], reverse=True)
+                        best_tier_cand, best_tier_score, _ = provider_tier_candidates[0]
+                        logger.info(
+                            f"    Got {len(provider_tier_candidates)} matching candidate(s) in priority {priority_num} "
+                            f"(best score: {best_tier_score:.1f})"
+                        )
+                        break  # Found matches in highest available quality tier
+
+                if provider_tier_candidates:
+                    scored_candidates.extend(provider_tier_candidates)
+                    best_provider_score = provider_tier_candidates[0][1]
+                    logger.info(f"  Best match from {provider.name}: score={best_provider_score:.1f}")
+
                     # Check if this is a perfect match (>= 90)
-                    if provider_best_score >= perfect_match_threshold:
-                        logger.info(f"  ✓ PERFECT MATCH from {provider.name} (score {provider_best_score:.1f} >= {perfect_match_threshold})")
-                        best_candidate = provider_best_candidate
-                        best_score = provider_best_score
-                        winning_provider_name = provider.name
-                        break  # Exit provider loop - we have a perfect match
-                    
-                    # Track best candidate across all providers for fallback
-                    if provider_best_score > best_score:
-                        logger.info(f"  New best candidate: {provider.name} (score {provider_best_score:.1f})")
-                        best_candidate = provider_best_candidate
-                        best_score = provider_best_score
-                        winning_provider_name = provider.name
+                    if best_provider_score >= perfect_match_threshold:
+                        logger.info(
+                            f"  ✓ PERFECT MATCH from {provider.name} "
+                            f"(score {best_provider_score:.1f} >= {perfect_match_threshold})"
+                        )
+                        break  # Exit provider loop - perfect match secured
                 else:
                     logger.info(f"  No acceptable match from {provider.name}")
                     continue
 
             # ============================================================================
-            # DOWNLOAD BEST CANDIDATE
+            # DOWNLOAD CANDIDATE (WITH PEER ENQUEUE FALLBACK RESILIENCE)
             # ============================================================================
-            if not best_candidate:
-                logger.warning(f"No suitable candidate matched across all {len(providers)} providers")
+            # Deduplicate scored_candidates by (provider.name, filename) and sort descending by score
+            unique_candidates: List[Tuple[EchosyncTrack, float, PluginBase]] = []
+            seen_cand_keys = set()
+            for cand, score, prov in sorted(scored_candidates, key=lambda x: x[1], reverse=True):
+                fname = cand.identifiers.get('provider_item_id') or cand.identifiers.get('plugin_item_id')
+                ckey = (prov.name, fname)
+                if ckey not in seen_cand_keys:
+                    seen_cand_keys.add(ckey)
+                    unique_candidates.append((cand, score, prov))
+
+            if not unique_candidates:
+                logger.warning(f"No suitable candidate matched across all {len(providers)} providers (min score: 70%)")
                 self._update_status(download_id, "failed_no_match")
                 return
 
-            logger.info("**PROCEEDING WITH DOWNLOAD**")
-            logger.info(f"  Track: {target_track.artist_name} - {target_track.title}")
-            logger.info(f"  Provider: {winning_provider_name}")
-            logger.info(f"  Match Score: {best_score:.1f}")
+            logger.info(
+                f"**PROCEEDING WITH DOWNLOAD EVALUATION** "
+                f"({len(unique_candidates)} qualifying candidate(s) >= 70%)"
+            )
 
-            # Extract download parameters
-            username = best_candidate.identifiers.get('username')
-            filename = best_candidate.identifiers.get('provider_item_id') or best_candidate.identifiers.get('plugin_item_id')
-            size = best_candidate.identifiers.get('size')
-            
-            if not username:
-                logger.error("Cannot download: no username in candidate identifiers")
-                self._update_status(download_id, "failed_no_username")
-                return
-            
-            if not filename:
-                logger.error("Cannot download: no filename in candidate identifiers")
-                self._update_status(download_id, "failed_no_filename")
-                return
+            download_started = False
+            for cand_idx, (candidate, score, download_provider) in enumerate(unique_candidates):
+                username = candidate.identifiers.get('username') or "unknown"
+                filename = candidate.identifiers.get('provider_item_id') or candidate.identifiers.get('plugin_item_id')
+                size = candidate.identifiers.get('size') or 0
 
-            # Find the provider instance to use for download
-            download_provider = None
-            for provider in providers:
-                if provider.name.lower() == winning_provider_name.lower():
-                    download_provider = provider
-                    break
-            
-            if not download_provider:
-                logger.error(f"Cannot find provider instance for {winning_provider_name}")
-                self._update_status(download_id, "failed_no_provider")
-                return
+                logger.info(
+                    f"\nAttempting download (candidate {cand_idx + 1}/{len(unique_candidates)}):\n"
+                    f"  Track: {target_track.artist_name} - {target_track.title}\n"
+                    f"  Provider: {download_provider.name} | User: {username}\n"
+                    f"  Match Score: {score:.1f}"
+                )
 
-            # Execute download on the winning provider
-            provider_id = None
-            try:
+                if not filename:
+                    logger.warning(
+                        f"Candidate {cand_idx + 1} from user '{username}' has no filename in candidate identifiers. "
+                        f"Falling back to next best candidate."
+                    )
+                    continue
+
+                provider_id = None
                 try:
                     from core.hook_manager import hook_manager
-                    plugin_decision = hook_manager.apply_filters('BEFORE_DOWNLOAD_START', None, target_track=target_track.to_dict(), candidate=best_candidate.to_dict(), provider=winning_provider_name)
+                    plugin_decision = hook_manager.apply_filters(
+                        'BEFORE_DOWNLOAD_START',
+                        None,
+                        target_track=target_track.to_dict(),
+                        candidate=candidate.to_dict(),
+                        provider=download_provider.name
+                    )
                     if plugin_decision == "ABORT":
-                        logger.warning(f"Plugin aborted download for: {best_candidate.title} on {winning_provider_name}")
-                        self._update_status(download_id, "failed_start_download")
-                        return
+                        logger.warning(
+                            f"Plugin aborted download for: {candidate.title} on {download_provider.name}. "
+                            f"Falling back to next best candidate."
+                        )
+                        continue
+
+                    if hasattr(download_provider, '_async_download'):
+                        provider_id = await download_provider._async_download(username, filename, size)
+                    else:
+                        loop = asyncio.get_running_loop()
+                        provider_id = await loop.run_in_executor(
+                            None, download_provider.download, username, filename, size
+                        )
                 except Exception as e:
-                    logger.error(f"Error in BEFORE_DOWNLOAD_START hook: {e}")
+                    logger.warning(
+                        f"Failed to enqueue candidate from user '{username}': {e}. "
+                        f"Falling back to next best candidate."
+                    )
+                    continue
 
-                if hasattr(download_provider, '_async_download'):
-                    provider_id = await download_provider._async_download(username, filename, size)
+                if provider_id:
+                    logger.info(f"DownloadQueue started: {provider_id}")
+                    self._update_status(download_id, "downloading", provider_id)
+                    download_started = True
+                    break
                 else:
-                    loop = asyncio.get_running_loop()
-                    provider_id = await loop.run_in_executor(None, download_provider.download, username, filename, size)
-            except Exception as e:
-                logger.error(f"Error initiating download on {winning_provider_name}: {e}")
-                self._update_status(download_id, "failed_start_download")
-                return
+                    logger.warning(
+                        f"Failed to enqueue candidate from user '{username}'. "
+                        f"Falling back to next best candidate."
+                    )
 
-            if provider_id:
-                logger.info(f"DownloadQueue started: {provider_id}")
-                self._update_status(download_id, "downloading", provider_id)
-            else:
-                logger.error(f"DownloadQueue provider {winning_provider_name} returned no provider_id")
+            if not download_started:
+                logger.error(f"All candidate download attempts failed for download {download_id}")
                 self._update_status(download_id, "failed_start_download")
 
         except Exception as e:
