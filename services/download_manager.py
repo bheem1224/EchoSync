@@ -639,6 +639,8 @@ class DownloadManager:
                 return
             # Reconstruct from stored JSON to preserve all metadata
             target_track = EchosyncTrack.from_dict(download.echo_sync_track)
+            raw_track_dict = download.echo_sync_track if isinstance(download.echo_sync_track, dict) else {}
+            blacklisted_candidates = set(raw_track_dict.get('blacklisted_candidates') or [])
 
         if not target_track:
             logger.error(f"Failed to deserialize track for download {download_id}")
@@ -763,17 +765,32 @@ class DownloadManager:
                     logger.info(f"    Strategy {strategy_idx} returned {len(search_results)} candidates")
 
                     if sniper_hit and search_results:
-                        # A perfect-score candidate was found inside the variant loop.
-                        # Bypass all remaining strategies for this provider.
-                        logger.info(
-                            f"  \u26a1 SNIPER HIT at strategy {strategy_idx} [{strategy_name}] "
-                            f"\u2014 short-circuiting remaining strategies."
-                        )
-                        sniper_winner = self._enrich_candidate_metadata(search_results[0])
-                        break
+                        first_cand = search_results[0]
+                        pid = first_cand.identifiers.get('plugin_item_id') or first_cand.identifiers.get('provider_item_id')
+                        username = first_cand.identifiers.get('username')
+                        comp_id = f"{username}|{pid}" if username and pid else None
+                        if (pid and pid in blacklisted_candidates) or (comp_id and comp_id in blacklisted_candidates):
+                            logger.info(f"    Sniper hit candidate '{pid}' is blacklisted; ignoring sniper bypass.")
+                            sniper_hit = False
+                        else:
+                            logger.info(
+                                f"  ⚡ SNIPER HIT at strategy {strategy_idx} [{strategy_name}] "
+                                f"— short-circuiting remaining strategies."
+                            )
+                            sniper_winner = self._enrich_candidate_metadata(first_cand)
+                            break
 
                     if search_results:
-                        enriched_results = [self._enrich_candidate_metadata(c) for c in search_results]
+                        valid_results = []
+                        for c in search_results:
+                            pid = c.identifiers.get('plugin_item_id') or c.identifiers.get('provider_item_id')
+                            username = c.identifiers.get('username')
+                            comp_id = f"{username}|{pid}" if username and pid else None
+                            if (pid and pid in blacklisted_candidates) or (comp_id and comp_id in blacklisted_candidates):
+                                logger.info(f"    Skipping blacklisted candidate '{pid}' from user '{username}'")
+                                continue
+                            valid_results.append(c)
+                        enriched_results = [self._enrich_candidate_metadata(c) for c in valid_results]
                         provider_candidates.extend(enriched_results)
 
                 matcher = self._get_matching_engine(quality_profile)
@@ -875,6 +892,11 @@ class DownloadManager:
                 username = candidate.identifiers.get('username') or "unknown"
                 filename = candidate.identifiers.get('provider_item_id') or candidate.identifiers.get('plugin_item_id')
                 size = candidate.identifiers.get('size') or 0
+                compound_id = f"{username}|{filename}"
+
+                if (filename and filename in blacklisted_candidates) or (compound_id in blacklisted_candidates):
+                    logger.info(f"Skipping blacklisted candidate {cand_idx + 1} from user '{username}': {filename}")
+                    continue
 
                 logger.info(
                     f"\nAttempting download (candidate {cand_idx + 1}/{len(unique_candidates)}):\n"
@@ -1025,18 +1047,73 @@ class DownloadManager:
 
                         logger.info(f"Download {db_id} completed via {found_provider}. Auto-pruning record from database.")
                         self._remove_from_queue(db_id)
+                    elif new_status == "failed":
+                        logger.warning(
+                            f"Download {db_id} transfer errored/rejected on {found_provider or 'provider'} "
+                            f"(ID: {provider_id}). Cancelling remote transfer and falling back to next candidate."
+                        )
+                        # Cancel remote transfer
+                        active_prov = next((p for p in providers if p.name == found_provider), providers[0])
+                        if hasattr(active_prov, '_async_cancel_download'):
+                            try:
+                                await active_prov._async_cancel_download(provider_id)
+                            except Exception as ce:
+                                logger.debug(f"Failed to cancel remote transfer {provider_id}: {ce}")
+
+                        with self.work_db.session_scope() as session:
+                            item = session.query(DownloadQueue).filter(DownloadQueue.id == db_id).first()
+                            if item:
+                                track_dict = dict(item.echo_sync_track or {})
+                                blacklist = list(track_dict.get('blacklisted_candidates') or [])
+                                if provider_id and provider_id not in blacklist:
+                                    blacklist.append(provider_id)
+                                    if '|' in provider_id:
+                                        _, fname = provider_id.split('|', 1)
+                                        if fname not in blacklist:
+                                            blacklist.append(fname)
+                                track_dict['blacklisted_candidates'] = blacklist
+                                item.echo_sync_track = track_dict
+                                item.status = "searching"
+                                item.provider_id = None
+                                item.updated_at = utc_now()
+                                session.commit()
+
+                        asyncio.create_task(self._execute_waterfall_search_and_download(db_id, providers))
                     else:
                         self._update_status(db_id, new_status, provider_id, speed, progress)
                         if new_status != "downloading":
                             logger.info(f"DownloadQueue {db_id} (Provider {found_provider}, ID {provider_id}) finished with status: {new_status}")
                 else:
-                    logger.info(f"DownloadQueue {db_id} not found in any active provider transfers - marking as completed and pruning")
-                    try:
-                        from core.hook_manager import hook_manager
-                        hook_manager.apply_filters('ON_DOWNLOAD_COMPLETED', None, download_id=db_id, provider_id=provider_id)
-                    except Exception as e:
-                        logger.error(f"Error in ON_DOWNLOAD_COMPLETED hook: {e}")
-                    self._remove_from_queue(db_id)
+                    logger.warning(
+                        f"DownloadQueue {db_id} not found in active transfers (disappeared) - "
+                        f"treating as failed, cleaning remote state, and falling back to next candidate."
+                    )
+                    for prov in providers:
+                        if hasattr(prov, '_async_cancel_download'):
+                            try:
+                                await prov._async_cancel_download(provider_id)
+                            except Exception:
+                                pass
+
+                    with self.work_db.session_scope() as session:
+                        item = session.query(DownloadQueue).filter(DownloadQueue.id == db_id).first()
+                        if item:
+                            track_dict = dict(item.echo_sync_track or {})
+                            blacklist = list(track_dict.get('blacklisted_candidates') or [])
+                            if provider_id and provider_id not in blacklist:
+                                blacklist.append(provider_id)
+                                if '|' in provider_id:
+                                    _, fname = provider_id.split('|', 1)
+                                    if fname not in blacklist:
+                                        blacklist.append(fname)
+                            track_dict['blacklisted_candidates'] = blacklist
+                            item.echo_sync_track = track_dict
+                            item.status = "searching"
+                            item.provider_id = None
+                            item.updated_at = utc_now()
+                            session.commit()
+
+                    asyncio.create_task(self._execute_waterfall_search_and_download(db_id, providers))
 
             except Exception as e:
                 logger.error(f"Error checking status for {db_id}: {e}")

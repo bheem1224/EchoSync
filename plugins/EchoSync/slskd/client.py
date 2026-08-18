@@ -841,17 +841,19 @@ class SlskdProvider(DownloaderProvider):
                                     file_filename = file_data.get('filename', '')
                                     # Match by filename
                                     if file_filename == filename:
-                                        # Map slskd status to our status
-                                        state = file_data.get('state', '').lower()
+                                        # Map slskd composite status to our status
+                                        state_lower = file_data.get('state', '').lower()
                                         status = "unknown"
-                                        if state in ['completed', 'succeeded', 'finished']:
-                                            status = "complete"
-                                        elif state in ['queued', 'initializing']:
-                                            status = "queued"
-                                        elif state in ['downloading', 'transferring']:
-                                            status = "downloading"
-                                        elif state in ['failed', 'error', 'aborted', 'cancelled']:
-                                            status = "failed"
+                                        if 'succeeded' in state_lower or 'finished' in state_lower:
+                                            status = 'complete'
+                                        elif any(x in state_lower for x in ['error', 'reject', 'abort', 'cancel', 'timedout', 'failed']):
+                                            status = 'failed'
+                                        elif 'queued' in state_lower or 'initializing' in state_lower:
+                                            status = 'queued'
+                                        elif 'downloading' in state_lower or 'transferring' in state_lower or 'inprogress' in state_lower:
+                                            status = 'downloading'
+                                        elif 'completed' in state_lower:
+                                            status = 'complete'
                                         
                                         return {
                                             'id': download_id,
@@ -872,7 +874,59 @@ class SlskdProvider(DownloaderProvider):
             logger.error(f"Error getting download status: {e}")
             return None
 
+    async def _async_cancel_download(self, provider_id: str) -> bool:
+        """Cancel/delete an active or queued download transfer from slskd."""
+        if not self.base_url or not provider_id:
+            return False
+
+        try:
+            if '|' not in provider_id:
+                return False
+
+            username, filename = provider_id.split('|', 1)
+
+            # Query downloads to find file transfer id if available, or delete by username
+            all_downloads = await self._make_request('GET', 'transfers/downloads')
+            file_id = None
+            if all_downloads and isinstance(all_downloads, dict):
+                user_data = all_downloads.get(username, {})
+                if isinstance(user_data, dict):
+                    for directory in user_data.get('directories', []):
+                        if isinstance(directory, dict):
+                            for file_data in directory.get('files', []):
+                                if isinstance(file_data, dict) and file_data.get('filename') == filename:
+                                    file_id = file_data.get('id')
+                                    break
+
+            if file_id:
+                try:
+                    await self._make_request('DELETE', f'transfers/downloads/{username}/{file_id}')
+                    logger.info(f"Cancelled slskd download for user '{username}', file ID {file_id}")
+                    return True
+                except Exception:
+                    pass
+
+            # Fallback delete by username
+            await self._make_request('DELETE', f'transfers/downloads/{username}')
+            logger.info(f"Cleared slskd downloads for user '{username}'")
+            return True
+        except Exception as e:
+            logger.warning(f"Failed to cancel slskd download '{provider_id}': {e}")
+            return False
+
     # Public Sync Wrappers for Provider Interface
+
+    def cancel_download(self, download_id: str) -> bool:
+        """Synchronous wrapper for cancel_download"""
+        try:
+            loop = asyncio.new_event_loop()
+            try:
+                return loop.run_until_complete(self._async_cancel_download(download_id))
+            finally:
+                loop.close()
+        except Exception as e:
+            logger.error(f"Error in synchronous cancel_download: {e}")
+            return False
 
     def search(
         self,

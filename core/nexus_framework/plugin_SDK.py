@@ -881,6 +881,10 @@ class PluginBase(ABC):
 
         self.models = _PluginModelFacade()
 
+    async def _async_cancel_download(self, provider_id: str) -> bool:
+        """Cancel an active or queued download transfer on the provider. Returns True if cancelled."""
+        return False
+
     def get_database_connection(self, write_access: bool = False):
         """
         Returns an SQLAlchemy engine connected to the plugin's isolated SQLite database.
@@ -1406,6 +1410,9 @@ class DownloaderProvider(PluginBase):
         pass
 
     def get_download_status(self, download_id: str) -> Optional[Dict[str, Any]]:
+        pass
+
+    def cancel_download(self, download_id: str) -> bool:
         pass
 
 class MediaServerProvider(PluginBase):
