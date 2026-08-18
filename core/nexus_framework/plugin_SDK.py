@@ -1323,6 +1323,8 @@ class ProviderCapabilities:
     supports_streaming: bool = False
     supports_downloads: bool = False
     supports_pre_filtering: bool = False
+    max_concurrency: int = 3
+    max_concurrent_searches: int = 3
     pre_filters: list = None
     playlist_algorithms: list = None  # List of algorithm IDs (e.g., ['spotify_mood'])
     supports_fingerprinting: bool = False  # Audio fingerprinting (AcoustID)

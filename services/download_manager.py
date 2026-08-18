@@ -241,18 +241,22 @@ class DownloadManager:
                 self._track_parser = TrackParser()
             parsed = self._track_parser.parse_filename(file_path)
             if parsed:
-                if parsed.artist_name and (not candidate.artist_name or candidate.artist_name == "Unknown Artist"):
-                    candidate.artist_name = parsed.artist_name
-                if parsed.title or parsed.raw_title:
-                    candidate.title = parsed.title or parsed.raw_title
-                    candidate.raw_title = parsed.raw_title or parsed.title
-                if parsed.album_title and not getattr(candidate, 'album_title', None):
-                    candidate.album_title = parsed.album_title
-                if parsed.release_year and not getattr(candidate, 'release_year', None):
+                parsed_artist = getattr(parsed, 'artist_name', None) or getattr(parsed, 'artist', None)
+                parsed_title = getattr(parsed, 'title', None) or getattr(parsed, 'raw_title', None)
+                parsed_album = getattr(parsed, 'album_title', None) or getattr(parsed, 'album', None)
+
+                if parsed_artist and (not candidate.artist_name or candidate.artist_name == "Unknown Artist"):
+                    candidate.artist_name = parsed_artist
+                if parsed_title:
+                    candidate.title = parsed_title
+                    candidate.raw_title = parsed_title
+                if parsed_album and not getattr(candidate, 'album_title', None):
+                    candidate.album_title = parsed_album
+                if getattr(parsed, 'release_year', None) and not getattr(candidate, 'release_year', None):
                     candidate.release_year = parsed.release_year
-                if parsed.track_number and not getattr(candidate, 'track_number', None):
+                if getattr(parsed, 'track_number', None) and not getattr(candidate, 'track_number', None):
                     candidate.track_number = parsed.track_number
-                if parsed.disc_number and not getattr(candidate, 'disc_number', None):
+                if getattr(parsed, 'disc_number', None) and not getattr(candidate, 'disc_number', None):
                     candidate.disc_number = parsed.disc_number
 
         # Version and edition extraction from title / raw_title / file_path
@@ -580,8 +584,13 @@ class DownloadManager:
         if not queued_ids:
             return
 
-        # Define strict concurrency semaphore (max 2 concurrent acquisitions)
-        semaphore = asyncio.Semaphore(2)
+        # Determine concurrency dynamically from active provider capabilities
+        if providers:
+            provider = providers[0]
+            concurrency = getattr(provider.capabilities, 'max_concurrency', 3) if hasattr(provider, 'capabilities') else 3
+        else:
+            concurrency = 3
+        semaphore = asyncio.Semaphore(concurrency)
 
         async def _throttled_download(download_id):
             async with semaphore:
@@ -592,7 +601,7 @@ class DownloadManager:
         
         # Wait for all searches to complete
         if tasks:
-            logger.info(f"Started {len(tasks)} search tasks (throttled to 2 concurrent) with {len(providers)} providers in waterfall priority order")
+            logger.info(f"Started {len(tasks)} search tasks (throttled to {concurrency} concurrent) with {len(providers)} providers in waterfall priority order")
             results = await asyncio.gather(*tasks, return_exceptions=True)
             failed = sum(1 for r in results if isinstance(r, Exception))
             if failed > 0:
@@ -1338,25 +1347,23 @@ class DownloadManager:
                         continue
                 
                 # Check additional constraints based on format type
-                if format_type == 'flac' or format_type == 'wav':
+                if format_type in ['flac', 'wav', 'dsd']:
                     bit_depths = fmt.get('bit_depths', [])
                     sample_rates = fmt.get('sample_rates', [])
                     
-                    # Only enforce bit depth if profile has it configured (non-empty list)
-                    if bit_depths:  # Profile has bit depth requirements
-                        if not media.bit_depth or str(media.bit_depth) not in bit_depths:
-                            # Reject: either no bit depth metadata or not in allowed list
+                    # Only enforce bit depth if profile has it configured and media has it
+                    if bit_depths and media.bit_depth is not None:
+                        allowed_bd = [str(b).strip() for b in bit_depths]
+                        if str(media.bit_depth) not in allowed_bd:
                             continue
                     
-                    # Only enforce sample rate if profile has it configured (non-empty list)
-                    if sample_rates:  # Profile has sample rate requirements
-                        if not media.sample_rate:
-                            # Reject: no sample rate metadata
-                            continue
-                        # Convert to kHz string for comparison
-                        sample_rate_khz = str(int(media.sample_rate / 1000))
-                        if sample_rate_khz not in sample_rates:
-                            # Reject: sample rate not in allowed list
+                    # Only enforce sample rate if profile has it configured and media has it
+                    if sample_rates and media.sample_rate is not None:
+                        sr_val = media.sample_rate
+                        sr_khz = f"{sr_val / 1000:.1f}".rstrip('0').rstrip('.')
+                        sr_hz = str(int(sr_val))
+                        allowed_sr = [str(s).strip().lower() for s in sample_rates]
+                        if sr_khz not in allowed_sr and sr_hz not in allowed_sr and str(sr_val) not in allowed_sr:
                             continue
                 
                 matching.append(track)
@@ -1446,20 +1453,19 @@ class DownloadManager:
                 bit_depths = fmt_config.get('bit_depths', [])
                 sample_rates = fmt_config.get('sample_rates', [])
                 
-                # Only enforce bit depth if profile has it configured (non-empty list)
-                if bit_depths:  # Profile has bit depth requirements
-                    if not media.bit_depth or str(media.bit_depth) not in bit_depths:
-                        # Reject: either no bit depth metadata or not in allowed list
+                # Only enforce bit depth if profile has it configured and media has it
+                if bit_depths and media.bit_depth is not None:
+                    allowed_bd = [str(b).strip() for b in bit_depths]
+                    if str(media.bit_depth) not in allowed_bd:
                         continue
                 
-                # Only enforce sample rate if profile has it configured (non-empty list)
-                if sample_rates:  # Profile has sample rate requirements
-                    if not media.sample_rate:
-                        # Reject: no sample rate metadata
-                        continue
-                    sample_rate_khz = str(int(media.sample_rate / 1000))
-                    if sample_rate_khz not in sample_rates:
-                        # Reject: sample rate not in allowed list
+                # Only enforce sample rate if profile has it configured and media has it
+                if sample_rates and media.sample_rate is not None:
+                    sr_val = media.sample_rate
+                    sr_khz = f"{sr_val / 1000:.1f}".rstrip('0').rstrip('.')
+                    sr_hz = str(int(sr_val))
+                    allowed_sr = [str(s).strip().lower() for s in sample_rates]
+                    if sr_khz not in allowed_sr and sr_hz not in allowed_sr and str(sr_val) not in allowed_sr:
                         continue
             
             # For lossy formats (MP3, AAC, OGG, etc.), check bitrate

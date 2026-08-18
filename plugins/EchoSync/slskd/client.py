@@ -174,6 +174,8 @@ class SlskdProvider(DownloaderProvider):
         supports_streaming=False,
         supports_downloads=True,
         supports_pre_filtering=True,
+        max_concurrency=3,
+        max_concurrent_searches=3,
     )
 
     def __init__(self):
@@ -335,6 +337,7 @@ class SlskdProvider(DownloaderProvider):
     def _convert_to_echosync_track(self, result: TrackResult) -> EchosyncTrack:
         """Convert TrackResult to EchosyncTrack with injected technical stats (Dumb Provider)."""
         safe_filename = _sanitize_peer_filename(result.filename)
+        file_ext = Path(result.filename).suffix.lower().lstrip('.') or result.quality or 'flac'
 
         # Dumb provider: store raw peer filename/path, leave detailed parsing to DownloadManager
         echo_track = self.create_echo_sync_track(
@@ -347,7 +350,7 @@ class SlskdProvider(DownloaderProvider):
             sample_rate=result.sample_rate,
             bit_depth=result.bit_depth,
             file_size_bytes=result.size,
-            file_format=result.quality,
+            file_format=file_ext,
             file_path=result.filename,
             source="slskd",
             provider_id=result.filename,
@@ -357,6 +360,23 @@ class SlskdProvider(DownloaderProvider):
             echo_track.raw_title = result.filename
             if echo_track.media and len(echo_track.media) > 0:
                 echo_track.media[0].file_path = result.filename
+                echo_track.media[0].bit_depth = result.bit_depth
+                echo_track.media[0].sample_rate = result.sample_rate
+                echo_track.media[0].bitrate = result.bitrate
+                echo_track.media[0].file_size_bytes = result.size
+                echo_track.media[0].file_format = file_ext
+            else:
+                from core.db.echo_sync_track import EchosyncMedia
+                echo_track.media = [
+                    EchosyncMedia(
+                        file_path=result.filename,
+                        file_format=file_ext,
+                        bitrate=result.bitrate,
+                        sample_rate=result.sample_rate,
+                        bit_depth=result.bit_depth,
+                        file_size_bytes=result.size,
+                    )
+                ]
             echo_track.identifiers['username'] = result.username
             echo_track.identifiers['size'] = result.size
             echo_track.identifiers['free_upload_slots'] = result.free_upload_slots
@@ -368,13 +388,11 @@ class SlskdProvider(DownloaderProvider):
             echo_track.identifiers['bitrate'] = result.bitrate
 
             if result.bit_depth:
-                echo_track.bit_depth = result.bit_depth
                 echo_track.identifiers['bit_depth'] = result.bit_depth
             if result.sample_rate:
-                echo_track.sample_rate = result.sample_rate
                 echo_track.identifiers['sample_rate'] = result.sample_rate
             if result.size:
-                echo_track.file_size_bytes = result.size
+                echo_track.identifiers['size'] = result.size
 
         return echo_track
 
@@ -706,7 +724,7 @@ class SlskdProvider(DownloaderProvider):
                     valid_tracks = [
                         t for t in valid_tracks
                         if all(
-                            inc in (t.filename or "").lower()
+                            inc in (t.media[0].file_path if getattr(t, 'media', None) and len(t.media) > 0 else (t.raw_title or "")).lower()
                             for inc in includes_lower
                         )
                     ]
@@ -719,7 +737,7 @@ class SlskdProvider(DownloaderProvider):
                     valid_tracks = [
                         t for t in valid_tracks
                         if not any(
-                            exc in (t.filename or "").lower()
+                            exc in (t.media[0].file_path if getattr(t, 'media', None) and len(t.media) > 0 else (t.raw_title or "")).lower()
                             for exc in excludes_lower
                         )
                     ]
