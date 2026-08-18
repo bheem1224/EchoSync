@@ -25,7 +25,8 @@ from typing import Any, Dict, List, Optional, Tuple
 from core.db.echo_sync_track import EchosyncTrack
 from core.matching_engine.matching_engine import WeightedMatchingEngine
 from core.matching_engine.scoring_profile import PROFILE_DOWNLOAD_SEARCH
-from core.matching_engine.text_utils import normalize_artist, normalize_title
+from core.matching_engine.track_parser import TrackParser
+from core.matching_engine.text_utils import normalize_artist, normalize_title, extract_version_info, extract_edition
 from core.settings import config_manager
 from time_utils import utc_now
 from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
@@ -214,6 +215,65 @@ class DownloadManager:
             accumulated.extend(batch)
         return accumulated, False
 
+    def _enrich_candidate_metadata(self, candidate: EchosyncTrack) -> EchosyncTrack:
+        """Centralized Path & Metadata Enrichment for raw candidates.
+        
+        Extracts structured artist, title, album, version, and edition metadata
+        from candidate media file path, raw_title, or identifiers using TrackParser
+        and text utilities.
+        """
+        if not candidate:
+            return candidate
+
+        # Determine path or filename to parse
+        file_path = None
+        if getattr(candidate, 'media', None) and len(candidate.media) > 0 and getattr(candidate.media[0], 'file_path', None):
+            file_path = candidate.media[0].file_path
+        elif candidate.identifiers and candidate.identifiers.get('plugin_item_id'):
+            file_path = candidate.identifiers.get('plugin_item_id')
+        elif candidate.identifiers and candidate.identifiers.get('provider_item_id'):
+            file_path = candidate.identifiers.get('provider_item_id')
+        elif candidate.raw_title:
+            file_path = candidate.raw_title
+
+        if file_path:
+            if not hasattr(self, '_track_parser') or self._track_parser is None:
+                self._track_parser = TrackParser()
+            parsed = self._track_parser.parse_filename(file_path)
+            if parsed:
+                if parsed.artist_name and (not candidate.artist_name or candidate.artist_name == "Unknown Artist"):
+                    candidate.artist_name = parsed.artist_name
+                if parsed.title or parsed.raw_title:
+                    candidate.title = parsed.title or parsed.raw_title
+                    candidate.raw_title = parsed.raw_title or parsed.title
+                if parsed.album_title and not getattr(candidate, 'album_title', None):
+                    candidate.album_title = parsed.album_title
+                if parsed.release_year and not getattr(candidate, 'release_year', None):
+                    candidate.release_year = parsed.release_year
+                if parsed.track_number and not getattr(candidate, 'track_number', None):
+                    candidate.track_number = parsed.track_number
+                if parsed.disc_number and not getattr(candidate, 'disc_number', None):
+                    candidate.disc_number = parsed.disc_number
+
+        # Version and edition extraction from title / raw_title / file_path
+        title_for_version = candidate.raw_title or candidate.title or file_path or ""
+        
+        # Version info (e.g. Remix, Acoustic)
+        clean_v_title, version_str = extract_version_info(title_for_version)
+        if version_str:
+            candidate.version = version_str
+            if not getattr(candidate, 'edition', None):
+                candidate.edition = version_str
+
+        # Edition info (e.g. Remastered, Deluxe, Live)
+        clean_e_title, edition_str = extract_edition(title_for_version)
+        if edition_str:
+            candidate.edition = edition_str
+            if not getattr(candidate, 'version', None):
+                candidate.version = edition_str
+
+        return candidate
+
     def _evaluate_search_batch(
         self,
         batch: List[EchosyncTrack],
@@ -228,10 +288,11 @@ class DownloadManager:
         remaining query variants are skipped as soon as a perfect match is
         found within the current variant's result set.
         """
+        enriched_batch = [self._enrich_candidate_metadata(c) for c in batch]
         priority_tiers = self._get_priority_tiers(quality_profile)
         matcher = self._get_matching_engine(quality_profile)
         for _priority_num, priority_formats in priority_tiers:
-            tier_candidates = self._filter_by_formats(batch, priority_formats)
+            tier_candidates = self._filter_by_formats(enriched_batch, priority_formats)
             if not tier_candidates:
                 continue
             candidate = matcher.select_best_download_candidate(target_track, tier_candidates)
@@ -672,7 +733,16 @@ class DownloadManager:
                             excludes=strategy_excludes,
                         )
                     except Exception as e:
-                        logger.warning(f"    Search failed on {provider.name}: {e}")
+                        logger.warning(
+                            f"    Strategy {strategy_idx} [{strategy_name}] failed on {provider.name}: {e}. "
+                            f"Advancing to Strategy {strategy_idx + 1}"
+                        )
+                        continue
+
+                    if not search_results:
+                        logger.info(
+                            f"    Strategy {strategy_idx} returned 0 candidates, advancing to Strategy {strategy_idx + 1}"
+                        )
                         continue
 
                     logger.info(f"    Strategy {strategy_idx} returned {len(search_results)} candidates")
@@ -684,11 +754,12 @@ class DownloadManager:
                             f"  \u26a1 SNIPER HIT at strategy {strategy_idx} [{strategy_name}] "
                             f"\u2014 short-circuiting remaining strategies."
                         )
-                        sniper_winner = search_results[0]
+                        sniper_winner = self._enrich_candidate_metadata(search_results[0])
                         break
 
                     if search_results:
-                        provider_candidates.extend(search_results)
+                        enriched_results = [self._enrich_candidate_metadata(c) for c in search_results]
+                        provider_candidates.extend(enriched_results)
 
                 # ── Fast-path: sniper winner bypasses full dedup + scoring ────────────
                 if sniper_winner is not None:

@@ -10,7 +10,6 @@ from core.nexus_framework.plugin_SDK import DownloaderProvider, ProviderCapabili
 
 from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
 from core.db.echo_sync_track import EchosyncTrack
-from core.matching_engine.track_parser import TrackParser
 from core.request_manager import RequestManager, RateLimitConfig, HttpError
 
 logger = get_logger("slskd_provider")
@@ -334,63 +333,47 @@ class SlskdProvider(DownloaderProvider):
             return None
 
     def _convert_to_echosync_track(self, result: TrackResult) -> EchosyncTrack:
-        """Convert TrackResult to EchosyncTrack with injected technical stats"""
+        """Convert TrackResult to EchosyncTrack with injected technical stats (Dumb Provider)."""
         safe_filename = _sanitize_peer_filename(result.filename)
 
-        # Parse filename / path using TrackParser for structured metadata
-        if not hasattr(self, '_track_parser') or self._track_parser is None:
-            self._track_parser = TrackParser()
-        parsed = self._track_parser.parse_filename(result.filename)
-
-        parsed_title = (parsed.raw_title or parsed.title) if parsed else None
-        parsed_artist = parsed.artist_name if parsed else None
-        parsed_album = parsed.album_title if parsed else None
-        parsed_year = parsed.release_year if parsed else None
-        parsed_track_num = parsed.track_number if parsed else None
-        parsed_disc_num = parsed.disc_number if parsed else None
-
-        title = result.title or parsed_title or safe_filename
-        artist = result.artist or parsed_artist or "Unknown Artist"
-        album = result.album or parsed_album or ""
-        track_number = result.track_number or parsed_track_num
-        disc_number = parsed_disc_num
-
-        # Create base track
-        # result.duration is stored as milliseconds by the JSON parser
+        # Dumb provider: store raw peer filename/path, leave detailed parsing to DownloadManager
         echo_track = self.create_echo_sync_track(
-            title=title,
-            artist=artist,
-            album=album,
+            title=safe_filename,
+            artist=result.artist or "Unknown Artist",
+            album=result.album or "",
             duration_ms=result.duration if result.duration else None,
-            year=parsed_year,
-            track_number=track_number,
-            disc_number=disc_number,
+            track_number=result.track_number,
             bitrate=result.bitrate,
+            sample_rate=result.sample_rate,
+            bit_depth=result.bit_depth,
+            file_size_bytes=result.size,
             file_format=result.quality,
-            file_path=str(self.download_path / safe_filename),
+            file_path=result.filename,
             source="slskd",
-            provider_id=result.filename, # Use filename as unique ID for Soulseek
+            provider_id=result.filename,
         )
 
-        # Manually inject metadata into identifiers for Matching Engine
         if echo_track:
-             echo_track.identifiers['username'] = result.username
-             echo_track.identifiers['size'] = result.size
-             echo_track.identifiers['free_upload_slots'] = result.free_upload_slots
-             echo_track.identifiers['upload_speed'] = result.upload_speed
-             echo_track.identifiers['queue_length'] = result.queue_length
-             echo_track.identifiers['provider_item_id'] = result.filename
-             echo_track.identifiers['local_filename'] = safe_filename
-             echo_track.identifiers['bitrate'] = result.bitrate
+            echo_track.raw_title = result.filename
+            if echo_track.media and len(echo_track.media) > 0:
+                echo_track.media[0].file_path = result.filename
+            echo_track.identifiers['username'] = result.username
+            echo_track.identifiers['size'] = result.size
+            echo_track.identifiers['free_upload_slots'] = result.free_upload_slots
+            echo_track.identifiers['upload_speed'] = result.upload_speed
+            echo_track.identifiers['queue_length'] = result.queue_length
+            echo_track.identifiers['provider_item_id'] = result.filename
+            echo_track.identifiers['plugin_item_id'] = result.filename
+            echo_track.identifiers['local_filename'] = safe_filename
+            echo_track.identifiers['bitrate'] = result.bitrate
 
-             # Technical metadata
-             if result.bit_depth:
+            if result.bit_depth:
                 echo_track.bit_depth = result.bit_depth
                 echo_track.identifiers['bit_depth'] = result.bit_depth
-             if result.sample_rate:
+            if result.sample_rate:
                 echo_track.sample_rate = result.sample_rate
                 echo_track.identifiers['sample_rate'] = result.sample_rate
-             if result.size:
+            if result.size:
                 echo_track.file_size_bytes = result.size
 
         return echo_track
@@ -497,7 +480,7 @@ class SlskdProvider(DownloaderProvider):
         self,
         query: str,
         basic_filters: Dict[str, Any] = None,
-        timeout: int = 180,
+        timeout: int = 60,
         quality_profile: Optional[Dict[str, Any]] = None,
         includes: Optional[List[str]] = None,
         excludes: Optional[List[str]] = None,
@@ -507,15 +490,8 @@ class SlskdProvider(DownloaderProvider):
         Atomic Search: Post -> Poll -> Parse -> Delete.
         Applies coarse filtering (basic_filters) before returning.
         
-        Concurrency: Limited to 5 concurrent searches (Slskd/Soulseek IP ban protection).
-        
-        Smart polling:
-        - Phase 1 (0-45s): Poll every 5s for quick responsiveness
-        - Phase 2 (45s+): Poll every 30s to minimize API calls
-        - Exit immediately upon terminal state (completed, timedout, failed, etc.)
-
         Concurrency: Limited to 3 concurrent searches (Soulseek IP ban protection).
-        Default timeout: 180 seconds (3 minutes) to allow extended waiting for slskd responses.
+        Default timeout: 60 seconds (12 polls at 5s intervals).
         """
         # Acquire semaphore slot (max 3 concurrent searches — Soulseek IP ban protection)
         async with self._search_semaphore:
@@ -569,7 +545,7 @@ class SlskdProvider(DownloaderProvider):
         self,
         query: str,
         basic_filters: Dict[str, Any] = None,
-        timeout: int = 180,
+        timeout: int = 60,
         quality_profile: Optional[Dict[str, Any]] = None,
         includes: Optional[List[str]] = None,
         excludes: Optional[List[str]] = None,
@@ -626,21 +602,16 @@ class SlskdProvider(DownloaderProvider):
                 logger.error("No search ID returned")
                 return []
 
-            # 2. Poll for search completion and results
-            # Smart polling strategy:
-            # - Phase 1 (0-45s): Poll every 5s for quick responsiveness
-            # - Phase 2 (45s+): Poll every 30s to minimize API calls
-            initial_phase_duration = 45.0  # First 45 seconds
-            initial_phase_interval = 5.0   # Poll every 5s during initial phase
-            main_phase_interval = 30.0     # Poll every 30s after initial phase
-            
+            # 2. Poll for search completion and results in 5s intervals up to 60s (12 polls max)
+            poll_interval = 5.0
+            max_polls = max(1, int(timeout / poll_interval))
             all_responses = []
             terminal_state = False
             elapsed_time = 0.0
 
-            logger.info(f"Polling for search completion (5s intervals for 45s, then 30s intervals, timeout: {timeout}s)...")
+            logger.info(f"Polling for search completion in 5s intervals up to {timeout}s (max {max_polls} polls)...")
             
-            for poll_count in range(int(timeout / main_phase_interval) + 10):  # Safety upper bound
+            for poll_count in range(max_polls):
                 if cancel_event and cancel_event.is_set():
                     logger.info("Search aborted by cancellation request")
                     if search_id:
@@ -652,23 +623,21 @@ class SlskdProvider(DownloaderProvider):
                             logger.warning(f"Failed to delete search {search_id} on cancellation: {e}")
                     return []
 
-                # Determine polling interval based on elapsed time
-                if elapsed_time < initial_phase_duration:
-                    poll_interval = initial_phase_interval
-                    phase_name = "initial"
-                else:
-                    poll_interval = main_phase_interval
-                    phase_name = "main"
-                
+                # Wait 5 seconds between polls
+                await asyncio.sleep(poll_interval)
+                elapsed_time += poll_interval
+
                 # Check search state to see if it's complete
                 search_state = await self._make_request('GET', f'searches/{search_id}')
                 if search_state:
                     state = search_state.get('state', '').lower()
-                    logger.debug(f"Poll {poll_count + 1} ({phase_name} phase, {elapsed_time:.0f}s): Search state = '{state}'")
+                    logger.debug(f"Poll {poll_count + 1}/{max_polls} ({elapsed_time:.0f}s): Search state = '{state}'")
                     
-                    # Check for terminal states (handle comma-separated states like "completed, timedout")
-                    terminal_states = {'completed', 'complete', 'done', 'finished', 'timedout', 'cancelled', 'errored', 'failed'}
-                    # Check if any terminal state appears in the state string
+                    # Check for terminal states (e.g. responselimitreached, filelimitreached, timedout, completed, etc.)
+                    terminal_states = {
+                        'completed', 'complete', 'done', 'finished', 'timedout',
+                        'cancelled', 'errored', 'failed', 'responselimitreached', 'filelimitreached'
+                    }
                     if any(ts in state for ts in terminal_states):
                         terminal_state = True
                         logger.info(f"Search reached terminal state: {state} (after {elapsed_time:.0f}s)")
@@ -678,31 +647,21 @@ class SlskdProvider(DownloaderProvider):
                 if responses_data and isinstance(responses_data, list):
                     all_responses = responses_data
                     response_count = len(all_responses)
-                    logger.debug(f"Poll {poll_count + 1} ({phase_name} phase, {elapsed_time:.0f}s): Got {response_count} responses")
+                    logger.debug(f"Poll {poll_count + 1}/{max_polls} ({elapsed_time:.0f}s): Got {response_count} responses")
                     
-                    # Exit early if we have a LOT of responses (prevent excessive waiting)
                     if response_count >= 150:
                         logger.info(f"Got {response_count} responses (threshold reached), stopping")
                         break
                 else:
-                    logger.debug(f"Poll {poll_count + 1} ({phase_name} phase, {elapsed_time:.0f}s): No responses yet")
+                    logger.debug(f"Poll {poll_count + 1}/{max_polls} ({elapsed_time:.0f}s): No responses yet")
                 
-                # Exit immediately on terminal state (don't continue polling)
+                # Exit immediately on terminal state
                 if terminal_state:
-                    logger.info(f"Exiting polling loop due to terminal state")
+                    logger.info("Exiting polling loop due to terminal state")
                     break
-                
-                # Exit if overall timeout exceeded
-                if elapsed_time >= timeout:
-                    logger.warning(f"Polling timeout exceeded ({elapsed_time:.0f}s >= {timeout}s)")
-                    break
-                
-                # Wait before next poll
-                await asyncio.sleep(poll_interval)
-                elapsed_time += poll_interval
 
             if not all_responses:
-                logger.info(f"Search complete but no responses received")
+                logger.info("Search complete but no responses received")
                 
             # 3. Parse Results
             track_results = self._process_search_responses(all_responses, quality_profile=quality_profile, cancel_event=cancel_event)
