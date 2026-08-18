@@ -1216,9 +1216,10 @@ class WeightedMatchingEngine:
         def sort_key(item):
             score, cand = item
 
-            # Extract attributes safely with defaults
-            size = cand.file_size_bytes or cand.identifiers.get('size', 0) or 0
-            bitrate = cand.identifiers.get('bitrate', 0) or 0
+            # Extract attributes safely with defaults from canonical media[0] or identifiers
+            first_media = cand.media[0] if getattr(cand, 'media', None) and len(cand.media) > 0 else None
+            size = (first_media.file_size_bytes if first_media and first_media.file_size_bytes else None) or cand.identifiers.get('size', 0) or 0
+            bitrate = (first_media.bitrate if first_media and first_media.bitrate else None) or cand.identifiers.get('bitrate', 0) or 0
             # Safe extraction: missing queue_length means we don't know, so penalize it heavily.
             raw_queue = cand.identifiers.get('queue_length')
             queue_length = int(raw_queue) if raw_queue is not None and str(raw_queue).strip() else 999999
