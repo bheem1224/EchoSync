@@ -198,13 +198,13 @@ class MusicBrainzClient(PluginBase):
         return tracks
 
     @plugin_cache(ttl_seconds=604800)
-    def _search_metadata_query(self, query: str, limit: int = 10) -> List[Dict[str, Any]]:
+    def _search_metadata_query(self, query: str, limit: int = 5) -> List[Dict[str, Any]]:
         """Cached helper for string queries to maintain legacy query caching."""
         query = str(query or "").strip()
         if not query:
             return []
 
-        safe_limit = max(1, min(int(limit or 10), 100))
+        safe_limit = max(1, min(int(limit or 5), 100))
         try:
             logger.debug(f"[MusicBrainz Client] Sending search query to MusicBrainz: query='{query}', limit={safe_limit}")
             response = self.http.get(
@@ -315,8 +315,9 @@ class MusicBrainzClient(PluginBase):
                     artist = parsed.artist_name
 
         # 3. Clean and sanitize strings through core text normalizers
+        cleaned_artist_str = self._clean_query_artist(artist)
         clean_title = normalize_title(title)
-        clean_artist = normalize_artist(artist)
+        clean_artist = normalize_artist(cleaned_artist_str or artist)
 
         # 3b. Check if track has an AcoustID ID to query MusicBrainz directly
         acoustid_val = getattr(track, 'acoustid_id', None)
@@ -325,7 +326,7 @@ class MusicBrainzClient(PluginBase):
         
         if acoustid_val and isinstance(acoustid_val, str) and len(acoustid_val) > 10:
             logger.debug(f"[MusicBrainz Client] Trying AcoustID query on MusicBrainz: acoustid:{acoustid_val}")
-            results = self._search_metadata_query(query=f'acoustid:{acoustid_val}', limit=1)
+            results = self._search_metadata_query(query=f'acoustid:{acoustid_val}', limit=5)
             if results:
                 top = results[0]
                 mbid = top.get("recording_id") or top.get("mbid")
@@ -360,17 +361,17 @@ class MusicBrainzClient(PluginBase):
 
             # Attempt 1: Strict Query (Artist + Title + Album + Duration)
             logger.debug(f"[MusicBrainz Client] Attempt 1 (Strict): '{strict_query}'")
-            results = self._search_metadata_query(query=strict_query, limit=1)
+            results = self._search_metadata_query(query=strict_query, limit=5)
             
             # Attempt 2: Fallback Query (Artist + Title + Album)
             if not results and strict_query != fallback_query:
                 logger.debug(f"[MusicBrainz Client] Strict query failed. Attempt 2 (Fallback): '{fallback_query}'")
-                results = self._search_metadata_query(query=fallback_query, limit=1)
+                results = self._search_metadata_query(query=fallback_query, limit=5)
                 
             # Attempt 3: Baseline Query (Artist + Title)
             if not results and fallback_query != baseline_query:
                 logger.debug(f"[MusicBrainz Client] Fallback query failed. Attempt 3 (Baseline): '{baseline_query}'")
-                results = self._search_metadata_query(query=baseline_query, limit=1)
+                results = self._search_metadata_query(query=baseline_query, limit=5)
 
             # Legacy Fallback 1: Strip parenthetical/bracketed phrases from the title and search again
             if not results:
@@ -380,7 +381,7 @@ class MusicBrainzClient(PluginBase):
                     safe_fallback_title = self._escape_lucene(fallback_title)
                     logger.debug(f"[MusicBrainz Client] Baseline query failed. Trying Legacy Fallback 1 (stripped brackets): title='{fallback_title}'")
                     legacy_query = f'artist:"{safe_artist}" AND recording:"{safe_fallback_title}"'
-                    results = self._search_metadata_query(query=legacy_query, limit=1)
+                    results = self._search_metadata_query(query=legacy_query, limit=5)
 
             # Legacy Fallback 2: Search for clean_title alone with artist as loose parameter
             if not results:
@@ -389,42 +390,110 @@ class MusicBrainzClient(PluginBase):
                 safe_loose_title = self._escape_lucene(loose_title)
                 logger.debug(f"[MusicBrainz Client] Legacy Fallback 1 failed or skipped. Trying Legacy Fallback 2 (loose artist): title='{loose_title}', artist='{clean_artist}'")
                 legacy_query = f'recording:"{safe_loose_title}" AND artist:{safe_artist}'
-                results = self._search_metadata_query(query=legacy_query, limit=1)
+                results = self._search_metadata_query(query=legacy_query, limit=5)
 
         # Fallback without artist (e.g. if artist was numeric track number or unknown, or artist queries yielded no match)
         if not results and safe_title:
             if safe_album:
                 logger.debug(f"[MusicBrainz Client] Trying Release + Recording fallback: recording='{safe_title}', release='{safe_album}'")
-                results = self._search_metadata_query(query=f'recording:"{safe_title}" AND release:"{safe_album}"', limit=1)
+                results = self._search_metadata_query(query=f'recording:"{safe_title}" AND release:"{safe_album}"', limit=5)
             if not results:
                 logger.debug(f"[MusicBrainz Client] Trying Recording-only fallback: recording='{safe_title}'")
-                results = self._search_metadata_query(query=f'recording:"{safe_title}"', limit=1)
+                results = self._search_metadata_query(query=f'recording:"{safe_title}"', limit=5)
 
         if results:
-            top = results[0]
-            logger.debug(f"[MusicBrainz Client] Top result found: {top}")
-            if isinstance(top, dict):
-                mbid = top.get("recording_id") or top.get("mbid")
-                if mbid:
-                    logger.debug(f"[MusicBrainz Client] Fetching track details for mbid: '{mbid}'")
-                    fetched = self.get_track(mbid)
-                    logger.debug(f"[MusicBrainz Client] Fetched track: {fetched}")
-                    if isinstance(fetched, EchosyncTrack):
-                        return fetched
+            # Multi-Candidate Evaluation using MatchingEngine
+            from core.matching_engine.scoring_profile import PROFILE_EXACT_SYNC
+            from core.matching_engine.matching_engine import WeightedMatchingEngine
+
+            source_track = None
+            if isinstance(track, EchosyncTrack):
+                source_track = track
+            else:
+                source_track = self.create_echo_sync_track(
+                    title=title,
+                    artist=artist,
+                    album=album,
+                    duration_ms=duration_ms,
+                    source="local",
+                )
+
+            engine = WeightedMatchingEngine(PROFILE_EXACT_SYNC)
+            best_candidate: Optional[EchosyncTrack] = None
+            best_score: float = -1.0
+
+            seen_mbids = set()
+            for cand in results:
+                if not isinstance(cand, dict):
+                    continue
+                mbid = cand.get("recording_id") or cand.get("mbid")
+                if not mbid or mbid in seen_mbids:
+                    continue
+                seen_mbids.add(mbid)
+
+                fetched = self.get_track(mbid)
+                if not isinstance(fetched, EchosyncTrack):
+                    continue
+
+                if source_track:
+                    match_result = engine.calculate_match(source_track, fetched)
+                    score = match_result.confidence_score if match_result else 0.0
+                    passed_version = match_result.passed_version_check if match_result else False
+                    logger.debug(
+                        f"[MusicBrainz Client] Candidate '{fetched.title}' by '{fetched.artist_name}' "
+                        f"(MBID: {mbid}) scored {score:.1f}% (version_pass={passed_version})"
+                    )
+
+                    # Filter by match_result.passed_version_check and score >= 85.0
+                    if passed_version and score >= 85.0 and score > best_score:
+                        best_score = score
+                        best_candidate = fetched
+                else:
+                    best_candidate = fetched
+                    break
+
+            if best_candidate:
+                logger.debug(f"[MusicBrainz Client] Winner selected: {best_candidate.title} by {best_candidate.artist_name} (score: {best_score:.1f}%)")
+                return best_candidate
         else:
             logger.debug("[MusicBrainz Client] No search results returned from _search_metadata_query after all fallback attempts")
         return None
 
-
-
-    def _escape_lucene(self, text: str) -> str:
-        """Escape special characters for strict Lucene queries."""
-        if not text:
+    def _clean_query_artist(self, artist_str: str) -> str:
+        """Strip featuring patterns cleanly without leaving trailing punctuation."""
+        if not artist_str:
             return ""
-        # The characters to escape in Lucene: + - & || ! ( ) { } [ ] ^ " ~ * ? : \ /
         import re
-        escaped = re.sub(r'([+\-&|!(){}\[\]^"~*?:\\/])', r'\\\1', text)
-        return escaped
+        # Strip feat./ft./featuring/with/vs. and trailing periods/ampersands
+        cleaned = re.sub(r'(?i)\s+(?:feat\.?|ft\.?|featuring|with|vs\.?)\s+.*$', '', artist_str).strip()
+        cleaned = re.sub(r'[\(\[]\s*(?:feat\.?|ft\.?|featuring|with)\s+[^()\[\]]*?[\)\]]', '', cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r'[\s&.,\-]+$', '', cleaned).strip()
+        return cleaned or artist_str.strip()
+
+    def _escape_lucene(self, term: str) -> str:
+        r"""Escape Lucene special characters: + - && || ! ( ) { } [ ] ^ " ~ * ? : \ /
+        Do NOT escape punctuation inside double-quoted string literals.
+        """
+        if not term:
+            return ""
+        import re
+
+        def _escape_unquoted(s: str) -> str:
+            s = re.sub(r'([+\-!(){}\[\]^"~*?:\\/])', r'\\\1', s)
+            s = re.sub(r'(?<!\\)&&', r'\&&', s)
+            s = re.sub(r'(?<!\\)\|\|', r'\|\|', s)
+            return s
+
+        parts = re.split(r'("[^"]*")', term)
+        escaped_parts = []
+        for part in parts:
+            if part.startswith('"') and part.endswith('"') and len(part) >= 2:
+                inner = part[1:-1].replace('\\', '\\\\').replace('"', '\\"')
+                escaped_parts.append(f'"{inner}"')
+            else:
+                escaped_parts.append(_escape_unquoted(part))
+
+        return "".join(escaped_parts).strip()
 
     async def search_recording_strict(self, artist: str, title: str, immediate: bool = False) -> List[EchosyncTrack]:
         if not artist or not title:

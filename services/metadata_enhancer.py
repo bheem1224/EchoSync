@@ -191,32 +191,47 @@ class RetroactiveEnhancer:
         try:
             # Priority 1: Native file tags (parsed via echosync_core)
             track_obj = None
+            raw_tags = {}
             try:
                 import echosync_core
-                raw_tags = echosync_core.extract_metadata(str(file_path))
+                raw_tags = echosync_core.extract_metadata(str(file_path)) or {}
+
+                # Support both echosync_core native keys and legacy fallback keys
+                raw_dur_ms = raw_tags.get("duration_ms")
+                if raw_dur_ms is not None:
+                    duration_ms = int(raw_dur_ms)
+                    duration_sec = duration_ms / 1000.0
+                elif raw_tags.get("duration") is not None:
+                    duration_sec = float(raw_tags["duration"])
+                    duration_ms = int(duration_sec * 1000)
+                else:
+                    duration_ms = None
+                    duration_sec = None
+
+                mbid = raw_tags.get("mbid") or raw_tags.get("musicbrainz_id") or raw_tags.get("musicbrainz_trackid")
+
                 track_obj = EchosyncTrack(
                     raw_title=raw_tags.get("title") or "",
-                    artist_name=raw_tags.get("artist") or "",
-                    album_title=raw_tags.get("album") or ""
+                    artist_name=raw_tags.get("artist") or raw_tags.get("artist_name") or "",
+                    album_title=raw_tags.get("album") or raw_tags.get("album_title") or ""
                 )
-                if raw_tags.get("duration"):
+                if duration_ms:
+                    track_obj.duration = int(duration_ms)
+                if raw_tags.get("track_number") or raw_tags.get("track_no"):
                     try:
-                        track_obj.duration = int(raw_tags["duration"])
+                        track_obj.track_number = int(str(raw_tags.get("track_number") or raw_tags.get("track_no")).split("/")[0])
                     except: pass
-                if raw_tags.get("track_number"):
+                if raw_tags.get("disc_number") or raw_tags.get("disc_no"):
                     try:
-                        track_obj.track_number = int(str(raw_tags["track_number"]).split("/")[0])
+                        track_obj.disc_number = int(str(raw_tags.get("disc_number") or raw_tags.get("disc_no")).split("/")[0])
                     except: pass
-                if raw_tags.get("disc_number"):
+                if raw_tags.get("year") or raw_tags.get("date"):
                     try:
-                        track_obj.disc_number = int(str(raw_tags["disc_number"]).split("/")[0])
+                        val = str(raw_tags.get("year") or raw_tags.get("date"))
+                        track_obj.release_year = int(val[:4])
                     except: pass
-                if raw_tags.get("date"):
-                    try:
-                        track_obj.release_year = int(str(raw_tags["date"])[:4])
-                    except: pass
-                if raw_tags.get("musicbrainz_id"):
-                    track_obj.musicbrainz_id = raw_tags["musicbrainz_id"]
+                if mbid:
+                    track_obj.musicbrainz_id = mbid
                 if raw_tags.get("isrc"):
                     track_obj.isrc = raw_tags["isrc"]
             except Exception as e:
@@ -298,12 +313,28 @@ class RetroactiveEnhancer:
                     fingerprint = FingerprintGenerator.generate(str(file_path))
                     duration_sec = None
                     if track_obj and track_obj.duration:
-                        duration_sec = int(track_obj.duration / 1000)
+                        duration_sec = track_obj.duration / 1000.0
+                    elif raw_tags:
+                        raw_dur_ms = raw_tags.get("duration_ms")
+                        if raw_dur_ms is not None:
+                            duration_sec = int(raw_dur_ms) / 1000.0
+                        elif raw_tags.get("duration") is not None:
+                            duration_sec = float(raw_tags["duration"])
+                        else:
+                            duration_sec = None
                     else:
-                        raw_tags = echosync_core.extract_metadata(str(file_path))
-                        duration_ms = raw_tags.get("duration")
-                        if duration_ms:
-                            duration_sec = int(duration_ms / 1000)
+                        try:
+                            import echosync_core
+                            raw_tags = echosync_core.extract_metadata(str(file_path)) or {}
+                            raw_dur_ms = raw_tags.get("duration_ms")
+                            if raw_dur_ms is not None:
+                                duration_sec = int(raw_dur_ms) / 1000.0
+                            elif raw_tags.get("duration") is not None:
+                                duration_sec = float(raw_tags["duration"])
+                            else:
+                                duration_sec = None
+                        except Exception:
+                            duration_sec = None
 
                     if fingerprint and duration_sec and fingerprint_provider:
                         logger.debug(
@@ -428,33 +459,44 @@ class RetroactiveEnhancer:
                 from core.matching_engine.fingerprinting import FingerprintGenerator
                 
                 track = None
-                track = None
                 try:
                     import echosync_core
-                    raw_tags = echosync_core.extract_metadata(file_path_str)
+                    raw_tags = echosync_core.extract_metadata(file_path_str) or {}
+                    # Support both echosync_core native keys and legacy fallback keys
+                    raw_dur_ms = raw_tags.get("duration_ms")
+                    if raw_dur_ms is not None:
+                        duration_ms = int(raw_dur_ms)
+                        duration_sec = duration_ms / 1000.0
+                    elif raw_tags.get("duration") is not None:
+                        duration_sec = float(raw_tags["duration"])
+                        duration_ms = int(duration_sec * 1000)
+                    else:
+                        duration_ms = None
+                        duration_sec = None
+
+                    mbid = raw_tags.get("mbid") or raw_tags.get("musicbrainz_id") or raw_tags.get("musicbrainz_trackid")
                     track = EchosyncTrack(
                         raw_title=raw_tags.get("title") or "",
-                        artist_name=raw_tags.get("artist") or "",
-                        album_title=raw_tags.get("album") or ""
+                        artist_name=raw_tags.get("artist") or raw_tags.get("artist_name") or "",
+                        album_title=raw_tags.get("album") or raw_tags.get("album_title") or ""
                     )
-                    if raw_tags.get("duration"):
+                    if duration_ms:
+                        track.duration = int(duration_ms)
+                    if raw_tags.get("track_number") or raw_tags.get("track_no"):
                         try:
-                            track.duration = int(raw_tags["duration"])
+                            track.track_number = int(str(raw_tags.get("track_number") or raw_tags.get("track_no")).split("/")[0])
                         except: pass
-                    if raw_tags.get("track_number"):
+                    if raw_tags.get("disc_number") or raw_tags.get("disc_no"):
                         try:
-                            track.track_number = int(str(raw_tags["track_number"]).split("/")[0])
+                            track.disc_number = int(str(raw_tags.get("disc_number") or raw_tags.get("disc_no")).split("/")[0])
                         except: pass
-                    if raw_tags.get("disc_number"):
+                    if raw_tags.get("year") or raw_tags.get("date"):
                         try:
-                            track.disc_number = int(str(raw_tags["disc_number"]).split("/")[0])
+                            val = str(raw_tags.get("year") or raw_tags.get("date"))
+                            track.release_year = int(val[:4])
                         except: pass
-                    if raw_tags.get("date"):
-                        try:
-                            track.release_year = int(str(raw_tags["date"])[:4])
-                        except: pass
-                    if raw_tags.get("musicbrainz_id"):
-                        track.musicbrainz_id = raw_tags["musicbrainz_id"]
+                    if mbid:
+                        track.musicbrainz_id = mbid
                     if raw_tags.get("isrc"):
                         track.isrc = raw_tags["isrc"]
                 except Exception as parse_err:
@@ -693,7 +735,7 @@ class RetroactiveEnhancer:
                         logger.warning("Failed to read tags from %s: %s", local_path.name, e)
                         file_tags = {}
 
-                    tag_mbid = file_tags.get("musicbrainz_id") or file_tags.get("recording_id")
+                    tag_mbid = file_tags.get("mbid") or file_tags.get("musicbrainz_id") or file_tags.get("recording_id")
                     
                     # Also fix VA artist from tags if needed
                     if not t_data['metadata_status'].get('artist_fixed_from_tags'):

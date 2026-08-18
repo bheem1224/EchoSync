@@ -768,38 +768,40 @@ class WeightedMatchingEngine:
             (matches: bool, reasoning: str)
         """
 
-        # If both have no edition, perfect match
-        if not source.edition and not candidate.edition:
+        source_edition = (source.edition or getattr(source, 'version', None) or "").strip()
+        candidate_edition = (candidate.edition or getattr(candidate, 'version', None) or "").strip()
+
+        # If both have no edition, perfect match (prefer studio originals)
+        if not source_edition and not candidate_edition:
             return True, "Both tracks have no version info (prefer originals)"
 
-        # If source has no version but candidate does, this is a MISMATCH
-        # When user wants original, don't give them remix/live/clean/edited/censored
-        if not source.edition and candidate.edition:
-            candidate_lower = candidate.edition.lower()
-            # Check if candidate is a remix/live/clean/edited/censored (not just remaster which is usually okay)
+        # If source has no version but candidate does, check if candidate is an unwanted variant
+        # When user wants original, reject remix/live/acoustic/instrumental/demo/clean/edited
+        if not source_edition and candidate_edition:
+            candidate_lower = candidate_edition.lower()
             unwanted_versions = frozenset({'remix', 'live', 'acoustic', 'instrumental', 'demo', 'radio edit', 'club', 'clean', 'edited', 'censored'})
             if any(unwanted in candidate_lower for unwanted in unwanted_versions):
-                return False, f"Source wants original but candidate is '{candidate.edition}' (version mismatch)"
+                return False, f"Source wants original but candidate is '{candidate_edition}' (version mismatch)"
             # Remaster/deluxe/etc are usually acceptable if source has no version preference
-            return True, f"Candidate is '{candidate.edition}' (remaster/edition okay)"
+            return True, f"Candidate is '{candidate_edition}' (remaster/edition okay)"
 
         # If candidate has no version but source specifies one, usually okay
         # (candidate might be original or just missing metadata)
-        if source.edition and not candidate.edition:
+        if source_edition and not candidate_edition:
             return True, "Candidate has no version info (might be original)"
 
         # Both have editions - check if they're the same or related
-        source_version_lower = source.edition.lower()
-        candidate_version_lower = candidate.edition.lower()
+        source_version_lower = source_edition.lower()
+        candidate_version_lower = candidate_edition.lower()
 
         # Exact match
         if source_version_lower == candidate_version_lower:
-            return True, f"Versions match: '{source.edition}'"
+            return True, f"Versions match: '{source_edition}'"
 
         # Check if candidate is clean/edited/censored when source is explicit/original
         clean_keywords = frozenset({'clean', 'edited', 'censored'})
         if any(c in candidate_version_lower for c in clean_keywords) and not any(c in source_version_lower for c in clean_keywords):
-            return False, f"Candidate is clean/edited ('{candidate.edition}') while source is original/explicit"
+            return False, f"Candidate is clean/edited ('{candidate_edition}') while source is original/explicit"
 
         # Check if both have version keywords from same family
         source_keywords = self._extract_version_keywords(source_version_lower)
@@ -811,7 +813,7 @@ class WeightedMatchingEngine:
 
         # If either is empty, mismatch
         if not source_keywords or not candidate_keywords:
-            return False, f"'{source.edition}' vs '{candidate.edition}' (different types)"
+            return False, f"'{source_edition}' vs '{candidate_edition}' (different types)"
 
         # Check for keyword overlap
         overlap = source_keywords & candidate_keywords
@@ -823,7 +825,7 @@ class WeightedMatchingEngine:
             return False, f"One is remix, other is original"
 
         # Otherwise, consider it a version mismatch
-        return False, f"Different versions: '{source.edition}' vs '{candidate.edition}'"
+        return False, f"Different versions: '{source_edition}' vs '{candidate_edition}'"
 
     def _check_edition_match(self, source: EchosyncTrack, candidate: EchosyncTrack) -> Tuple[bool, str]:
         """
