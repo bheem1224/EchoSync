@@ -183,10 +183,20 @@ class SlskdProvider(DownloaderProvider):
         self.base_url: Optional[str] = None
         self.api_key: Optional[str] = None
         self.download_path: Path = Path("./downloads")
-        # Concurrency limiter: Slskd can only handle 3 concurrent searches (IP ban protection)
-        self._search_semaphore = asyncio.Semaphore(3)
+        self._loop_semaphores: Dict[Any, asyncio.Semaphore] = {}
         self._setup_client()
         self._register_health_check()
+    
+    @property
+    def search_semaphore(self) -> asyncio.Semaphore:
+        """Lazy per-running-event-loop semaphore to prevent cross-event-loop lock errors."""
+        loop = asyncio.get_running_loop()
+        if not hasattr(self, '_loop_semaphores'):
+            self._loop_semaphores = {}
+        if loop not in self._loop_semaphores:
+            limit = getattr(self.capabilities, 'max_concurrent_searches', 3)
+            self._loop_semaphores[loop] = asyncio.Semaphore(limit)
+        return self._loop_semaphores[loop]
     
     def _register_health_check(self):
         """Register periodic health check for Slskd API."""
@@ -512,7 +522,7 @@ class SlskdProvider(DownloaderProvider):
         Default timeout: 60 seconds (12 polls at 5s intervals).
         """
         # Acquire semaphore slot (max 3 concurrent searches — Soulseek IP ban protection)
-        async with self._search_semaphore:
+        async with self.search_semaphore:
             return await self._do_async_search(
                 query, basic_filters, timeout, quality_profile,
                 includes=includes, excludes=excludes,
