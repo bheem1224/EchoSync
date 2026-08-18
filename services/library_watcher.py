@@ -103,6 +103,10 @@ class _AudioEventHandler(FileSystemEventHandler):
 
     def _schedule(self, raw_path: str) -> None:
         """(Re-)schedule processing for a path after the debounce window."""
+        normalized_path = raw_path.replace("\\", "/").lower()
+        if any(ignored in normalized_path for ignored in ['/poor_metadata', '/incomplete', 'poor_metadata', 'incomplete', '.tmp', '.part']):
+            return
+
         path = Path(raw_path)
         if path.suffix.lower() not in _AUDIO_EXTENSIONS:
             return
@@ -190,7 +194,7 @@ def _process_new_file(path: Path) -> None:
                 duration_ms = None
 
         # ── 2. Upsert into the music database ─────────────────────────────
-        # Build a minimal EchosyncTrack so the existing LibraryManager
+        # Build a minimal EchosyncTrack so the TrackRepository
         # upsert pipeline handles Artist / Album / Track creation.
         # album_title is a required positional field on EchosyncTrack; fall
         # back to empty string when the tag is absent.
@@ -208,12 +212,12 @@ def _process_new_file(path: Path) -> None:
         )
 
         try:
+            from core.database.repositories.track_repo import TrackRepository
             db = get_database()
-            # bulk_import is the only public upsert API; it manages its own
-            # session via session_factory and handles Artist / Album / Track
-            # get-or-create internally.
-            lib_manager = LibraryManager(db.session_factory)
-            lib_manager.bulk_import([track_obj])
+            with db.session_factory() as session:
+                repo = TrackRepository(session)
+                repo.bulk_upsert_tracks([track_obj])
+                session.commit()
             logger.info("Watcher: DB upsert complete for '%s' by '%s'", title, artist_name)
         except Exception as db_err:
             logger.error("Watcher: DB upsert failed for %s: %s", path.name, db_err)

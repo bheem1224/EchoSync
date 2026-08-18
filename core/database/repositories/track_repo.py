@@ -5,7 +5,7 @@ SQLAlchemy 2.0 High-Performance UPSERT Repository for Track & LocalMedia ingesti
 - EchosyncTrack: logical music metadata -> tracks table (keyed by sync_id)
 - EchosyncMedia: physical file telemetry -> local_media table (keyed by media_id)
 """
-from typing import List, Optional
+from typing import List, Optional, Any
 from datetime import datetime, timezone
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, joinedload
@@ -26,6 +26,9 @@ class TrackRepository:
     Enforces strict 2-Model separation: Track rows hold metadata only, LocalMedia rows hold
     physical file telemetry.
     """
+
+    def __init__(self, session: Optional[Session] = None):
+        self.session = session
 
     @staticmethod
     def get_or_create_default_artist(session: Session) -> int:
@@ -201,8 +204,29 @@ class TrackRepository:
         for t in tracks:
             t.album_id = album_map.get((getattr(t, "album_title", None) or getattr(t, "album", ""), t.artist_id))
 
+    def bulk_upsert_tracks(self_or_cls, session_or_tracks: Any, tracks: Optional[List[EchosyncTrack]] = None) -> int:
+        if isinstance(self_or_cls, Session):
+            # Called as TrackRepository.bulk_upsert_tracks(session, tracks)
+            tracks_list = session_or_tracks if isinstance(session_or_tracks, list) else (tracks or [])
+            return TrackRepository._execute_bulk_upsert(self_or_cls, tracks_list)
+
+        if isinstance(self_or_cls, TrackRepository):
+            if tracks is None and isinstance(session_or_tracks, list):
+                # Called as repo.bulk_upsert_tracks(tracks)
+                if self_or_cls.session is None:
+                    raise ValueError("TrackRepository instance was initialized without a Session")
+                return TrackRepository._execute_bulk_upsert(self_or_cls.session, session_or_tracks)
+            elif isinstance(session_or_tracks, Session) and isinstance(tracks, list):
+                # Called as repo.bulk_upsert_tracks(session, tracks)
+                return TrackRepository._execute_bulk_upsert(session_or_tracks, tracks)
+
+        if isinstance(session_or_tracks, Session) and isinstance(tracks, list):
+            return TrackRepository._execute_bulk_upsert(session_or_tracks, tracks)
+
+        return 0
+
     @classmethod
-    def bulk_upsert_tracks(cls, session: Session, tracks: List[EchosyncTrack]) -> int:
+    def _execute_bulk_upsert(cls, session: Session, tracks: List[EchosyncTrack]) -> int:
         if not tracks:
             return 0
 

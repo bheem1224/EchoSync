@@ -147,9 +147,99 @@ class AutoImportService:
             tags=["echosync", "import"],
             max_retries=3
         )
+        register_job(
+            name="retry_aged_review_tasks",
+            func=self._retry_aged_review_tasks,
+            interval_seconds=86400,  # Run daily
+            start_after=1200,  # Wait 20 minutes before initial check
+            enabled=True,
+            tags=["echosync", "metadata", "review"],
+            max_retries=3
+        )
+
+    def _retry_aged_review_tasks(self) -> None:
+        """Proactively re-evaluate review queue items older than 7 days."""
+        work_db = get_working_database()
+        from time_utils import utc_now
+        cutoff = utc_now() - timedelta(days=7)
+
+        tasks_to_retry: List[Dict[str, Any]] = []
+        try:
+            with work_db.session_scope() as session:
+                aged_tasks = (
+                    session.query(ReviewTask)
+                    .filter(
+                        ReviewTask.status == 'pending',
+                        ReviewTask.updated_at < cutoff
+                    )
+                    .all()
+                )
+                for t in aged_tasks:
+                    tasks_to_retry.append({"id": t.id, "file_path": t.file_path})
+        except Exception as e:
+            logger.error(f"Error querying aged review tasks: {e}", exc_info=True)
+            return
+
+        if not tasks_to_retry:
+            logger.debug("No aged review tasks pending re-evaluation (>7 days).")
+            return
+
+        logger.info(f"Found {len(tasks_to_retry)} aged review task(s) for re-evaluation (>7 days old).")
+
+        meta_config = config_manager.get('metadata_enhancement') or {}
+        auto_import = meta_config.get('auto_import', False)
+        confidence_threshold = meta_config.get('confidence_threshold', 90) / 100.0
+
+        for item in tasks_to_retry:
+            task_id = item["id"]
+            file_path_str = item["file_path"]
+            p = Path(file_path_str)
+
+            if not p.exists():
+                logger.info(f"Aged review task file no longer on disk: {file_path_str}")
+                try:
+                    with work_db.session_scope() as session:
+                        task = session.query(ReviewTask).filter(ReviewTask.id == task_id).first()
+                        if task:
+                            task.last_checked_at = utc_now()
+                            task.updated_at = utc_now()
+                except Exception:
+                    pass
+                continue
+
+            try:
+                metadata, confidence = self.enhancer.identify_file(p)
+                now = utc_now()
+                with work_db.session_scope() as session:
+                    task = session.query(ReviewTask).filter(ReviewTask.id == task_id).first()
+                    if task:
+                        task.last_checked_at = now
+                        task.updated_at = now
+                        task.retry_count = (task.retry_count or 0) + 1
+                        if metadata:
+                            task.confidence_score = confidence
+                            task.detected_metadata = metadata
+
+                if metadata and confidence >= confidence_threshold:
+                    if auto_import:
+                        logger.info(f"Aged task match found and auto_import is True; importing: {p}")
+                        self.finalize_import(p, metadata)
+                    else:
+                        logger.info(f"Aged task match found but auto_import is False for {p}")
+            except Exception as err:
+                logger.warning(f"Failed to re-evaluate aged review task #{task_id} ({file_path_str}): {err}")
+                try:
+                    with work_db.session_scope() as session:
+                        task = session.query(ReviewTask).filter(ReviewTask.id == task_id).first()
+                        if task:
+                            task.last_checked_at = utc_now()
+                            task.updated_at = utc_now()
+                except Exception:
+                    pass
 
     def scan_and_process(self, force_scan: bool = False, params: Optional[Dict[str, Any]] = None, **kwargs):
         """Scan download directory for audio files and process them."""
+        import time
         params = params or {}
         if force_scan:
             params["force_scan"] = True
@@ -184,13 +274,33 @@ class AutoImportService:
             stats = {"found": 0, "imported": 0, "pending_review": 0, "failed": 0}
 
             for root, dirs, files in os.walk(download_dir):
+                # Filter out poor_metadata, incomplete, and temporary directories
+                dirs[:] = [d for d in dirs if not any(ignored in d.lower() for ignored in ['poor_metadata', 'incomplete', '.tmp', '.part'])]
                 logger.debug(f"Scanning directory: {root}")
                 logger.debug(f"Found {len(files)} files in {root}")
                 for file in files:
                     path = Path(root) / file
+                    normalized_str = str(path).replace("\\", "/").lower()
+                    if any(ignored in normalized_str for ignored in ['/poor_metadata', '/incomplete', 'poor_metadata', 'incomplete', '.tmp', '.part']):
+                        continue
+
                     logger.debug(f"Checking file: {path}")
                     if path.suffix.lower() in supported_exts:
                         logger.debug(f"File matches audio extension: {path.suffix}")
+
+                        # Strict I/O safety lock check: verify size > 64KB (65536 bytes) and age > 15s
+                        try:
+                            f_size = os.path.getsize(path)
+                            f_mtime = os.path.getmtime(path)
+                            if f_size <= 65536:
+                                logger.debug(f"I/O safety guard: skipping file <= 64KB ({f_size} bytes): {path}")
+                                continue
+                            if time.time() - f_mtime <= 15:
+                                logger.debug(f"I/O safety guard: skipping file within 15s cool-off: {path}")
+                                continue
+                        except Exception as e:
+                            logger.debug(f"I/O safety guard check failed for {path}: {e}")
+                            continue
 
                         # Check if file is ignored via DB check (avoids loading all ignored files into memory)
                         if self._is_path_ignored(str(path), params=params):
@@ -316,6 +426,26 @@ class AutoImportService:
                     self._processing_files.discard(file_key)
                 continue
 
+            # Strict I/O safety lock
+            try:
+                f_size = os.path.getsize(file_path)
+                f_mtime = os.path.getmtime(file_path)
+                if f_size <= 65536:
+                    logger.debug("I/O safety guard: skipping file <= 64KB (%d bytes): %s", f_size, file_path)
+                    with self._processing_lock:
+                        self._processing_files.discard(file_key)
+                    continue
+                if time.time() - f_mtime <= 15:
+                    logger.debug("I/O safety guard: skipping file within 15s cool-off: %s", file_path)
+                    with self._processing_lock:
+                        self._processing_files.discard(file_key)
+                    continue
+            except Exception as stat_err:
+                logger.warning("I/O safety guard: error checking %s: %s", file_path, stat_err)
+                with self._processing_lock:
+                    self._processing_files.discard(file_key)
+                continue
+
             by_dir.setdefault(str(file_path.parent), []).append(file_path)
 
         # ── Phase 2: identify each directory group together (album-aware) ─────
@@ -333,8 +463,6 @@ class AutoImportService:
                 batch_results = {}
 
             # ── Phase 3: per-file decision logic (Chunked Concurrency) ─────────
-            import asyncio
-
             CHUNK_SIZE = 50
             for chunk_start in range(0, len(dir_files), CHUNK_SIZE):
                 chunk_files = dir_files[chunk_start:chunk_start + CHUNK_SIZE]
@@ -378,7 +506,7 @@ class AutoImportService:
                             self._processing_files.discard(file_key)
 
                 # Yield to let tasks clear out
-                asyncio.run(asyncio.sleep(0))
+                time.sleep(0.01)
 
                 # Cleanup empty directories.
         for f in files:
@@ -537,6 +665,10 @@ class _DownloadDirEventHandler(FileSystemEventHandler):
 
     def _schedule(self, raw_path: str) -> None:
         """(Re-)schedule processing for *raw_path* after the debounce window."""
+        normalized_path = raw_path.replace("\\", "/").lower()
+        if any(ignored in normalized_path for ignored in ['/poor_metadata', '/incomplete', 'poor_metadata', 'incomplete', '.tmp', '.part']):
+            return
+
         path = Path(raw_path)
         if path.suffix.lower() not in _AUDIO_EXTENSIONS:
             return

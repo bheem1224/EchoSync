@@ -323,9 +323,12 @@
   }
 
   function getLookupMetadata(response) {
-    const payload = response?.data || {};
-    const taskPayload = payload?.task || {};
-    return taskPayload?.detected_metadata || payload?.detected_metadata || payload?.metadata || null;
+    return (
+      response?.data?.metadata ||
+      response?.data?.detected_metadata ||
+      response?.data?.task?.detected_metadata ||
+      null
+    );
   }
 
   async function runMusicBrainzLookup() {
@@ -344,19 +347,6 @@
         },
         { timeout: 60000 }
       );
-      
-      const isOk = response && (response.status >= 200 && response.status < 300);
-      if (!isOk) {
-        const status = response?.status;
-        if (status === 404) {
-          feedback.addToast('No match found on MusicBrainz.', 'error');
-        } else if (status === 500 || status === 503) {
-          feedback.addToast('Provider lookup failed or is temporarily unavailable.', 'error');
-        } else {
-          feedback.addToast('MusicBrainz lookup returned no metadata', 'error');
-        }
-        return;
-      }
 
       const updatedMetadata = getLookupMetadata(response);
       if (updatedMetadata) {
@@ -402,19 +392,6 @@
         {},
         { timeout: 60000 }
       );
-      
-      const isOk = response && (response.status >= 200 && response.status < 300);
-      if (!isOk) {
-        const status = response?.status;
-        if (status === 404) {
-          feedback.addToast('No match found on AcoustID.', 'error');
-        } else if (status === 500 || status === 503) {
-          feedback.addToast('Provider lookup failed or is temporarily unavailable.', 'error');
-        } else {
-          feedback.addToast('AcoustID scan returned no metadata', 'error');
-        }
-        return;
-      }
 
       const updatedMetadata = getLookupMetadata(response);
       if (updatedMetadata) {
@@ -462,21 +439,6 @@
     isrcLookupLoading = true;
     try {
       const response = await apiClient.get(`/core/metadata/isrc/${encodeURIComponent(isrc)}`);
-      
-      const isOk = response && (response.status >= 200 && response.status < 300);
-      if (!isOk) {
-        const status = response?.status;
-        if (status === 404) {
-          feedback.addToast('No match found on ISRC Provider.', 'error');
-        } else if (status === 500 || status === 503) {
-          feedback.addToast('Provider lookup failed or is temporarily unavailable.', 'error');
-        } else if (status === 400) {
-          feedback.addToast('Invalid ISRC format — expected 12 alphanumeric characters', 'error');
-        } else {
-          feedback.addToast(`No results found for ISRC ${isrc}`, 'error');
-        }
-        return;
-      }
 
       const result = response?.data?.result;
       if (result) {
@@ -519,11 +481,6 @@
     closeIsrcPrompt();
     doRunISRCLookup(isrc);
   }
-
-
-  onDestroy(() => {
-    clearAutosaveTimer();
-  });
 </script>
 
 <div class="fixed inset-0 z-[100] w-screen h-screen flex items-center justify-center bg-black/75 overflow-hidden">
