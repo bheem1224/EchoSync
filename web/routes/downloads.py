@@ -173,27 +173,24 @@ def _clear_queue_impl():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-def _search_or_retry_download_impl(download_id: int):
+def _requeue_download_impl(download_id: int):
     try:
         with get_working_database().session_scope() as session:
             download = session.query(DownloadQueue).filter(DownloadQueue.id == download_id).first()
             if not download:
-                raise HTTPException(status_code=404, detail="DownloadQueue not found")
+                raise HTTPException(status_code=404, detail="Download not found")
             
             download.status = "queued"
-            download.retry_count = (download.retry_count or 0) + 1
             download.updated_at = utc_now()
             session.commit()
         
-        dm = get_download_manager()
-        dm.process_single_download(download_id)
-        
-        logger.info(f"Triggered search/retry for download {download_id}")
-        return {"success": True, "message": f"Search triggered for download {download_id}"}
+        # Passive return: Do NOT call process_downloads_now or process_single_download
+        logger.info(f"Passively re-queued download {download_id}")
+        return {"success": True, "message": f"Download {download_id} re-queued"}
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error triggering search for download {download_id}: {e}")
+        logger.error(f"Error re-queueing download {download_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -233,6 +230,59 @@ def _cancel_download_impl(download_id: int):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def _requeue_all_failed_impl():
+    try:
+        with get_working_database().session_scope() as session:
+            failed_items = session.query(DownloadQueue).filter(DownloadQueue.status.like("failed%")).all()
+            count = len(failed_items)
+            for item in failed_items:
+                item.status = "queued"
+                item.retry_count = (item.retry_count or 0) + 1
+                item.updated_at = utc_now()
+            session.commit()
+            logger.info(f"Re-queued {count} failed downloads")
+            return {"success": True, "message": f"Re-queued {count} failed downloads", "count": count}
+    except Exception as e:
+        logger.error(f"Error re-queueing failed downloads: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+def _delete_all_failed_impl():
+    try:
+        with get_working_database().session_scope() as session:
+            count = session.query(DownloadQueue).filter(DownloadQueue.status.like("failed%")).delete(synchronize_session=False)
+            session.commit()
+            logger.info(f"Cleared {count} failed downloads from queue")
+            return {"success": True, "message": f"Cleared {count} failed downloads", "count": count}
+    except Exception as e:
+        logger.error(f"Error clearing failed downloads: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+def _start_download_now_impl(download_id: int):
+    try:
+        with get_working_database().session_scope() as session:
+            download = session.query(DownloadQueue).filter(DownloadQueue.id == download_id).first()
+            if not download:
+                raise HTTPException(status_code=404, detail="DownloadQueue not found")
+            
+            download.status = "queued"
+            download.retry_count = (download.retry_count or 0) + 1
+            download.updated_at = utc_now()
+            session.commit()
+        
+        dm = get_download_manager()
+        dm.process_single_download(download_id)
+        
+        logger.info(f"Immediately triggered download {download_id}")
+        return {"success": True, "message": f"Download {download_id} started"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error starting download {download_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 def _delete_batch_impl(payload: BatchDeleteRequest):
     try:
         ids = payload.ids
@@ -259,8 +309,12 @@ for r in (router, core_router):
     r.add_api_route("/active", _get_active_impl, methods=["GET"], response_model=QueueResponse)
     r.add_api_route("/history", _get_history_impl, methods=["GET"], response_model=QueueResponse)
     r.add_api_route("/run", _run_downloads_impl, methods=["POST"])
-    r.add_api_route("/{download_id}/retry", _search_or_retry_download_impl, methods=["POST"])
-    r.add_api_route("/{download_id}/search", _search_or_retry_download_impl, methods=["POST"])
+    r.add_api_route("/requeue-all-failed", _requeue_all_failed_impl, methods=["POST"])
+    r.add_api_route("/failed", _delete_all_failed_impl, methods=["DELETE"])
+    r.add_api_route("/{download_id}/start-now", _start_download_now_impl, methods=["POST"])
+    r.add_api_route("/{download_id}/requeue", _requeue_download_impl, methods=["POST"])
+    r.add_api_route("/{download_id}/retry", _requeue_download_impl, methods=["POST"])
+    r.add_api_route("/{download_id}/search", _start_download_now_impl, methods=["POST"])
     r.add_api_route("/{download_id}/pause", _pause_download_impl, methods=["POST"])
     r.add_api_route("/{download_id}/cancel", _cancel_download_impl, methods=["POST"])
     r.add_api_route("/{download_id}", _delete_download_impl, methods=["DELETE"])

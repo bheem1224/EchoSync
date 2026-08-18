@@ -570,8 +570,17 @@ class DownloadManager:
         queued_ids = []
         with self.work_db.session_scope() as session:
             # Get up to 30 queued items to enable concurrent searches
-            # Order by created_at DESC to prioritize newer tracks first
-            items = session.query(DownloadQueue).filter(DownloadQueue.status.ilike("queued")).order_by(DownloadQueue.created_at.desc()).limit(30).all()
+            # Order by retry_count ASC (prioritizes unattempted items where retry_count=0) and created_at DESC (newer first)
+            items = (
+                session.query(DownloadQueue)
+                .filter(DownloadQueue.status.ilike("queued"))
+                .order_by(
+                    DownloadQueue.retry_count.asc().nullsfirst(),
+                    DownloadQueue.created_at.desc()
+                )
+                .limit(30)
+                .all()
+            )
             if items:
                 logger.info(f"Found {len(items)} queued items for processing.")
 
@@ -1007,18 +1016,26 @@ class DownloadManager:
                     speed = status.get('speed', 0.0) # bytes/s
                     progress = status.get('progress', 0.0) # 0.0 to 100.0
 
-                    self._update_status(db_id, new_status, provider_id, speed, progress)
+                    if new_status == "completed":
+                        try:
+                            from core.hook_manager import hook_manager
+                            hook_manager.apply_filters('ON_DOWNLOAD_COMPLETED', None, download_id=db_id, provider_id=provider_id)
+                        except Exception as e:
+                            logger.error(f"Error in ON_DOWNLOAD_COMPLETED hook: {e}")
 
-                    if new_status != "downloading":
-                        logger.info(f"DownloadQueue {db_id} (Provider {found_provider}, ID {provider_id}) finished with status: {new_status}")
-
-                        if new_status == "completed":
-                            logger.info(f"DownloadQueue completed, removing {db_id} from queue")
-                            self._remove_from_queue(db_id)
-                            logger.info(f"DownloadQueue {db_id} completed. TODO: Trigger Auto Import/Post-Processing.")
+                        logger.info(f"Download {db_id} completed via {found_provider}. Auto-pruning record from database.")
+                        self._remove_from_queue(db_id)
+                    else:
+                        self._update_status(db_id, new_status, provider_id, speed, progress)
+                        if new_status != "downloading":
+                            logger.info(f"DownloadQueue {db_id} (Provider {found_provider}, ID {provider_id}) finished with status: {new_status}")
                 else:
-                    logger.info(f"DownloadQueue {db_id} not found in any active provider transfers - marking as completed")
-                    self._update_status(db_id, "completed")
+                    logger.info(f"DownloadQueue {db_id} not found in any active provider transfers - marking as completed and pruning")
+                    try:
+                        from core.hook_manager import hook_manager
+                        hook_manager.apply_filters('ON_DOWNLOAD_COMPLETED', None, download_id=db_id, provider_id=provider_id)
+                    except Exception as e:
+                        logger.error(f"Error in ON_DOWNLOAD_COMPLETED hook: {e}")
                     self._remove_from_queue(db_id)
 
             except Exception as e:
@@ -1849,7 +1866,7 @@ class DownloadManager:
         """Move retryable failed items back to queued so manual runs can re-attempt them.
         
         Prioritizes NEWEST tracks first (DESC by created_at) so most recent failures are retried first.
-        Also increments retry_count to track retry attempts.
+        Caps automatic re-queuing at retry_count < 5. Tracks with >= 5 retries require manual user intervention.
         """
         retryable_statuses = {
             "failed_no_results",
@@ -1863,9 +1880,14 @@ class DownloadManager:
 
         requeued = 0
         with self.work_db.session_scope() as session:
+            # Cap automatic re-queuing at retry_count < 5
+            # Tracks with >= 5 retries require manual user intervention
             items = (
                 session.query(DownloadQueue)
-                .filter(DownloadQueue.status.in_(retryable_statuses))
+                .filter(
+                    DownloadQueue.status.in_(retryable_statuses),
+                    (DownloadQueue.retry_count < 5) | (DownloadQueue.retry_count.is_(None))
+                )
                 .order_by(DownloadQueue.created_at.desc())  # Newest first
                 .limit(limit)
                 .all()
@@ -1878,7 +1900,7 @@ class DownloadManager:
                 item.updated_at = utc_now()
                 requeued += 1
 
-        logger.info(f"Re-queued {requeued} failed items for retry (prioritizing newest first)")
+        logger.info(f"Re-queued {requeued} failed items for retry (capped at retry_count < 5, prioritizing newest first)")
         return requeued
 
 # Global Accessor

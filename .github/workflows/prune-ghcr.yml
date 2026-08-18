@@ -1,0 +1,53 @@
+name: Prune Untagged GHCR Images
+
+on:
+  schedule:
+    - cron: "0 3 * * *" # Nightly at 3:00 AM
+  workflow_dispatch: # Manual trigger button in Actions tab
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+permissions:
+  packages: write
+  contents: read
+
+jobs:
+  prune-untagged:
+    runs-on: [self-hosted, linux, x64]
+    steps:
+      - name: Bulk Delete Untagged Container Images
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OWNER: ${{ github.repository_owner }}
+          PACKAGE_NAME: echosync
+        run: |
+          echo "Fetching untagged image versions for ${OWNER}/${PACKAGE_NAME}..."
+
+          # Fetch all untagged versions via gh CLI using GITHUB_TOKEN
+          UNTAGGED_IDS=$(gh api --paginate "/user/packages/container/${PACKAGE_NAME}/versions" \
+            --jq '.[] | select(.metadata.container.tags | length == 0) | .id' 2>/dev/null || \
+            gh api --paginate "/orgs/${OWNER}/packages/container/${PACKAGE_NAME}/versions" \
+            --jq '.[] | select(.metadata.container.tags | length == 0) | .id')
+
+          if [ -z "$UNTAGGED_IDS" ]; then
+            echo "No untagged images found. Registry is clean."
+            exit 0
+          fi
+
+          TOTAL=$(echo "$UNTAGGED_IDS" | wc -w)
+          echo "Found ${TOTAL} untagged versions. Pruning..."
+
+          COUNT=0
+          for VERSION_ID in $UNTAGGED_IDS; do
+            COUNT=$((COUNT + 1))
+            echo "[$COUNT/$TOTAL] Deleting version ID: $VERSION_ID"
+            
+            gh api --method DELETE "/user/packages/container/${PACKAGE_NAME}/versions/${VERSION_ID}" 2>/dev/null || \
+            gh api --method DELETE "/orgs/${OWNER}/packages/container/${PACKAGE_NAME}/versions/${VERSION_ID}"
+            
+            # 0.2s pause to protect against secondary rate limit bursts
+            sleep 0.2
+          done
+
+          echo "Successfully deleted ${COUNT} untagged package versions."

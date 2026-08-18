@@ -573,6 +573,7 @@ def quality_profile():
 
 
 @router.get("/quality-profiles")
+@router.get("/config/quality-profiles")
 def list_quality_profiles():
     """Return stored quality profiles from config manager and dynamic plugin options."""
     try:

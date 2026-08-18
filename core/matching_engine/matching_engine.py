@@ -88,13 +88,14 @@ class WeightedMatchingEngine:
     VERSION_KEYWORDS = {
         'remix', 'rmx', 'mix', 'edit', 'extended', 'instrumental',
         'acapella', 'bootleg', 'cover', 'remaster', 'remastered',
-        'original', 'club', 'radio', 'house', 'deep', 'progressive',
-        'version', 'ver', 'alternative', 'alt', 'acoustic', 'live'
+        'original', 'club', 'radio', 'radio edit', 'house', 'deep', 'progressive',
+        'version', 'ver', 'alternative', 'alt', 'acoustic', 'live',
+        'clean', 'edited', 'censored'
     }
 
     EDITION_KEYWORDS = {
-        'deluxe', 'standard', 'explicit', 'clean', 'remaster',
-        'remastered', '24bit', '16bit', 'lossless', 'radio', 'extended'
+        'deluxe', 'standard', 'explicit', 'clean', 'edited', 'censored', 'remaster',
+        'remastered', '24bit', '16bit', 'lossless', 'radio', 'radio edit', 'extended'
     }
 
     def __init__(self, profile: ScoringProfile):
@@ -772,11 +773,11 @@ class WeightedMatchingEngine:
             return True, "Both tracks have no version info (prefer originals)"
 
         # If source has no version but candidate does, this is a MISMATCH
-        # When user wants original, don't give them remix/live
+        # When user wants original, don't give them remix/live/clean/edited/censored
         if not source.edition and candidate.edition:
             candidate_lower = candidate.edition.lower()
-            # Check if candidate is a remix/live/etc (not just remaster which is usually okay)
-            unwanted_versions = frozenset({'remix', 'live', 'acoustic', 'instrumental', 'demo', 'radio edit', 'club'})
+            # Check if candidate is a remix/live/clean/edited/censored (not just remaster which is usually okay)
+            unwanted_versions = frozenset({'remix', 'live', 'acoustic', 'instrumental', 'demo', 'radio edit', 'club', 'clean', 'edited', 'censored'})
             if any(unwanted in candidate_lower for unwanted in unwanted_versions):
                 return False, f"Source wants original but candidate is '{candidate.edition}' (version mismatch)"
             # Remaster/deluxe/etc are usually acceptable if source has no version preference
@@ -794,6 +795,11 @@ class WeightedMatchingEngine:
         # Exact match
         if source_version_lower == candidate_version_lower:
             return True, f"Versions match: '{source.edition}'"
+
+        # Check if candidate is clean/edited/censored when source is explicit/original
+        clean_keywords = frozenset({'clean', 'edited', 'censored'})
+        if any(c in candidate_version_lower for c in clean_keywords) and not any(c in source_version_lower for c in clean_keywords):
+            return False, f"Candidate is clean/edited ('{candidate.edition}') while source is original/explicit"
 
         # Check if both have version keywords from same family
         source_keywords = self._extract_version_keywords(source_version_lower)

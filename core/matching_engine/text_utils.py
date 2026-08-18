@@ -26,10 +26,10 @@ _OST_PATTERNS = [
 ]
 
 _VERSION_PATTERNS = [
-    (re.compile(r'\s*\(([^)]*(?:remix|version|edit|live|acoustic|instrumental|remaster|radio|mix|club)[^)]*)\)', flags=re.IGNORECASE), 1),
-    (re.compile(r'\s*\[([^\]]*(?:remix|version|edit|live|acoustic|instrumental|remaster|radio|mix|club)[^\]]*)\]', flags=re.IGNORECASE), 1),
-    (re.compile(r'\s*-\s*([^-]*(?:remix|version|edit|live at|live|acoustic|instrumental|remaster|radio|mix|club)[^-]*)$', flags=re.IGNORECASE), 1),
-    (re.compile(r'\s*-\s*((?:[A-Z][a-z]+\s+)*(?:Radio|Edit|Mix|Remix|Version)[^-]*)$', flags=re.IGNORECASE), 1),
+    (re.compile(r'\s*\(([^)]*(?:remix|version|edit|live|acoustic|instrumental|remaster|radio|mix|club|clean|edited|censored)[^)]*)\)', flags=re.IGNORECASE), 1),
+    (re.compile(r'\s*\[([^\]]*(?:remix|version|edit|live|acoustic|instrumental|remaster|radio|mix|club|clean|edited|censored)[^\]]*)\]', flags=re.IGNORECASE), 1),
+    (re.compile(r'\s*-\s*([^-]*(?:remix|version|edit|live at|live|acoustic|instrumental|remaster|radio|mix|club|clean|edited|censored)[^-]*)$', flags=re.IGNORECASE), 1),
+    (re.compile(r'\s*-\s*((?:[A-Z][a-z]+\s+)*(?:Radio|Edit|Mix|Remix|Version|Clean|Edited|Censored)[^-]*)$', flags=re.IGNORECASE), 1),
 ]
 
 _EDITION_PATTERNS = [
@@ -47,12 +47,15 @@ _EDITION_PATTERNS = [
     (re.compile(r'\b(collector\'?s?)\s*(?:edition)?\b', flags=re.IGNORECASE), 'Collectors'),
     (re.compile(r'\b(explicit)\b', flags=re.IGNORECASE), 'Explicit'),
     (re.compile(r'\b(clean)\b', flags=re.IGNORECASE), 'Clean'),
+    (re.compile(r'\b(edited)\b', flags=re.IGNORECASE), 'Edited'),
+    (re.compile(r'\b(censored)\b', flags=re.IGNORECASE), 'Censored'),
     (re.compile(r'\b(instrumental)\b', flags=re.IGNORECASE), 'Instrumental'),
     (re.compile(r'\b(acapella|a\s*cappella)\b', flags=re.IGNORECASE), 'Acapella'),
     (re.compile(r'\b(acoustic)\b', flags=re.IGNORECASE), 'Acoustic'),
     (re.compile(r'\b(unplugged)\b', flags=re.IGNORECASE), 'Unplugged'),
     (re.compile(r'\b(original)\s*(?:version|mix)?\b', flags=re.IGNORECASE), 'Original'),
     (re.compile(r'\b(radio)\s*(?:edit|version|mix)?\b', flags=re.IGNORECASE), 'Radio Edit'),
+    (re.compile(r'\b(radio\s*edit)\b', flags=re.IGNORECASE), 'Radio Edit'),
     (re.compile(r'\b(extended)\s*(?:version|mix)?\b', flags=re.IGNORECASE), 'Extended'),
     (re.compile(r'\b(club)\s*(?:version|mix)?\b', flags=re.IGNORECASE), 'Club Mix'),
     (re.compile(r'\b(album)\s*(?:version)?\b', flags=re.IGNORECASE), 'Album Version'),
