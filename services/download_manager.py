@@ -1751,6 +1751,41 @@ class DownloadManager:
         except Exception as e:
             logger.error(f"DownloadQueue processing cycle failed: {e}", exc_info=True)
 
+    def process_single_download(self, download_id: int):
+        """Run acquisition strictly for a single download ID without global queue sweeps."""
+        async def _run_single():
+            providers = self._get_active_download_providers()
+            if not providers:
+                logger.warning("No active download providers available for single-item retry.")
+                return
+            await self._execute_waterfall_search_and_download(download_id, providers)
+
+        # 1. Background daemon loop active:
+        if self._loop and self._loop.is_running():
+            try:
+                running_loop = asyncio.get_running_loop()
+            except RuntimeError:
+                running_loop = None
+
+            if running_loop is self._loop:
+                return self._loop.create_task(_run_single())
+            else:
+                return asyncio.run_coroutine_threadsafe(_run_single(), self._loop)
+
+        # 2. Inside active FastAPI event loop:
+        try:
+            current_loop = asyncio.get_running_loop()
+            if current_loop and current_loop.is_running():
+                return current_loop.create_task(_run_single())
+        except RuntimeError:
+            pass
+
+        # 3. Synchronous context:
+        try:
+            asyncio.run(_run_single())
+        except Exception as e:
+            logger.error(f"Single download execution failed: {e}", exc_info=True)
+
     def _requeue_retryable_failed_items(self, limit: int = 50) -> int:
         """Move retryable failed items back to queued so manual runs can re-attempt them.
         

@@ -10,6 +10,7 @@ from core.nexus_framework.plugin_SDK import DownloaderProvider, ProviderCapabili
 
 from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
 from core.db.echo_sync_track import EchosyncTrack
+from core.matching_engine.track_parser import TrackParser
 from core.request_manager import RequestManager, RateLimitConfig, HttpError
 
 logger = get_logger("slskd_provider")
@@ -335,14 +336,35 @@ class SlskdProvider(DownloaderProvider):
     def _convert_to_echosync_track(self, result: TrackResult) -> EchosyncTrack:
         """Convert TrackResult to EchosyncTrack with injected technical stats"""
         safe_filename = _sanitize_peer_filename(result.filename)
+
+        # Parse filename / path using TrackParser for structured metadata
+        if not hasattr(self, '_track_parser') or self._track_parser is None:
+            self._track_parser = TrackParser()
+        parsed = self._track_parser.parse_filename(result.filename)
+
+        parsed_title = (parsed.raw_title or parsed.title) if parsed else None
+        parsed_artist = parsed.artist_name if parsed else None
+        parsed_album = parsed.album_title if parsed else None
+        parsed_year = parsed.release_year if parsed else None
+        parsed_track_num = parsed.track_number if parsed else None
+        parsed_disc_num = parsed.disc_number if parsed else None
+
+        title = result.title or parsed_title or safe_filename
+        artist = result.artist or parsed_artist or "Unknown Artist"
+        album = result.album or parsed_album or ""
+        track_number = result.track_number or parsed_track_num
+        disc_number = parsed_disc_num
+
         # Create base track
         # result.duration is stored as milliseconds by the JSON parser
         echo_track = self.create_echo_sync_track(
-            title=result.title or safe_filename,
-            artist=result.artist or "Unknown Artist",
-            album=result.album or "",
+            title=title,
+            artist=artist,
+            album=album,
             duration_ms=result.duration if result.duration else None,
-            track_number=result.track_number,
+            year=parsed_year,
+            track_number=track_number,
+            disc_number=disc_number,
             bitrate=result.bitrate,
             file_format=result.quality,
             file_path=str(self.download_path / safe_filename),

@@ -193,3 +193,18 @@ class TestAutoImportLogic:
                     assert service._is_path_ignored(pending_old_path) is False
                     # unknown path → don't skip
                     assert service._is_path_ignored("/downloads/random.mp3") is False
+
+    def test_process_single_download_triggers_waterfall(self):
+        """Verify process_single_download executes strictly for the given download_id."""
+        manager = DownloadManager.get_instance()
+        executed_calls = []
+
+        async def fake_execute(download_id, providers):
+            executed_calls.append((download_id, providers))
+
+        manager._execute_waterfall_search_and_download = fake_execute
+        manager._get_active_download_providers = lambda: ["mock_provider"]
+
+        manager.process_single_download(123)
+        assert len(executed_calls) == 1
+        assert executed_calls[0] == (123, ["mock_provider"])

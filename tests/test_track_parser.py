@@ -340,6 +340,28 @@ class TestTrackParserIntegration:
         assert track is not None
         assert track.artist_name is not None
 
+    def test_hierarchical_path_three_levels(self):
+        """Test path with Music/Artist/Album/01 - Title.flac"""
+        track = self.parser.parse_filename(r"Music\Jonas Blue\By Your Side\01 - By Your Side.flac")
+        assert track is not None
+        assert "jonas blue" in track.artist_name.lower()
+        assert "by your side" in track.title.lower()
+        assert "by your side" in track.album_title.lower()
+
+    def test_hierarchical_path_two_levels(self):
+        """Test path with Artist/01 - Title.flac"""
+        track = self.parser.parse_filename("Jonas Blue/01 - By Your Side.flac")
+        assert track is not None
+        assert "jonas blue" in track.artist_name.lower()
+        assert "by your side" in track.title.lower()
+
+    def test_underscore_delimited_filename(self):
+        """Test Artist_Name-Title_Name.flac"""
+        track = self.parser.parse_filename("Jonas_Blue-By_Your_Side.flac")
+        assert track is not None
+        assert "jonas blue" in track.artist_name.lower()
+        assert "by your side" in track.title.lower()
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

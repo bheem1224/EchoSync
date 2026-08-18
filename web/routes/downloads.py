@@ -186,7 +186,7 @@ def _search_or_retry_download_impl(download_id: int):
             session.commit()
         
         dm = get_download_manager()
-        dm.process_downloads_now()
+        dm.process_single_download(download_id)
         
         logger.info(f"Triggered search/retry for download {download_id}")
         return {"success": True, "message": f"Search triggered for download {download_id}"}

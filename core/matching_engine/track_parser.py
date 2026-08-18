@@ -11,11 +11,14 @@ This service handles:
 """
 
 import re
+import logging
 from typing import Optional, List, Dict, Set
 from dataclasses import dataclass
 from pathlib import Path
 from ..db.echo_sync_track import EchosyncTrack, QualityTag
 from .fingerprinting import FingerprintGenerator, FingerprintCache
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -143,10 +146,10 @@ class TrackParser:
 
     def parse_filename(self, raw_string: str) -> Optional[EchosyncTrack]:
         """
-        Parse a raw filename/string into a EchosyncTrack object
+        Parse a raw filename or hierarchical path into a EchosyncTrack object.
 
         Args:
-            raw_string: Raw filename or track description
+            raw_string: Raw filename or track description / file path
 
         Returns:
             EchosyncTrack object if parsing succeeds, None otherwise
@@ -155,12 +158,30 @@ class TrackParser:
             return None
 
         # Clean input
-        working_string = raw_string.strip()
-        if not working_string:
+        raw_clean = raw_string.strip()
+        if not raw_clean:
             return None
 
-        # Extract year early (don't remove yet)
-        year = self._extract_year(working_string)
+        # Detect directory separators (/ or \)
+        clean_path = raw_clean.replace('\\', '/')
+        parts = [p.strip() for p in clean_path.split('/') if p.strip()]
+
+        dir_artist = None
+        dir_album = None
+        if len(parts) >= 3:
+            dir_artist = parts[-3]
+            dir_album = parts[-2]
+            filename_part = parts[-1]
+        elif len(parts) == 2:
+            dir_artist = parts[-2]
+            filename_part = parts[-1]
+        else:
+            filename_part = parts[0]
+
+        working_string = filename_part
+
+        # Extract year early (check filename first, then directory album)
+        year = self._extract_year(working_string) or (self._extract_year(dir_album) if dir_album else None)
 
         # Extract track/disk numbers
         track_number, disc_number = self._extract_track_numbers(working_string)
@@ -183,8 +204,38 @@ class TrackParser:
             # Remove version parentheticals but keep version string
             working_string = self._remove_parenthetical_versions(working_string)
 
-        # Try different parsing patterns
-        parsed_data = self._try_parse_patterns(working_string)
+        # Remove leading track number prefixes (e.g. "01 - ", "01. ", "1-05 ", "01 ")
+        clean_filename_part = re.sub(r'^(?:(?:\d+[.-])?\d{1,2}[\s.-]+)', '', working_string).strip()
+
+        # Try different parsing patterns on clean_filename_part first
+        parsed_data = self._try_parse_patterns(clean_filename_part)
+
+        # If clean_filename_part didn't have artist-title pattern (e.g. title-only like "01 - Title.flac"),
+        # and dir_artist is available, use dir_artist and clean_title
+        if not parsed_data and dir_artist:
+            clean_title = self.PATTERNS['extension_strip'].sub('', clean_filename_part or working_string).strip()
+            if clean_title:
+                parsed_data = {
+                    'artist': dir_artist,
+                    'album': dir_album or '',
+                    'title': clean_title
+                }
+
+        # Otherwise fallback to parsing the uncleaned working_string if parsed_data is still None
+        if not parsed_data:
+            parsed_data = self._try_parse_patterns(working_string)
+
+        if parsed_data:
+            # If the parsed artist is purely digits (e.g. leftover track number), fallback to dir_artist
+            parsed_artist = (parsed_data.get('artist') or '').strip()
+            if re.match(r'^\d+$', parsed_artist) or not parsed_artist:
+                if dir_artist:
+                    parsed_data['artist'] = dir_artist
+                else:
+                    parsed_data = None
+            if parsed_data and dir_album and not parsed_data.get('album'):
+                parsed_data['album'] = dir_album
+
         if not parsed_data:
             return None
 
@@ -223,7 +274,7 @@ class TrackParser:
             return None
 
         except Exception as e:
-            print(f"Error creating EchosyncTrack: {e}")
+            logger.error(f"Error creating EchosyncTrack: {e}")
             return None
 
     def _try_parse_patterns(self, working_string: str) -> Optional[Dict[str, str]]:
