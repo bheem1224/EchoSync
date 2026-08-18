@@ -593,6 +593,28 @@ def register_download_manager_queue_job(interval_seconds: int = 21600, enabled: 
         logger.error(f"Failed to register download_manager_queue job: {e}", exc_info=True)
 
 
+def register_auto_import_scan_job(interval_seconds: int = 10800, enabled: bool = True):
+    """Register the auto-importer directory scan & processing job (every 3 hours fallback, plus realtime watchdog)."""
+    try:
+        from services.auto_importer import get_auto_importer
+        auto_importer = get_auto_importer()
+        job_queue.register_job(
+            name="auto_import_scan",
+            func=auto_importer.scan_and_process,
+            interval_seconds=interval_seconds,
+            start_after=600,
+            enabled=enabled,
+            tags=["echosync", "import", "auto_import"],
+            max_retries=3,
+        )
+        logger.info(
+            f"Auto import scan job registered "
+            f"(interval: {interval_seconds}s = {interval_seconds / 3600:.1f}h, enabled={enabled})"
+        )
+    except Exception as e:
+        logger.error(f"Failed to register auto_import_scan job: {e}", exc_info=True)
+
+
 def register_user_history_sync_job(interval_seconds: int = 43200, enabled: bool = True):
     """Register periodic user history sync job (every 12 hours)."""
 
@@ -853,6 +875,9 @@ def register_all_system_jobs():
 
         # Download manager queue processing (every 6 hours).
         register_download_manager_queue_job(interval_seconds=21600, enabled=True)
+
+        # Auto-importer scan job (every 3 hours fallback & watchdog initialization).
+        register_auto_import_scan_job(interval_seconds=10800, enabled=True)
 
         # User history sync for Suggestion Engine baseline data (every 12 hours).
         register_user_history_sync_job(interval_seconds=43200, enabled=True)

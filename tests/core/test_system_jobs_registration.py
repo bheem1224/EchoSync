@@ -26,6 +26,10 @@ def test_register_all_system_jobs_registers_expected_defaults(monkeypatch):
     assert by_name["suggestion_engine_daily_playlists"]["enabled"] is True
     assert by_name["suggestion_engine_daily_playlists"]["interval_seconds"] == 86400
 
+    assert "auto_import_scan" in by_name
+    assert by_name["auto_import_scan"]["enabled"] is True
+    assert by_name["auto_import_scan"]["interval_seconds"] == 10800
+
 
 def test_system_jobs_accept_kwargs(monkeypatch):
     """Verify all registered system job functions tolerate **kwargs without raising TypeError."""

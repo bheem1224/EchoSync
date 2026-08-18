@@ -110,6 +110,10 @@ async def start_services() -> None:
     library_watcher = get_library_watcher()
     library_watcher.start()
 
+    # Start auto-importer service and real-time download directory watcher
+    from services.auto_importer import get_auto_importer
+    auto_importer = get_auto_importer()
+
     # Keep services alive indefinitely
     try:
         shutdown_event = asyncio.Event()
@@ -118,8 +122,12 @@ async def start_services() -> None:
         logger.info("Backend shutdown signal received")
     finally:
         library_watcher.stop()
+        if auto_importer:
+            try:
+                auto_importer.stop_watcher()
+            except Exception as e:
+                logger.warning(f"Error stopping auto-importer watcher: {e}")
         await download_manager.stop_background_task()
-        pass
         await _graceful_close(active_clients)
         logger.info("Backend services stopped")
 

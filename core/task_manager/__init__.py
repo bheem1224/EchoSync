@@ -28,7 +28,7 @@ from core.task_manager.health import (
 from core.task_manager.health_service import get_system_health
 from core.task_manager.binary_runner import CoreBinaryRunner
 from core.task_manager.backend_services import start_services, backend_main
-from core.task_manager.system_jobs import register_all_system_jobs
+from core.task_manager.system_jobs import register_all_system_jobs, register_auto_import_scan_job
 from core.task_manager.models import (
     OwnerType,
     PluginLifecycleState,
@@ -62,6 +62,7 @@ __all__ = [
     "start_services",
     "backend_main",
     "register_all_system_jobs",
+    "register_auto_import_scan_job",
     "OwnerType",
     "PluginLifecycleState",
     "ProcessOwner",
