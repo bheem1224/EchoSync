@@ -274,11 +274,18 @@ def get_cover_art(path: str = Query(..., description="absolute path to audio fil
     try:
         from core.settings import config_manager
         from core.path_security import resolve_safe_path, PathTraversalError
-        _lib = config_manager.get('storage.library_dir') or config_manager.get('library_dir') or config_manager.get('data_dir') or '.'
-        allowed_root = Path(_lib).resolve()
+        candidate_roots = [
+            config_manager.get('storage.library_dir'),
+            config_manager.get('library_dir'),
+            config_manager.get('download_dir'),
+            config_manager.get('storage.download_dir'),
+            config_manager.get('data_dir'),
+            '.'
+        ]
+        allowed_roots = [Path(r).resolve() for r in candidate_roots if r]
 
         try:
-            file_path = resolve_safe_path(allowed_root, path)
+            file_path = resolve_safe_path(allowed_roots, path)
         except (PathTraversalError, ValueError):
             raise HTTPException(status_code=403, detail="Security violation: Access denied")
 
@@ -287,7 +294,7 @@ def get_cover_art(path: str = Query(..., description="absolute path to audio fil
 
         for name in ["cover.jpg", "folder.jpg", "cover.png", "folder.png"]:
             try:
-                fallback = resolve_safe_path(allowed_root, file_path.parent / name)
+                fallback = resolve_safe_path(allowed_roots, file_path.parent / name)
                 if fallback.exists() and fallback.is_file():
                     return FileResponse(path=str(fallback))
             except (PathTraversalError, ValueError):
@@ -297,5 +304,5 @@ def get_cover_art(path: str = Query(..., description="absolute path to audio fil
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error extracting cover art for {path}: {e}")
+        logger.error(f"Error extracting cover art for {path}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to extract cover art")

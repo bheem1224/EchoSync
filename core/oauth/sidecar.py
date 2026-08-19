@@ -24,31 +24,44 @@ def oauth_callback(provider_name: str):
     lan_ip = get_lan_ip()
     main_port = get_main_app_port()
 
-    query_string = request.query_string.decode('utf-8')
+    clean_provider = urllib.parse.quote(provider_name.strip())
     if request.path.startswith('/api/oauth/callback/plugins/'):
         try:
-            from database.config_database import get_config_database
-            db = get_config_database()
-            conn = db._open_connection()
-            try:
-                c = conn.cursor()
-                c.execute("SELECT plugin_id FROM services WHERE LOWER(name) LIKE ?", ('%' + provider_name.lower(),))
-                row = c.fetchone()
-                if row and row[0]:
-                    provider_name = str(row[0])
-            finally:
-                conn.close()
+            import binascii
+            from core.nexus_framework.plugin_loader import PluginRegistry
+            plugin_cls = PluginRegistry.get_plugin_class(provider_name)
+            if plugin_cls and hasattr(plugin_cls, 'name') and plugin_cls.name:
+                clean_provider = str(binascii.crc32(plugin_cls.name.lower().encode('utf-8')) & 0xFFFFFFFF)
+            else:
+                from database.config_database import get_config_database
+                db = get_config_database()
+                conn = db._open_connection()
+                try:
+                    c = conn.cursor()
+                    c.execute("SELECT plugin_id FROM services WHERE LOWER(name) LIKE ?", ('%' + clean_provider.lower(),))
+                    row = c.fetchone()
+                    if row and row[0]:
+                        clean_provider = urllib.parse.quote(str(row[0]))
+                finally:
+                    conn.close()
         except Exception:
             logger.debug(f"Unable to resolve plugin provider '{provider_name}' to canonical plugin ID from DB", exc_info=True)
 
-        redirect_url = f"http://{lan_ip}:{main_port}/api/plugins/{provider_name}/callback"
+        target_path = f"/api/plugins/{clean_provider}/callback"
     else:
-        redirect_url = f"http://{lan_ip}:{main_port}/api/{provider_name}/callback"
+        target_path = f"/api/{clean_provider}/callback"
 
+    query_string = request.query_string.decode('utf-8') if request.query_string else ""
+    redirect_url = f"http://{lan_ip}:{main_port}{target_path}"
     if query_string:
         redirect_url += f"?{query_string}"
 
-    logger.info(f"OAuth sidecar proxying callback for {provider_name} to {redirect_url}")
+    # Verify destination is strictly the expected local host/port
+    parsed = urllib.parse.urlsplit(redirect_url)
+    if parsed.netloc != f"{lan_ip}:{main_port}":
+        return ("Invalid redirect destination", 400)
+
+    logger.info(f"OAuth sidecar proxying callback for {clean_provider} to {redirect_url}")
     return redirect(redirect_url, code=302)
 
 

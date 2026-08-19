@@ -75,8 +75,8 @@ def create_system_backup():
             "filename": Path(backup_path).name
         }
     except Exception as e:
-        logger.error(f"Backup failed: {e}")
-        return {"success": False, "error": str(e)}
+        logger.error(f"Backup failed: {e}", exc_info=True)
+        return {"success": False, "error": "Backup creation failed"}
 
 
 @router.get("/backups", dependencies=[Depends(require_auth)])
@@ -89,8 +89,8 @@ def list_system_backups():
             "backups": backups
         }
     except Exception as e:
-        logger.error(f"Failed to list backups: {e}")
-        return {"success": False, "error": str(e)}
+        logger.error(f"Failed to list backups: {e}", exc_info=True)
+        return {"success": False, "error": "Failed to list backups"}
 
 
 @router.get("/backups/{filename}/download", dependencies=[Depends(require_auth)])
@@ -106,9 +106,10 @@ def download_system_backup(filename):
     except FileNotFoundError:
         return {"success": False, "error": "Backup not found"}
     except ValueError as e:
-        return {"success": False, "error": str(e)}
+        logger.error(f"Invalid backup file request: {e}", exc_info=True)
+        return {"success": False, "error": "Invalid backup file request"}
     except Exception as e:
-        logger.error(f"Download failed: {e}")
+        logger.error(f"Download failed: {e}", exc_info=True)
         return {"success": False, "error": "Download failed"}
 
 
@@ -162,8 +163,8 @@ async def restore_system_backup(request: Request):
     except FileNotFoundError:
         return {"success": False, "error": "Local backup file not found"}
     except Exception as e:
-        logger.error(f"Restore failed: {e}")
-        return {"success": False, "error": str(e)}
+        logger.error(f"Restore failed: {e}", exc_info=True)
+        return {"success": False, "error": "Restore failed"}
     finally:
         if tmp_path and tmp_path.exists():
             os.remove(tmp_path)
@@ -510,10 +511,17 @@ async def update_settings(request: Request):
         ui_path = str(payload["custom_ui_path"]).strip()
         if ui_path:
             try:
-                resolved_ui = Path(ui_path).resolve()
+                from core.path_security import resolve_safe_path, PathTraversalError
+                allowed_ui_root = (Path(config_manager.config_dir) / "custom_ui").resolve()
+                allowed_ui_root.mkdir(parents=True, exist_ok=True)
+                resolved_ui = resolve_safe_path(allowed_ui_root, ui_path)
                 if not resolved_ui.is_dir():
                     raise HTTPException(status_code=400, detail="Custom UI directory does not exist")
                 payload["custom_ui_path"] = str(resolved_ui)
+            except (PathTraversalError, ValueError):
+                raise HTTPException(status_code=403, detail="Security violation: Custom UI path must be inside config/custom_ui")
+            except HTTPException:
+                raise
             except Exception:
                 raise HTTPException(status_code=400, detail="Invalid Custom UI path")
         else:
@@ -530,7 +538,7 @@ async def update_settings(request: Request):
 
         return resp
     except Exception as e:
-        logger.error(f"Error updating settings: {e}")
+        logger.error(f"Error updating settings: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to update settings")
 
 
@@ -835,7 +843,7 @@ async def trigger_metadata_enhancement(request: Request):
         return {"status": "ok", "batch_size": size}
     except Exception as exc:
         logger.error("Manual enhance trigger failed: %s", exc, exc_info=True)
-        return {"error": str(exc)}
+        return {"error": "Manual metadata enhancement failed"}
 
 
 @router.post("/reset/state", dependencies=[Depends(require_auth)])

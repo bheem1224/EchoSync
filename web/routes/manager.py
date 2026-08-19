@@ -225,8 +225,8 @@ def manager_settings(request: Request, payload: Optional[ManagerSettingsRequest]
             config_manager.set('manager', manager_config)
             return {"success": True, "settings": manager_config, "routing": routing}
         except Exception as e:
-            logger.error(f"Error updating manager settings: {e}")
-            return {"error": str(e)}
+            logger.error(f"Error updating manager settings: {e}", exc_info=True)
+            return {"error": "Failed to update manager settings"}
     else:
         # GET
         try:
@@ -247,8 +247,8 @@ def manager_settings(request: Request, payload: Optional[ManagerSettingsRequest]
             settings['_routing'] = routing
             return {"success": True, "settings": settings, "routing": routing}
         except Exception as e:
-            logger.error(f"Error getting manager settings: {e}")
-            return {"error": str(e)}
+            logger.error(f"Error getting manager settings: {e}", exc_info=True)
+            return {"error": "Failed to get manager settings"}
 
 
 @router.api_route("/ui-beta", methods=["GET", "POST"])
@@ -286,8 +286,8 @@ def ui_beta_opt(request: Request, payload: Optional[UIBetaRequest] = None, _=Dep
 
         return {'beta_opt_in': saved, 'dev_mode': dev_mode}
     except Exception as e:
-        logger.error(f"Error handling ui-beta opt: {e}")
-        return {'error': str(e)}
+        logger.error(f"Error handling ui-beta opt: {e}", exc_info=True)
+        return {'error': 'Failed to process UI beta option'}
 
 
 @router.get("/suggestion-candidates")
@@ -299,40 +299,29 @@ def get_suggestion_candidates(limit: int = Query(100), _=Depends(require_auth)):
 
     try:
         with work_db.session_scope() as session:
-            score_expr = WorkingUserRating.rating * 2.0
-            rows = (
-                session.query(
-                    WorkingUserRating.sync_id.label("sync_id"),
-                    func.avg(score_expr).label("avg_score_10"),
-                    func.count(WorkingUserRating.id).label("ratings_count"),
-                    func.max(
-                        case((UserTrackState.admin_exempt_deletion.is_(True), 1), else_=0)
-                    ).label("admin_exempt_deletion"),
-                    func.max(
-                        case((UserTrackState.admin_force_upgrade.is_(True), 1), else_=0)
-                    ).label("admin_force_upgrade"),
-                    func.max(UserTrackState.updated_at).label("last_override_at"),
-                )
-                .outerjoin(UserTrackState, UserTrackState.sync_id == WorkingUserRating.sync_id)
-                .group_by(WorkingUserRating.sync_id)
-                .all()
-            )
+            rated_sync_ids = [
+                row[0]
+                for row in session.query(WorkingUserRating.sync_id).distinct().all()
+            ]
 
             delete_candidates = []
             upgrade_candidates = []
 
-            for row in rows:
-                if row.avg_score_10 is None:
-                    continue
+            for sync_id in rated_sync_ids:
+                lifecycle = calculate_consensus(sync_id)
+                ratings_count = int(lifecycle.get("ratings_count", 0))
+                avg_score = float(lifecycle.get("avg_score", 0.0))
+                preview = _resolve_track_preview(sync_id) or {}
 
-                avg_score = float(row.avg_score_10)
                 candidate = {
-                    "sync_id": row.sync_id,
-                    "score_10": round(avg_score, 2),
-                    "ratings_count": int(row.ratings_count or 0),
-                    "admin_exempt_deletion": bool(row.admin_exempt_deletion),
-                    "admin_force_upgrade": bool(row.admin_force_upgrade),
-                    "last_override_at": row.last_override_at.isoformat() if row.last_override_at else None,
+                    "sync_id": sync_id,
+                    "title": preview.get("title") or sync_id,
+                    "artist": preview.get("artist") or "Unknown Artist",
+                    "score_10": round(avg_score * 2.0, 1),
+                    "ratings_count": ratings_count,
+                    "preview": preview,
+                    "admin_exempt_deletion": lifecycle.get("admin_exempt_deletion", False),
+                    "admin_force_upgrade": lifecycle.get("admin_force_upgrade", False),
                 }
 
                 if avg_score <= 2.0:
@@ -354,16 +343,15 @@ def get_suggestion_candidates(limit: int = Query(100), _=Depends(require_auth)):
             }
     except Exception as e:
         logger.error(f"Error getting suggestion candidates: {e}", exc_info=True)
-        return {"error": str(e)}
+        return {"error": "Failed to get suggestion candidates"}
 
 
 @router.post("/suggestion-candidates/override")
-def toggle_suggestion_candidate_override():
+def toggle_suggestion_candidate_override(payload: dict, _=Depends(require_auth)):
     """Toggle admin exemption flags used by the suggestion engine lifecycle gate."""
-    payload_data = payload.model_dump(exclude_unset=True) if payload else {}
-    sync_id = _normalize_sync_id(payload_data.get("sync_id"))
-    field = payload_data.get("field")
-    value = bool(payload_data.get("value"))
+    sync_id = _normalize_sync_id(payload.get("sync_id"))
+    field = payload.get("field")
+    value = bool(payload.get("value"))
 
     valid_fields = {"admin_exempt_deletion", "admin_force_upgrade"}
     if not sync_id:
@@ -416,7 +404,7 @@ def toggle_suggestion_candidate_override():
             return {"success": True, "state": response_state}
     except Exception as e:
         logger.error(f"Error toggling suggestion candidate override for {sync_id}: {e}", exc_info=True)
-        return {"error": str(e)}
+        return {"error": "Failed to toggle suggestion candidate override"}
 
 @router.post("/scan")
 def run_manager_scan(_=Depends(require_auth)):
@@ -480,7 +468,7 @@ def run_manager_scan(_=Depends(require_auth)):
 
     except Exception as e:
         logger.error(f"Error running manager scan: {e}", exc_info=True)
-        return {"error": str(e)}
+        return {"error": "Failed to run manager scan"}
 
 
 @router.post("/prune/run")
@@ -493,7 +481,7 @@ def run_prune_job(_=Depends(require_auth)):
         return {"success": True, "result": result}
     except Exception as e:
         logger.error(f"Error running prune job: {e}", exc_info=True)
-        return {"error": str(e)}
+        return {"error": "Failed to run prune job"}
 
 @router.get("/duplicates")
 def get_duplicates(_=Depends(require_auth)):
@@ -507,7 +495,7 @@ def get_duplicates(_=Depends(require_auth)):
         return {"success": True, "duplicates": all_duplicates}
     except Exception as e:
         logger.error(f"Error getting duplicates: {e}", exc_info=True)
-        return {"error": str(e)}
+        return {"error": "Failed to get duplicates"}
 
 @router.get("/queue/actions")
 def get_action_queue(_=Depends(require_auth)):
@@ -568,7 +556,7 @@ def get_action_queue(_=Depends(require_auth)):
         return {"success": True, "queue": queue, "count": len(queue)}
     except Exception as e:
         logger.error(f"Error getting staged lifecycle queue: {e}", exc_info=True)
-        return {"error": str(e)}
+        return {"error": "Failed to get staged lifecycle queue"}
 
 
 @router.post("/track/{track_id}/force_delete")
@@ -594,7 +582,7 @@ def force_delete_track(track_id: int, _=Depends(require_auth)):
         return result, status
     except Exception as e:
         logger.error(f"Error forcing delete for track {track_id}: {e}", exc_info=True)
-        return {"error": str(e)}
+        return {"error": "Failed to force delete track"}
 
 
 @router.post("/track/{track_id}/force_upgrade")
@@ -652,7 +640,7 @@ def force_upgrade_track(track_id: int, _=Depends(require_auth)):
         return {"success": True}
     except Exception as e:
         logger.error(f"Error forcing upgrade for track {track_id}: {e}", exc_info=True)
-        return {"error": str(e)}
+        return {"error": "Failed to force upgrade track"}
 
 @router.post("/track/{track_id}/fetch_metadata")
 def fetch_metadata(track_id: int, _=Depends(require_auth)):
@@ -673,7 +661,7 @@ def fetch_metadata(track_id: int, _=Depends(require_auth)):
         }
     except Exception as e:
         logger.error(f"Error fetching metadata for track {track_id}: {e}", exc_info=True)
-        return {"error": str(e)}
+        return {"error": "Failed to fetch track metadata"}
 
 @router.post("/track/{track_id}/override")
 def override_track(track_id: int, payload: TrackOverrideRequest, _=Depends(require_auth)):
@@ -710,7 +698,7 @@ def resolve_conflict(payload: ConflictResolveRequest, _=Depends(require_auth)):
             return {"error": "Failed to resolve some conflicts"}
     except Exception as e:
         logger.error(f"Error resolving conflict: {e}", exc_info=True)
-        return {"error": str(e)}
+        return {"error": "Failed to resolve conflict"}
 
 @router.get("/trends")
 def get_trends(user_id: Optional[int] = Query(None), account_id: Optional[int] = Query(None), _=Depends(require_auth)):
@@ -759,7 +747,7 @@ def get_trends(user_id: Optional[int] = Query(None), account_id: Optional[int] =
             }
     except Exception as e:
         logger.error(f"Error getting trends: {e}", exc_info=True)
-        return {"error": str(e)}
+        return {"error": "Failed to get library trends"}
 
 @router.get("/search")
 def search_library(q: str = Query(None), _=Depends(require_auth)):
@@ -774,7 +762,7 @@ def search_library(q: str = Query(None), _=Depends(require_auth)):
         return results
     except Exception as e:
         logger.error(f"Error searching library: {e}", exc_info=True)
-        return {"error": str(e)}
+        return {"error": "Failed to search library"}
 
 @router.post("/settings")
 def set_manager_settings(payload: ManagerSettingsRequest, _=Depends(require_auth)):
@@ -808,7 +796,7 @@ def get_suggestion_queue(_=Depends(require_auth)):
             }
     except Exception as e:
         logger.error(f"Error getting suggestion queue: {e}", exc_info=True)
-        return {"error": str(e)}
+        return {"error": "Failed to get suggestion queue"}
 
 @router.post("/suggestion-candidates/override")
 def override_suggestion_candidate(payload: OverrideRequest, _=Depends(require_auth)):
@@ -838,7 +826,7 @@ def override_suggestion_candidate(payload: OverrideRequest, _=Depends(require_au
             return {"success": True}
     except Exception as e:
         logger.error(f"Error overriding suggestion candidate: {e}", exc_info=True)
-        return {"error": str(e)}
+        return {"error": "Failed to override suggestion candidate"}
 
 
 @router.post("/veto")
@@ -876,7 +864,7 @@ def veto_suggestion(payload: VetoRequest, _=Depends(require_auth)):
         return {"success": True, "sync_id": sync_id}
     except Exception as e:
         logger.error(f"Error vetoing suggestion {sync_id}: {e}", exc_info=True)
-        return {"error": str(e)}
+        return {"error": "Failed to veto suggestion"}
 
 
 @router.post("/execute")
@@ -940,4 +928,4 @@ def execute_pending_action(payload: ExecuteRequest, _=Depends(require_auth)):
         return {"success": True, "sync_id": sync_id, "executed_action": action}
     except Exception as e:
         logger.error(f"Error executing pending action for {sync_id}: {e}", exc_info=True)
-        return {"error": str(e)}
+        return {"error": "Failed to execute pending action"}

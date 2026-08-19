@@ -218,7 +218,7 @@ def get_suggestion_accounts(request: Request):
         
     except Exception as e:
         logger.error(f"Error getting suggestion accounts: {e}", exc_info=True)
-        return {'error': str(e)}
+        return {'error': 'Failed to get suggestion accounts'}
 
 
 @router.get("/pending/{account_id}")
@@ -303,7 +303,7 @@ def get_pending_suggestions(account_id: int):
         
     except Exception as e:
         logger.error(f"Error getting pending suggestions: {e}", exc_info=True)
-        return {'error': str(e)}
+        return {'error': 'Failed to get pending suggestions'}
 
 
 @router.post("/approve")
@@ -356,7 +356,7 @@ def approve_suggestion(payload: ApproveSuggestionRequest):
         
     except Exception as e:
         logger.error(f"Error approving suggestion: {e}", exc_info=True)
-        return {'error': str(e)}
+        return {'error': 'Failed to approve suggestion'}
 
 
 @router.get("/audit")
@@ -412,7 +412,7 @@ def get_suggestion_audit(request: Request):
         
     except Exception as e:
         logger.error(f"Error getting audit history: {e}", exc_info=True)
-        return {'error': str(e)}
+        return {'error': 'Failed to get suggestion audit history'}
 
 
 @router.post("/toggle-auto")
@@ -446,4 +446,4 @@ def toggle_auto_suggestions(payload: ToggleAutoRequest):
         
     except Exception as e:
         logger.error(f"Error toggling auto suggestions: {e}", exc_info=True)
-        return {'error': str(e)}
+        return {'error': 'Failed to toggle automated suggestions'}

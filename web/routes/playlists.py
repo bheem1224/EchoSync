@@ -63,7 +63,7 @@ router = APIRouter(prefix="/api/v1/core/playlists", tags=["Playlists"])
 # substring boost to be withheld, preventing false-positive Swap Cases.
 _OST_SAFE_RE = re.compile(
     r'^(?:'
-    r'\s+'                                           # whitespace between tokens
+    r'\s'                                            # whitespace between tokens
     r'|电视剧|网剧|影视剧|影視劇|电影'              # drama-type classifiers
     r'|片头曲|片尾曲|主题曲|插曲|推广曲'             # song-role labels
     r'|原声带|原声|配乐'                              # soundtrack labels
@@ -74,14 +74,14 @@ _OST_SAFE_RE = re.compile(
     # Longer forms are listed before shorter prefixes so the regex engine
     # consumes them greedily before attempting a shorter alternative
     # (e.g. 'remastered' is tried before 'remaster').
-    # \d+ covers year tokens (2013, 2024) and track numbers.
+    # \d covers year tokens (2013, 2024) and track numbers.
     r'|remastered|remaster'                          # remaster suffix variants
     r'|acoustic|live'                                # performance/recording type
     r'|radio|single'                                 # release format descriptors
     r'|version|edit|mix'                             # common music metadata
     r'|official|song|shanty'                         # descriptor words
     r'|deluxe'                                       # edition descriptor
-    r'|\d+'                                          # years / track numbers (2013, 2024)
+    r'|\d'                                           # digits for years / track numbers (2013, 2024)
     r')+$',
     re.IGNORECASE | re.UNICODE,
 )
@@ -1325,7 +1325,7 @@ def analyze_playlists(payload_obj: Optional[PlaylistAnalyzeSchema] = None):
         return result
     except Exception as e:
         logger.error(f"Error analyzing playlists: {e}", exc_info=True)
-        return {"error": f"Analysis failed: {str(e)}"}
+        return {"error": "Playlist analysis failed"}
 
 
 @router.post("/analyze/start")
@@ -1835,8 +1835,8 @@ async def download_missing_tracks(request: Request):
         }
     
     except Exception as e:
-        logger.error(f"Failed to queue downloads: {e}")
-        return {"accepted": False, "error": f"Failed to queue downloads: {e}"}
+        logger.error(f"Failed to queue downloads: {e}", exc_info=True)
+        return {"accepted": False, "error": "Failed to queue downloads"}
 
 
 # ========================================
