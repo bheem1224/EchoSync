@@ -37,3 +37,20 @@ def test_validate_zip_entry_zip_slip_blocked(tmp_path):
     # Zip Slip attack entry
     with pytest.raises(PathTraversalError):
         validate_zip_entry(base_dir, "../../evil.sh")
+
+def test_resolve_safe_path_symlink_escape(tmp_path):
+    sandbox = tmp_path / "sandbox"
+    sandbox.mkdir()
+    outside_file = tmp_path / "outside_secret.txt"
+    outside_file.write_text("secret")
+
+    symlink_path = sandbox / "symlink_to_outside.txt"
+    try:
+        symlink_path.symlink_to(outside_file)
+    except (OSError, NotImplementedError):
+        pytest.skip("Symlink creation not supported in this environment")
+
+    # Accessing the symlink inside the sandbox should resolve to outside_file and fail containment
+    with pytest.raises(PathTraversalError):
+        resolve_safe_path(sandbox, "symlink_to_outside.txt")
+
