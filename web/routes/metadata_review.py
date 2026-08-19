@@ -34,6 +34,10 @@ class ApproveReviewQueueRequest(BaseModel):
 class MusicBrainzLookupRequest(BaseModel):
     metadata: Optional[Dict[str, Any]] = None
 
+class ISRCLookupRequest(BaseModel):
+    isrc: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+
 def _get_media_file_path(media_id: str) -> Optional[str]:
     if not media_id:
         return None
@@ -147,10 +151,28 @@ def _serialize_task(
     current_metadata: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     track_data = task.track_data or {}
+
+    artist_val = (
+        (detected_metadata.get("artist") if isinstance(detected_metadata, dict) else None)
+        or track_data.get("artist_name")
+        or track_data.get("artist")
+    )
+    title_val = (
+        (detected_metadata.get("title") if isinstance(detected_metadata, dict) else None)
+        or track_data.get("title")
+        or track_data.get("raw_title")
+        or track_data.get("display_title")
+    )
+    album_val = (
+        (detected_metadata.get("album") if isinstance(detected_metadata, dict) else None)
+        or track_data.get("album_title")
+        or track_data.get("album")
+    )
+
     detected = detected_metadata if detected_metadata is not None else {
-        "title": track_data.get("title") or track_data.get("raw_title"),
-        "artist": track_data.get("artist"),
-        "album": track_data.get("album_title") or track_data.get("album"),
+        "title": title_val,
+        "artist": artist_val,
+        "album": album_val,
         "year": track_data.get("release_year") or track_data.get("year"),
         "track_number": track_data.get("track_number"),
         "disc_number": track_data.get("disc_number"),
@@ -160,12 +182,22 @@ def _serialize_task(
         "mb_release_id": track_data.get("mb_release_id"),
         "fingerprint": track_data.get("fingerprint"),
     }
+    if isinstance(detected, dict):
+        if not detected.get("artist") and artist_val:
+            detected["artist"] = artist_val
+        if not detected.get("title") and title_val:
+            detected["title"] = title_val
+        if not detected.get("album") and album_val:
+            detected["album"] = album_val
+
     return {
         "id": task.id,
         "file_path": task.file_path,
         "media_id": task.file_path,
         "detected_metadata": detected,
         "current_metadata": current_metadata if current_metadata is not None else _read_current_metadata(task),
+        "proposed_artist": artist_val or "Unknown Artist",
+        "proposed_title": title_val or "Unknown Title",
         "confidence_score": task.confidence_score,
         "created_at": task.created_at.isoformat() if task.created_at else None,
     }
@@ -790,12 +822,17 @@ def lookup_review_queue_item_acoustid(task_id: int, _=Depends(require_auth)):
                 track_obj.identifiers["source"] = "acoustid_no_match"
                 task.track_data = track_obj.to_dict()
                 flag_modified(task, "track_data")
+                serialized = _serialize_task(task)
                 return {
                     "success": True,
+                    "match_found": False,
                     "acoustid_match": False,
                     "acoustid_fingerprint": fingerprint,
                     "acoustid_fingerprint_duration": duration_int,
-                    "task": _serialize_task(task),
+                    "updated_fields": ["acoustid_fingerprint", "acoustid_fingerprint_duration"] if fingerprint else [],
+                    "metadata": serialized["detected_metadata"],
+                    "message": "No matching record found in database",
+                    "task": serialized,
                 }
 
             # ── Step 5: match found → enrich metadata ────────────────────────────
@@ -824,10 +861,24 @@ def lookup_review_queue_item_acoustid(task_id: int, _=Depends(require_auth)):
             confidence_floor = 0.9 if mbids else 0.6
             task.confidence_score = max(float(task.confidence_score or 0.0), confidence_floor)
 
+            updated_fields = []
+            if track_obj.title: updated_fields.append("title")
+            if track_obj.artist_name: updated_fields.append("artist")
+            if track_obj.album_title: updated_fields.append("album")
+            if track_obj.release_year: updated_fields.append("year")
+            if track_obj.musicbrainz_id: updated_fields.append("musicbrainz_id")
+            if track_obj.acoustid_id: updated_fields.append("acoustid")
+            if track_obj.isrc: updated_fields.append("isrc")
+
+            serialized = _serialize_task(task)
             return {
                 "success": True,
+                "match_found": True,
                 "acoustid_match": True,
-                "task": _serialize_task(task),
+                "updated_fields": list(dict.fromkeys(updated_fields)),
+                "metadata": serialized["detected_metadata"],
+                "message": "Match found",
+                "task": serialized,
             }
     except HTTPException:
         raise
@@ -893,9 +944,15 @@ def lookup_review_queue_item_musicbrainz(task_id: int, payload: MusicBrainzLooku
                             task.track_data = found_track.to_dict()
                             flag_modified(task, "track_data")
                             task.confidence_score = max(float(task.confidence_score or 0.0), 0.95)
+                            updated_fields = [k for k in ["title", "artist", "album", "year", "musicbrainz_id", "isrc", "track_number", "disc_number"] if getattr(found_track, k, None) or found_track.to_dict().get(k)]
+                            serialized = _serialize_task(task)
                             return {
                                 "success": True,
-                                "task": _serialize_task(task),
+                                "match_found": True,
+                                "updated_fields": list(dict.fromkeys(updated_fields)),
+                                "metadata": serialized["detected_metadata"],
+                                "message": "Match found",
+                                "task": serialized,
                             }
             elif track_obj and track_obj.title and track_obj.artist_name:
                 artist = track_obj.artist_name
@@ -914,10 +971,14 @@ def lookup_review_queue_item_musicbrainz(task_id: int, payload: MusicBrainzLooku
                     task = session.query(ReviewTask).filter(ReviewTask.id == task_id).first()
                     task.track_data = empty_track.to_dict()
                     flag_modified(task, "track_data")
+                    serialized = _serialize_task(task, detected_metadata=empty_track.to_dict())
                     return {
-                        "success": False,
-                        "error": "No physical tags found and AcoustID match failed",
-                        "task": _serialize_task(task, detected_metadata=empty_track.to_dict()),
+                        "success": True,
+                        "match_found": False,
+                        "updated_fields": [],
+                        "metadata": serialized["detected_metadata"],
+                        "message": "No matching record found in database",
+                        "task": serialized,
                     }
 
         if not artist or not title:
@@ -950,7 +1011,15 @@ def lookup_review_queue_item_musicbrainz(task_id: int, payload: MusicBrainzLooku
             found_track = _musicbrainz_text_search(metadata_provider, track_obj)
             if not found_track:
                 logger.debug("[MusicBrainz Route] No MusicBrainz match found")
-                raise HTTPException(status_code=404, detail="No MusicBrainz match found")
+                serialized = _serialize_task(task)
+                return {
+                    "success": True,
+                    "match_found": False,
+                    "updated_fields": [],
+                    "metadata": serialized["detected_metadata"],
+                    "message": "No matching record found in database",
+                    "task": serialized,
+                }
 
             logger.debug(f"[MusicBrainz Route] MusicBrainz match found: {found_track.to_dict()}")
             found_track.identifiers["source"] = "musicbrainz_text_lookup"
@@ -958,13 +1027,116 @@ def lookup_review_queue_item_musicbrainz(task_id: int, payload: MusicBrainzLooku
             flag_modified(task, "track_data")
             task.confidence_score = max(float(task.confidence_score or 0.0), 0.85)
 
+            updated_fields = []
+            if found_track.title: updated_fields.append("title")
+            if found_track.artist_name: updated_fields.append("artist")
+            if found_track.album_title: updated_fields.append("album")
+            if found_track.release_year: updated_fields.append("year")
+            if found_track.musicbrainz_id: updated_fields.append("musicbrainz_id")
+            if found_track.isrc: updated_fields.append("isrc")
+            if found_track.track_number: updated_fields.append("track_number")
+            if found_track.disc_number: updated_fields.append("disc_number")
+
             logger.debug(f"[MusicBrainz Route] Successfully updated task {task_id} with MusicBrainz data")
+            serialized = _serialize_task(task)
             return {
                 "success": True,
-                "task": _serialize_task(task),
+                "match_found": True,
+                "updated_fields": list(dict.fromkeys(updated_fields)),
+                "metadata": serialized["detected_metadata"],
+                "message": "Match found",
+                "task": serialized,
             }
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Failed musicbrainz lookup for review task {task_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="MusicBrainz lookup failed")
+
+
+@router.post("/{task_id}/lookup/isrc")
+def lookup_review_queue_item_isrc(task_id: int, payload: Optional[ISRCLookupRequest] = None, _=Depends(require_auth)):
+    """Run ISRC-based lookup and update detected metadata."""
+    payload_data = payload.model_dump(exclude_unset=True) if payload else {}
+    isrc_code = str(payload_data.get("isrc") or "").strip()
+
+    db = get_working_database()
+    try:
+        with db.session_scope() as session:
+            task = session.query(ReviewTask).filter(ReviewTask.id == task_id).first()
+            if not task:
+                raise HTTPException(status_code=404, detail="Task not found")
+
+            if not isrc_code:
+                current = _normalize_detected_metadata(task.detected_metadata) or {}
+                isrc_code = str(current.get("isrc") or (task.track_data or {}).get("isrc") or "").strip()
+
+            if not isrc_code:
+                raise HTTPException(status_code=400, detail="ISRC code is required")
+
+            provider = get_plugin_by_capability(Capability.FETCH_BY_ISRC)
+            if not provider:
+                raise HTTPException(status_code=503, detail="No plugin available for ISRC lookups")
+
+            from services.isrc_lookup_service import _normalise_isrc
+            canonical = _normalise_isrc(isrc_code)
+            if canonical is None:
+                raise HTTPException(status_code=400, detail=f"Invalid ISRC format: {isrc_code}")
+
+            track = provider.search_by_isrc(canonical)
+            if not track:
+                serialized = _serialize_task(task)
+                return {
+                    "success": True,
+                    "match_found": False,
+                    "updated_fields": [],
+                    "metadata": serialized["detected_metadata"],
+                    "message": "No matching record found in database",
+                    "task": serialized,
+                }
+
+            track_obj = EchosyncTrack.from_dict(task.track_data or {})
+            if hasattr(track, "title") and track.title:
+                track_obj.title = track.title
+                track_obj.raw_title = track.title
+            if hasattr(track, "artist_name") and track.artist_name:
+                track_obj.artist_name = track.artist_name
+            elif hasattr(track, "artist") and track.artist:
+                track_obj.artist_name = track.artist
+            if hasattr(track, "album_title") and track.album_title:
+                track_obj.album_title = track.album_title
+            elif hasattr(track, "album") and track.album:
+                track_obj.album_title = track.album
+            if hasattr(track, "release_year") and track.release_year:
+                track_obj.release_year = track.release_year
+            if hasattr(track, "musicbrainz_id") and track.musicbrainz_id:
+                track_obj.musicbrainz_id = track.musicbrainz_id
+            track_obj.isrc = canonical
+
+            from sqlalchemy.orm.attributes import flag_modified
+            task.track_data = track_obj.to_dict()
+            flag_modified(task, "track_data")
+            task.confidence_score = max(float(task.confidence_score or 0.0), 0.90)
+
+            updated_fields = []
+            if track_obj.title: updated_fields.append("title")
+            if track_obj.artist_name: updated_fields.append("artist")
+            if track_obj.album_title: updated_fields.append("album")
+            if track_obj.release_year: updated_fields.append("year")
+            if track_obj.musicbrainz_id: updated_fields.append("musicbrainz_id")
+            if track_obj.isrc: updated_fields.append("isrc")
+
+            serialized = _serialize_task(task)
+            return {
+                "success": True,
+                "match_found": True,
+                "updated_fields": list(dict.fromkeys(updated_fields)),
+                "metadata": serialized["detected_metadata"],
+                "message": "Match found",
+                "task": serialized,
+            }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed ISRC lookup for review task {task_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="ISRC lookup failed")

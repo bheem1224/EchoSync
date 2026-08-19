@@ -4,7 +4,12 @@ function createFeedback() {
   const { subscribe, update, set } = writable({ toasts: [], loading: false });
 
   function addToast(message, type = 'success', duration = 3500) {
-    const id = Date.now().toString();
+    if (typeof message === 'object' && message !== null) {
+      type = message.type || type || 'success';
+      duration = message.duration || duration || 3500;
+      message = message.message || '';
+    }
+    const id = Date.now().toString() + Math.random().toString(36).substr(2, 4);
     update((s) => ({ ...s, toasts: [...s.toasts, { id, message, type }] }));
     setTimeout(() => removeToast(id), duration);
     return id;

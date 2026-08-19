@@ -18,9 +18,9 @@
   let metadataHistory = [];
   let restoringFromUndo = false;
   let showAdvanced = true;
-  let musicbrainzLookupLoading = false;
-  let acoustidLookupLoading = false;
-  let isrcLookupLoading = false;
+  let isScanningAcoustID = false;
+  let isLookingUpMB = false;
+  let isLookingUpISRC = false;
 
   let showIsrcPrompt = false;
   let isrcInputValue = '';
@@ -332,12 +332,12 @@
   }
 
   async function runMusicBrainzLookup() {
-    if (!task?.id || musicbrainzLookupLoading || acoustidLookupLoading || approving) {
+    if (!task?.id || isScanningAcoustID || isLookingUpMB || isLookingUpISRC || savingDraft || approving) {
       return;
     }
 
     clearAutosaveTimer();
-    musicbrainzLookupLoading = true;
+    isLookingUpMB = true;
     try {
       const response = await apiClient.post(
         `/core/metadata_review/${task.id}/lookup/musicbrainz`,
@@ -348,44 +348,73 @@
         { timeout: 60000 }
       );
 
+      if (response?.data?.match_found === false) {
+        feedback.addToast({
+          type: 'warning',
+          message: response?.data?.message || 'No matching record found in database'
+        });
+        return;
+      }
+
       const updatedMetadata = getLookupMetadata(response);
-      if (updatedMetadata) {
-        const { changed, fieldsChanged, nextState } = applyMetadataUpdate(updatedMetadata);
-        if (changed) {
-          const summary = fieldsChanged.map(f => f.replace('_', ' ')).join(', ');
-          feedback.addToast(`MusicBrainz: Updated ${summary} for "${nextState.title || 'track'}"`, 'success');
+      if (updatedMetadata && response?.data?.match_found) {
+        const { changed, fieldsChanged } = applyMetadataUpdate(updatedMetadata);
+        if (changed && fieldsChanged.length > 0) {
+          const changedKeys = fieldsChanged.map(f => f.replace('_', ' '));
+          feedback.addToast({
+            type: 'success',
+            message: `Match found! Updated: ${changedKeys.join(', ')}`
+          });
         } else {
-          feedback.addToast('MusicBrainz: Verified metadata (already matches proposed values)', 'success');
+          feedback.addToast({
+            type: 'info',
+            message: 'Match confirmed: Current metadata is already up to date.'
+          });
         }
-      } else {
-        feedback.addToast('MusicBrainz lookup returned no metadata', 'error');
+      } else if (!updatedMetadata) {
+        feedback.addToast({
+          type: 'warning',
+          message: 'No matching record found in database'
+        });
       }
     } catch (error) {
       console.error('MusicBrainz lookup failed:', error);
       if (error?.code === 'ECONNABORTED' || error?.message?.includes('timeout')) {
-        feedback.addToast('MusicBrainz lookup timed out after 60s. The service may be busy.', 'error');
+        feedback.addToast({
+          type: 'error',
+          message: 'MusicBrainz lookup timed out after 60s. The service may be busy.'
+        });
       } else {
         const status = error?.response?.status;
         if (status === 404) {
-          feedback.addToast('No match found on MusicBrainz for this track/artist.', 'error');
+          feedback.addToast({
+            type: 'warning',
+            message: 'No matching records found'
+          });
         } else if (status === 500 || status === 503) {
-          feedback.addToast('Provider lookup failed or is temporarily unavailable.', 'error');
+          feedback.addToast({
+            type: 'error',
+            message: 'Provider lookup failed or is temporarily unavailable.'
+          });
         } else {
-          feedback.addToast(error?.response?.data?.detail || 'MusicBrainz lookup failed', 'error');
+          feedback.addToast({
+            type: 'error',
+            message: error?.response?.data?.detail || 'MusicBrainz lookup failed'
+          });
         }
       }
     } finally {
-      musicbrainzLookupLoading = false;
+      isLookingUpMB = false;
     }
   }
 
   async function runAcoustIDLookup() {
-    if (!task?.id || acoustidLookupLoading || musicbrainzLookupLoading || approving) {
+    if (!task?.id || isScanningAcoustID || isLookingUpMB || isLookingUpISRC || savingDraft || approving) {
       return;
     }
 
     clearAutosaveTimer();
-    acoustidLookupLoading = true;
+    isScanningAcoustID = true;
     try {
       const response = await apiClient.post(
         `/core/metadata_review/${task.id}/lookup/acoustid`,
@@ -393,89 +422,156 @@
         { timeout: 60000 }
       );
 
+      if (response?.data?.match_found === false) {
+        const updatedMetadata = getLookupMetadata(response);
+        if (updatedMetadata) {
+          applyMetadataUpdate(updatedMetadata);
+        }
+        feedback.addToast({
+          type: 'warning',
+          message: response?.data?.message || 'No matching record found in database'
+        });
+        return;
+      }
+
       const updatedMetadata = getLookupMetadata(response);
-      if (updatedMetadata) {
-        const { changed, fieldsChanged, nextState } = applyMetadataUpdate(updatedMetadata);
-        const isMatch = response?.data?.acoustid_match;
-        if (isMatch === false) {
-          feedback.addToast('AcoustID: Fingerprint generated & stored (no catalog match found yet)', 'info');
-        } else if (changed) {
-          const summary = fieldsChanged.map(f => f.replace('_', ' ')).join(', ');
-          feedback.addToast(`AcoustID: Matched fingerprint and updated ${summary}`, 'success');
+      if (updatedMetadata && response?.data?.match_found) {
+        const { changed, fieldsChanged } = applyMetadataUpdate(updatedMetadata);
+        if (changed && fieldsChanged.length > 0) {
+          const changedKeys = fieldsChanged.map(f => f.replace('_', ' '));
+          feedback.addToast({
+            type: 'success',
+            message: `Match found! Updated: ${changedKeys.join(', ')}`
+          });
         } else {
-          feedback.addToast('AcoustID: Fingerprint match verified (matches current metadata)', 'success');
+          feedback.addToast({
+            type: 'info',
+            message: 'Match confirmed: Current metadata is already up to date.'
+          });
         }
       } else {
-        feedback.addToast('AcoustID scan returned no metadata', 'error');
+        feedback.addToast({
+          type: 'warning',
+          message: 'No matching record found in database'
+        });
       }
     } catch (error) {
       console.error('AcoustID lookup failed:', error);
       if (error?.code === 'ECONNABORTED' || error?.message?.includes('timeout')) {
-        feedback.addToast('AcoustID fingerprinting timed out.', 'error');
+        feedback.addToast({
+          type: 'error',
+          message: 'AcoustID fingerprinting timed out.'
+        });
       } else {
         const status = error?.response?.status;
         if (status === 404) {
-          feedback.addToast('No match found on AcoustID.', 'error');
+          feedback.addToast({
+            type: 'warning',
+            message: 'No matching records found'
+          });
         } else if (status === 500 || status === 503) {
-          feedback.addToast('Provider lookup failed or is temporarily unavailable.', 'error');
+          feedback.addToast({
+            type: 'error',
+            message: 'Provider lookup failed or is temporarily unavailable.'
+          });
         } else {
-          feedback.addToast(error?.response?.data?.detail || 'AcoustID lookup failed', 'error');
+          feedback.addToast({
+            type: 'error',
+            message: error?.response?.data?.detail || 'AcoustID lookup failed'
+          });
         }
       }
     } finally {
-      acoustidLookupLoading = false;
+      isScanningAcoustID = false;
     }
   }
 
   async function runISRCLookup() {
+    if (isScanningAcoustID || isLookingUpMB || isLookingUpISRC || savingDraft || approving) {
+      return;
+    }
     openIsrcPrompt();
   }
 
   async function doRunISRCLookup(isrc) {
-    if (isrcLookupLoading || musicbrainzLookupLoading || acoustidLookupLoading || approving || savingDraft) {
+    if (isScanningAcoustID || isLookingUpMB || isLookingUpISRC || savingDraft || approving) {
       return;
     }
 
-    isrcLookupLoading = true;
+    clearAutosaveTimer();
+    isLookingUpISRC = true;
     try {
-      const response = await apiClient.get(`/core/metadata/isrc/${encodeURIComponent(isrc)}`);
+      const response = await apiClient.post(
+        `/core/metadata_review/${task.id}/lookup/isrc`,
+        { isrc },
+        { timeout: 60000 }
+      );
 
-      const result = response?.data?.result;
-      if (result) {
-        // Remap ISRC-response field names to the keys applyMetadataUpdate understands.
-        applyMetadataUpdate({
-          title: result.title,
-          artist: result.artist,
-          album: result.album,
-          year: result.release_year,
-          musicbrainz_id: result.musicbrainz_recording_id,
-          isrc: result.isrc,
+      if (response?.data?.match_found === false) {
+        feedback.addToast({
+          type: 'warning',
+          message: response?.data?.message || 'No matching record found in database'
         });
-        feedback.addToast('ISRC metadata loaded', 'success');
+        return;
+      }
+
+      const updatedMetadata = getLookupMetadata(response);
+      if (updatedMetadata && response?.data?.match_found) {
+        const { changed, fieldsChanged } = applyMetadataUpdate(updatedMetadata);
+        if (changed && fieldsChanged.length > 0) {
+          const changedKeys = fieldsChanged.map(f => f.replace('_', ' '));
+          feedback.addToast({
+            type: 'success',
+            message: `Match found! Updated: ${changedKeys.join(', ')}`
+          });
+        } else {
+          feedback.addToast({
+            type: 'info',
+            message: 'Match confirmed: Current metadata is already up to date.'
+          });
+        }
       } else {
-        feedback.addToast(`No results found for ISRC ${isrc}`, 'error');
+        feedback.addToast({
+          type: 'warning',
+          message: 'No matching records found'
+        });
       }
     } catch (error) {
+      console.error('ISRC lookup failed:', error);
       const status = error?.response?.status;
       if (status === 400) {
-        feedback.addToast('Invalid ISRC format — expected 12 alphanumeric characters', 'error');
+        feedback.addToast({
+          type: 'error',
+          message: 'Invalid ISRC format — expected 12 alphanumeric characters'
+        });
       } else if (status === 404) {
-        feedback.addToast('No match found on ISRC Provider.', 'error');
+        feedback.addToast({
+          type: 'warning',
+          message: 'No matching records found'
+        });
       } else if (status === 500 || status === 503) {
-        feedback.addToast('Provider lookup failed or is temporarily unavailable.', 'error');
+        feedback.addToast({
+          type: 'error',
+          message: 'Provider lookup failed or is temporarily unavailable.'
+        });
       } else {
-        feedback.addToast('ISRC lookup failed', 'error');
+        feedback.addToast({
+          type: 'error',
+          message: error?.response?.data?.detail || 'ISRC lookup failed'
+        });
       }
-      console.error('ISRC lookup failed:', error);
     } finally {
-      isrcLookupLoading = false;
+      isLookingUpISRC = false;
     }
   }
 
   function submitIsrcPrompt() {
     const isrc = isrcInputValue.trim();
     if (!isrc) {
-      feedback.addToast('Please enter an ISRC code', 'error');
+      feedback.addToast({
+        type: 'error',
+        message: 'Please enter an ISRC code'
+      });
       return;
     }
     closeIsrcPrompt();
@@ -698,27 +794,39 @@
         </button>
 
         <button
-          class="px-4 py-2 rounded-lg bg-indigo-700 text-white hover:bg-indigo-600 disabled:opacity-60 active:scale-95 transition-all duration-200"
+          class="px-4 py-2 rounded-lg bg-indigo-700 text-white hover:bg-indigo-600 disabled:opacity-60 inline-flex items-center justify-center gap-2 active:scale-95 transition-all duration-200"
           on:click={runMusicBrainzLookup}
-          disabled={musicbrainzLookupLoading || acoustidLookupLoading || approving || savingDraft}
+          disabled={isScanningAcoustID || isLookingUpMB || isLookingUpISRC || approving || savingDraft}
         >
-          {musicbrainzLookupLoading ? 'Looking up MusicBrainz...' : '🔍 MusicBrainz Lookup'}
+          {#if isLookingUpMB}
+            <span class="loading loading-spinner loading-xs animate-spin inline-block w-4 h-4 border-2 border-current border-t-transparent rounded-full"></span> Looking up...
+          {:else}
+            🔍 MusicBrainz Lookup
+          {/if}
         </button>
 
         <button
-          class="px-4 py-2 rounded-lg bg-emerald-700 text-white hover:bg-emerald-600 disabled:opacity-60 active:scale-95 transition-all duration-200"
+          class="px-4 py-2 rounded-lg bg-emerald-700 text-white hover:bg-emerald-600 disabled:opacity-60 inline-flex items-center justify-center gap-2 active:scale-95 transition-all duration-200"
           on:click={runAcoustIDLookup}
-          disabled={acoustidLookupLoading || musicbrainzLookupLoading || approving || savingDraft}
+          disabled={isScanningAcoustID || isLookingUpMB || isLookingUpISRC || approving || savingDraft}
         >
-          {acoustidLookupLoading ? 'Scanning AcoustID...' : '🧬 AcoustID Scan'}
+          {#if isScanningAcoustID}
+            <span class="loading loading-spinner loading-xs animate-spin inline-block w-4 h-4 border-2 border-current border-t-transparent rounded-full"></span> Scanning...
+          {:else}
+            🧬 AcoustID Scan
+          {/if}
         </button>
 
         <button
-          class="px-4 py-2 rounded-lg bg-orange-700 text-white hover:bg-orange-600 disabled:opacity-60 active:scale-95 transition-all duration-200"
+          class="px-4 py-2 rounded-lg bg-orange-700 text-white hover:bg-orange-600 disabled:opacity-60 inline-flex items-center justify-center gap-2 active:scale-95 transition-all duration-200"
           on:click={runISRCLookup}
-          disabled={isrcLookupLoading || musicbrainzLookupLoading || acoustidLookupLoading || approving || savingDraft}
+          disabled={isScanningAcoustID || isLookingUpMB || isLookingUpISRC || approving || savingDraft}
         >
-          {isrcLookupLoading ? 'Looking up ISRC...' : '🎵 ISRC Lookup'}
+          {#if isLookingUpISRC}
+            <span class="loading loading-spinner loading-xs animate-spin inline-block w-4 h-4 border-2 border-current border-t-transparent rounded-full"></span> Looking up...
+          {:else}
+            🎵 ISRC Lookup
+          {/if}
         </button>
 
         <button

@@ -509,6 +509,26 @@ class RetroactiveEnhancer:
                         album_title=""
                     )
 
+                # Local heuristic fallback when tags are absent/empty
+                if not track.artist_name or not (track.title or track.raw_title):
+                    try:
+                        from core.matching_engine.track_parser import TrackParser
+                        parsed_meta = TrackParser.parse_filename(file_path_str)
+                        if parsed_meta:
+                            parsed_artist = getattr(parsed_meta, 'artist', None) or getattr(parsed_meta, 'artist_name', None)
+                            parsed_title = getattr(parsed_meta, 'title', None) or getattr(parsed_meta, 'raw_title', None)
+                            if parsed_artist and not track.artist_name:
+                                track.artist_name = parsed_artist
+                            if parsed_title and not (track.title or track.raw_title):
+                                track.title = parsed_title
+                                track.raw_title = parsed_title
+                            if getattr(parsed_meta, 'display_title', None) and not track.display_title:
+                                track.display_title = parsed_meta.display_title
+                            if getattr(parsed_meta, 'album_title', None) and not track.album_title:
+                                track.album_title = parsed_meta.album_title
+                    except Exception as tp_err:
+                        logger.debug(f"TrackParser filename fallback error for {file_path_str}: {tp_err}")
+
                 from core.io_gatekeeper import Gatekeeper
                 file_exists = False
                 try:
@@ -561,6 +581,33 @@ class RetroactiveEnhancer:
                             pass
 
                 track_dict = track.to_dict()
+
+                # Ensure track_data dictionary contains structured artist_name, title, display_title, album_title
+                # using TrackParser fallback if still missing
+                if not track_dict.get('artist_name') and not track_dict.get('artist') or not track_dict.get('title'):
+                    try:
+                        from core.matching_engine.track_parser import TrackParser
+                        parsed_meta = TrackParser.parse_filename(file_path_str)
+                        if parsed_meta:
+                            parsed_artist = getattr(parsed_meta, 'artist', None) or getattr(parsed_meta, 'artist_name', None)
+                            parsed_title = getattr(parsed_meta, 'title', None) or getattr(parsed_meta, 'raw_title', None)
+                            if parsed_artist:
+                                track_dict['artist_name'] = parsed_artist
+                                track_dict['artist'] = parsed_artist
+                            if parsed_title:
+                                track_dict['title'] = parsed_title
+                                track_dict['raw_title'] = parsed_title
+                            if getattr(parsed_meta, 'display_title', None):
+                                track_dict['display_title'] = parsed_meta.display_title
+                            if getattr(parsed_meta, 'album_title', None):
+                                track_dict['album_title'] = parsed_meta.album_title
+                    except Exception as tp_err:
+                        logger.debug(f"TrackParser fallback dictionary error for {file_path_str}: {tp_err}")
+                else:
+                    if track_dict.get('artist') and not track_dict.get('artist_name'):
+                        track_dict['artist_name'] = track_dict['artist']
+                    elif track_dict.get('artist_name') and not track_dict.get('artist'):
+                        track_dict['artist'] = track_dict['artist_name']
                 
                 if existing:
                     existing.track_data = track_dict

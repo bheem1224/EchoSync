@@ -12,7 +12,7 @@ This service handles:
 
 import re
 import logging
-from typing import Optional, List, Dict, Set
+from typing import Optional, List, Dict, Set, Any
 from dataclasses import dataclass
 from pathlib import Path
 from ..db.echo_sync_track import EchosyncTrack, QualityTag
@@ -144,17 +144,31 @@ class TrackParser:
         """Set the database path for fingerprint caching"""
         self.fingerprint_cache = FingerprintCache(database_path)
 
-    def parse_filename(self, raw_string: str) -> Optional[EchosyncTrack]:
+    def parse_filename(self_or_raw: Any, raw_string: Optional[str] = None) -> Optional[EchosyncTrack]:
         """
         Parse a raw filename or hierarchical path into a EchosyncTrack object.
+        Supports being called as TrackParser.parse_filename(path) or parser.parse_filename(path).
 
         Args:
-            raw_string: Raw filename or track description / file path
+            self_or_raw: TrackParser instance or raw filename / file path string
+            raw_string: Raw filename or track description / file path if called on instance
 
         Returns:
             EchosyncTrack object if parsing succeeds, None otherwise
         """
-        if not raw_string or not isinstance(raw_string, str):
+        if isinstance(self_or_raw, TrackParser):
+            return self_or_raw._parse_filename_core(raw_string)
+        elif isinstance(self_or_raw, (str, Path)):
+            return TrackParser()._parse_filename_core(self_or_raw)
+        else:
+            target = raw_string if raw_string is not None else self_or_raw
+            return TrackParser()._parse_filename_core(target)
+
+    def _parse_filename_core(self, raw_string: Any) -> Optional[EchosyncTrack]:
+        if raw_string is None:
+            return None
+        raw_string = str(raw_string)
+        if not raw_string:
             return None
 
         # Clean input
