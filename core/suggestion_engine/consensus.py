@@ -31,10 +31,12 @@ def calculate_consensus(sync_id: str) -> Dict[str, Any]:
     with db.session_scope() as session:
         ratings_records = session.query(UserRating).filter(UserRating.sync_id == base_sync_id).all()
 
-        if not ratings_records:
+        valid_records = [record for record in ratings_records if record.rating is not None]
+        
+        if not valid_records:
             return {"status": "KEEP", "action": "KEEP", "sync_id": base_sync_id}
 
-        mapped_scores = [stars_to_ten_point(record.rating) for record in ratings_records]
+        mapped_scores = [stars_to_ten_point(record.rating) for record in valid_records]
         avg_score = sum(mapped_scores) / len(mapped_scores)
 
         # Follow the explicit lifecycle thresholds.
@@ -47,7 +49,7 @@ def calculate_consensus(sync_id: str) -> Dict[str, Any]:
                 "action": "DELETE_MONTH_END",
                 "sync_id": base_sync_id,
                 "score_10": avg_score,
-                "account_ids": [record.account_id for record in ratings_records],
+                "account_ids": [record.account_id for record in valid_records],
             }
 
         if avg_score <= 2.0:
@@ -56,7 +58,7 @@ def calculate_consensus(sync_id: str) -> Dict[str, Any]:
                 "action": "UPGRADE_WEEK_END",
                 "sync_id": base_sync_id,
                 "score_10": avg_score,
-                "account_ids": [record.account_id for record in ratings_records],
+                "account_ids": [record.account_id for record in valid_records],
             }
 
         return {
