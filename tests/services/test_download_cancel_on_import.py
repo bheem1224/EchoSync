@@ -114,7 +114,7 @@ class TestTrackImportedCancelsQueue:
 
         with mock_work_db.session_scope() as session:
             dl = session.get(DownloadQueue, dl_id)
-            assert dl.status == "cancelled"
+            assert dl is None, "DownloadQueue should be hard deleted"
 
     def test_searching_download_is_cancelled_on_isrc_match(self, manager, mock_work_db):
         """
@@ -128,7 +128,7 @@ class TestTrackImportedCancelsQueue:
 
         with mock_work_db.session_scope() as session:
             dl = session.get(DownloadQueue, dl_id)
-            assert dl.status == "cancelled"
+            assert dl is None, "DownloadQueue should be hard deleted"
 
     def test_downloading_download_is_cancelled_on_isrc_match(self, manager, mock_work_db):
         """
@@ -142,7 +142,7 @@ class TestTrackImportedCancelsQueue:
 
         with mock_work_db.session_scope() as session:
             dl = session.get(DownloadQueue, dl_id)
-            assert dl.status == "cancelled"
+            assert dl is None, "DownloadQueue should be hard deleted"
 
     def test_non_matching_isrc_leaves_download_untouched(self, manager, mock_work_db):
         """
@@ -157,22 +157,7 @@ class TestTrackImportedCancelsQueue:
             dl = session.get(DownloadQueue, dl_id)
             assert dl.status == "queued"    # fully unchanged
 
-    def test_cancellation_reason_written_to_track_json(self, manager, mock_work_db):
-        """
-        After cancellation, the download's echo_sync_track dict must contain
-        a 'cancellation_reason' key so operators can audit why it was dropped.
-        """
-        isrc = "DECP12345672"
-        dl_id = _insert_download(mock_work_db, isrc, status="queued")
 
-        manager._on_track_imported(_make_imported_payload(isrc))
-
-        with mock_work_db.session_scope() as session:
-            dl = session.get(DownloadQueue, dl_id)
-            assert dl.status == "cancelled"
-            assert isinstance(dl.echo_sync_track, dict)
-            assert "cancellation_reason" in dl.echo_sync_track
-            assert len(dl.echo_sync_track["cancellation_reason"]) > 0
 
     def test_already_cancelled_download_is_not_reprocessed(self, manager, mock_work_db):
         """
@@ -211,9 +196,7 @@ class TestBatchCancellation:
         with mock_work_db.session_scope() as session:
             for dl_id in ids:
                 dl = session.get(DownloadQueue, dl_id)
-                assert dl.status == "cancelled", (
-                    f"DownloadQueue {dl_id} was expected to be cancelled but is '{dl.status}'"
-                )
+                assert dl is None, f"DownloadQueue {dl_id} was expected to be hard deleted"
 
     def test_unrelated_downloads_survive_batch_cancellation(self, manager, mock_work_db):
         """
@@ -232,8 +215,9 @@ class TestBatchCancellation:
             target_dl = session.get(DownloadQueue, target_id)
             other_dl  = session.get(DownloadQueue, other_id)
 
-            assert target_dl.status == "cancelled"
-            assert other_dl.status  == "queued"     # unaffected
+            assert target_dl is None, "DownloadQueue should be hard deleted"
+            assert other_dl is not None
+            assert other_dl.status == "queued"     # unaffected
 
 
 # ── Graceful handling of malformed / empty payloads ───────────────────────────

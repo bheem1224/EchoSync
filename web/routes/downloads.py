@@ -150,6 +150,24 @@ def _delete_download_impl(download_id: int):
             download = session.query(DownloadQueue).filter(DownloadQueue.id == download_id).first()
             if not download:
                 raise HTTPException(status_code=404, detail="DownloadQueue not found")
+            
+            if download.status == 'downloading' and download.provider_id:
+                dm = get_download_manager()
+                providers = dm._get_active_download_providers()
+                import asyncio
+                for p in providers:
+                    try:
+                        if hasattr(p, 'cancel_download'):
+                            p.cancel_download(download.provider_id)
+                        elif hasattr(p, '_async_cancel_download'):
+                            try:
+                                loop = asyncio.get_running_loop()
+                                loop.create_task(p._async_cancel_download(download.provider_id))
+                            except RuntimeError:
+                                pass
+                    except Exception as ce:
+                        logger.debug(f"Failed to cancel remote transfer {download.provider_id}: {ce}")
+            
             session.delete(download)
             session.commit()
             logger.info(f"Deleted download {download_id} from queue")
@@ -171,6 +189,27 @@ def _clear_queue_impl(scope: Optional[str] = None, status: Optional[str] = None,
                 query = query.filter(DownloadQueue.status.like("failed%"))
             elif scope == "active":
                 query = query.filter(DownloadQueue.status.in_(["queued", "searching", "downloading", "in_progress", "paused"]))
+            
+            active_downloads = query.filter(DownloadQueue.status == 'downloading').all()
+            if active_downloads:
+                dm = get_download_manager()
+                providers = dm._get_active_download_providers()
+                import asyncio
+                for item in active_downloads:
+                    if item.provider_id:
+                        for p in providers:
+                            try:
+                                if hasattr(p, 'cancel_download'):
+                                    p.cancel_download(item.provider_id)
+                                elif hasattr(p, '_async_cancel_download'):
+                                    try:
+                                        loop = asyncio.get_running_loop()
+                                        loop.create_task(p._async_cancel_download(item.provider_id))
+                                    except RuntimeError:
+                                        pass
+                            except Exception as ce:
+                                logger.debug(f"Failed to cancel remote transfer {item.provider_id}: {ce}")
+                                
             count = query.delete(synchronize_session=False)
             session.commit()
             logger.info(f"Cleared {count} downloads from queue (scope={scope}, status={status})")
@@ -296,6 +335,26 @@ def _delete_batch_impl(payload: BatchDeleteRequest):
         if not ids:
             raise HTTPException(status_code=400, detail="No IDs provided")
         with get_working_database().session_scope() as session:
+            active_downloads = session.query(DownloadQueue).filter(DownloadQueue.id.in_(ids), DownloadQueue.status == 'downloading').all()
+            if active_downloads:
+                dm = get_download_manager()
+                providers = dm._get_active_download_providers()
+                import asyncio
+                for item in active_downloads:
+                    if item.provider_id:
+                        for p in providers:
+                            try:
+                                if hasattr(p, 'cancel_download'):
+                                    p.cancel_download(item.provider_id)
+                                elif hasattr(p, '_async_cancel_download'):
+                                    try:
+                                        loop = asyncio.get_running_loop()
+                                        loop.create_task(p._async_cancel_download(item.provider_id))
+                                    except RuntimeError:
+                                        pass
+                            except Exception as ce:
+                                logger.debug(f"Failed to cancel remote transfer {item.provider_id}: {ce}")
+            
             count = session.query(DownloadQueue).filter(DownloadQueue.id.in_(ids)).delete(synchronize_session=False)
             session.commit()
             logger.info(f"Deleted {count} downloads from queue (batch)")

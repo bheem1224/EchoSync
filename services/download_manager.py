@@ -92,15 +92,21 @@ class DownloadManager:
                     item_isrc = (item.echo_sync_track or {}).get("isrc")
 
                     if (target_isrc and item_isrc and target_isrc == item_isrc) or (target_sig[:2] == item_sig[:2] and any(target_sig[:2])):
-                        # Soft Cancel
-                        item.status = "cancelled"
-                        item.updated_at = utc_now()
-                        # Append a cancellation message to the track JSON to preserve why it was cancelled
-                        track_json = dict(item.echo_sync_track)
-                        track_json["cancellation_reason"] = "Job cancelled: Track already confirmed in local library."
-                        item.echo_sync_track = track_json
-
-                        logger.info(f"Silently cancelled download {item.id} matching imported track '{track.title}'")
+                        logger.info(f"Purging download {item.id} matching imported track '{track.title}'")
+                        
+                        if item.status == 'downloading' and item.provider_id:
+                            providers = self._get_active_download_providers()
+                            for p in providers:
+                                try:
+                                    if hasattr(p, 'cancel_download'):
+                                        p.cancel_download(item.provider_id)
+                                    elif hasattr(p, '_async_cancel_download'):
+                                        loop = asyncio.get_running_loop()
+                                        loop.create_task(p._async_cancel_download(item.provider_id))
+                                except Exception as ce:
+                                    logger.debug(f"Failed to cancel remote transfer {item.provider_id}: {ce}")
+                        
+                        session.delete(item)
                         cancelled_count += 1
 
             if cancelled_count > 0:
@@ -570,7 +576,6 @@ class DownloadManager:
         queued_ids = []
         with self.work_db.session_scope() as session:
             # Get up to 30 queued items to enable concurrent searches
-            # Order by retry_count ASC (prioritizes unattempted items where retry_count=0) and created_at DESC (newer first)
             items = (
                 session.query(DownloadQueue)
                 .filter(DownloadQueue.status.ilike("queued"))
@@ -581,8 +586,35 @@ class DownloadManager:
                 .limit(30)
                 .all()
             )
+            
             if items:
-                logger.info(f"Found {len(items)} queued items for processing.")
+                # Single bulk pre-check against music_library.db
+                to_delete_ids = []
+                with self.db.session_scope() as music_sess:
+                    for item in items:
+                        track_dict = item.echo_sync_track or {}
+                        artist = normalize_artist(track_dict.get("artist_name") or track_dict.get("artist") or "")
+                        title = normalize_title(track_dict.get("title") or track_dict.get("raw_title") or "")
+                        if not artist or not title:
+                            continue
+                        exists = music_sess.query(
+                            music_sess.query(Track).join(Artist).filter(
+                                Artist.name.ilike(artist), 
+                                Track.title.ilike(title)
+                            ).exists()
+                        ).scalar()
+                        if exists:
+                            to_delete_ids.append(item.id)
+                
+                if to_delete_ids:
+                    session.query(DownloadQueue).filter(DownloadQueue.id.in_(to_delete_ids)).delete(synchronize_session=False)
+                    session.commit()
+                    logger.debug(f"Purged {len(to_delete_ids)} queued downloads: already present in library.")
+                    
+                items = [item for item in items if item.id not in to_delete_ids]
+                
+                if items:
+                    logger.info(f"Found {len(items)} queued items for processing.")
 
             for item in items:
                 # Mark as processing so other workers (if any) don't grab it
@@ -655,11 +687,11 @@ class DownloadManager:
         duration_ms = getattr(target_track, 'duration', None)
         if self._track_exists_in_library(target_track.artist_name, target_track.title,
                                           album=album_name, duration=duration_ms):
-            logger.info(
-                f"Skipping download {download_id}: '{target_track.artist_name} – {target_track.title}' "
-                f"already present in library (detected at search-time)."
-            )
-            self._update_status(download_id, "skipped_exists")
+            logger.debug(f"Purged track '{target_track.title}' from download queue: already present in library.")
+            with self.work_db.session_scope() as sess:
+                item = sess.query(DownloadQueue).get(download_id)
+                if item:
+                    sess.delete(item)
             return
 
         # Keep provider query broad; matching engine handles duration scoring/gating.
