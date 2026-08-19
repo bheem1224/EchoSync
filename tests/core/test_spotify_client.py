@@ -158,3 +158,63 @@ def test_setup_client_prefers_account_creds(monkeypatch):
     assert captured.get('client_id') == 'acctid'
     assert captured.get('client_secret') == 'acctsec'
     assert captured.get('redirect_uri') == 'acct://cb'
+
+
+def test_search_by_isrc_with_default_account(monkeypatch):
+    """search_by_isrc resolves the default active account and executes query."""
+    dummy_track = {
+        'id': 'spotify123',
+        'name': 'Midnight City',
+        'artists': [{'name': 'M83'}],
+        'album': {'name': 'Hurry Up, We\'re Dreaming', 'release_date': '2011-10-18'},
+        'duration_ms': 243000,
+        'external_ids': {'isrc': 'FRUM71100370'}
+    }
+
+    mock_sp = MagicMock()
+    mock_sp.search.return_value = {'tracks': {'items': [dummy_track]}}
+
+    with patch('core.settings.ConfigManager.get_service_credentials', return_value={'client_id': 'id', 'client_secret': 'sec'}), \
+         patch('core.account_manager.AccountManager.list_accounts', return_value=[{'id': 42, 'is_active': True}]):
+        client = SpotifyClient(account_id=None)
+        client.sp = mock_sp
+
+        track = client.search_by_isrc('FR-UM7-11-00370')
+        assert track is not None
+        assert track.raw_title == 'Midnight City'
+        assert track.artist_name == 'M83'
+        assert track.album_title == "Hurry Up, We're Dreaming"
+        assert track.release_year == 2011
+        assert track.isrc == 'FRUM71100370'
+        assert track.identifiers.get('source') == 'EchoSync.spotify'
+        mock_sp.search.assert_called_once_with(q='isrc:FRUM71100370', type='track', limit=1)
+
+
+def test_client_credentials_fallback_when_no_user_accounts(monkeypatch):
+    """When no user accounts exist, client uses SpotifyClientCredentials."""
+    captured = {}
+    class FakeClientCredentials:
+        def __init__(self, client_id, client_secret):
+            captured['client_id'] = client_id
+            captured['client_secret'] = client_secret
+
+    import sys
+    for mod_name in list(sys.modules.keys()):
+        if 'spotify.client' in mod_name.lower():
+            mod = sys.modules[mod_name]
+            if hasattr(mod, 'SpotifyClientCredentials'):
+                monkeypatch.setattr(mod, 'SpotifyClientCredentials', FakeClientCredentials)
+    monkeypatch.setattr('spotipy.oauth2.SpotifyClientCredentials', FakeClientCredentials)
+
+    mock_storage = MagicMock()
+    mock_storage.list_accounts.return_value = []
+
+    with patch('core.settings.ConfigManager.get_service_credentials', return_value={'client_id': 'app_id', 'client_secret': 'app_sec'}), \
+         patch('core.account_manager.AccountManager.list_accounts', return_value=[]), \
+         patch('core.file_handling.storage.get_storage_service', return_value=mock_storage), \
+         patch('core.account_manager.AccountManager.get_service_config', side_effect=lambda svc, key: {'client_id': 'app_id', 'client_secret': 'app_sec'}.get(key)):
+        client = SpotifyClient(account_id=None)
+        assert captured.get('client_id') == 'app_id'
+        assert captured.get('client_secret') == 'app_sec'
+        assert client.is_authenticated() is True
+

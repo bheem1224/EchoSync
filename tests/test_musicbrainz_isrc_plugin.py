@@ -8,7 +8,8 @@ def test_musicbrainz_isrc_plugin_resolution():
     # Register the plugin class with PluginRegistry manually for testing
     PluginRegistry.register(MusicBrainzClient, name="EchoSync.musicbrainz", source_type="core")
 
-    provider = get_plugin_by_capability(Capability.FETCH_BY_ISRC)
+    providers = PluginRegistry.get_plugins_with_capability(Capability.FETCH_BY_ISRC)
+    provider = next((p for p in providers if p.name == "EchoSync.musicbrainz"), None)
     assert provider is not None
     assert provider.name == "EchoSync.musicbrainz"
 

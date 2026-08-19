@@ -1,6 +1,6 @@
 
 import spotipy
-from spotipy.oauth2 import SpotifyOAuth
+from spotipy.oauth2 import SpotifyOAuth, SpotifyClientCredentials
 try:
     from spotipy.cache_handler import CacheHandler
 except Exception:
@@ -25,6 +25,27 @@ class ConfigCacheHandler(CacheHandler):
         self.account_id = account_id
         logger.debug(f"Initialized ConfigCacheHandler for account {account_id}")
 
+    def _resolve_account_id(self) -> Optional[int]:
+        if self.account_id is not None:
+            return self.account_id
+        try:
+            from core.account_manager import AccountManager
+            accounts = AccountManager.list_accounts('spotify')
+        except Exception:
+            accounts = []
+        if not accounts:
+            try:
+                from core.file_handling.storage import get_storage_service
+                accounts = get_storage_service().list_accounts('spotify')
+            except Exception:
+                accounts = []
+        active_account = next((acc for acc in accounts if acc.get('is_active') or acc.get('authenticated') or acc.get('is_authenticated')), None)
+        if not active_account and accounts:
+            active_account = accounts[0]
+        if active_account:
+            self.account_id = active_account.get('id') or active_account.get('account_id')
+        return self.account_id
+
     def get_cached_token(self):
         """Load cached token from storage database.
         
@@ -32,23 +53,23 @@ class ConfigCacheHandler(CacheHandler):
         or None if no token is stored.
         """
         try:
-            if not self.account_id:
-                logger.debug("No account_id specified, cannot load token")
+            target_account_id = self._resolve_account_id()
+            if not target_account_id:
                 return None
             
             from database.config_database import get_config_database
             db = get_config_database()
-            token_data = db.get_account_token(self.account_id)
+            token_data = db.get_account_token(target_account_id)
             
             if not token_data:
                 try:
                     from core.nexus_framework.plugin_SDK import sdk
-                    token_data = sdk.accounts.get_token(self.account_id)
+                    token_data = sdk.accounts.get_token(target_account_id)
                 except Exception:
                     token_data = None
 
             if not token_data:
-                logger.debug(f"No token data found in storage for account {self.account_id}")
+                logger.debug(f"No token data found in storage for account {target_account_id}")
                 return None
             
             access_token = token_data.get('access_token')
@@ -62,7 +83,7 @@ class ConfigCacheHandler(CacheHandler):
                 refresh_token = None
 
             logger.debug(
-                f"Loaded token data for account {self.account_id}: access={bool(access_token)}, "
+                f"Loaded token data for account {target_account_id}: access={bool(access_token)}, "
                 f"refresh={bool(refresh_token)}, expires={expires_at}, scope={scope}"
             )
             
@@ -88,12 +109,13 @@ class ConfigCacheHandler(CacheHandler):
         Ensures both access_token and refresh_token are persisted.
         """
         try:
-            if not self.account_id:
+            target_account_id = self._resolve_account_id()
+            if not target_account_id:
                 logger.warning("No account_id specified; cannot save Spotify tokens")
                 return
             
             if not token_info:
-                logger.warning(f"No token_info provided to save for account {self.account_id}")
+                logger.warning(f"No token_info provided to save for account {target_account_id}")
                 return
             
             from database.config_database import get_config_database
@@ -105,20 +127,20 @@ class ConfigCacheHandler(CacheHandler):
             scope = token_info.get('scope', "user-library-read user-read-private playlist-read-private playlist-read-collaborative user-read-email playlist-modify-public playlist-modify-private")
             
             if not access_token:
-                logger.warning(f"No access_token in token_info for account {self.account_id}")
+                logger.warning(f"No access_token in token_info for account {target_account_id}")
                 return
             
             # If no refresh token provided, try to preserve existing one
             if not refresh_token:
-                existing_token = db.get_account_token(self.account_id)
+                existing_token = db.get_account_token(target_account_id)
                 if existing_token and existing_token.get('refresh_token') and existing_token.get('refresh_token') != 'REDACTED':
                     refresh_token = existing_token.get('refresh_token')
-                    logger.debug(f"Preserving existing refresh_token for account {self.account_id}")
+                    logger.debug(f"Preserving existing refresh_token for account {target_account_id}")
 
-            logger.debug(f"Saving token for account {self.account_id}: access={bool(access_token)}, refresh={bool(refresh_token)}, expires={expires_at}")
+            logger.debug(f"Saving token for account {target_account_id}: access={bool(access_token)}, refresh={bool(refresh_token)}, expires={expires_at}")
             
             success = db.save_account_token(
-                account_id=self.account_id,
+                account_id=target_account_id,
                 access_token=access_token,
                 refresh_token=refresh_token if refresh_token else None,
                 token_type='Bearer',
@@ -127,14 +149,14 @@ class ConfigCacheHandler(CacheHandler):
             )
             
             if success:
-                logger.info(f"Successfully persisted Spotify tokens for account {self.account_id}")
+                logger.info(f"Successfully persisted Spotify tokens for account {target_account_id}")
                 try:
-                    db.mark_account_authenticated(self.account_id)
-                    db.toggle_account_active(self.account_id, True)
+                    db.mark_account_authenticated(target_account_id)
+                    db.toggle_account_active(target_account_id, True)
                 except Exception as e:
                     logger.debug(f"Failed to mark account as authenticated: {e}")
             else:
-                logger.error(f"Failed to save Spotify tokens for account {self.account_id}")
+                logger.error(f"Failed to save Spotify tokens for account {target_account_id}")
         except Exception as e:
             logger.error(f"Error saving Spotify token to cache for account {self.account_id}: {e}")
 
@@ -178,26 +200,11 @@ class SpotifyClient(SyncServiceProvider):
         super().__init__()  # Initialize PluginBase which sets up rate-limited HTTP client
         self.sp: Optional[spotipy.Spotify] = None
         self.user_id: Optional[str] = None
+        self.account_id: Optional[int] = account_id
 
         # Auto-detect active account if not provided
-        if account_id is None:
-
-            account_id = self.sdk.config.get('active_spotify_account_id')
-
-            # If still None, try to find the first available account
-            if account_id is None:
-                try:
-                    from core.file_handling.storage import get_storage_service
-                    storage = get_storage_service()
-                    accounts = storage.list_accounts('spotify')
-                    if accounts:
-                        # Pick the first one
-                        account_id = accounts[0]['id']
-                        logger.info(f"No active account set, defaulting to first found account: {account_id}")
-                except Exception as e:
-                    logger.warning(f"Failed to auto-detect spotify account: {e}")
-
-        self.account_id: Optional[int] = account_id
+        if self.account_id is None:
+            self._resolve_account_id()
 
         # Initialize the cache manager
         try:
@@ -231,8 +238,8 @@ class SpotifyClient(SyncServiceProvider):
                 # Use token cache check instead of API call
                 if not self.is_authenticated():
                     # Check if it failed because the refresh token was missing or revoked
-                    auth_manager = self.sp.auth_manager
-                    cached_token = auth_manager.cache_handler.get_cached_token() if auth_manager else None
+                    auth_manager = getattr(self.sp, "auth_manager", None)
+                    cached_token = auth_manager.cache_handler.get_cached_token() if auth_manager and getattr(auth_manager, "cache_handler", None) else None
                     if cached_token and cached_token.get('refresh_token'):
                         msg = "Spotify refresh token failed - please re-authenticate"
                     else:
@@ -258,9 +265,65 @@ class SpotifyClient(SyncServiceProvider):
         
         self.sdk.health.register(spotify_health_check, interval_seconds=300)
 
+    def _resolve_account_id(self) -> Optional[int]:
+        """Resolve active or default Spotify account ID if none set."""
+        if self.account_id is not None:
+            return self.account_id
+
+        accounts = []
+        try:
+            from core.account_manager import AccountManager
+            accounts = AccountManager.list_accounts('spotify')
+        except Exception:
+            accounts = []
+        if not accounts:
+            try:
+                from core.file_handling.storage import get_storage_service
+                accounts = get_storage_service().list_accounts('spotify')
+            except Exception:
+                accounts = []
+
+        if not accounts:
+            return None
+
+        # Check for explicit active account ID from config if that account exists
+        try:
+            active_id = self.sdk.config.get('active_spotify_account_id')
+            if active_id is not None:
+                matching = next((acc for acc in accounts if (acc.get('id') or acc.get('account_id')) == active_id), None)
+                if matching:
+                    self.account_id = active_id
+                    return self.account_id
+        except Exception:
+            pass
+
+        active_account = next((acc for acc in accounts if acc.get('is_active') or acc.get('authenticated') or acc.get('is_authenticated')), None)
+        if not active_account and accounts:
+            active_account = accounts[0]
+
+        if active_account:
+            self.account_id = active_account.get('id') or active_account.get('account_id')
+            logger.info(f"Defaulting to Spotify account: {self.account_id}")
+
+        return self.account_id
+
     def _setup_client(self):
         try:
+            self._resolve_account_id()
             creds = {'client_id': None, 'client_secret': None, 'redirect_uri': None}
+
+            # 0. Check unified ConfigManager service credentials
+            try:
+                from core.settings import config_manager
+                service_creds = config_manager.get_service_credentials('spotify') or {}
+                if service_creds.get('client_id'):
+                    creds['client_id'] = service_creds['client_id']
+                if service_creds.get('client_secret'):
+                    creds['client_secret'] = service_creds['client_secret']
+                if service_creds.get('redirect_uri'):
+                    creds['redirect_uri'] = service_creds['redirect_uri']
+            except Exception:
+                pass
 
             # 1. Check account object if account_id is provided
             if self.account_id is not None:
@@ -309,102 +372,103 @@ class SpotifyClient(SyncServiceProvider):
             except Exception:
                 pass
 
-            # 4. Fallback to legacy storage service
-            from core.file_handling.storage import get_storage_service
-            storage = get_storage_service()
-            if not creds['client_id']:
-                creds['client_id'] = storage.get_service_config('spotify', 'client_id')
-            if not creds['client_secret']:
-                creds['client_secret'] = storage.get_service_config('spotify', 'client_secret')
-            if not creds['redirect_uri']:
-                creds['redirect_uri'] = storage.get_service_config('spotify', 'redirect_uri')
+            # 4. Fallback to legacy storage service / AccountManager
+            try:
+                from core.account_manager import AccountManager
+                if not creds['client_id']:
+                    creds['client_id'] = AccountManager.get_service_config('spotify', 'client_id')
+                if not creds['client_secret']:
+                    creds['client_secret'] = AccountManager.get_service_config('spotify', 'client_secret')
+                if not creds['redirect_uri']:
+                    creds['redirect_uri'] = AccountManager.get_service_config('spotify', 'redirect_uri')
+            except Exception:
+                pass
+
+            if not creds['client_id'] or not creds['client_secret']:
+                logger.debug(
+                    f"Spotify credentials not configured (account_id={self.account_id})"
+                )
+                return
 
             if not creds['redirect_uri']:
                 from core.network_utils import get_lan_ip
                 creds['redirect_uri'] = f"https://{get_lan_ip()}:5001/api/oauth/callback/plugins/spotify"
 
-            if not creds['client_id'] or not creds['client_secret']:
-                logger.warning(
-                    f"Spotify credentials not configured (account_id={self.account_id})"
-                )
-                return
-
-            # Updated scope to include write permissions
-            scope = "user-library-read user-read-private playlist-read-private playlist-read-collaborative user-read-email playlist-modify-public playlist-modify-private"
-
-            # Initialize cache handler and pre-load token to ensure state is primed
+            # Initialize cache handler and pre-load token to inspect auth state
             self.cache_handler = ConfigCacheHandler(self.account_id)
             preloaded_token = self.cache_handler.get_cached_token()
-            logger.debug(f"DEBUG: Pre-loaded token info for account {self.account_id}: {bool(preloaded_token)}")
 
-            # Determine which scopes to pass to SpotifyOAuth.  When we reload
-            # an existing account that already has saved tokens, we should use
-            # the scopes that were granted previously rather than forcing the
-            # full set of scopes.  If we always request the full permission set
-            # on init then SpotifyOAuth.validate_token() will reject cached
-            # tokens that lack newly-added scopes (see issue where a second
-            # account with read-only scopes was treated as unauthenticated).
-            default_scope = (
-                "user-library-read user-read-private playlist-read-private "
-                "playlist-read-collaborative user-read-email playlist-modify-public "
-                "playlist-modify-private"
-            )
-            if preloaded_token and preloaded_token.get('scope'):
-                # Use the stored scope string so validate_token doesn't fail due
-                # to a mismatch.  We'll still re-authenticate later if we try to
-                # perform an operation that requires a missing scope.
-                scope = preloaded_token.get('scope')
-                logger.debug(f"Using existing cached scope for account {self.account_id}: {scope}")
-            else:
-                scope = default_scope
-
-            # Create auth manager WITHOUT requesting authorization on init
-            # Pass the instance of cache_handler, not a new one
-            # IMPORTANT: open_browser=False prevents browser popup in headless mode
-            auth_manager = SpotifyOAuth(
-                client_id=creds['client_id'],
-                client_secret=creds['client_secret'],
-                redirect_uri=creds['redirect_uri'],
-                scope=scope,
-                cache_handler=self.cache_handler,
-                show_dialog=False,
-                open_browser=False
-            )
-
-            # optionally refresh token if expired/refreshable
-            try:
-                cached = auth_manager.cache_handler.get_cached_token()
-                if cached and cached.get('access_token'):
-                    logger.info(f"Using valid cached access token for Spotify account {self.account_id}")
-                elif cached and cached.get('refresh_token'):
-                    logger.debug(f"Refresh token found for account {self.account_id}, attempting silent refresh")
-                    try:
-                        new_token = auth_manager.refresh_access_token(cached.get('refresh_token'))
-                        if new_token and new_token.get('access_token'):
-                            logger.info(f"Successfully refreshed Spotify token for account {self.account_id}")
-                        else:
-                            logger.warning(f"Refresh token refresh returned no access token for account {self.account_id}")
-                    except Exception as e:
-                        logger.warning(f"Failed to refresh Spotify token for account {self.account_id}: {e}")
+            if preloaded_token or self.account_id is not None:
+                # User OAuth flow
+                default_scope = (
+                    "user-library-read user-read-private playlist-read-private "
+                    "playlist-read-collaborative user-read-email playlist-modify-public "
+                    "playlist-modify-private"
+                )
+                if preloaded_token and preloaded_token.get('scope'):
+                    scope = preloaded_token.get('scope')
+                    logger.debug(f"Using existing cached scope for account {self.account_id}: {scope}")
                 else:
-                    logger.debug(
-                        f"Cached token invalid/absent for account {self.account_id} (after validation). "
-                        f"Raw token info: {cached}. User authentication required."
-                    )
-            except Exception as e:
-                logger.debug(f"Error checking/refreshing cached token: {e}")
+                    scope = default_scope
 
-            # Initialize Spotipy with the auth manager
-            # Use the auth_manager's get_access_token which won't trigger browser if token exists
-            self.sp = spotipy.Spotify(auth_manager=auth_manager)
+                auth_manager = SpotifyOAuth(
+                    client_id=creds['client_id'],
+                    client_secret=creds['client_secret'],
+                    redirect_uri=creds['redirect_uri'],
+                    scope=scope,
+                    cache_handler=self.cache_handler,
+                    show_dialog=False,
+                    open_browser=False
+                )
+
+                # optionally refresh token if expired/refreshable
+                try:
+                    cached = auth_manager.cache_handler.get_cached_token()
+                    if cached and cached.get('access_token'):
+                        logger.info(f"Using valid cached access token for Spotify account {self.account_id}")
+                    elif cached and cached.get('refresh_token'):
+                        logger.debug(f"Refresh token found for account {self.account_id}, attempting silent refresh")
+                        try:
+                            new_token = auth_manager.refresh_access_token(cached.get('refresh_token'))
+                            if new_token and new_token.get('access_token'):
+                                logger.info(f"Successfully refreshed Spotify token for account {self.account_id}")
+                            else:
+                                logger.warning(f"Refresh token refresh returned no access token for account {self.account_id}")
+                        except Exception as e:
+                            logger.warning(f"Failed to refresh Spotify token for account {self.account_id}: {e}")
+                    else:
+                        logger.debug(
+                            f"Cached token invalid/absent for account {self.account_id} (after validation). "
+                            f"Raw token info: {cached}. User authentication required."
+                        )
+                except Exception as e:
+                    logger.debug(f"Error checking/refreshing cached token: {e}")
+
+                self.sp = spotipy.Spotify(auth_manager=auth_manager)
+                logger.info("Spotify client initialized successfully with OAuth")
+            else:
+                # Client credentials fallback flow for public catalog access
+                client_credentials_manager = SpotifyClientCredentials(
+                    client_id=creds['client_id'],
+                    client_secret=creds['client_secret']
+                )
+                self.sp = spotipy.Spotify(client_credentials_manager=client_credentials_manager)
+                logger.info("Spotify client initialized successfully with Client Credentials flow")
+
             self.user_id = None
-            logger.info("Spotify client initialized successfully")
 
         except Exception as e:
             logger.error(f"Failed to initialize Spotify client: {e}")
             self.sp = None
 
     def authenticate(self, **kwargs) -> bool:
+        return self.is_authenticated()
+
+    def ensure_authenticated(self) -> bool:
+        """Ensure client is configured and authenticated, attempting resolution if uninitialized."""
+        if self.is_authenticated():
+            return True
+        self._setup_client()
         return self.is_authenticated()
 
     def is_authenticated(self) -> bool:
@@ -418,13 +482,16 @@ class SpotifyClient(SyncServiceProvider):
             logger.debug("Spotify client not initialized")
             return False
         try:
-            # Check if we have a valid cached token WITHOUT calling the API
-            # This avoids triggering browser-based authentication
-            auth_manager = self.sp.auth_manager
+            # 1. Check if client credentials manager is configured
+            if getattr(self.sp, "client_credentials_manager", None) is not None:
+                return True
+
+            # 2. Check OAuth auth manager
+            auth_manager = getattr(self.sp, "auth_manager", None)
             if not auth_manager:
                 return False
                 
-            cached_token = auth_manager.cache_handler.get_cached_token()
+            cached_token = auth_manager.cache_handler.get_cached_token() if getattr(auth_manager, "cache_handler", None) else None
             if not cached_token:
                 return False
                 
@@ -630,7 +697,7 @@ class SpotifyClient(SyncServiceProvider):
                 year=release_year,
                 isrc=isrc,
                 provider_id=track_id,
-                source='spotify',
+                source='EchoSync.spotify',
                 popularity=spotify_track_data.get('popularity'),
                 preview_url=spotify_track_data.get('preview_url')
             )
@@ -667,11 +734,18 @@ class SpotifyClient(SyncServiceProvider):
         Uses the ``isrc:<code>`` qualifier supported by the Spotify search endpoint.
         Returns a single ``EchosyncTrack`` on an exact match, ``None`` otherwise.
         """
-        if not self.is_authenticated():
-            logger.debug("search_by_isrc: Spotify not authenticated, skipping.")
+        if not isrc:
             return None
+
+        if not self.ensure_authenticated():
+            logger.debug("search_by_isrc: Spotify not authenticated and client credentials unavailable, skipping.")
+            return None
+
+        canonical = str(isrc).strip().upper().replace("-", "")
+        q = f"isrc:{canonical}"
+
         try:
-            results = self.sp.search(q=f"isrc:{isrc}", type="track", limit=1)
+            results = self.sp.search(q=q, type="track", limit=1)
             items = ((results or {}).get("tracks") or {}).get("items") or []
             if not items:
                 return None
@@ -680,11 +754,10 @@ class SpotifyClient(SyncServiceProvider):
                 if not isinstance(track.identifiers, dict):
                     track.identifiers = {}
                 track.identifiers["source"] = "EchoSync.spotify"
-                if isrc and not track.isrc:
-                    track.isrc = str(isrc).strip().upper().replace("-", "")
+                track.isrc = canonical
             return track
         except Exception as exc:
-            logger.warning("Spotify search_by_isrc(%s) failed: %s", isrc, exc)
+            logger.warning("Spotify search_by_isrc(%s) failed: %s", canonical, exc)
             return None
 
     @plugin_cache(ttl_seconds=2592000)
