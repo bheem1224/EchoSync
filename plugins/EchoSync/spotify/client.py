@@ -169,6 +169,8 @@ class SpotifyClient(SyncServiceProvider):
         supports_library_scan=False,
         supports_streaming=True,
         supports_downloads=False,
+        supports_metadata_fetch=True,
+        supports_isrc_lookup=True,
         playlist_algorithms=['spotify_mood', 'spotify_energy', 'spotify_newness'],
     )
 

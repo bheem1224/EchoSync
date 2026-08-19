@@ -89,7 +89,32 @@ def test_review_queue_isrc_lookup_uses_waterfall(tmp_path):
 
         assert res["success"] is True
         assert res["match_found"] is True
+        assert res["message"] == "Match found via EchoSync.spotify"
         assert "title" in res["updated_fields"]
         assert "artist" in res["updated_fields"]
         assert res["metadata"]["title"] == "Blinding Lights"
         assert res["metadata"]["artist"] == "The Weeknd"
+
+def test_review_queue_isrc_lookup_no_match(tmp_path):
+    file_path = tmp_path / "song_missing.mp3"
+    file_path.write_bytes(b"fake data")
+
+    db = get_working_database()
+    with db.session_scope() as session:
+        task = ReviewTask(
+            file_path=str(file_path),
+            status="pending",
+            track_data={"isrc": "USUG11904206"}
+        )
+        session.add(task)
+        session.flush()
+        task_id = task.id
+
+    with patch("services.isrc_lookup_service.dispatch_isrc_lookup", return_value=None):
+        req = ISRCLookupRequest(isrc="USUG11904206")
+        res = lookup_review_queue_item_isrc(task_id, req)
+
+        assert res["success"] is True
+        assert res["match_found"] is False
+        assert res["metadata"] is None
+        assert res["message"] == "No matching record found across configured providers"

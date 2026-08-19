@@ -1106,8 +1106,8 @@ def lookup_review_queue_item_isrc(task_id: int, payload: Optional[ISRCLookupRequ
                     "success": True,
                     "match_found": False,
                     "updated_fields": [],
-                    "metadata": serialized["detected_metadata"],
-                    "message": "No matching record found in database",
+                    "metadata": None,
+                    "message": "No matching record found across configured providers",
                     "task": serialized,
                 }
 
@@ -1149,12 +1149,16 @@ def lookup_review_queue_item_isrc(task_id: int, payload: Optional[ISRCLookupRequ
             if track_obj.duration: updated_fields.append("duration")
 
             serialized = _serialize_task(task)
+            src_label = (
+                (track.identifiers.get("source") if hasattr(track, "identifiers") and isinstance(track.identifiers, dict) else None)
+                or "ISRC lookup"
+            )
             return {
                 "success": True,
                 "match_found": True,
                 "updated_fields": list(dict.fromkeys(updated_fields)),
                 "metadata": serialized["detected_metadata"],
-                "message": "Match found",
+                "message": f"Match found via {src_label}",
                 "task": serialized,
             }
     except HTTPException:
