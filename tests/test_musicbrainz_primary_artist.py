@@ -46,6 +46,47 @@ def test_primary_artist_query_fallback():
         # Verify that primary artist query was executed
         assert any('artist:"disclosure"' in q[0].lower() for q in searched_queries)
 
+def test_unquoted_artist_tokens_and_collaborative_scoring():
+    client = MusicBrainzClient()
+
+    # Input track has comma-separated artist credit
+    input_track = EchosyncTrack(
+        raw_title="New Vibe Who Dis",
+        artist_name="Madison Mars, Feldz",
+        album_title="",
+        duration=180000
+    )
+
+    searched_queries = []
+
+    def mock_search_query(query, limit=5):
+        searched_queries.append((query, limit))
+        # Simulate Attempt 3 (unquoted artist tokens) succeeding
+        if 'artist:(madison mars)' in query.lower():
+            return [{
+                "recording_id": "rec-madison",
+                "title": "New Vibe Who Dis",
+                "artist_name": "Madison Mars feat. Feldz",
+                "score": 100
+            }]
+        return []
+
+    mock_track = EchosyncTrack(
+        raw_title="New Vibe Who Dis",
+        artist_name="Madison Mars feat. Feldz",
+        album_title="New Vibe Who Dis",
+        duration=180000,
+        musicbrainz_id="rec-madison"
+    )
+
+    with patch.object(client, "_search_metadata_query", side_effect=mock_search_query), \
+         patch.object(client, "get_track", return_value=mock_track):
+        res = client.search_metadata(input_track)
+        assert res is not None
+        assert res.musicbrainz_id == "rec-madison"
+        # Verify Attempt 3 was executed
+        assert any('artist:(madison mars)' in q[0].lower() for q in searched_queries)
+
 def test_recording_only_query_expanded_limit():
     client = MusicBrainzClient()
 

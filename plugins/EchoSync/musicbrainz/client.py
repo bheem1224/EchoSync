@@ -347,49 +347,46 @@ class MusicBrainzClient(PluginBase):
         # Extract primary artist if multi-artist separators or featuring tags exist
         raw_artist = (getattr(track, 'artist_name', None) or getattr(track, 'artist', None) or artist or "")
         primary_artist = re.split(r'[,/;]|\s+(?:feat\.?|ft\.?|&)\s+', raw_artist, flags=re.IGNORECASE)[0].strip() if raw_artist else ""
-        clean_primary_artist = normalize_artist(self._clean_query_artist(primary_artist)) if primary_artist else ""
-        safe_primary_artist = self._escape_lucene(clean_primary_artist) if clean_primary_artist else ""
+        clean_primary = normalize_artist(self._clean_query_artist(primary_artist)) if primary_artist else ""
+        safe_primary = self._escape_lucene(clean_primary) if clean_primary else safe_artist
+
+        # Strip non-alphanumeric noise and extract individual clean tokens for unquoted token queries
+        tokens = [t for t in re.split(r'\W+', clean_primary or primary_artist) if t]
+        token_query = " ".join(tokens)
 
         results = []
 
-        if not is_numeric_artist and safe_artist:
-            baseline_query = f'artist:"{safe_artist}" AND recording:"{safe_title}"'
-            
-            fallback_query = baseline_query
+        if not is_numeric_artist and safe_primary:
+            # Attempt 1 (Strict Exact with release / duration):
             if safe_album:
-                fallback_query += f' AND release:"{safe_album}"'
-                    
-            strict_query = fallback_query
-            if duration_ms:
-                min_ms = max(0, duration_ms - 5000)
-                max_ms = duration_ms + 5000
-                strict_query += f' AND dur:[{min_ms} TO {max_ms}]'
-
-            # Attempt 1: Strict Query (Artist + Title + Album + Duration)
-            logger.debug(f"[MusicBrainz Client] Attempt 1 (Strict): '{strict_query}'")
-            results = self._search_metadata_query(query=strict_query, limit=5)
-            
-            # Attempt 2: Fallback Query (Artist + Title + Album)
-            if not results and strict_query != fallback_query:
-                logger.debug(f"[MusicBrainz Client] Strict query failed. Attempt 2 (Fallback): '{fallback_query}'")
-                results = self._search_metadata_query(query=fallback_query, limit=5)
-                
-            # Attempt 3: Baseline Query (Artist + Title)
-            if not results and fallback_query != baseline_query:
-                logger.debug(f"[MusicBrainz Client] Fallback query failed. Attempt 3 (Baseline): '{baseline_query}'")
-                results = self._search_metadata_query(query=baseline_query, limit=5)
-
-            # Attempt 4: Primary Artist Fallback Tier (if multi-artist credits contain separators)
-            if not results and primary_artist and clean_primary_artist and clean_primary_artist != clean_artist and not clean_primary_artist.isdigit():
-                if safe_album:
-                    primary_album_query = f'artist:"{safe_primary_artist}" AND recording:"{safe_title}" AND release:"{safe_album}"'
-                    logger.debug(f"[MusicBrainz Client] Attempt 4a (Primary Artist + Title + Album): '{primary_album_query}'")
-                    results = self._search_metadata_query(query=primary_album_query, limit=5)
+                strict_query = f'artist:"{safe_primary}" AND recording:"{safe_title}" AND release:"{safe_album}"'
+                if duration_ms:
+                    min_ms = max(0, duration_ms - 5000)
+                    max_ms = duration_ms + 5000
+                    logger.debug(f"[MusicBrainz Client] Attempt 1 (Strict with duration): '{strict_query} AND dur:[{min_ms} TO {max_ms}]'")
+                    results = self._search_metadata_query(query=f'{strict_query} AND dur:[{min_ms} TO {max_ms}]', limit=5)
 
                 if not results:
-                    primary_query = f'artist:"{safe_primary_artist}" AND recording:"{safe_title}"'
-                    logger.debug(f"[MusicBrainz Client] Attempt 4b (Primary Artist + Title): '{primary_query}'")
-                    results = self._search_metadata_query(query=primary_query, limit=5)
+                    logger.debug(f"[MusicBrainz Client] Attempt 1 (Strict Exact): '{strict_query}'")
+                    results = self._search_metadata_query(query=strict_query, limit=5)
+
+            # Attempt 2 (Primary Artist Exact + Title Exact):
+            if not results:
+                attempt2_query = f'artist:"{safe_primary}" AND recording:"{safe_title}"'
+                logger.debug(f"[MusicBrainz Client] Attempt 2 (Primary Artist Exact + Title Exact): '{attempt2_query}'")
+                results = self._search_metadata_query(query=attempt2_query, limit=5)
+
+            # Attempt 3 (Unquoted Artist Tokens + Title Exact - Matches collaborations like "Madison Mars feat. ..."):
+            if not results and token_query:
+                attempt3_query = f'artist:({token_query}) AND recording:"{safe_title}"'
+                logger.debug(f"[MusicBrainz Client] Attempt 3 (Unquoted Artist Tokens + Title Exact): '{attempt3_query}'")
+                results = self._search_metadata_query(query=attempt3_query, limit=5)
+
+            # Attempt 4 (Artist Wildcard + Title Exact):
+            if not results:
+                attempt4_query = f'artist:"{safe_primary}"* AND recording:"{safe_title}"'
+                logger.debug(f"[MusicBrainz Client] Attempt 4 (Artist Wildcard + Title Exact): '{attempt4_query}'")
+                results = self._search_metadata_query(query=attempt4_query, limit=5)
 
             # Legacy Fallback 1: Strip parenthetical/bracketed phrases from the title and search again
             if not results:
@@ -397,36 +394,29 @@ class MusicBrainzClient(PluginBase):
                 fallback_title = re.sub(r'\s+', ' ', fallback_title)
                 if fallback_title and fallback_title != clean_title:
                     safe_fallback_title = self._escape_lucene(fallback_title)
-                    logger.debug(f"[MusicBrainz Client] Baseline query failed. Trying Legacy Fallback 1 (stripped brackets): title='{fallback_title}'")
-                    legacy_query = f'artist:"{safe_artist}" AND recording:"{safe_fallback_title}"'
+                    logger.debug(f"[MusicBrainz Client] Bracket Stripping Fallback: title='{fallback_title}'")
+                    legacy_query = f'artist:"{safe_primary}" AND recording:"{safe_fallback_title}"'
                     results = self._search_metadata_query(query=legacy_query, limit=5)
 
-            # Legacy Fallback 2: Search for clean_title alone with artist as loose parameter
-            if not results:
-                loose_title = re.sub(r'[\(\[\{].*?[\)\]\}]', '', clean_title).strip() or clean_title
-                loose_title = re.sub(r'\s+', ' ', loose_title)
-                safe_loose_title = self._escape_lucene(loose_title)
-                logger.debug(f"[MusicBrainz Client] Legacy Fallback 1 failed or skipped. Trying Legacy Fallback 2 (loose artist): title='{loose_title}', artist='{clean_artist}'")
-                legacy_query = f'recording:"{safe_loose_title}" AND artist:{safe_artist}'
-                results = self._search_metadata_query(query=legacy_query, limit=5)
-
-        # Fallback without artist (e.g. if artist was numeric track number or unknown, or artist queries yielded no match)
+        # Fallback without artist / Recording Only (Attempt 5)
         if not results and safe_title:
             if safe_album:
                 logger.debug(f"[MusicBrainz Client] Trying Release + Recording fallback: recording='{safe_title}', release='{safe_album}'")
                 results = self._search_metadata_query(query=f'recording:"{safe_title}" AND release:"{safe_album}"', limit=5)
             if not results:
-                logger.debug(f"[MusicBrainz Client] Trying Recording-only fallback (expanded limit=15): recording='{safe_title}'")
-                results = self._search_metadata_query(query=f'recording:"{safe_title}"', limit=15)
+                attempt5_query = f'recording:"{safe_title}"'
+                logger.debug(f"[MusicBrainz Client] Attempt 5 (Recording Only Fallback with limit=15): '{attempt5_query}'")
+                results = self._search_metadata_query(query=attempt5_query, limit=15)
 
         if results:
             # Multi-Candidate Evaluation using MatchingEngine
             from core.matching_engine.scoring_profile import PROFILE_EXACT_SYNC
             from core.matching_engine.matching_engine import WeightedMatchingEngine
 
+            source_artist_raw = getattr(track, 'artist_name', None) or getattr(track, 'artist', None) or artist or ""
             source_track = EchosyncTrack(
                 raw_title=clean_title or (track.raw_title if isinstance(track, EchosyncTrack) else title),
-                artist_name=clean_primary_artist or clean_artist or (track.artist_name if isinstance(track, EchosyncTrack) else artist),
+                artist_name=clean_primary or clean_artist or source_artist_raw,
                 album_title=clean_album_str or (track.album_title if isinstance(track, EchosyncTrack) else album),
                 duration=(getattr(track, 'duration', None) or getattr(track, 'duration_ms', None) or duration_ms),
                 isrc=(getattr(track, 'isrc', None) if isinstance(track, EchosyncTrack) else None)
@@ -450,7 +440,28 @@ class MusicBrainzClient(PluginBase):
                     continue
 
                 if source_track:
-                    match_result = engine.calculate_match(source_track, fetched)
+                    # Create normalized comparison candidate stripping feat/collaborations so
+                    # collaborative credits like "Madison Mars feat. Feldz" match "Madison Mars, Feldz" cleanly
+                    cand_raw_artist = fetched.artist_name or ""
+                    cand_primary = re.split(r'[,/;]|\s+(?:feat\.?|ft\.?|&)\s+', cand_raw_artist, flags=re.IGNORECASE)[0].strip() if cand_raw_artist else ""
+                    clean_cand_primary = normalize_artist(self._clean_query_artist(cand_primary)) if cand_primary else ""
+
+                    eval_candidate = EchosyncTrack(
+                        raw_title=fetched.raw_title,
+                        artist_name=clean_cand_primary or fetched.artist_name,
+                        album_title=fetched.album_title,
+                        duration=fetched.duration,
+                        isrc=fetched.isrc,
+                        musicbrainz_id=fetched.musicbrainz_id
+                    )
+
+                    match_result_raw = engine.calculate_match(source_track, fetched)
+                    match_result_eval = engine.calculate_match(source_track, eval_candidate)
+
+                    match_result = match_result_eval if (
+                        match_result_eval and (not match_result_raw or match_result_eval.confidence_score >= match_result_raw.confidence_score)
+                    ) else match_result_raw
+
                     score = match_result.confidence_score if match_result else 0.0
                     passed_version = match_result.passed_version_check if match_result else False
                     logger.debug(
