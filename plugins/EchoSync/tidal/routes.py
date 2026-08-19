@@ -51,7 +51,7 @@ def list_accounts():
         })
     except Exception as e:
         logger.error(f"Error getting Tidal accounts: {e}", exc_info=True)
-        return JSONResponse(content={"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}, status_code=500)
+        return JSONResponse(content={"error": "Failed to get Tidal accounts"}, status_code=500)
 
 
 @router.post('/')
@@ -103,7 +103,7 @@ async def create_account(request: Request):
         }, status_code=201)
     except Exception as e:
         logger.error(f"Error creating Tidal account: {e}", exc_info=True)
-        return JSONResponse(content={"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}, status_code=500)
+        return JSONResponse(content={"error": "Failed to create Tidal account"}, status_code=500)
 
 
 @router.get('/{account_id}')
@@ -133,7 +133,7 @@ def get_account(account_id: int):
         })
     except Exception as e:
         logger.error(f"Error getting Tidal account: {e}", exc_info=True)
-        return JSONResponse(content={"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}, status_code=500)
+        return JSONResponse(content={"error": "Failed to get Tidal account"}, status_code=500)
 
 
 @router.put('/{account_id}')
@@ -181,7 +181,7 @@ async def update_account(account_id: int, request: Request):
         })
     except Exception as e:
         logger.error(f"Error updating Tidal account: {e}", exc_info=True)
-        return JSONResponse(content={"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}, status_code=500)
+        return JSONResponse(content={"error": "Failed to update Tidal account"}, status_code=500)
 
 
 @router.put('/{account_id}/activate')
@@ -202,7 +202,7 @@ async def activate_account(account_id: int, request: Request):
         return JSONResponse(content={'status': 'ok', 'is_active': is_active})
     except Exception as e:
         logger.error(f"Error activating Tidal account: {e}", exc_info=True)
-        return JSONResponse(content={"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}, status_code=500)
+        return JSONResponse(content={"error": "Failed to activate Tidal account"}, status_code=500)
 
 
 @router.delete('/{account_id}')
@@ -217,7 +217,7 @@ def delete_account(account_id: int):
         return JSONResponse(content={'status': 'ok', 'message': 'Account deleted'})
     except Exception as e:
         logger.error(f"Error deleting Tidal account: {e}", exc_info=True)
-        return JSONResponse(content={"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}, status_code=500)
+        return JSONResponse(content={"error": "Failed to delete Tidal account"}, status_code=500)
 
 
 @router.post('/redirect-uri')
@@ -237,7 +237,7 @@ async def set_redirect_uri(request: Request):
         return JSONResponse(content={'status': 'ok', 'redirect_uri': redirect_uri})
     except Exception as e:
         logger.error(f"Error setting redirect URI: {e}", exc_info=True)
-        return JSONResponse(content={"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}, status_code=500)
+        return JSONResponse(content={"error": "Failed to set redirect URI"}, status_code=500)
 
 
 @router.get('/auth')
@@ -278,4 +278,4 @@ async def begin_auth(request: Request):
         return JSONResponse(content={'auth_url': auth_url}, status_code=200)
     except Exception as e:
         logger.error(f"Error generating Tidal auth URL: {e}", exc_info=True)
-        return JSONResponse(content={"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}, status_code=500)
+        return JSONResponse(content={"error": "Failed to initiate Tidal authentication"}, status_code=500)

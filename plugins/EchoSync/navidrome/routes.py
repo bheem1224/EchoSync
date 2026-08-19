@@ -60,7 +60,7 @@ def get_settings():
         })
     except Exception as e:
         logger.error(f"Error getting Navidrome settings: {e}", exc_info=True)
-        return JSONResponse(content={"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}, status_code=500)
+        return JSONResponse(content={"error": "Failed to get Navidrome settings"}, status_code=500)
 
 
 @router.post('/settings')
@@ -90,7 +90,7 @@ async def save_settings(request: Request):
         return {'success': True}
     except Exception as e:
         logger.error(f"Error saving Navidrome settings: {e}", exc_info=True)
-        return JSONResponse(content={"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}, status_code=500)
+        return JSONResponse(content={"error": "Failed to save Navidrome settings"}, status_code=500)
 
 
 @router.post('/activate')
@@ -105,7 +105,7 @@ def activate_server():
         })
     except Exception as e:
         logger.error(f"Error activating Navidrome: {e}", exc_info=True)
-        return JSONResponse(content={"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}, status_code=500)
+        return JSONResponse(content={"error": "Failed to activate Navidrome server"}, status_code=500)
 
 
 @router.post('/test-connection')
@@ -158,4 +158,4 @@ def test_connection():
         return JSONResponse(content={'error': 'requests library not available'}, status_code=500)
     except Exception as e:
         logger.error(f"Navidrome connection test failed: {e}", exc_info=True)
-        return JSONResponse(content={"connected": False, "error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Connection test failed"}, status_code=400)
+        return JSONResponse(content={"connected": False, "error": "Connection test failed"}, status_code=400)

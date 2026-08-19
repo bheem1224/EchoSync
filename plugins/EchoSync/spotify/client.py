@@ -547,7 +547,7 @@ class SpotifyClient(SyncServiceProvider):
 
         except Exception as e:
             logger.error(f"Spotify callback error: {e}", exc_info=True)
-            error_html = f"<html><body style='font-family: Arial, sans-serif;'><h2>Spotify Authentication Failed</h2><p>{str(e)}</p></body></html>"
+            error_html = "<html><body style='font-family: Arial, sans-serif;'><h2>Spotify Authentication Failed</h2><p>An unexpected error occurred during Spotify authentication. Please try again.</p></body></html>"
             return error_html, 500, {"Content-Type": "text/html"}
 
     def is_configured(self) -> bool:

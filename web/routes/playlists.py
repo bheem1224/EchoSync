@@ -1599,8 +1599,8 @@ def _sync_to_plex(payload, source, target, playlist_name, matches, download_miss
         if not job_queue.execute_job_now(job_name):
             raise RuntimeError(f"Job '{job_name}' is already running or unavailable")
     except Exception as e:
-        logger.error(f"Failed to schedule Plex sync job '{job_name}': {e}")
-        return {"accepted": False, "error": f"Failed to schedule sync: {e}"}
+        logger.error(f"Failed to schedule Plex sync job '{job_name}': {e}", exc_info=True)
+        return {"accepted": False, "error": "Failed to schedule sync job"}
 
     return {
         "accepted": True,
@@ -1706,8 +1706,8 @@ def _sync_to_tier(payload, source, target, playlist_name, matches, download_miss
         if not job_queue.execute_job_now(job_name):
             raise RuntimeError(f"Job '{job_name}' is already running or unavailable")
     except Exception as e:
-        logger.error(f"Failed to schedule {target} sync job '{job_name}': {e}")
-        return {"accepted": False, "error": f"Failed to schedule sync: {e}"}
+        logger.error(f"Failed to schedule {target} sync job '{job_name}': {e}", exc_info=True)
+        return {"accepted": False, "error": "Failed to schedule sync job"}
 
     return {
         "accepted": True,

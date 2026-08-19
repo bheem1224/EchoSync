@@ -43,7 +43,7 @@ def get_config():
         })
     except Exception as e:
         logger.error(f"Error reading AcoustID config: {e}", exc_info=True)
-        return JSONResponse(content={"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}, status_code=500)
+        return JSONResponse(content={"error": "Failed to read AcoustID config"}, status_code=500)
 
 @config_router.post("/config")
 async def save_config(request: Request):
@@ -99,4 +99,4 @@ async def save_config(request: Request):
         })
     except Exception as e:
         logger.error(f"Error saving AcoustID config: {e}", exc_info=True)
-        return JSONResponse(content={"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}, status_code=500)
+        return JSONResponse(content={"error": "Failed to save AcoustID config"}, status_code=500)

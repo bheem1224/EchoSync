@@ -59,7 +59,7 @@ def get_settings():
         })
     except Exception as e:
         logger.error(f"Error getting Jellyfin settings: {e}", exc_info=True)
-        return JSONResponse(content={"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}, status_code=500)
+        return JSONResponse(content={"error": "Failed to get Jellyfin settings"}, status_code=500)
 
 
 @router.post('/settings')
@@ -89,7 +89,7 @@ async def save_settings(request: Request):
         return {'success': True}
     except Exception as e:
         logger.error(f"Error saving Jellyfin settings: {e}", exc_info=True)
-        return JSONResponse(content={"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}, status_code=500)
+        return JSONResponse(content={"error": "Failed to save Jellyfin settings"}, status_code=500)
 
 
 @router.post('/activate')
@@ -104,7 +104,7 @@ def activate_server():
         })
     except Exception as e:
         logger.error(f"Error activating Jellyfin: {e}", exc_info=True)
-        return JSONResponse(content={"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}, status_code=500)
+        return JSONResponse(content={"error": "Failed to activate Jellyfin server"}, status_code=500)
 
 
 @router.post('/test-connection')
@@ -113,19 +113,19 @@ def test_connection():
     try:
         base_url = sdk.config.get('jellyfin.base_url', '').strip()
         username = sdk.config.get('jellyfin.username', '').strip()
-        password = sdk.config.get('jellyfin.password', '').strip()
+        password = sdk.config.get('jellyfin.password', '')
         
         if not base_url:
-            return JSONResponse(content={'error': 'Server URL is required'}, status_code=400)
-        if not username or not password:
-            return JSONResponse(content={'error': 'Username and password are required'}, status_code=400)
+            return JSONResponse(content={'connected': False, 'error': 'Server URL is required'}, status_code=400)
+        
+        if not username:
+            return JSONResponse(content={'connected': False, 'error': 'Username is required'}, status_code=400)
         
         import requests
         
-        # Test authentication endpoint
+        # Test connection by trying to authenticate
         auth_url = f"{base_url.rstrip('/')}/Users/AuthenticateByName"
         headers = {
-            'Content-Type': 'application/json',
             'X-Emby-Authorization': 'MediaBrowser Client="Echosync", Device="Echosync", DeviceId="echosync-1", Version="1.0.0"'
         }
         auth_data = {
@@ -175,4 +175,4 @@ def test_connection():
         return JSONResponse(content={'error': 'requests library not available'}, status_code=500)
     except Exception as e:
         logger.error(f"Jellyfin connection test failed: {e}", exc_info=True)
-        return JSONResponse(content={"connected": False, "error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Connection test failed"}, status_code=400)
+        return JSONResponse(content={"connected": False, "error": "Connection test failed"}, status_code=400)

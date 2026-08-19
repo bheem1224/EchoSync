@@ -107,7 +107,7 @@ def begin_auth(request: Request):
         return JSONResponse(content={'error': 'Invalid account_id format'}, status_code=400)
     except Exception as e:
         logger.error(f"Error creating Tidal auth URL: {e}", exc_info=True)
-        return JSONResponse(content={"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}, status_code=500)
+        return JSONResponse(content={"error": "Failed to create Tidal authentication URL"}, status_code=500)
 
 
 @router.get('/callback')
@@ -147,7 +147,7 @@ def oauth_callback(request: Request):
                 
         except Exception as e:
             logger.error(f"Failed to decode state: {e}")
-            return JSONResponse(content={"error": f"Invalid state parameter: {e}"}, status_code=400)
+            return JSONResponse(content={"error": "Invalid state parameter"}, status_code=400)
 
         # Retrieve PKCE entry from config.db
         
@@ -228,8 +228,8 @@ def oauth_callback(request: Request):
 
     except Exception as e:
         logger.error(f"Tidal callback error: {e}", exc_info=True)
-        error_html = f"""<html><body style='font-family: Arial, sans-serif;'>
+        error_html = """<html><body style='font-family: Arial, sans-serif;'>
             <h2>Tidal Authentication Failed</h2>
-            <p>{str(e)}</p>
+            <p>An unexpected error occurred during Tidal authentication. Please try again.</p>
         </body></html>"""
         return HTMLResponse(content=error_html, status_code=500)

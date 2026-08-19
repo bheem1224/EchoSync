@@ -66,7 +66,7 @@ def get_settings():
         })
     except Exception as e:
         logger.error(f"Error getting Spotify settings: {e}", exc_info=True)
-        return JSONResponse(content={"error": str(e)}, status_code=500)
+        return JSONResponse(content={"error": "Failed to get Spotify settings"}, status_code=500)
 
 
 @router.post('/settings')
@@ -113,7 +113,7 @@ async def save_settings(request: Request):
         return JSONResponse(content={'success': True})
     except Exception as e:
         logger.error(f"Error saving Spotify settings: {e}", exc_info=True)
-        return JSONResponse(content={"error": str(e)}, status_code=500)
+        return JSONResponse(content={"error": "Failed to save Spotify settings"}, status_code=500)
 
 
 # ── Accounts ──────────────────────────────────────────────────────────────────
@@ -137,7 +137,7 @@ def list_accounts():
         return JSONResponse(content={'accounts': accounts})
     except Exception as e:
         logger.error(f"Error listing Spotify accounts: {e}", exc_info=True)
-        return JSONResponse(content={"error": str(e)}, status_code=500)
+        return JSONResponse(content={"error": "Failed to list Spotify accounts"}, status_code=500)
 
 
 @router.post('/accounts')
@@ -164,7 +164,7 @@ async def create_account(request: Request):
         }, status_code=201)
     except Exception as e:
         logger.error(f"Error creating Spotify account: {e}", exc_info=True)
-        return JSONResponse(content={"error": str(e)}, status_code=500)
+        return JSONResponse(content={"error": "Failed to create Spotify account"}, status_code=500)
 
 
 @router.put('/accounts/{account_id}/activate')
@@ -178,7 +178,7 @@ async def activate_account(account_id: int, request: Request):
         return JSONResponse(content={'success': True, 'is_active': is_active})
     except Exception as e:
         logger.error(f"Error activating Spotify account {account_id}: {e}", exc_info=True)
-        return JSONResponse(content={"error": str(e)}, status_code=500)
+        return JSONResponse(content={"error": "Failed to activate Spotify account"}, status_code=500)
 
 
 @router.delete('/accounts/{account_id}')
@@ -189,7 +189,7 @@ def delete_account(account_id: int):
         return JSONResponse(content={'success': True})
     except Exception as e:
         logger.error(f"Error deleting Spotify account {account_id}: {e}", exc_info=True)
-        return JSONResponse(content={"error": str(e)}, status_code=500)
+        return JSONResponse(content={"error": "Failed to delete Spotify account"}, status_code=500)
 
 
 # ── OAuth ─────────────────────────────────────────────────────────────────────
@@ -242,7 +242,7 @@ def begin_auth(account_id: Optional[int] = None):
         return JSONResponse(content={'auth_url': auth_url}, status_code=200)
     except Exception as e:
         logger.error(f"Error creating Spotify auth URL: {e}", exc_info=True)
-        return JSONResponse(content={'error': str(e)}, status_code=500)
+        return JSONResponse(content={'error': "Failed to initiate Spotify authentication"}, status_code=500)
 
 
 @router.get('/callback')
@@ -335,7 +335,7 @@ def oauth_callback(code: Optional[str] = None, state: Optional[str] = None, erro
 
     except Exception as e:
         logger.error(f"Spotify callback error: {e}", exc_info=True)
-        html = f"<html><body style='font-family: Arial, sans-serif;'><h2>Spotify Authentication Failed</h2><p>{str(e)}</p></body></html>"
+        html = "<html><body style='font-family: Arial, sans-serif;'><h2>Spotify Authentication Failed</h2><p>An unexpected error occurred during Spotify authentication. Please try again.</p></body></html>"
         return HTMLResponse(content=html, status_code=500)
 
 

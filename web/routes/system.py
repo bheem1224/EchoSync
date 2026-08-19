@@ -423,7 +423,7 @@ def get_all_system_accounts():
         }
     except Exception as e:
         logger.error(f"Error getting system accounts: {e}", exc_info=True)
-        return {"error": str(e)}
+        return {"error": "Failed to get system accounts"}
 
 
 @router.post("/accounts/map", dependencies=[Depends(require_auth)])
@@ -457,7 +457,7 @@ async def map_system_accounts(request: Request):
         return {'success': True}
     except Exception as e:
         logger.error(f"Error mapping accounts: {e}", exc_info=True)
-        return {"error": str(e)}
+        return {"error": "Failed to map system accounts"}
 
 
 @router.post("/settings", dependencies=[Depends(require_auth)])
@@ -963,4 +963,4 @@ def kill_job(job_name):
         return {'error': 'Failed to kill job'}
 
 
-
+bp = router

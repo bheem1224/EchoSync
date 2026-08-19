@@ -53,7 +53,7 @@ def get_config():
         })
     except Exception as e:
         logger.error(f"Error reading MusicBrainz config: {e}", exc_info=True)
-        return JSONResponse(content={"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}, status_code=500)
+        return JSONResponse(content={"error": "Failed to read MusicBrainz config"}, status_code=500)
 
 
 @config_router.post("/config")
@@ -91,7 +91,7 @@ async def save_config(request: Request):
         })
     except Exception as e:
         logger.error(f"Error saving MusicBrainz config: {e}", exc_info=True)
-        return JSONResponse(content={"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}, status_code=500)
+        return JSONResponse(content={"error": "Failed to save MusicBrainz config"}, status_code=500)
 
 _AUTH_URL = "https://musicbrainz.org/oauth2/authorize"
 _TOKEN_URL = "https://musicbrainz.org/oauth2/token"
@@ -139,10 +139,7 @@ def list_accounts():
         })
     except Exception as e:
         logger.error(f"Error listing MusicBrainz accounts: {e}", exc_info=True)
-        return JSONResponse(content={"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}, status_code=500)
-    except Exception as e:
-        logger.error(f"Error listing MusicBrainz accounts: {e}", exc_info=True)
-        return JSONResponse(content={"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}, status_code=500)
+        return JSONResponse(content={"error": "Failed to list MusicBrainz accounts"}, status_code=500)
 
 
 @router.post("/accounts")
@@ -176,7 +173,7 @@ async def create_account(request: Request):
         }), 201
     except Exception as e:
         logger.error(f"Error creating MusicBrainz account: {e}", exc_info=True)
-        return JSONResponse(content={"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}, status_code=500)
+        return JSONResponse(content={"error": "Failed to create MusicBrainz account"}, status_code=500)
 
 
 @router.delete("/accounts/{account_id}")
@@ -190,7 +187,7 @@ def delete_account(account_id: int):
         return JSONResponse(content={"error": "Account not found or deletion failed"}, status_code=404)
     except Exception as e:
         logger.error(f"Error deleting MusicBrainz account {account_id}: {e}", exc_info=True)
-        return JSONResponse(content={"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}, status_code=500)
+        return JSONResponse(content={"error": "Failed to delete MusicBrainz account"}, status_code=500)
 
 
 @router.put("/accounts/{account_id}/activate")
@@ -206,7 +203,7 @@ async def activate_account(account_id: int, request: Request):
         return JSONResponse(content={"error": "Failed to update account status"}, status_code=500)
     except Exception as e:
         logger.error(f"Error toggling MusicBrainz account {account_id}: {e}", exc_info=True)
-        return JSONResponse(content={"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}, status_code=500)
+        return JSONResponse(content={"error": "Failed to update account status"}, status_code=500)
 
 
 # ── OAuth2 PKCE Flow ──────────────────────────────────────────────────────────
@@ -296,7 +293,7 @@ async def begin_auth(request: Request):
         return JSONResponse(content={"error": "Invalid account_id format"}, status_code=400)
     except Exception as e:
         logger.error(f"Error starting MusicBrainz OAuth: {e}", exc_info=True)
-        return JSONResponse(content={"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}, status_code=500)
+        return JSONResponse(content={"error": "Failed to initiate MusicBrainz authentication"}, status_code=500)
 
 
 @router.get("/callback")
@@ -331,7 +328,7 @@ async def oauth_callback(request: Request):
             raise ValueError("No pkce_id in state payload")
     except Exception as e:
         logger.error(f"Failed to decode OAuth state: {e}")
-        return JSONResponse(content={"error": f"Invalid state parameter: {e}"}, status_code=400)
+        return JSONResponse(content={"error": "Invalid state parameter"}, status_code=400)
 
     
     pkce = storage.get_pkce_session(pkce_id)
@@ -424,7 +421,7 @@ def get_settings():
         return JSONResponse(content={"settings": {"api_base_url": api_base_url}}, status_code=200)
     except Exception as e:
         logger.error(f"Error reading MusicBrainz settings: {e}", exc_info=True)
-        return JSONResponse(content={"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}, status_code=500)
+        return JSONResponse(content={"error": "Failed to read MusicBrainz settings"}, status_code=500)
 
 @router.post("/settings")
 async def save_settings(request: Request):
@@ -438,7 +435,7 @@ async def save_settings(request: Request):
         return JSONResponse(content={"success": True}, status_code=200)
     except Exception as e:
         logger.error(f"Error saving MusicBrainz settings: {e}", exc_info=True)
-        return JSONResponse(content={"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}, status_code=500)
+        return JSONResponse(content={"error": "Failed to save MusicBrainz settings"}, status_code=500)
 
 @router.get("/credentials")
 def get_credentials():
@@ -450,7 +447,7 @@ def get_credentials():
         return JSONResponse(content={"credentials": {"client_id": client_id, "has_secret": bool(client_secret)}}, status_code=200)
     except Exception as e:
         logger.error(f"Error reading MusicBrainz credentials: {e}", exc_info=True)
-        return JSONResponse(content={"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}, status_code=500)
+        return JSONResponse(content={"error": "Failed to read MusicBrainz credentials"}, status_code=500)
 
 @router.post("/credentials")
 async def save_credentials(request: Request):
@@ -467,4 +464,4 @@ async def save_credentials(request: Request):
         return JSONResponse(content={"success": True}, status_code=200)
     except Exception as e:
         logger.error(f"Error saving MusicBrainz credentials: {e}", exc_info=True)
-        return JSONResponse(content={"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}, status_code=500)
+        return JSONResponse(content={"error": "Failed to save MusicBrainz credentials"}, status_code=500)

@@ -5,19 +5,22 @@ and safely interact with the configuration database.
 """
 import pytest
 from unittest.mock import MagicMock, patch
-from flask import Flask
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+from web.auth import require_auth
 
 import web.routes.system as route_module
 
 @pytest.fixture
 def app():
-    app = Flask(__name__)
-    app.register_blueprint(route_module.bp)
+    app = FastAPI()
+    app.include_router(route_module.router)
+    app.dependency_overrides[require_auth] = lambda: True
     return app
 
 @pytest.fixture
 def client(app):
-    return app.test_client()
+    return TestClient(app)
 
 def test_system_accounts_list(client, monkeypatch):
     """Verifies that music services are properly filtered by capabilities."""
@@ -72,10 +75,10 @@ def test_system_accounts_list(client, monkeypatch):
 
     monkeypatch.setattr('core.nexus_framework.plugin_loader.PluginRegistry', MockPluginRegistry)
 
-    response = client.get('/api/system/accounts')
+    response = client.get('/api/v1/system/accounts')
     assert response.status_code == 200
     
-    data = response.get_json()
+    data = response.json()
     assert 'music_accounts' in data
     assert 'media_users' in data
 
@@ -98,9 +101,9 @@ def test_map_system_accounts(client, monkeypatch):
         'account_ids': [200, 300]
     }
     
-    response = client.post('/api/system/accounts/map', json=payload)
+    response = client.post('/api/v1/system/accounts/map', json=payload)
     assert response.status_code == 200
-    assert response.get_json()['success'] is True
+    assert response.json()['success'] is True
 
     # Verify deletions and sets
     mock_db.delete_account_mappings_for_account.assert_called_once_with(100)

@@ -20,7 +20,13 @@ def test_initialization(spotify_client):
 def test_is_configured_false(spotify_client):
     # Reset sp to test unconfigured state
     spotify_client.sp = None
-    with patch('core.file_handling.storage.get_storage_service') as mock_storage:
+    with patch('core.file_handling.storage.get_storage_service') as mock_storage, \
+         patch('database.config_database.get_config_database') as mock_db_fn:
+        mock_db = MagicMock()
+        mock_db.get_service_id.return_value = None
+        mock_db.get_or_create_service_id.return_value = None
+        mock_db.get_service_config.return_value = None
+        mock_db_fn.return_value = mock_db
         mock_storage_instance = MagicMock()
         mock_storage_instance.get_service_config.return_value = None
         mock_storage.return_value = mock_storage_instance

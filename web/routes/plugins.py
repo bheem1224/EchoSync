@@ -181,7 +181,7 @@ def get_plugin_store():
         return PluginsListResponse(plugins=plugins)
     except Exception as e:
         logger.error(f"Error fetching plugin store: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Failed to fetch plugin store")
 
 class PluginActionRequest(BaseModel):
     plugin: Dict[str, Any]
@@ -206,9 +206,11 @@ def install_plugin(request: Request, data: PluginActionRequest):
     except PrivilegeEscalationError as e:
         from fastapi.responses import JSONResponse
         return JSONResponse(status_code=403, content={"requires_consent": True, "escalations": e.escalations, "message": "This update requires elevated permissions."})
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Install error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Install error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to install plugin")
 
 @router.post("/update", dependencies=[Depends(require_auth)])
 def update_plugin(request: Request, data: PluginActionRequest):
@@ -250,9 +252,11 @@ def update_plugin(request: Request, data: PluginActionRequest):
     except PrivilegeEscalationError as e:
         from fastapi.responses import JSONResponse
         return JSONResponse(status_code=403, content={"requires_consent": True, "escalations": e.escalations, "message": "This update requires elevated permissions."})
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Update error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Update error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to update plugin")
 
 @router.post("/rollback", response_model=GenericSuccessResponse, dependencies=[Depends(require_auth)])
 def rollback_plugin(data: PluginActionRequest):
@@ -288,9 +292,11 @@ def rollback_plugin(data: PluginActionRequest):
         if success:
             return GenericSuccessResponse(success=True)
         raise HTTPException(status_code=500, detail="Failed to rollback plugin")
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Rollback error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Rollback error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to rollback plugin")
 
 @router.post("/{plugin_id}/rollback", response_model=GenericSuccessResponse, dependencies=[Depends(require_auth)])
 def rollback_plugin_direct(plugin_id: str):
@@ -321,9 +327,11 @@ def rollback_plugin_direct(plugin_id: str):
         if success:
             return GenericSuccessResponse(success=True)
         raise HTTPException(status_code=500, detail="Failed to rollback plugin")
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Rollback error for {plugin_id}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Rollback error for {plugin_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to rollback plugin")
 
 class BetaOptRequest(BaseModel):
     beta_opt_in: Optional[bool] = None
@@ -370,9 +378,11 @@ def set_plugin_beta_opt(plugin_id: str, data: BetaOptRequest):
             logger.warning(f"Failed to hot-reload plugin {db_plugin_id} after beta-opt change: {re}")
             
         return GenericSuccessResponse(success=True)
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error setting beta opt for {plugin_id}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Error setting beta opt for {plugin_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to set beta opt-in")
 
 class UninstallPluginRequest(BaseModel):
     id: Optional[Any] = None
@@ -418,9 +428,11 @@ def uninstall_plugin_route(data: UninstallPluginRequest):
         if success:
             return GenericSuccessResponse(success=True)
         raise HTTPException(status_code=500, detail="Failed to uninstall plugin")
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Uninstall error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Uninstall error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to uninstall plugin")
 
 
 class TogglePluginRequest(BaseModel):
@@ -609,9 +621,11 @@ def list_all_plugins(request: Request):
             content=plugins_list, 
             headers={'ETag': etag, 'Cache-Control': 'public, max-age=0, must-revalidate'}
         )
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error listing plugins: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Error listing plugins: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to list plugins")
 
 @router.get("/download-clients")
 def list_download_clients():
@@ -643,9 +657,11 @@ def list_download_clients():
         
         return download_clients
         
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error listing download clients: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Error listing download clients: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to list download clients")
 
 @router.get("/download-clients/active")
 def get_active_download_client():
@@ -656,9 +672,11 @@ def get_active_download_client():
         active_downloads = PluginRegistry.get_active_services_by_type('download')
         active = active_downloads[0].split('.')[-1] if active_downloads else None
         return {'active_client': active}
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error getting active download client: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Error getting active download client: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to get active download client")
 
 class ActivateClientRequest(BaseModel):
     client: Optional[str] = None
@@ -692,8 +710,8 @@ def set_active_download_client(data: ActivateClientRequest):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error setting active download client: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Error setting active download client: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to set active download client")
 
 
 @router.post("/{plugin_id}/rollback", dependencies=[Depends(require_auth)])
@@ -711,8 +729,8 @@ def rollback_plugin(plugin_id: str):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error rolling back plugin {plugin_id}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Error rolling back plugin {plugin_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to rollback plugin")
 
 
 @router.get("/{plugin_id}/accounts")
@@ -780,8 +798,8 @@ def get_plugin_accounts(plugin_id: str):
             'total': len(accounts_list),
         }
     except Exception as e:
-        logger.error(f"Error fetching accounts for plugin {plugin_id}: {e}")
-        return {'plugin': str(plugin_id), 'items': [], 'total': 0, 'error': str(e)}
+        logger.error(f"Error fetching accounts for plugin {plugin_id}: {e}", exc_info=True)
+        return {'plugin': str(plugin_id), 'items': [], 'total': 0, 'error': 'Failed to fetch plugin accounts'}
 
 
 @router.get("/{plugin_id}/playlists")
@@ -874,8 +892,8 @@ def get_plugin_playlists(plugin_id: str):
                 }
 
             except Exception as e:
-                logger.error(f"Error handling multi-account logic for {short_name}: {e}")
-                raise HTTPException(status_code=500, detail=str(e))
+                logger.error(f"Error handling multi-account logic for {short_name}: {e}", exc_info=True)
+                raise HTTPException(status_code=500, detail="Failed to retrieve multi-account playlists")
 
         if hasattr(plugin, 'is_configured') and not plugin.is_configured():
             logger.info(f"Plugin {plugin_id} is not configured, returning empty list")
@@ -913,7 +931,7 @@ def get_plugin_playlists(plugin_id: str):
         raise
     except Exception as e:
         logger.error(f"Error fetching playlists for {plugin_id}: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Failed to fetch playlists")
 
 
 @router.get("/{plugin_id}/settings")
@@ -959,8 +977,8 @@ def get_plugin_settings(plugin_id: str):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error getting settings for {plugin_id}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Error getting settings for {plugin_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to get plugin settings")
 
 @router.post("/{plugin_id}/settings", dependencies=[Depends(require_auth)])
 async def update_plugin_settings(plugin_id: str, request: Request):
@@ -1072,8 +1090,8 @@ def list_plugins_route():
             'total': len(plugins)
         }
     except Exception as e:
-        logger.error(f"Error listing plugins: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Error listing plugins: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to list plugins")
 
 @router.get("/by-capability/{capability}")
 def get_plugins_by_capability(capability: str):
@@ -1086,8 +1104,8 @@ def get_plugins_by_capability(capability: str):
             'total': len(plugins)
         }
     except Exception as e:
-        logger.error(f"Error getting plugins for capability {capability}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Error getting plugins for capability {capability}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to get plugins for capability")
 
 @router.get("/{plugin_id}")
 def get_plugin_details(plugin_id: str):
@@ -1104,8 +1122,8 @@ def get_plugin_details(plugin_id: str):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error getting plugin details for {plugin_id}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Error getting plugin details for {plugin_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to get plugin details")
 
 @router.get("/{plugin_id}/credentials", dependencies=[Depends(require_auth)])
 def get_plugin_credentials(plugin_id: str):
@@ -1136,7 +1154,7 @@ def get_plugin_credentials(plugin_id: str):
         raise
     except Exception as e:
         logger.error(f"Error fetching credentials for {plugin_id}: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Failed to fetch plugin credentials")
 
 
 @router.get("/{plugin_id}/settings")
@@ -1182,8 +1200,8 @@ def get_plugin_settings(plugin_id: str):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error getting settings for {plugin_id}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Error getting settings for {plugin_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to get plugin settings")
 
 @router.post("/{plugin_id}/settings", dependencies=[Depends(require_auth)])
 async def update_plugin_settings(plugin_id: str, request: Request):
@@ -1273,8 +1291,8 @@ def list_plugins_route():
             'total': len(plugins)
         }
     except Exception as e:
-        logger.error(f"Error listing plugins: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Error listing plugins: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to list plugins")
 
 @router.get("/by-capability/{capability}")
 def get_plugins_by_capability(capability: str):
@@ -1287,8 +1305,8 @@ def get_plugins_by_capability(capability: str):
             'total': len(plugins)
         }
     except Exception as e:
-        logger.error(f"Error getting plugins for capability {capability}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Error getting plugins for capability {capability}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to get plugins for capability")
 
 @router.get("/{plugin_id}")
 def get_plugin_details(plugin_id: str):
@@ -1305,8 +1323,8 @@ def get_plugin_details(plugin_id: str):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error getting plugin details for {plugin_id}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Error getting plugin details for {plugin_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to get plugin details")
 
 @router.get("/{plugin_id}/credentials", dependencies=[Depends(require_auth)])
 def get_plugin_credentials(plugin_id: str):
@@ -1344,8 +1362,8 @@ def get_plugin_credentials(plugin_id: str):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error getting credentials for {plugin_id}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Error getting credentials for {plugin_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to get credentials")
 
 class SetCredentialsRequest(BaseModel):
     credentials: Optional[Dict[str, Any]] = None
@@ -1392,8 +1410,8 @@ def set_plugin_credentials(plugin_id: str, data: SetCredentialsRequest):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error setting credentials for {plugin_id}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Error setting credentials for {plugin_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to set credentials")
 @router.get('/{plugin_id}/ui/{filename:path}', dependencies=[Depends(require_auth)])
 def serve_plugin_asset(plugin_id: str, filename: str):
     logger.info(f'[serve_plugin_asset] Request received for plugin_id={plugin_id}, filename={filename}')

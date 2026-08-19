@@ -46,7 +46,7 @@ def get_active_download_client():
         }
     except Exception as e:
         logger.error(f"Failed to get active download client: {e}")
-        return {"active": False, "active_client": None, "error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal error checking client"}
+        return {"active": False, "active_client": None, "error": "Failed to get active download client"}
 
 
 class ActivateClientRequest(BaseModel):
@@ -64,7 +64,7 @@ def activate_download_client(data: Optional[ActivateClientRequest] = None):
         return {"success": True, "active_client": target}
     except Exception as e:
         logger.error(f"Failed to activate download client: {e}")
-        raise HTTPException(status_code=500, detail=str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error")
+        raise HTTPException(status_code=500, detail="Failed to activate download client")
 
 
 # ---------------------------------------------------------------------------
@@ -90,7 +90,7 @@ def get_settings():
         }
     except Exception as e:
         logger.error(f"Failed to get slskd settings: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error")
+        raise HTTPException(status_code=500, detail="Failed to get slskd settings")
 
 
 class SettingsRequest(BaseModel):
@@ -121,7 +121,7 @@ def save_settings(data: SettingsRequest):
         raise
     except Exception as e:
         logger.error(f"Failed to save slskd settings: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error")
+        raise HTTPException(status_code=500, detail="Failed to save slskd settings")
 
 
 class TestConnectionRequest(BaseModel):
@@ -160,8 +160,8 @@ def test_connection(data: Optional[TestConnectionRequest] = None):
                 return {"success": False, "error": "Could not connect. Check URL and ensure slskd is running."}
             except asyncio.TimeoutError:
                 return {"success": False, "error": "Connection timed out."}
-            except Exception as ex:
-                return {"success": False, "error": str(ex)}
+            except Exception:
+                return {"success": False, "error": "Connection failed."}
 
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
@@ -177,7 +177,7 @@ def test_connection(data: Optional[TestConnectionRequest] = None):
         raise
     except Exception as e:
         logger.error(f"Failed to test slskd connection: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error")
+        raise HTTPException(status_code=500, detail="Connection test failed")
 
 
 @router.get("/settings/key")
@@ -193,4 +193,4 @@ def get_api_key():
         raise
     except Exception as e:
         logger.error(f"Failed to fetch API key: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error")
+        raise HTTPException(status_code=500, detail="Failed to fetch API key")

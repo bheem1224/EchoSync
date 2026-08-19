@@ -66,7 +66,7 @@ def get_settings():
         })
     except Exception as e:
         logger.error(f"Error getting Plex settings: {e}", exc_info=True)
-        return JSONResponse(content={"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}, status_code=500)
+        return JSONResponse(content={"error": "Failed to get Plex settings"}, status_code=500)
 
 
 @router.post('/settings')
@@ -113,7 +113,7 @@ async def save_settings(request: Request):
         return {'success': True}
     except Exception as e:
         logger.error(f"Error saving Plex settings: {e}", exc_info=True)
-        return JSONResponse(content={"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}, status_code=500)
+        return JSONResponse(content={"error": "Failed to save Plex settings"}, status_code=500)
 
 
 @router.post('/activate')
@@ -128,7 +128,7 @@ def activate_server():
         })
     except Exception as e:
         logger.error(f"Error activating Plex: {e}", exc_info=True)
-        return JSONResponse(content={"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}, status_code=500)
+        return JSONResponse(content={"error": "Failed to activate Plex server"}, status_code=500)
 
 
 @router.post('/test-connection')
@@ -180,7 +180,7 @@ async def test_connection(request: Request):
         return JSONResponse(content={'error': 'Plex library not available'}, status_code=500)
     except Exception as e:
         logger.error(f"Plex connection test failed: {e}", exc_info=True)
-        return JSONResponse(content={"connected": False, "error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Connection test failed"}, status_code=400)
+        return JSONResponse(content={"connected": False, "error": "Connection test failed"}, status_code=400)
 
 
 # --- OAuth Logic (from providers/plex/oauth_routes.py) ---
@@ -268,7 +268,7 @@ async def start_oauth(request: Request):
         return JSONResponse(content={'error': 'Plex library not available'}, status_code=500)
     except Exception as e:
         logger.error(f"Error starting Plex OAuth: {e}", exc_info=True)
-        return JSONResponse(content={"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}, status_code=500)
+        return JSONResponse(content={"error": "Failed to start Plex authentication"}, status_code=500)
 
 
 @router.get('/auth/poll/{session_id}')
@@ -386,7 +386,7 @@ def poll_oauth(session_id: str):
 
     except Exception as e:
         logger.error(f"Error polling Plex OAuth: {e}", exc_info=True)
-        return JSONResponse(content={"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}, status_code=500)
+        return JSONResponse(content={"error": "Failed to poll Plex authentication"}, status_code=500)
 
 
 @router.delete('/auth/cancel/{session_id}')
@@ -401,7 +401,7 @@ def cancel_oauth(session_id: str):
         return {'success': True}
     except Exception as e:
         logger.error(f"Error cancelling Plex OAuth: {e}", exc_info=True)
-        return JSONResponse(content={"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}, status_code=500)
+        return JSONResponse(content={"error": "Failed to cancel Plex authentication"}, status_code=500)
 
 from web.auth import require_auth
 
@@ -425,4 +425,4 @@ def sync_plex_users():
         })
     except Exception as e:
         logger.error(f"Error syncing Plex users: {e}", exc_info=True)
-        return JSONResponse(content={"error": str(e) if logger.isEnabledFor(logging.DEBUG) else "Internal server error"}, status_code=500)
+        return JSONResponse(content={"error": "Failed to sync Plex users"}, status_code=500)
