@@ -273,28 +273,29 @@ def get_cover_art(path: str = Query(..., description="absolute path to audio fil
     """Extract embedded cover art from an audio file."""
     try:
         from core.settings import config_manager
+        from core.path_security import resolve_safe_path, PathTraversalError
         _lib = config_manager.get('storage.library_dir') or config_manager.get('library_dir') or config_manager.get('data_dir') or '.'
         allowed_root = Path(_lib).resolve()
 
         try:
-            resolved_path = Path(path).resolve()
-            if not resolved_path.is_relative_to(allowed_root):
-                raise HTTPException(status_code=403, detail="Security violation: Access denied")
-        except Exception:
-            raise HTTPException(status_code=400, detail="Invalid path")
+            file_path = resolve_safe_path(allowed_root, path)
+        except (PathTraversalError, ValueError):
+            raise HTTPException(status_code=403, detail="Security violation: Access denied")
 
-        file_path = resolved_path
         if not file_path.exists() or not file_path.is_file():
             raise HTTPException(status_code=404, detail="File not found")
 
         for name in ["cover.jpg", "folder.jpg", "cover.png", "folder.png"]:
-            fallback = file_path.parent / name
-            if fallback.exists():
-                return FileResponse(path=str(fallback))
+            try:
+                fallback = resolve_safe_path(allowed_root, file_path.parent / name)
+                if fallback.exists() and fallback.is_file():
+                    return FileResponse(path=str(fallback))
+            except (PathTraversalError, ValueError):
+                continue
                 
         raise HTTPException(status_code=404, detail="No cover art found")
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Error extracting cover art for {path}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Failed to extract cover art")

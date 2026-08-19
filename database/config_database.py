@@ -457,15 +457,21 @@ class ConfigDatabase:
             logger.error(f"Failed to resolve plugin details for {name}: {e}")
 
         if not is_matched and name.lower().startswith('echosync.'):
-            plugin_name = name.split('.')[-1]
+            import re
             from core.settings import config_manager
-            from pathlib import Path
-            bundle_path = Path(config_manager.get_plugins_dir()) / 'EchoSync' / plugin_name
-            if bundle_path.exists():
-                resolved_plugin_id_str = name
-                resolved_version = '1.0.0'
-                resolved_path = str(bundle_path.resolve())
-                is_matched = True
+            from core.path_security import resolve_safe_path, PathTraversalError
+            plugin_name = name.split('.')[-1]
+            if re.match(r'^[a-zA-Z0-9_\-]+$', plugin_name):
+                plugins_root = Path(config_manager.get_plugins_dir()).resolve() / 'EchoSync'
+                try:
+                    bundle_path = resolve_safe_path(plugins_root, plugin_name)
+                    if bundle_path.exists() and bundle_path.is_dir():
+                        resolved_plugin_id_str = name
+                        resolved_version = '1.0.0'
+                        resolved_path = str(bundle_path)
+                        is_matched = True
+                except (PathTraversalError, ValueError):
+                    pass
 
         if name.lower() == 'system' or is_matched:
             plugin_id_int = binascii.crc32(resolved_plugin_id_str.lower().encode('utf-8')) & 0xFFFFFFFF

@@ -34,28 +34,47 @@ def resolve_safe_path(base_dir: Union[str, Path], user_input: Union[str, Path]) 
 
     # 1. Convert base_dir to an absolute resolved Path
     base_path = Path(base_dir).resolve()
+    base_abs = str(base_path)
 
-    # 2. Sanitize user input string/path (strip absolute root markers if passed as string)
+    # 2. Sanitize user input string/path
     input_str = str(user_input).strip()
-    
-    # Neutralize leading slashes/drive letters to prevent Path('/') ignoring base_path
-    if os.path.isabs(input_str) or input_str.startswith('/') or input_str.startswith('\\'):
-        input_str = input_str.lstrip('/\\')
-        # On Windows, strip drive letters like C:
-        if len(input_str) >= 2 and input_str[1] == ':':
-            input_str = input_str[2:].lstrip('/\\')
+    if "\0" in input_str:
+        raise PathTraversalError("Null byte in path")
 
-    # 3. Combine and resolve the target path
-    target_path = (base_path / input_str).resolve()
+    # If input is already an absolute path
+    input_p = Path(input_str)
+    if input_p.is_absolute() or (len(input_str) >= 2 and input_str[1] == ':'):
+        target_path = input_p.resolve()
+        try:
+            is_safe = target_path.is_relative_to(base_path)
+        except AttributeError:
+            try:
+                is_safe = os.path.commonpath([str(target_path), base_abs]) == base_abs
+            except ValueError:
+                is_safe = False
 
-    # 4. Enforce strict containment check
+        if not is_safe:
+            raise PathTraversalError(
+                f"Security Violation: Path traversal attempt detected. "
+                f"Input '{user_input}' escapes root directory '{base_path}'"
+            )
+        return target_path
+
+    # Relative path: check for '..' traversal tokens
+    cleaned = os.path.normpath(input_str).lstrip('/\\')
+    parts = cleaned.replace('\\', '/').split('/')
+    if '..' in parts or any(p == '..' for p in parts):
+        raise PathTraversalError(
+            f"Security Violation: Path traversal attempt detected. "
+            f"Input '{user_input}' escapes root directory '{base_path}'"
+        )
+
+    target_path = (base_path / cleaned).resolve()
     try:
-        # Python 3.9+ containment check
         is_safe = target_path.is_relative_to(base_path)
     except AttributeError:
-        # Fallback for Python < 3.9 using commonpath
         try:
-            is_safe = os.path.commonpath([str(target_path), str(base_path)]) == str(base_path)
+            is_safe = os.path.commonpath([str(target_path), base_abs]) == base_abs
         except ValueError:
             is_safe = False
 

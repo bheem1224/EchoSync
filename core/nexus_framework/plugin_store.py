@@ -148,19 +148,21 @@ class PluginStore:
                 return []
 
         # Case 2: GitHub Browser URL (Legacy/Custom)
-        parts = repo_url.rstrip('/').split('/')
-        if "github.com" in parts:
+        import urllib.parse
+        parsed_repo = urllib.parse.urlparse(repo_url)
+        repo_host = (parsed_repo.hostname or "").lower()
+        if repo_host == "github.com" or repo_host.endswith(".github.com"):
             try:
-                gh_idx = parts.index("github.com")
-                user = parts[gh_idx + 1]
-                repo = parts[gh_idx + 2]
-                
-                branch = "main"
-                subfolder = ""
-                if len(parts) > gh_idx + 3 and parts[gh_idx + 3] == "tree":
-                    branch = parts[gh_idx + 4]
-                    if len(parts) > gh_idx + 5:
-                        subfolder = "/".join(parts[gh_idx + 5:])
+                path_parts = [p for p in parsed_repo.path.strip("/").split("/") if p]
+                if len(path_parts) >= 2:
+                    user = path_parts[0]
+                    repo = path_parts[1]
+                    branch = "main"
+                    subfolder = ""
+                    if len(path_parts) > 3 and path_parts[2] == "tree":
+                        branch = path_parts[3]
+                        if len(path_parts) > 4:
+                            subfolder = "/".join(path_parts[4:])
 
                 # Try store-manifest.json first, then manifest.json
                 manifest_files = ["store-manifest.json", "manifest.json"]
@@ -494,8 +496,9 @@ class PluginStore:
         if not folder_path:
             clean_id = str(plugin_id)
             folder_path = clean_id.replace('.', '/')
-            
-        dest_dir = resolve_safe_path(self.plugins_dir, folder_path)
+
+        clean_folder = os.path.normpath(str(folder_path)).replace('\\', '/').strip('/')
+        dest_dir = resolve_safe_path(self.plugins_dir, clean_folder)
         beta_dir = dest_dir / "beta"
 
         if channel == "beta":
@@ -503,7 +506,8 @@ class PluginStore:
         else:
             target_dir = dest_dir
 
-        tmp_dir = resolve_safe_path(self.plugins_dir, f"tmp_{folder_path.replace('/', '_')}")
+        import tempfile
+        tmp_dir = Path(tempfile.mkdtemp(prefix="plugin_tmp_", dir=str(self.plugins_dir.resolve())))
 
         try:
             logger.info(f"Direct downloading {plugin_id} ({channel}) from {download_url}")
@@ -624,8 +628,12 @@ class PluginStore:
                 manifest_version = new_manifest["version"]
                 manifest_type = new_manifest.get("type") or new_manifest.get("category", "provider")
                 
+                if not re.match(r'^[a-zA-Z0-9_\-]+$', manifest_author) or not re.match(r'^[a-zA-Z0-9_\-]+$', manifest_name):
+                    logger.error(f"Invalid characters in manifest author or name: {manifest_author}.{manifest_name}")
+                    return False
+
                 # Dynamically calculate target directories based on strict_namespace
-                dest_dir = self.plugins_dir / manifest_author / manifest_name
+                dest_dir = resolve_safe_path(self.plugins_dir, f"{manifest_author}/{manifest_name}")
                 
                 # Check case-insensitively to reuse existing folder names and prevent casing duplicates
                 existing_dest = dest_dir if dest_dir.exists() else None

@@ -31,7 +31,7 @@ def run_test():
     # Re-initialize config manager to pick up clean state
     config_manager.__init__()
 
-    print(f"Testing with secret: '{test_secret_key}'")
+    print(f"Testing with key: '{test_secret_key}'")
 
     # 2. Set a secret value
     config_manager.set(test_secret_key, test_secret_value)
@@ -39,8 +39,8 @@ def run_test():
 
     # 3. Get the secret value and verify it
     retrieved_value = config_manager.get(test_secret_key)
-    print(f"Retrieved value: '{retrieved_value}'")
-    assert retrieved_value == test_secret_value, f"FAIL: Retrieved value '{retrieved_value}' does not match original '{test_secret_value}'"
+    print(f"Retrieved value verified: '{retrieved_value[:3]}***'")
+    assert retrieved_value == test_secret_value, "FAIL: Retrieved value does not match original"
     print("✅ SUCCESS: Retrieved value matches original value.")
 
     # 4. Inspect the database to ensure the value is encrypted

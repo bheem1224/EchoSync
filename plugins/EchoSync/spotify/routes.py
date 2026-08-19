@@ -253,7 +253,8 @@ def oauth_callback(code: Optional[str] = None, state: Optional[str] = None, erro
         return JSONResponse(content={'error': 'Spotify provider is disabled'}, status_code=403)
     try:
         if error:
-            desc = error_description or error
+            import html as html_escape
+            desc = html_escape.escape(error_description or error or "Unknown error")
             logger.error(f"Spotify OAuth error: {desc}")
             html = f"<html><body style='font-family: Arial, sans-serif;'><h2>Spotify Authentication Failed</h2><p><strong>Error:</strong> {desc}</p><p>Please try again or check your Spotify app settings.</p></body></html>"
             return HTMLResponse(content=html, status_code=400)

@@ -46,7 +46,7 @@ export function decodeSyncId(syncId) {
       return `${titleCase(artistRaw)} - ${titleCase(titleRaw)}`;
     }
 
-    return titleCase(decoded.replace('|', ' - '));
+    return titleCase(decoded.replaceAll('|', ' - '));
   } catch {
     return syncId;
   }

@@ -7,6 +7,8 @@ from core.tiered_logger import get_logger
 
 logger = get_logger("local_server_routes")
 router = APIRouter(prefix="/api/v1/system/local_server", tags=["Local Server"])
+legacy_router = APIRouter(prefix="/api/local_server", tags=["Local Server Legacy"])
+bp = router
 
 # Formats that modern browsers can decode natively — served directly with Accept-Ranges.
 _NATIVE_FORMATS = {'.mp3', '.flac', '.wav', '.m4a', '.ogg'}
@@ -16,6 +18,7 @@ _TRANSCODE_FORMATS = {'.dsf', '.dff', '.ape', '.wma'}
 
 
 @router.get("/stream")
+@legacy_router.get("/stream")
 def stream_audio(path: str = Query(..., description="Path to the audio file")):
     """Stream audio file from the local library.
 
@@ -36,13 +39,11 @@ def stream_audio(path: str = Query(..., description="Path to the audio file")):
         raise HTTPException(status_code=500, detail="Library directory is not configured")
 
     try:
-        requested_path = Path(path).resolve()
-        library_root = library_dir.resolve()
-
-        # Verify that the requested path falls within the library root.
-        # This prevents directory traversal attacks (e.g., path=../../etc/passwd).
-        if not requested_path.is_relative_to(library_root):
-            logger.warning(f"Security violation: Attempted to access file outside library path: {requested_path}")
+        from core.path_security import resolve_safe_path, PathTraversalError
+        try:
+            requested_path = resolve_safe_path(library_dir, path)
+        except (PathTraversalError, ValueError):
+            logger.warning(f"Security violation: Attempted to access file outside library path: {path}")
             raise HTTPException(status_code=403, detail="Security violation: Access denied")
 
         if not requested_path.exists():
@@ -61,17 +62,18 @@ def stream_audio(path: str = Query(..., description="Path to the audio file")):
         if ext in _TRANSCODE_FORMATS:
             logger.info(f"Transcoding {ext} → FLAC for {requested_path.name}")
 
-            import os
-            safe_path = os.path.normpath(str(requested_path.resolve()))
+            # Fixed command line with pipe:0 input stream prevents CWE-078 command injection
             ffmpeg_cmd = [
                 "ffmpeg", "-hide_banner", "-loglevel", "error",
-                "-i", safe_path,
+                "-i", "pipe:0",
                 "-c:a", "flac", "-f", "flac", "pipe:1",
             ]
 
             def generate():
+                in_file = open(requested_path, "rb")
                 proc = subprocess.Popen(
                     ffmpeg_cmd,
+                    stdin=in_file,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     shell=False,
@@ -85,7 +87,7 @@ def stream_audio(path: str = Query(..., description="Path to the audio file")):
                         owner_type=OwnerType.CORE,
                         pid=proc.pid,
                         task_name="ffmpeg_transcode",
-                        metadata={"cmd": ffmpeg_cmd, "path": safe_path}
+                        metadata={"cmd": ffmpeg_cmd, "file": requested_path.name}
                     )
                     reg_id = supervisor.register_process(owner_info)
                 except Exception as reg_err:
@@ -103,6 +105,10 @@ def stream_audio(path: str = Query(..., description="Path to the audio file")):
                             supervisor.unregister_process(reg_id)
                         except Exception:
                             pass
+                    try:
+                        in_file.close()
+                    except Exception:
+                        pass
                     proc.stdout.close()
                     proc.wait()
                     if proc.returncode not in (0, None):

@@ -509,9 +509,15 @@ async def update_settings(request: Request):
     if "custom_ui_path" in payload:
         ui_path = str(payload["custom_ui_path"]).strip()
         if ui_path:
-            if not os.path.isdir(ui_path):
-                raise HTTPException(status_code=400, detail=f"Custom UI directory does not exist: {ui_path}")
-        payload["custom_ui_path"] = ui_path
+            try:
+                resolved_ui = Path(ui_path).resolve()
+                if not resolved_ui.is_dir():
+                    raise HTTPException(status_code=400, detail="Custom UI directory does not exist")
+                payload["custom_ui_path"] = str(resolved_ui)
+            except Exception:
+                raise HTTPException(status_code=400, detail="Invalid Custom UI path")
+        else:
+            payload["custom_ui_path"] = ""
         restart_warning = True
 
     try:

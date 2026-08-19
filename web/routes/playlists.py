@@ -63,7 +63,7 @@ router = APIRouter(prefix="/api/v1/core/playlists", tags=["Playlists"])
 # substring boost to be withheld, preventing false-positive Swap Cases.
 _OST_SAFE_RE = re.compile(
     r'^(?:'
-    r'\s*'                                           # whitespace between tokens
+    r'\s+'                                           # whitespace between tokens
     r'|电视剧|网剧|影视剧|影視劇|电影'              # drama-type classifiers
     r'|片头曲|片尾曲|主题曲|插曲|推广曲'             # song-role labels
     r'|原声带|原声|配乐'                              # soundtrack labels

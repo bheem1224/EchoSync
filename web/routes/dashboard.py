@@ -13,19 +13,27 @@ dashboards_bp = APIRouter(prefix="/api/v1/dashboards", tags=["Dashboards"])
 @dashboards_bp.get("/{filename}", dependencies=[Depends(require_auth)])
 def get_custom_dashboard_yaml(filename: str):
     from fastapi.responses import PlainTextResponse
-    import os
-    
-    filename = os.path.basename(filename)
-    filepath = os.path.join("config", "webui", filename)
-    
-    if not os.path.exists(filepath):
-        raise HTTPException(status_code=404, detail="Dashboard not found")
-        
+    import re
+    from core.path_security import resolve_safe_path, PathTraversalError
+
+    safe_name = os.path.basename(filename.strip())
+    if not re.match(r'^[a-zA-Z0-9_\-]+\.(yaml|yml|json)$', safe_name):
+        raise HTTPException(status_code=400, detail="Invalid dashboard filename")
+
     try:
-        with open(filepath, "r", encoding="utf-8") as f:
+        base_dir = Path("config/webui").resolve()
+        target_path = resolve_safe_path(base_dir, safe_name)
+    except (PathTraversalError, ValueError):
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    if not target_path.exists() or not target_path.is_file():
+        raise HTTPException(status_code=404, detail="Dashboard not found")
+
+    try:
+        with open(target_path, "r", encoding="utf-8") as f:
             return PlainTextResponse(f.read(), media_type="text/yaml")
     except Exception as e:
-        logger.error(f"Error reading {filename}: {e}")
+        logger.error(f"Error reading {safe_name}: {e}")
         raise HTTPException(status_code=500, detail="Failed to read dashboard")
 
 DASHBOARD_FILE = os.path.join("config", "webui", "dashboard.yaml")
