@@ -465,7 +465,7 @@ class ConfigDatabase:
                 plugins_root = Path(config_manager.get_plugins_dir()).resolve() / 'EchoSync'
                 try:
                     bundle_path = resolve_safe_path(plugins_root, plugin_name)
-                    if bundle_path.exists() and bundle_path.is_dir():
+                    if bundle_path.is_dir():
                         resolved_plugin_id_str = name
                         resolved_version = '1.0.0'
                         resolved_path = str(bundle_path)

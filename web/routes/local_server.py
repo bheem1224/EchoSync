@@ -32,25 +32,29 @@ def stream_audio(path: str = Query(..., description="Path to the audio file")):
     if not path:
         raise HTTPException(status_code=400, detail="Missing 'path' query parameter")
 
-    _lib = config_manager.get('storage.library_dir') or config_manager.get('library_dir')
-    library_dir = Path(_lib) if _lib else None
+    candidate_roots = [
+        config_manager.get('storage.library_dir'),
+        config_manager.get('library_dir'),
+        config_manager.get('download_dir'),
+        config_manager.get('storage.download_dir'),
+        config_manager.get('data_dir'),
+        '.'
+    ]
+    allowed_roots = [Path(r).resolve() for r in candidate_roots if r]
 
-    if not library_dir:
+    if not allowed_roots:
         raise HTTPException(status_code=500, detail="Library directory is not configured")
 
     try:
         from core.path_security import resolve_safe_path, PathTraversalError
         try:
-            requested_path = resolve_safe_path(library_dir, path)
+            requested_path = resolve_safe_path(allowed_roots, path)
         except (PathTraversalError, ValueError):
             logger.warning(f"Security violation: Attempted to access file outside library path: {path}")
             raise HTTPException(status_code=403, detail="Security violation: Access denied")
 
-        if not requested_path.exists():
+        if not requested_path.exists() or not requested_path.is_file():
             raise HTTPException(status_code=404, detail="File not found")
-
-        if not requested_path.is_file():
-            raise HTTPException(status_code=400, detail="Requested path is not a file")
 
         ext = requested_path.suffix.lower()
 

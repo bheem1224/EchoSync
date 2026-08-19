@@ -27,7 +27,7 @@ def is_safe_path(target_path: Union[str, Path], allowed_roots: Union[str, Path, 
         bool: True if target_path is strictly inside an allowed root, False otherwise.
     """
     try:
-        target = Path(target_path).resolve()
+        target_abs = os.path.abspath(os.path.realpath(os.path.normpath(str(target_path))))
     except Exception:
         return False
 
@@ -38,16 +38,10 @@ def is_safe_path(target_path: Union[str, Path], allowed_roots: Union[str, Path, 
 
     for root in roots:
         try:
-            r = Path(root).resolve()
-            try:
-                if target.is_relative_to(r):
-                    return True
-            except AttributeError:
-                target_str = str(target)
-                root_str = str(r)
-                if os.path.commonpath([target_str, root_str]) == root_str:
-                    return True
-        except Exception:
+            root_abs = os.path.abspath(os.path.realpath(os.path.normpath(str(root))))
+            if os.path.commonpath([target_abs, root_abs]) == root_abs:
+                return True
+        except (ValueError, Exception):
             continue
 
     return False
@@ -74,10 +68,11 @@ def resolve_safe_path(
         raise ValueError("base_dir must be specified")
 
     if isinstance(base_dir, (str, Path)):
-        allowed_roots = [Path(base_dir).resolve()]
+        raw_roots = [base_dir]
     else:
-        allowed_roots = [Path(r).resolve() for r in base_dir if r]
+        raw_roots = list(base_dir)
 
+    allowed_roots = [os.path.abspath(os.path.realpath(os.path.normpath(str(r)))) for r in raw_roots if r]
     if not allowed_roots:
         raise ValueError("At least one valid base_dir must be provided")
 
@@ -86,35 +81,28 @@ def resolve_safe_path(
     if "\0" in input_str:
         raise PathTraversalError("Null byte in path")
 
-    # If input is already an absolute path
-    input_p = Path(input_str)
-    if input_p.is_absolute() or (len(input_str) >= 2 and input_str[1] == ':'):
-        target_path = input_p.resolve()
-        if not is_safe_path(target_path, allowed_roots):
-            raise PathTraversalError(
-                f"Security Violation: Path traversal attempt detected. "
-                f"Input '{user_input}' escapes allowed root directories."
-            )
-        return target_path
-
-    # Relative path: check for '..' traversal tokens
-    cleaned = os.path.normpath(input_str).lstrip('/\\')
-    parts = cleaned.replace('\\', '/').split('/')
+    # Reject explicit double-dot path traversal elements
+    parts = input_str.replace('\\', '/').split('/')
     if '..' in parts or any(p == '..' for p in parts):
         raise PathTraversalError(
             f"Security Violation: Path traversal attempt detected. "
             f"Input '{user_input}' escapes root directory."
         )
 
-    # Try resolving relative to first root
-    target_path = (allowed_roots[0] / cleaned).resolve()
-    if not is_safe_path(target_path, allowed_roots):
+    # If input is already an absolute path
+    if os.path.isabs(input_str) or (len(input_str) >= 2 and input_str[1] == ':'):
+        target_abs = os.path.abspath(os.path.realpath(os.path.normpath(input_str)))
+    else:
+        cleaned = os.path.normpath(input_str).lstrip('/\\')
+        target_abs = os.path.abspath(os.path.realpath(os.path.normpath(os.path.join(allowed_roots[0], cleaned))))
+
+    if not is_safe_path(target_abs, allowed_roots):
         raise PathTraversalError(
             f"Security Violation: Path traversal attempt detected. "
-            f"Input '{user_input}' escapes root directory."
+            f"Input '{user_input}' escapes allowed root directories."
         )
 
-    return target_path
+    return Path(target_abs)
 
 
 def validate_zip_entry(base_dir: Union[str, Path], zip_filename: str) -> Path:

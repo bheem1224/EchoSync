@@ -274,7 +274,7 @@ def plugin_cache(ttl_seconds: int = 3600, key_prefix: str = ""):
 
             # Create hash of key to avoid overly long cache keys
             key_str = "|".join(key_parts)
-            cache_key = hashlib.md5(key_str.encode()).hexdigest()
+            cache_key = hashlib.md5(key_str.encode(), usedforsecurity=False).hexdigest()
 
             # Try to get from cache
             cached_result = cache.get(cache_key, ttl_seconds)

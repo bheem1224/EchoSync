@@ -214,7 +214,7 @@ class MatchService:
         """
         import hashlib
         key_str = f"parse|{raw_string}"
-        cache_key = hashlib.md5(key_str.encode()).hexdigest()
+        cache_key = hashlib.md5(key_str.encode(), usedforsecurity=False).hexdigest()
 
         cached_data = self.cache.get(cache_key)
         if cached_data:

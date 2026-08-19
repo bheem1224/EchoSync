@@ -1,10 +1,13 @@
 import os
+from pathlib import Path
 from fastapi import APIRouter, HTTPException, Depends, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 from web.auth import require_auth
 from core.tiered_logger import get_logger
 from ruamel.yaml import YAML
 from ruamel.yaml.error import YAMLError
+from core.path_security import resolve_safe_path, PathTraversalError
+import re
 
 logger = get_logger("dashboard_route")
 dashboard_bp = APIRouter(prefix="/api/v1/system/dashboard", tags=["Dashboard"])
@@ -12,10 +15,6 @@ dashboards_bp = APIRouter(prefix="/api/v1/dashboards", tags=["Dashboards"])
 
 @dashboards_bp.get("/{filename}", dependencies=[Depends(require_auth)])
 def get_custom_dashboard_yaml(filename: str):
-    from fastapi.responses import PlainTextResponse
-    import re
-    from core.path_security import resolve_safe_path, PathTraversalError
-
     safe_name = os.path.basename(filename.strip())
     if not re.match(r'^[a-zA-Z0-9_\-]+\.(yaml|yml|json)$', safe_name):
         raise HTTPException(status_code=400, detail="Invalid dashboard filename")
@@ -33,7 +32,7 @@ def get_custom_dashboard_yaml(filename: str):
         with open(target_path, "r", encoding="utf-8") as f:
             return PlainTextResponse(f.read(), media_type="text/yaml")
     except Exception as e:
-        logger.error(f"Error reading {safe_name}: {e}")
+        logger.error(f"Error reading {safe_name}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to read dashboard")
 
 DASHBOARD_FILE = os.path.join("config", "webui", "dashboard.yaml")

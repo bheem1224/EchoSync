@@ -612,7 +612,7 @@ def list_all_plugins(request: Request):
         plugins_list = list_plugins()
         
         content_json = json.dumps(plugins_list, sort_keys=True).encode('utf-8')
-        etag = hashlib.md5(content_json).hexdigest()
+        etag = hashlib.md5(content_json, usedforsecurity=False).hexdigest()
         
         if request.headers.get('If-None-Match') == etag:
             return Response(status_code=304)
