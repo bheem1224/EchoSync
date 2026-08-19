@@ -21,6 +21,7 @@
   let isScanningAcoustID = false;
   let isLookingUpMB = false;
   let isLookingUpISRC = false;
+  let lookupStatus = null; // { type: 'success'|'warning'|'error'|'info', message: string, timestamp: number }
 
   let showIsrcPrompt = false;
   let isrcInputValue = '';
@@ -82,6 +83,7 @@
     lastObservedSignature = initialSignature;
     lastPersistedSignature = initialSignature;
     initializedTaskId = task.id;
+    lookupStatus = null;
     clearAutosaveTimer();
     autosavePending = false;
   }
@@ -349,9 +351,11 @@
       );
 
       if (response?.data?.match_found === false) {
+        const warnMsg = response?.data?.message || 'MusicBrainz: No matching record found in database.';
+        lookupStatus = { type: 'warning', message: warnMsg, timestamp: Date.now() };
         feedback.addToast({
           type: 'warning',
-          message: response?.data?.message || 'No matching record found in database'
+          message: warnMsg
         });
         return;
       }
@@ -361,48 +365,48 @@
         const { changed, fieldsChanged } = applyMetadataUpdate(updatedMetadata);
         if (changed && fieldsChanged.length > 0) {
           const changedKeys = fieldsChanged.map(f => f.replace('_', ' '));
+          const successMsg = `Matched! Updated: ${changedKeys.join(', ')}`;
+          lookupStatus = { type: 'success', message: successMsg, timestamp: Date.now() };
           feedback.addToast({
             type: 'success',
             message: `Match found! Updated: ${changedKeys.join(', ')}`
           });
         } else {
+          const infoMsg = 'Match confirmed: Current metadata is already up to date.';
+          lookupStatus = { type: 'info', message: infoMsg, timestamp: Date.now() };
           feedback.addToast({
             type: 'info',
-            message: 'Match confirmed: Current metadata is already up to date.'
+            message: infoMsg
           });
         }
       } else if (!updatedMetadata) {
+        const noRecordMsg = 'MusicBrainz: No matching record found in database.';
+        lookupStatus = { type: 'warning', message: noRecordMsg, timestamp: Date.now() };
         feedback.addToast({
           type: 'warning',
-          message: 'No matching record found in database'
+          message: noRecordMsg
         });
       }
     } catch (error) {
       console.error('MusicBrainz lookup failed:', error);
+      let errMsg = 'MusicBrainz lookup failed';
       if (error?.code === 'ECONNABORTED' || error?.message?.includes('timeout')) {
-        feedback.addToast({
-          type: 'error',
-          message: 'MusicBrainz lookup timed out after 60s. The service may be busy.'
-        });
+        errMsg = 'MusicBrainz lookup timed out after 60s. The service may be busy.';
       } else {
         const status = error?.response?.status;
         if (status === 404) {
-          feedback.addToast({
-            type: 'warning',
-            message: 'No matching records found'
-          });
+          errMsg = 'No matching records found';
         } else if (status === 500 || status === 503) {
-          feedback.addToast({
-            type: 'error',
-            message: 'Provider lookup failed or is temporarily unavailable.'
-          });
-        } else {
-          feedback.addToast({
-            type: 'error',
-            message: error?.response?.data?.detail || 'MusicBrainz lookup failed'
-          });
+          errMsg = 'Provider lookup failed or is temporarily unavailable.';
+        } else if (error?.response?.data?.detail) {
+          errMsg = error.response.data.detail;
         }
       }
+      lookupStatus = { type: 'error', message: errMsg, timestamp: Date.now() };
+      feedback.addToast({
+        type: 'error',
+        message: errMsg
+      });
     } finally {
       isLookingUpMB = false;
     }
@@ -427,9 +431,11 @@
         if (updatedMetadata) {
           applyMetadataUpdate(updatedMetadata);
         }
+        const noMatchMsg = 'AcoustID: No acoustic fingerprint match found in database.';
+        lookupStatus = { type: 'warning', message: noMatchMsg, timestamp: Date.now() };
         feedback.addToast({
           type: 'warning',
-          message: response?.data?.message || 'No matching record found in database'
+          message: response?.data?.message || noMatchMsg
         });
         return;
       }
@@ -439,48 +445,48 @@
         const { changed, fieldsChanged } = applyMetadataUpdate(updatedMetadata);
         if (changed && fieldsChanged.length > 0) {
           const changedKeys = fieldsChanged.map(f => f.replace('_', ' '));
+          const successMsg = `Matched! Updated: ${changedKeys.join(', ')}`;
+          lookupStatus = { type: 'success', message: successMsg, timestamp: Date.now() };
           feedback.addToast({
             type: 'success',
             message: `Match found! Updated: ${changedKeys.join(', ')}`
           });
         } else {
+          const infoMsg = 'Match confirmed: Current metadata is already up to date.';
+          lookupStatus = { type: 'info', message: infoMsg, timestamp: Date.now() };
           feedback.addToast({
             type: 'info',
-            message: 'Match confirmed: Current metadata is already up to date.'
+            message: infoMsg
           });
         }
       } else {
+        const noMatchMsg = 'AcoustID: No acoustic fingerprint match found in database.';
+        lookupStatus = { type: 'warning', message: noMatchMsg, timestamp: Date.now() };
         feedback.addToast({
           type: 'warning',
-          message: 'No matching record found in database'
+          message: noMatchMsg
         });
       }
     } catch (error) {
       console.error('AcoustID lookup failed:', error);
+      let errMsg = 'AcoustID lookup failed';
       if (error?.code === 'ECONNABORTED' || error?.message?.includes('timeout')) {
-        feedback.addToast({
-          type: 'error',
-          message: 'AcoustID fingerprinting timed out.'
-        });
+        errMsg = 'AcoustID fingerprinting timed out.';
       } else {
         const status = error?.response?.status;
         if (status === 404) {
-          feedback.addToast({
-            type: 'warning',
-            message: 'No matching records found'
-          });
+          errMsg = 'No matching records found';
         } else if (status === 500 || status === 503) {
-          feedback.addToast({
-            type: 'error',
-            message: 'Provider lookup failed or is temporarily unavailable.'
-          });
-        } else {
-          feedback.addToast({
-            type: 'error',
-            message: error?.response?.data?.detail || 'AcoustID lookup failed'
-          });
+          errMsg = 'Provider lookup failed or is temporarily unavailable.';
+        } else if (error?.response?.data?.detail) {
+          errMsg = error.response.data.detail;
         }
       }
+      lookupStatus = { type: 'error', message: errMsg, timestamp: Date.now() };
+      feedback.addToast({
+        type: 'error',
+        message: errMsg
+      });
     } finally {
       isScanningAcoustID = false;
     }
@@ -508,9 +514,11 @@
       );
 
       if (response?.data?.match_found === false) {
+        const noMatchMsg = 'ISRC: No matching record found in database.';
+        lookupStatus = { type: 'warning', message: noMatchMsg, timestamp: Date.now() };
         feedback.addToast({
           type: 'warning',
-          message: response?.data?.message || 'No matching record found in database'
+          message: response?.data?.message || noMatchMsg
         });
         return;
       }
@@ -520,46 +528,46 @@
         const { changed, fieldsChanged } = applyMetadataUpdate(updatedMetadata);
         if (changed && fieldsChanged.length > 0) {
           const changedKeys = fieldsChanged.map(f => f.replace('_', ' '));
+          const successMsg = `Matched! Updated: ${changedKeys.join(', ')}`;
+          lookupStatus = { type: 'success', message: successMsg, timestamp: Date.now() };
           feedback.addToast({
             type: 'success',
             message: `Match found! Updated: ${changedKeys.join(', ')}`
           });
         } else {
+          const infoMsg = 'Match confirmed: Current metadata is already up to date.';
+          lookupStatus = { type: 'info', message: infoMsg, timestamp: Date.now() };
           feedback.addToast({
             type: 'info',
-            message: 'Match confirmed: Current metadata is already up to date.'
+            message: infoMsg
           });
         }
       } else {
+        const noMatchMsg = 'ISRC: No matching record found in database.';
+        lookupStatus = { type: 'warning', message: noMatchMsg, timestamp: Date.now() };
         feedback.addToast({
           type: 'warning',
-          message: 'No matching records found'
+          message: noMatchMsg
         });
       }
     } catch (error) {
       console.error('ISRC lookup failed:', error);
+      let errMsg = 'ISRC lookup failed';
       const status = error?.response?.status;
       if (status === 400) {
-        feedback.addToast({
-          type: 'error',
-          message: 'Invalid ISRC format — expected 12 alphanumeric characters'
-        });
+        errMsg = 'Invalid ISRC format — expected 12 alphanumeric characters';
       } else if (status === 404) {
-        feedback.addToast({
-          type: 'warning',
-          message: 'No matching records found'
-        });
+        errMsg = 'No matching records found';
       } else if (status === 500 || status === 503) {
-        feedback.addToast({
-          type: 'error',
-          message: 'Provider lookup failed or is temporarily unavailable.'
-        });
-      } else {
-        feedback.addToast({
-          type: 'error',
-          message: error?.response?.data?.detail || 'ISRC lookup failed'
-        });
+        errMsg = 'Provider lookup failed or is temporarily unavailable.';
+      } else if (error?.response?.data?.detail) {
+        errMsg = error.response.data.detail;
       }
+      lookupStatus = { type: 'error', message: errMsg, timestamp: Date.now() };
+      feedback.addToast({
+        type: 'error',
+        message: errMsg
+      });
     } finally {
       isLookingUpISRC = false;
     }
@@ -766,6 +774,23 @@
           </audio>
         {/if}
       </div>
+
+      {#if lookupStatus}
+        <div class="px-5 pt-3 bg-slate-900/80 border-t border-slate-800">
+          <div class="alert alert-{lookupStatus.type} text-xs py-1.5 px-3 mb-0 flex items-center justify-between transition-all rounded-lg border {
+            lookupStatus.type === 'success' ? 'bg-emerald-950/60 border-emerald-500/50 text-emerald-200' :
+            lookupStatus.type === 'warning' ? 'bg-amber-950/60 border-amber-500/50 text-amber-200' :
+            lookupStatus.type === 'error' ? 'bg-rose-950/60 border-rose-500/50 text-rose-200' :
+            'bg-cyan-950/60 border-cyan-500/50 text-cyan-200'
+          }">
+            <div class="flex items-center gap-2">
+              <span>{lookupStatus.type === 'success' ? '✓' : lookupStatus.type === 'warning' ? '⚠️' : lookupStatus.type === 'error' ? '✕' : 'ℹ'}</span>
+              <span class="font-medium">{lookupStatus.message}</span>
+            </div>
+            <button class="btn btn-ghost btn-xs btn-circle text-slate-400 hover:text-slate-100 hover:bg-slate-800" on:click={() => lookupStatus = null}>✕</button>
+          </div>
+        </div>
+      {/if}
 
       <div class="px-5 py-4 border-t border-slate-800 flex flex-col-reverse sm:flex-row justify-end gap-2 sm:gap-3 bg-slate-900/80">
         <button

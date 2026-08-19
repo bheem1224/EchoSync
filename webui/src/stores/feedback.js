@@ -12,6 +12,9 @@ function createFeedback() {
     const id = Date.now().toString() + Math.random().toString(36).substr(2, 4);
     update((s) => ({ ...s, toasts: [...s.toasts, { id, message, type }] }));
     setTimeout(() => removeToast(id), duration);
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('es-toast', { detail: { message, type } }));
+    }
     return id;
   }
 

@@ -57,7 +57,7 @@
   }
 </script>
 
-<div class="fixed bottom-6 right-6 z-[9999] flex flex-col gap-3 pointer-events-none">
+<div class="fixed bottom-6 right-6 z-[99999] flex flex-col gap-3 pointer-events-none" style="z-index: 99999;">
   {#each toasts as toast (toast.id)}
     <div class="pointer-events-auto flex items-center gap-3 p-4 bg-surface backdrop-blur-md border border-glass-border {getBorderColorClass(toast.type)} border-l-4 shadow-xl rounded-global animate-slide-up">
       <span class="font-bold {getIconColorClass(toast.type)}">{getIcon(toast.type)}</span>

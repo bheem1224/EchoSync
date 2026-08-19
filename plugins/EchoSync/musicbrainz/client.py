@@ -344,6 +344,12 @@ class MusicBrainzClient(PluginBase):
         clean_album_str = re.sub(r'^\d{4}\s*[-_]\s*', '', album.strip()) if album else ''
         safe_album = self._escape_lucene(clean_album_str) if clean_album_str else ''
 
+        # Extract primary artist if multi-artist separators or featuring tags exist
+        raw_artist = (getattr(track, 'artist_name', None) or getattr(track, 'artist', None) or artist or "")
+        primary_artist = re.split(r'[,/;]|\s+(?:feat\.?|ft\.?|&)\s+', raw_artist, flags=re.IGNORECASE)[0].strip() if raw_artist else ""
+        clean_primary_artist = normalize_artist(self._clean_query_artist(primary_artist)) if primary_artist else ""
+        safe_primary_artist = self._escape_lucene(clean_primary_artist) if clean_primary_artist else ""
+
         results = []
 
         if not is_numeric_artist and safe_artist:
@@ -373,6 +379,18 @@ class MusicBrainzClient(PluginBase):
                 logger.debug(f"[MusicBrainz Client] Fallback query failed. Attempt 3 (Baseline): '{baseline_query}'")
                 results = self._search_metadata_query(query=baseline_query, limit=5)
 
+            # Attempt 4: Primary Artist Fallback Tier (if multi-artist credits contain separators)
+            if not results and primary_artist and clean_primary_artist and clean_primary_artist != clean_artist and not clean_primary_artist.isdigit():
+                if safe_album:
+                    primary_album_query = f'artist:"{safe_primary_artist}" AND recording:"{safe_title}" AND release:"{safe_album}"'
+                    logger.debug(f"[MusicBrainz Client] Attempt 4a (Primary Artist + Title + Album): '{primary_album_query}'")
+                    results = self._search_metadata_query(query=primary_album_query, limit=5)
+
+                if not results:
+                    primary_query = f'artist:"{safe_primary_artist}" AND recording:"{safe_title}"'
+                    logger.debug(f"[MusicBrainz Client] Attempt 4b (Primary Artist + Title): '{primary_query}'")
+                    results = self._search_metadata_query(query=primary_query, limit=5)
+
             # Legacy Fallback 1: Strip parenthetical/bracketed phrases from the title and search again
             if not results:
                 fallback_title = re.sub(r'[\(\[\{].*?[\)\]\}]', '', clean_title).strip()
@@ -398,25 +416,21 @@ class MusicBrainzClient(PluginBase):
                 logger.debug(f"[MusicBrainz Client] Trying Release + Recording fallback: recording='{safe_title}', release='{safe_album}'")
                 results = self._search_metadata_query(query=f'recording:"{safe_title}" AND release:"{safe_album}"', limit=5)
             if not results:
-                logger.debug(f"[MusicBrainz Client] Trying Recording-only fallback: recording='{safe_title}'")
-                results = self._search_metadata_query(query=f'recording:"{safe_title}"', limit=5)
+                logger.debug(f"[MusicBrainz Client] Trying Recording-only fallback (expanded limit=15): recording='{safe_title}'")
+                results = self._search_metadata_query(query=f'recording:"{safe_title}"', limit=15)
 
         if results:
             # Multi-Candidate Evaluation using MatchingEngine
             from core.matching_engine.scoring_profile import PROFILE_EXACT_SYNC
             from core.matching_engine.matching_engine import WeightedMatchingEngine
 
-            source_track = None
-            if isinstance(track, EchosyncTrack):
-                source_track = track
-            else:
-                source_track = self.create_echo_sync_track(
-                    title=title,
-                    artist=artist,
-                    album=album,
-                    duration_ms=duration_ms,
-                    source="local",
-                )
+            source_track = EchosyncTrack(
+                raw_title=clean_title or (track.raw_title if isinstance(track, EchosyncTrack) else title),
+                artist_name=clean_primary_artist or clean_artist or (track.artist_name if isinstance(track, EchosyncTrack) else artist),
+                album_title=clean_album_str or (track.album_title if isinstance(track, EchosyncTrack) else album),
+                duration=(getattr(track, 'duration', None) or getattr(track, 'duration_ms', None) or duration_ms),
+                isrc=(getattr(track, 'isrc', None) if isinstance(track, EchosyncTrack) else None)
+            )
 
             engine = WeightedMatchingEngine(PROFILE_EXACT_SYNC)
             best_candidate: Optional[EchosyncTrack] = None
