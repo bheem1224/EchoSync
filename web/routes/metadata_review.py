@@ -378,11 +378,14 @@ def _normalize_duration_seconds(metadata: Dict[str, Any], file_path: Path) -> Op
 def _submit_acoustid_contribution_async(fingerprint: str, duration: int, mbid: str) -> None:
     try:
         fingerprint_provider = get_plugin_by_capability(Capability.RESOLVE_FINGERPRINT)
-        if not fingerprint_provider or not hasattr(fingerprint_provider, "submit_fingerprint"):
+        if not fingerprint_provider:
             logger.debug("Skipping AcoustID contribution: no submit-capable fingerprint provider")
             return
 
-        fingerprint_provider.submit_fingerprint(fingerprint=fingerprint, duration=duration, mbid=mbid)
+        if hasattr(fingerprint_provider, "queue_fingerprint_submission"):
+            fingerprint_provider.queue_fingerprint_submission(fingerprint=fingerprint, duration=duration, mbid=mbid)
+        elif hasattr(fingerprint_provider, "submit_fingerprint"):
+            fingerprint_provider.submit_fingerprint(fingerprint=fingerprint, duration=duration, mbid=mbid)
     except Exception as exc:
         logger.debug(f"AcoustID background contribution failed: {exc}")
 
@@ -623,15 +626,31 @@ def approve_review_queue_item(task_id: int, payload: ApproveReviewQueueRequest, 
                         logger.info(f"Relocated file: {file_path_obj} -> {destination_path}")
 
                     # 5. Community Contribution (AcoustID)
-                    contribute_metadata_pref = bool(config_manager.get("metadata_enhancement.contribute_metadata", True))
-                    auto_submit_enabled = bool(
+                    auto_contrib_enabled = (
                         config_manager.get("metadata_enhancement.enable_acoustid_auto_submission", False)
+                        or config_manager.get("metadata_enhancement.contribute_metadata", False)
                     )
-                    contribute_metadata = contribute_metadata_pref and auto_submit_enabled
+
+                    fingerprint_provider = get_plugin_by_capability(Capability.RESOLVE_FINGERPRINT)
+                    plugin_auto_contrib = False
+                    if fingerprint_provider and hasattr(fingerprint_provider, "config"):
+                        p_cfg = fingerprint_provider.config.get("auto_contribute")
+                        plugin_auto_contrib = (p_cfg == "true" or p_cfg is True)
+
+                    should_contribute = auto_contrib_enabled or plugin_auto_contrib
                     acoustid_fingerprint = str(staged_track.fingerprint or "").strip()
                     musicbrainz_id = str(staged_track.musicbrainz_id or "").strip()
 
-                    if contribute_metadata and acoustid_fingerprint and musicbrainz_id:
+                    import uuid
+                    is_valid_mbid = False
+                    if musicbrainz_id:
+                        try:
+                            uuid.UUID(musicbrainz_id)
+                            is_valid_mbid = True
+                        except ValueError:
+                            is_valid_mbid = False
+
+                    if should_contribute and acoustid_fingerprint and is_valid_mbid:
                         duration_seconds = _normalize_duration_seconds(metadata_to_tag, destination_path)
                         if duration_seconds and duration_seconds > 0:
                             _submit_acoustid_contribution_async(

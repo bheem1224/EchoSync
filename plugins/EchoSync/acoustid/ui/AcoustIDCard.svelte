@@ -15,6 +15,10 @@
   let keyConfigured = false;
   let showKey = false;
 
+  let userApiKey = '';
+  let userKeyConfigured = false;
+  let showUserKey = false;
+
   let autoContribute = false;
 
   // ── Lifecycle ──────────────────────────────────────────────────────────────
@@ -30,9 +34,11 @@
       if (res.ok) {
         const data = await res.json();
         keyConfigured = data.api_key_configured ?? false;
+        userKeyConfigured = data.user_key_configured ?? false;
         autoContribute = data.auto_contribute ?? false;
         // Never pre-fill the key; show a placeholder if one is stored.
         if (keyConfigured) apiKey = '';
+        if (userKeyConfigured) userApiKey = '';
       }
     } catch (err) {
       console.error('[AcoustIDSettingsCard] Failed to load config:', err);
@@ -50,6 +56,10 @@
       return;
     }
 
+    if (userApiKey.trim()) {
+      payload.user_api_key = userApiKey.trim();
+    }
+
     error = '';
     saving = true;
     saved = false;
@@ -65,13 +75,15 @@
       if (res.ok) {
         const data = await res.json();
         keyConfigured = data.api_key_configured ?? keyConfigured;
+        userKeyConfigured = data.user_key_configured ?? userKeyConfigured;
         apiKey = '';
+        userApiKey = '';
         saved = true;
         // Dispatch a DOM event
         dispatchEvent(new CustomEvent('acoustid-config-saved', {
           bubbles: true,
           composed: true,
-          detail: { api_key_configured: keyConfigured, auto_contribute: autoContribute }
+          detail: { api_key_configured: keyConfigured, user_key_configured: userKeyConfigured, auto_contribute: autoContribute }
         }));
         setTimeout(() => (saved = false), 3000);
       } else {
@@ -138,6 +150,41 @@
           aria-label={showKey ? 'Hide key' : 'Show key'}
         >
           {showKey ? '🙈' : '👁️'}
+        </button>
+      </div>
+    </div>
+
+    <!-- User Account API Key -->
+    <div class="form-section">
+      <label class="field-label" for="acoustid-user-key">
+        AcoustID User Account Key
+        {#if userKeyConfigured}
+          <span class="status-tag success">● Configured</span>
+        {/if}
+      </label>
+      <p class="helper-text">
+        Get your free user key from
+        <a href="https://acoustid.org/api-key" target="_blank" rel="noopener noreferrer" class="link">
+          acoustid.org/api-key
+        </a>.
+        Required to submit acoustic fingerprints to the community database.
+      </p>
+      <div class="input-wrapper">
+        <input
+          id="acoustid-user-key"
+          type={showUserKey ? 'text' : 'password'}
+          bind:value={userApiKey}
+          placeholder={userKeyConfigured ? '••••••••  (leave blank to keep current)' : 'Enter your AcoustID user key for contributions'}
+          class="input-field"
+        />
+        <button
+          type="button"
+          class="toggle-btn"
+          on:click={() => (showUserKey = !showUserKey)}
+          title={showUserKey ? 'Hide key' : 'Show key'}
+          aria-label={showUserKey ? 'Hide key' : 'Show key'}
+        >
+          {showUserKey ? '🙈' : '👁️'}
         </button>
       </div>
     </div>

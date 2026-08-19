@@ -71,3 +71,22 @@ def test_musicbrainz_lookup_response_structure_on_no_match(tmp_path):
         assert res["match_found"] is False
         assert res["updated_fields"] == []
         assert res["message"] == "No matching record found in database"
+
+def test_acoustid_contribution_trigger_on_approval(tmp_path):
+    from web.routes.metadata_review import _submit_acoustid_contribution_async
+    from core.enums import Capability
+
+    mock_provider = MagicMock()
+    with patch("web.routes.metadata_review.get_plugin_by_capability", return_value=mock_provider):
+        # Valid UUID and fingerprint
+        _submit_acoustid_contribution_async(
+            fingerprint="AQAAZEmSJVkSRUkC",
+            duration=180,
+            mbid="8543e49e-b79e-4e4b-a25e-38d5e8964e52"
+        )
+        mock_provider.queue_fingerprint_submission.assert_called_once_with(
+            fingerprint="AQAAZEmSJVkSRUkC",
+            duration=180,
+            mbid="8543e49e-b79e-4e4b-a25e-38d5e8964e52"
+        )
+
