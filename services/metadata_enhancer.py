@@ -307,6 +307,23 @@ class RetroactiveEnhancer:
                     except Exception as e:
                         logger.warning(f"Fallback search using local_metadata failed: {e}", exc_info=True)
 
+            # Priority 1.5: ISRC Waterfall Resolution (if file tags contain an ISRC)
+            if not metadata:
+                isrc_val = (raw_tags.get("isrc") if isinstance(raw_tags, dict) else None) or (track_obj.isrc if track_obj else None)
+                if isrc_val:
+                    try:
+                        from services.isrc_lookup_service import dispatch_isrc_lookup
+                        isrc_track = dispatch_isrc_lookup(str(isrc_val).strip())
+                        if isrc_track:
+                            src_name = (
+                                (isrc_track.identifiers.get("source") if isinstance(isrc_track.identifiers, dict) else None)
+                                or "ISRC"
+                            )
+                            logger.info(f"Identified file via ISRC waterfall from provider: {src_name}")
+                            return isrc_track, 0.92
+                    except Exception as isrc_err:
+                        logger.warning(f"ISRC waterfall lookup error for {file_path.name}: {isrc_err}")
+
             # Priority 2: AcoustID fingerprinting matches (if native tags are missing or search failed)
             if not metadata:
                 try:

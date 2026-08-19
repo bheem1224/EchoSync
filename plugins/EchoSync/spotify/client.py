@@ -673,7 +673,14 @@ class SpotifyClient(SyncServiceProvider):
             items = ((results or {}).get("tracks") or {}).get("items") or []
             if not items:
                 return None
-            return self._convert_track(items[0])
+            track = self._convert_track(items[0])
+            if track:
+                if not isinstance(track.identifiers, dict):
+                    track.identifiers = {}
+                track.identifiers["source"] = "EchoSync.spotify"
+                if isrc and not track.isrc:
+                    track.isrc = str(isrc).strip().upper().replace("-", "")
+            return track
         except Exception as exc:
             logger.warning("Spotify search_by_isrc(%s) failed: %s", isrc, exc)
             return None

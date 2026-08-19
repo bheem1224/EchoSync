@@ -1093,16 +1093,13 @@ def lookup_review_queue_item_isrc(task_id: int, payload: Optional[ISRCLookupRequ
             if not isrc_code:
                 raise HTTPException(status_code=400, detail="ISRC code is required")
 
-            provider = get_plugin_by_capability(Capability.FETCH_BY_ISRC)
-            if not provider:
-                raise HTTPException(status_code=503, detail="No plugin available for ISRC lookups")
-
-            from services.isrc_lookup_service import _normalise_isrc
+            from services.isrc_lookup_service import _normalise_isrc, dispatch_isrc_lookup
             canonical = _normalise_isrc(isrc_code)
             if canonical is None:
                 raise HTTPException(status_code=400, detail=f"Invalid ISRC format: {isrc_code}")
 
-            track = provider.search_by_isrc(canonical)
+            # Dispatch ISRC lookup across all capable providers in order (MusicBrainz -> Spotify -> etc.)
+            track = dispatch_isrc_lookup(canonical)
             if not track:
                 serialized = _serialize_task(task)
                 return {
@@ -1130,7 +1127,12 @@ def lookup_review_queue_item_isrc(task_id: int, payload: Optional[ISRCLookupRequ
                 track_obj.release_year = track.release_year
             if hasattr(track, "musicbrainz_id") and track.musicbrainz_id:
                 track_obj.musicbrainz_id = track.musicbrainz_id
+            if hasattr(track, "duration") and track.duration:
+                track_obj.duration = track.duration
             track_obj.isrc = canonical
+            if hasattr(track, "identifiers") and isinstance(track.identifiers, dict):
+                for k, v in track.identifiers.items():
+                    track_obj.identifiers[k] = v
 
             from sqlalchemy.orm.attributes import flag_modified
             task.track_data = track_obj.to_dict()
@@ -1144,6 +1146,7 @@ def lookup_review_queue_item_isrc(task_id: int, payload: Optional[ISRCLookupRequ
             if track_obj.release_year: updated_fields.append("year")
             if track_obj.musicbrainz_id: updated_fields.append("musicbrainz_id")
             if track_obj.isrc: updated_fields.append("isrc")
+            if track_obj.duration: updated_fields.append("duration")
 
             serialized = _serialize_task(task)
             return {

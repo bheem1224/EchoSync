@@ -57,6 +57,66 @@ def _track_to_dict(track: EchosyncTrack, source: str) -> Dict[str, Any]:
 
 # ─── Provider-agnostic ISRC dispatcher ───────────────────────────────────────
 
+def dispatch_isrc_lookup(isrc: str) -> Optional[EchosyncTrack]:
+    """Dispatch ISRC lookup across all capable providers (MusicBrainz -> Spotify -> etc.)
+    returning an EchosyncTrack if found, or None.
+    """
+    canonical = _normalise_isrc(isrc)
+    if not canonical:
+        return None
+
+    from core.nexus_framework.plugin_loader import PluginRegistry
+    from core.enums import Capability
+
+    candidates = PluginRegistry.get_plugins_with_capability(Capability.FETCH_METADATA)
+    isrc_providers = [p for p in candidates if getattr(p, "supports_isrc_lookup", False)]
+    for p in PluginRegistry.get_plugins_with_capability(Capability.FETCH_BY_ISRC):
+        if p not in isrc_providers:
+            isrc_providers.append(p)
+
+    def _richness(provider: Any) -> int:
+        caps = getattr(provider, "capabilities", None)
+        if caps is None:
+            return 0
+        meta = getattr(caps, "metadata", None)
+        try:
+            return int(meta) if meta is not None else 0
+        except (TypeError, ValueError):
+            return 0
+
+    isrc_providers.sort(key=_richness, reverse=True)
+
+    for provider in isrc_providers:
+        provider_name = getattr(provider, "name", repr(provider))
+        try:
+            track = provider.search_by_isrc(canonical)
+        except Exception as exc:
+            logger.warning("ISRC provider %s raised: %s", provider_name, exc)
+            track = None
+
+        if track is not None:
+            if isinstance(track, EchosyncTrack):
+                if not isinstance(track.identifiers, dict):
+                    track.identifiers = {}
+                if not track.identifiers.get("source"):
+                    track.identifiers["source"] = provider_name
+                return track
+            elif isinstance(track, dict):
+                track_obj = EchosyncTrack(
+                    raw_title=track.get("title") or track.get("raw_title") or "",
+                    artist_name=track.get("artist") or track.get("artist_name") or "",
+                    album_title=track.get("album") or track.get("album_title") or "",
+                    release_year=track.get("release_year") or track.get("year"),
+                    duration=track.get("duration_ms") or track.get("duration"),
+                    isrc=canonical,
+                    musicbrainz_id=track.get("musicbrainz_recording_id") or track.get("musicbrainz_id") or track.get("mbid"),
+                    identifiers={"source": provider_name}
+                )
+                return track_obj
+
+    return None
+
+
 def _dispatch_isrc_via_providers(
     isrc: str,
 ) -> Tuple[Optional[Dict[str, Any]], List[str]]:
@@ -73,6 +133,9 @@ def _dispatch_isrc_via_providers(
 
     candidates = PluginRegistry.get_plugins_with_capability(Capability.FETCH_METADATA)
     isrc_providers = [p for p in candidates if getattr(p, "supports_isrc_lookup", False)]
+    for p in PluginRegistry.get_plugins_with_capability(Capability.FETCH_BY_ISRC):
+        if p not in isrc_providers:
+            isrc_providers.append(p)
 
     # Sort descending by metadata richness so the richest source goes first.
     # MetadataRichness values are comparable integers (HIGH > MEDIUM > LOW).
