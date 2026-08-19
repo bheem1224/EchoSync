@@ -209,7 +209,8 @@ def test_client_credentials_fallback_when_no_user_accounts(monkeypatch):
     mock_storage = MagicMock()
     mock_storage.list_accounts.return_value = []
 
-    with patch('core.settings.ConfigManager.get_service_credentials', return_value={'client_id': 'app_id', 'client_secret': 'app_sec'}), \
+    with patch('core.settings.config_manager.get_service_credentials', return_value={'client_id': 'app_id', 'client_secret': 'app_sec'}), \
+         patch('core.settings.ConfigManager.get_service_credentials', return_value={'client_id': 'app_id', 'client_secret': 'app_sec'}), \
          patch('core.account_manager.AccountManager.list_accounts', return_value=[]), \
          patch('core.file_handling.storage.get_storage_service', return_value=mock_storage), \
          patch('core.account_manager.AccountManager.get_service_config', side_effect=lambda svc, key: {'client_id': 'app_id', 'client_secret': 'app_sec'}.get(key)):

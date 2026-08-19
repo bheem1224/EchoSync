@@ -161,12 +161,19 @@ def _delete_download_impl(download_id: int):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-def _clear_queue_impl():
+def _clear_queue_impl(scope: Optional[str] = None, status: Optional[str] = None, clear_all: Optional[bool] = True):
     try:
         with get_working_database().session_scope() as session:
-            count = session.query(DownloadQueue).delete()
+            query = session.query(DownloadQueue)
+            if status:
+                query = query.filter(DownloadQueue.status == status)
+            elif scope == "failed":
+                query = query.filter(DownloadQueue.status.like("failed%"))
+            elif scope == "active":
+                query = query.filter(DownloadQueue.status.in_(["queued", "searching", "downloading", "in_progress", "paused"]))
+            count = query.delete(synchronize_session=False)
             session.commit()
-            logger.info(f"Cleared {count} downloads from queue")
+            logger.info(f"Cleared {count} downloads from queue (scope={scope}, status={status})")
             return {"success": True, "message": f"Cleared {count} downloads", "count": count}
     except Exception as e:
         logger.error(f"Error clearing download queue: {e}")
@@ -311,6 +318,8 @@ for r in (router, core_router):
     r.add_api_route("/run", _run_downloads_impl, methods=["POST"])
     r.add_api_route("/requeue-all-failed", _requeue_all_failed_impl, methods=["POST"])
     r.add_api_route("/failed", _delete_all_failed_impl, methods=["DELETE"])
+    r.add_api_route("/queue", _clear_queue_impl, methods=["DELETE"])
+    r.add_api_route("/batch", _delete_batch_impl, methods=["DELETE"])
     r.add_api_route("/{download_id}/start-now", _start_download_now_impl, methods=["POST"])
     r.add_api_route("/{download_id}/requeue", _requeue_download_impl, methods=["POST"])
     r.add_api_route("/{download_id}/retry", _requeue_download_impl, methods=["POST"])
@@ -318,6 +327,4 @@ for r in (router, core_router):
     r.add_api_route("/{download_id}/pause", _pause_download_impl, methods=["POST"])
     r.add_api_route("/{download_id}/cancel", _cancel_download_impl, methods=["POST"])
     r.add_api_route("/{download_id}", _delete_download_impl, methods=["DELETE"])
-    r.add_api_route("/queue", _clear_queue_impl, methods=["DELETE"])
-    r.add_api_route("/batch", _delete_batch_impl, methods=["DELETE"])
 

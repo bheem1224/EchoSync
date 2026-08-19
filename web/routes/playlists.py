@@ -53,6 +53,8 @@ ANALYSIS_JOBS = {}
 
 logger = get_logger("playlists_api")
 router = APIRouter(prefix="/api/v1/core/playlists", tags=["Playlists"])
+api_v1_router = APIRouter(prefix="/api/v1/playlists", tags=["Playlists"])
+legacy_router = APIRouter(prefix="/api/playlists", tags=["Playlists"])
 
 # ── Semantic Substring Failsafe — safe OST filler dictionary ──────────────────
 # Words that commonly appear in longer CJK/English OST title variants but do NOT
@@ -1481,9 +1483,6 @@ def _sync_to_plex(payload, source, target, playlist_name, matches, download_miss
     job_name = f"sync:plex:{playlist_name}:{int(time.time())}"
 
     def _run_sync():
-        from core.nexus_framework.plugin_loader import PluginRegistry
-        PlexClient = PluginRegistry.get_plugin_class('plex')
-
         marker = "⇄"
         total = len(rating_keys)
         logger.info(f"[{job_name}] Starting Plex sync for playlist '{playlist_name}' with {total} tracks")
@@ -1495,8 +1494,31 @@ def _sync_to_plex(payload, source, target, playlist_name, matches, download_miss
             "sync_mode": sync_mode,
         })
 
+        client = None
         try:
+            from plugins.EchoSync.plex.client import PlexClient
             client = PlexClient()
+        except ImportError:
+            try:
+                from core.nexus_framework.plugin_loader import PluginRegistry
+                PlexCls = PluginRegistry.get_plugin_class('EchoSync.plex') or PluginRegistry.get_plugin_class('plex')
+                if PlexCls:
+                    client = PlexCls()
+                else:
+                    client = PluginRegistry.get_plugin_instance('EchoSync.plex') or PluginRegistry.get_plugin_instance('plex')
+            except Exception as reg_err:
+                logger.warning(f"PluginRegistry resolution of Plex failed: {reg_err}")
+
+        if not client:
+            err_msg = "Plex plugin is disabled, unconfigured, or could not be loaded"
+            logger.error(f"[{job_name}] {err_msg}")
+            event_bus.publish(job_name, "sync_failed", {
+                "playlist": playlist_name,
+                "error": err_msg,
+            })
+            return
+
+        try:
             if not client.ensure_connection():
                 raise RuntimeError("Plex connection failed")
 
@@ -1609,7 +1631,7 @@ def _sync_to_plex(payload, source, target, playlist_name, matches, download_miss
         "playlist": playlist_name,
         "match_count": len(rating_keys),
         "sync_mode": sync_mode,
-        "events_path": f"/api/playlists/sync/events?job={quote(job_name, safe='')}",
+        "events_path": f"/api/v1/core/playlists/sync/events?job={quote(job_name, safe='')}",
     }
 
 
@@ -1716,25 +1738,34 @@ def _sync_to_tier(payload, source, target, playlist_name, matches, download_miss
         "playlist": playlist_name,
         "track_count": len(track_ids),
         "sync_mode": sync_mode,
-        "events_path": f"/api/playlists/sync/events?job={quote(job_name, safe='')}",
+        "events_path": f"/api/v1/core/playlists/sync/events?job={quote(job_name, safe='')}",
     }
 
 
 @router.get("/sync/events")
-def sync_events(request: Request):
-    job_name = request.query_params.get("job")
-    since_val = request.query_params.get("since")
-    since = int(since_val) if since_val is not None else None
+def sync_events(request: Request, job: Optional[str] = None, since: Optional[Union[int, str]] = None):
+    job_name = job or request.query_params.get("job")
+    since_val = since if since is not None else request.query_params.get("since")
+    since_int = None
+    if since_val is not None:
+        try:
+            since_int = int(since_val)
+        except (ValueError, TypeError):
+            since_int = None
 
     if not job_name:
         return {"error": "job query parameter required"}
 
-    events = event_bus.get_events(job_name, since_id=since)
+    events = event_bus.get_events(job_name, since_id=since_int)
     return {
         "job": job_name,
         "events": events,
         "count": len(events),
     }
+
+
+for extra_r in (api_v1_router, legacy_router):
+    extra_r.add_api_route("/sync/events", sync_events, methods=["GET"])
 
 
 @router.get("/sync/history")
