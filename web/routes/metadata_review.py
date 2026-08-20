@@ -691,7 +691,9 @@ def approve_review_queue_item(task_id: int, payload: ApproveReviewQueueRequest, 
 
 
 @router.post("/{task_id}/reject")
+@router.post("/tasks/{task_id}/reject")
 @router.delete("/{task_id}")
+@router.delete("/tasks/{task_id}")
 def reject_and_delete_review_queue_item(task_id: int, _=Depends(require_auth)):
     """
     Reject a review task, securely delete the physical unverified file from disk,

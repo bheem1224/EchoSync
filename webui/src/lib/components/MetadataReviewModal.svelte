@@ -611,307 +611,309 @@
   }
 </script>
 
-<div class="fixed inset-0 z-[100] w-screen h-screen flex items-center justify-center bg-black/75 overflow-hidden">
-  <div class="relative w-full h-full flex items-center justify-center p-4 md:p-6">
-    <div
-      class="w-full max-w-5xl rounded-2xl border border-slate-700 bg-slate-900 text-slate-100 shadow-2xl max-h-[90vh]"
-    >
-      <div class="px-5 py-4 border-b border-slate-800 flex items-start justify-between gap-4">
-        <div>
-          <p class="text-xs uppercase tracking-wide text-cyan-300/80 font-semibold">Metadata Editor</p>
-          <h3 class="text-xl font-bold">Edit Metadata</h3>
-          <p class="text-xs text-slate-400 mt-1">Task #{task?.id} - {getFilename(task?.file_path)}</p>
+<div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+  <div class="relative flex flex-col w-full max-w-5xl max-h-[90vh] bg-slate-900 rounded-xl border border-slate-700 shadow-2xl overflow-hidden">
+    <!-- 1. Header (Fixed Height) -->
+    <header class="flex shrink-0 items-center justify-between p-4 border-b border-slate-800 bg-slate-900">
+      <div>
+        <p class="text-xs uppercase tracking-wide text-cyan-300/80 font-semibold">Metadata Editor</p>
+        <h3 class="text-xl font-bold text-slate-100">Edit Metadata</h3>
+        <p class="text-xs text-slate-400 mt-1">Task #{task?.id} - {getFilename(task?.file_path)}</p>
+      </div>
+      <button
+        class="px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-sm active:scale-95 transition-all duration-200"
+        on:click={closeModal}
+        disabled={savingDraft || approving || rejecting}
+      >
+        Close
+      </button>
+    </header>
+
+    <!-- 2. Scrollable Body (Takes Remaining Height) -->
+    <main class="flex-1 min-h-0 overflow-y-auto p-6 space-y-6">
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <section class="rounded-xl border border-slate-800 bg-slate-950/50 p-4">
+          <div class="flex items-start gap-4 mb-4">
+            {#if coverUrl}
+              <div class="w-24 h-24 rounded-lg overflow-hidden border border-slate-700 shadow-lg flex-shrink-0">
+                <img src={coverUrl} alt="Album Cover" class="w-full h-full object-cover" />
+              </div>
+            {:else}
+              <div class="w-24 h-24 rounded-lg bg-slate-800 flex items-center justify-center flex-shrink-0 text-slate-500 border border-slate-700">
+                <span class="text-2xl">🎵</span>
+              </div>
+            {/if}
+            <div class="flex-1 min-w-0">
+              <h4 class="text-sm font-semibold text-slate-100 mb-1">Current File Metadata</h4>
+              <p class="text-xs text-slate-400 truncate" title={task?.file_path}>{task?.file_path}</p>
+            </div>
+          </div>
+          <div class="space-y-2 text-sm">
+            <div class="flex justify-between gap-4">
+              <span class="text-slate-400">Title</span>
+              <span class="text-slate-200 text-right">{displayValue(currentMetadata.title)}</span>
+            </div>
+            <div class="flex justify-between gap-4">
+              <span class="text-slate-400">Artist</span>
+              <span class="text-slate-200 text-right">{displayValue(currentMetadata.artist)}</span>
+            </div>
+            <div class="flex justify-between gap-4">
+              <span class="text-slate-400">Album</span>
+              <span class="text-slate-200 text-right">{displayValue(currentMetadata.album)}</span>
+            </div>
+            <div class="flex justify-between gap-4">
+              <span class="text-slate-400">Year</span>
+              <span class="text-slate-200 text-right">{displayValue(currentMetadata.year || currentMetadata.date)}</span>
+            </div>
+            <div class="flex justify-between gap-4">
+              <span class="text-slate-400">Track #</span>
+              <span class="text-slate-200 text-right">{displayValue(currentMetadata.track_number)}</span>
+            </div>
+            <div class="flex justify-between gap-4">
+              <span class="text-slate-400">Disc #</span>
+              <span class="text-slate-200 text-right">{displayValue(currentMetadata.disc_number)}</span>
+            </div>
+            <div class="flex justify-between gap-4">
+              <span class="text-slate-400">ISRC</span>
+              <span class="text-slate-200 text-right break-all">{displayValue(currentMetadata.isrc)}</span>
+            </div>
+            <div class="flex justify-between gap-4">
+              <span class="text-slate-400">MusicBrainz ID</span>
+              <span class="text-slate-200 text-right break-all">{displayValue(currentMetadata.mbid || currentMetadata.musicbrainz_id)}</span>
+            </div>
+            <div class="flex justify-between gap-4">
+              <span class="text-slate-400">AcoustID</span>
+              <span class="text-slate-200 text-right break-all">{displayValue(currentMetadata.acoustid || currentMetadata.acoustid_id)}</span>
+            </div>
+            <div class="flex justify-between gap-4">
+              <span class="text-slate-400">Comments</span>
+              <span class="text-slate-200 text-right break-all">{displayValue(currentMetadata.comments)}</span>
+            </div>
+          </div>
+        </section>
+
+        <section class="rounded-xl border border-cyan-700/40 bg-cyan-950/10 p-4">
+          <h4 class="text-sm font-semibold text-cyan-200 mb-3">Proposed Metadata (Editable)</h4>
+          
+          {#if noTagsWarning}
+            <div class="mb-4 px-3 py-2 rounded border border-amber-500/50 bg-amber-950/30 text-amber-200 text-sm flex items-start gap-2">
+              <span class="mt-0.5">⚠️</span>
+              <span>No embedded tags found. Manual entry required.</span>
+            </div>
+          {/if}
+
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <label class="sm:col-span-2">
+              <span class="block text-xs text-slate-400 mb-1">Title</span>
+              <input class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-slate-100" bind:value={proposedMetadata.title} on:keydown={handleInputKeydown} />
+            </label>
+
+            <label class="sm:col-span-2">
+              <span class="block text-xs text-slate-400 mb-1">Artist</span>
+              <input class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-slate-100" bind:value={proposedMetadata.artist} on:keydown={handleInputKeydown} />
+            </label>
+
+            <label class="sm:col-span-2">
+              <span class="block text-xs text-slate-400 mb-1">Album</span>
+              <input class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-slate-100" bind:value={proposedMetadata.album} on:keydown={handleInputKeydown} />
+            </label>
+
+            <label>
+              <span class="block text-xs text-slate-400 mb-1">Year</span>
+              <input class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-slate-100" bind:value={proposedMetadata.year} on:keydown={handleInputKeydown} />
+            </label>
+
+            <label>
+              <span class="block text-xs text-slate-400 mb-1">Track Number</span>
+              <input class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-slate-100" bind:value={proposedMetadata.track_number} on:keydown={handleInputKeydown} />
+            </label>
+
+            <label>
+              <span class="block text-xs text-slate-400 mb-1">Disc Number</span>
+              <input class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-slate-100" bind:value={proposedMetadata.disc_number} on:keydown={handleInputKeydown} />
+            </label>
+
+            <details class="sm:col-span-2 rounded-lg border border-slate-700 bg-slate-900/50 p-3" bind:open={showAdvanced}>
+              <summary class="cursor-pointer text-sm font-medium text-slate-200">Advanced Tagging</summary>
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3">
+                <label>
+                  <span class="block text-xs text-slate-400 mb-1">MusicBrainz ID (MBID)</span>
+                  <input class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-slate-100" bind:value={proposedMetadata.mbid} on:keydown={handleInputKeydown} />
+                </label>
+
+                <label>
+                  <span class="block text-xs text-slate-400 mb-1">AcoustID</span>
+                  <input class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-slate-100" bind:value={proposedMetadata.acoustid} on:keydown={handleInputKeydown} />
+                </label>
+
+                <label>
+                  <span class="block text-xs text-slate-400 mb-1">Fingerprint Duration (s)</span>
+                  <input
+                    class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-slate-300"
+                    value={proposedMetadata.acoustid_fingerprint_duration || ''}
+                    readonly
+                  />
+                </label>
+
+                <label class="sm:col-span-2">
+                  <span class="block text-xs text-slate-400 mb-1">AcoustID Fingerprint (Submission Payload)</span>
+                  <textarea
+                    class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-slate-300 min-h-[90px]"
+                    value={proposedMetadata.acoustid_fingerprint || ''}
+                    readonly
+                  ></textarea>
+                </label>
+
+                <label class="sm:col-span-2">
+                  <span class="block text-xs text-slate-400 mb-1">ISRC</span>
+                  <input class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-slate-100" bind:value={proposedMetadata.isrc} on:keydown={handleInputKeydown} />
+                </label>
+
+                <label class="sm:col-span-2">
+                  <span class="block text-xs text-slate-400 mb-1">Comments</span>
+                  <textarea class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-slate-100 min-h-[90px]" bind:value={proposedMetadata.comments}></textarea>
+                </label>
+              </div>
+            </details>
+          </div>
+          <p class="mt-3 text-xs text-slate-400">
+            {#if autosavePending}
+              Autosave pending...
+            {:else if savingDraft}
+              Saving draft...
+            {:else}
+              Changes are autosaved 1s after typing stops.
+            {/if}
+          </p>
+        </section>
+      </div>
+    </main>
+
+    <!-- Track Preview -->
+    {#if streamUrl}
+      <div class="px-5 py-2.5 border-t border-slate-800 bg-slate-950/80 shrink-0">
+        <p class="text-xs uppercase tracking-wide text-slate-400 mb-1.5 font-medium">Track Preview</p>
+        <audio controls src={streamUrl} class="w-full h-8">
+          Your browser does not support audio playback.
+        </audio>
+      </div>
+    {/if}
+
+    {#if lookupStatus}
+      <div class="absolute bottom-20 left-6 right-6 z-50 pointer-events-auto" style="position: absolute; bottom: 5rem; left: 1.5rem; right: 1.5rem; z-index: 50;">
+        <div class="alert alert-{lookupStatus.type} text-xs py-2 px-4 shadow-2xl flex items-center justify-between transition-all rounded-xl border backdrop-blur-md {
+          lookupStatus.type === 'success' ? 'bg-emerald-950/90 border-emerald-500/50 text-emerald-200' :
+          lookupStatus.type === 'warning' ? 'bg-amber-950/90 border-amber-500/50 text-amber-200' :
+          lookupStatus.type === 'error' ? 'bg-rose-950/90 border-rose-500/50 text-rose-200' :
+          'bg-cyan-950/90 border-cyan-500/50 text-cyan-200'
+        }">
+          <div class="flex items-center gap-2.5">
+            <span class="text-sm">{lookupStatus.type === 'success' ? '✓' : lookupStatus.type === 'warning' ? '⚠️' : lookupStatus.type === 'error' ? '✕' : 'ℹ'}</span>
+            <span class="font-medium">{lookupStatus.message}</span>
+          </div>
+          <button class="btn btn-ghost btn-xs btn-circle text-slate-400 hover:text-slate-100 hover:bg-slate-800" on:click={() => lookupStatus = null}>✕</button>
         </div>
+      </div>
+    {/if}
+
+    <!-- 3. Footer Toolbar (Pinned & Always Visible) -->
+    <footer class="flex shrink-0 flex-wrap items-center justify-between gap-3 p-4 bg-slate-950 border-t border-slate-800">
+      <!-- Left: Destructive Actions -->
+      <div class="flex items-center gap-2">
         <button
-          class="px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-sm active:scale-95 transition-all duration-200"
-          on:click={closeModal}
-          disabled={savingDraft || approving}
+          class="px-4 py-2 rounded-lg bg-rose-700/80 hover:bg-rose-600 text-white disabled:opacity-60 inline-flex items-center justify-center gap-2 active:scale-95 transition-all duration-200 text-sm font-medium"
+          on:click={rejectAndDelete}
+          disabled={rejecting || approving || savingDraft}
+          title="Reject track candidate and delete physical file from disk"
         >
-          Close
+          {#if rejecting}
+            <span class="loading loading-spinner loading-xs animate-spin inline-block w-4 h-4 border-2 border-current border-t-transparent rounded-full"></span> Deleting...
+          {:else}
+            🗑️ Reject & Delete
+          {/if}
         </button>
       </div>
 
-      <div class="p-5 md:p-6 max-h-[70vh] overflow-y-auto">
-        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <section class="rounded-xl border border-slate-800 bg-slate-950/50 p-4">
-            <div class="flex items-start gap-4 mb-4">
-              {#if coverUrl}
-                <div class="w-24 h-24 rounded-lg overflow-hidden border border-slate-700 shadow-lg flex-shrink-0">
-                  <img src={coverUrl} alt="Album Cover" class="w-full h-full object-cover" />
-                </div>
-              {:else}
-                <div class="w-24 h-24 rounded-lg bg-slate-800 flex items-center justify-center flex-shrink-0 text-slate-500 border border-slate-700">
-                  <span class="text-2xl">🎵</span>
-                </div>
-              {/if}
-              <div class="flex-1 min-w-0">
-                <h4 class="text-sm font-semibold text-slate-100 mb-1">Current File Metadata</h4>
-                <p class="text-xs text-slate-400 truncate" title={task?.file_path}>{task?.file_path}</p>
-              </div>
-            </div>
-            <div class="space-y-2 text-sm">
-              <div class="flex justify-between gap-4">
-                <span class="text-slate-400">Title</span>
-                <span class="text-slate-200 text-right">{displayValue(currentMetadata.title)}</span>
-              </div>
-              <div class="flex justify-between gap-4">
-                <span class="text-slate-400">Artist</span>
-                <span class="text-slate-200 text-right">{displayValue(currentMetadata.artist)}</span>
-              </div>
-              <div class="flex justify-between gap-4">
-                <span class="text-slate-400">Album</span>
-                <span class="text-slate-200 text-right">{displayValue(currentMetadata.album)}</span>
-              </div>
-              <div class="flex justify-between gap-4">
-                <span class="text-slate-400">Year</span>
-                <span class="text-slate-200 text-right">{displayValue(currentMetadata.year || currentMetadata.date)}</span>
-              </div>
-              <div class="flex justify-between gap-4">
-                <span class="text-slate-400">Track #</span>
-                <span class="text-slate-200 text-right">{displayValue(currentMetadata.track_number)}</span>
-              </div>
-              <div class="flex justify-between gap-4">
-                <span class="text-slate-400">Disc #</span>
-                <span class="text-slate-200 text-right">{displayValue(currentMetadata.disc_number)}</span>
-              </div>
-              <div class="flex justify-between gap-4">
-                <span class="text-slate-400">ISRC</span>
-                <span class="text-slate-200 text-right break-all">{displayValue(currentMetadata.isrc)}</span>
-              </div>
-              <div class="flex justify-between gap-4">
-                <span class="text-slate-400">MusicBrainz ID</span>
-                <span class="text-slate-200 text-right break-all">{displayValue(currentMetadata.mbid || currentMetadata.musicbrainz_id)}</span>
-              </div>
-              <div class="flex justify-between gap-4">
-                <span class="text-slate-400">AcoustID</span>
-                <span class="text-slate-200 text-right break-all">{displayValue(currentMetadata.acoustid || currentMetadata.acoustid_id)}</span>
-              </div>
-              <div class="flex justify-between gap-4">
-                <span class="text-slate-400">Comments</span>
-                <span class="text-slate-200 text-right break-all">{displayValue(currentMetadata.comments)}</span>
-              </div>
-            </div>
-          </section>
+      <!-- Right: Search Engines & Import -->
+      <div class="flex flex-wrap items-center justify-end gap-2 sm:gap-3">
+        <button
+          class="px-4 py-2 rounded-lg bg-slate-800 text-slate-200 hover:bg-slate-700 disabled:opacity-60 active:scale-95 transition-all duration-200 text-sm"
+          on:click={closeModal}
+          disabled={savingDraft || approving || rejecting}
+        >
+          Cancel
+        </button>
 
-          <section class="rounded-xl border border-cyan-700/40 bg-cyan-950/10 p-4">
-            <h4 class="text-sm font-semibold text-cyan-200 mb-3">Proposed Metadata (Editable)</h4>
-            
-            {#if noTagsWarning}
-              <div class="mb-4 px-3 py-2 rounded border border-amber-500/50 bg-amber-950/30 text-amber-200 text-sm flex items-start gap-2">
-                <span class="mt-0.5">⚠️</span>
-                <span>No embedded tags found. Manual entry required.</span>
-              </div>
-            {/if}
+        <button
+          class="px-4 py-2 rounded-lg bg-amber-600 text-white hover:bg-amber-500 disabled:opacity-60 active:scale-95 transition-all duration-200 text-sm"
+          on:click={() => saveDraft({ silent: false })}
+          disabled={savingDraft || approving || rejecting}
+        >
+          {savingDraft ? 'Saving...' : 'Save Draft'}
+        </button>
 
-            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <label class="sm:col-span-2">
-                <span class="block text-xs text-slate-400 mb-1">Title</span>
-                <input class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-slate-100" bind:value={proposedMetadata.title} on:keydown={handleInputKeydown} />
-              </label>
+        <button
+          class="px-4 py-2 rounded-lg bg-slate-700 text-slate-100 hover:bg-slate-600 disabled:opacity-60 active:scale-95 transition-all duration-200 text-sm"
+          on:click={undoLastChange}
+          disabled={savingDraft || approving || rejecting || metadataHistory.length < 2}
+          title="Undo last metadata edit"
+        >
+          Undo
+        </button>
 
-              <label class="sm:col-span-2">
-                <span class="block text-xs text-slate-400 mb-1">Artist</span>
-                <input class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-slate-100" bind:value={proposedMetadata.artist} on:keydown={handleInputKeydown} />
-              </label>
+        <button
+          class="px-4 py-2 rounded-lg bg-indigo-700 text-white hover:bg-indigo-600 disabled:opacity-60 inline-flex items-center justify-center gap-2 active:scale-95 transition-all duration-200 text-sm"
+          on:click={runMusicBrainzLookup}
+          disabled={isScanningAcoustID || isLookingUpMB || isLookingUpISRC || approving || savingDraft || rejecting}
+        >
+          {#if isLookingUpMB}
+            <span class="loading loading-spinner loading-xs animate-spin inline-block w-4 h-4 border-2 border-current border-t-transparent rounded-full"></span> Looking up...
+          {:else}
+            🔍 MusicBrainz Lookup
+          {/if}
+        </button>
 
-              <label class="sm:col-span-2">
-                <span class="block text-xs text-slate-400 mb-1">Album</span>
-                <input class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-slate-100" bind:value={proposedMetadata.album} on:keydown={handleInputKeydown} />
-              </label>
+        <button
+          class="px-4 py-2 rounded-lg bg-emerald-700 text-white hover:bg-emerald-600 disabled:opacity-60 inline-flex items-center justify-center gap-2 active:scale-95 transition-all duration-200 text-sm"
+          on:click={runAcoustIDLookup}
+          disabled={isScanningAcoustID || isLookingUpMB || isLookingUpISRC || approving || savingDraft || rejecting}
+        >
+          {#if isScanningAcoustID}
+            <span class="loading loading-spinner loading-xs animate-spin inline-block w-4 h-4 border-2 border-current border-t-transparent rounded-full"></span> Scanning...
+          {:else}
+            🧬 AcoustID Scan
+          {/if}
+        </button>
 
-              <label>
-                <span class="block text-xs text-slate-400 mb-1">Year</span>
-                <input class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-slate-100" bind:value={proposedMetadata.year} on:keydown={handleInputKeydown} />
-              </label>
+        <button
+          class="px-4 py-2 rounded-lg bg-orange-700 text-white hover:bg-orange-600 disabled:opacity-60 inline-flex items-center justify-center gap-2 active:scale-95 transition-all duration-200 text-sm"
+          on:click={runISRCLookup}
+          disabled={isScanningAcoustID || isLookingUpMB || isLookingUpISRC || approving || savingDraft || rejecting}
+        >
+          {#if isLookingUpISRC}
+            <span class="loading loading-spinner loading-xs animate-spin inline-block w-4 h-4 border-2 border-current border-t-transparent rounded-full"></span> Looking up...
+          {:else}
+            🎵 ISRC Lookup
+          {/if}
+        </button>
 
-              <label>
-                <span class="block text-xs text-slate-400 mb-1">Track Number</span>
-                <input class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-slate-100" bind:value={proposedMetadata.track_number} on:keydown={handleInputKeydown} />
-              </label>
-
-              <label>
-                <span class="block text-xs text-slate-400 mb-1">Disc Number</span>
-                <input class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-slate-100" bind:value={proposedMetadata.disc_number} on:keydown={handleInputKeydown} />
-              </label>
-
-              <details class="sm:col-span-2 rounded-lg border border-slate-700 bg-slate-900/50 p-3" bind:open={showAdvanced}>
-                <summary class="cursor-pointer text-sm font-medium text-slate-200">Advanced Tagging</summary>
-                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3">
-                  <label>
-                    <span class="block text-xs text-slate-400 mb-1">MusicBrainz ID (MBID)</span>
-                    <input class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-slate-100" bind:value={proposedMetadata.mbid} on:keydown={handleInputKeydown} />
-                  </label>
-
-                  <label>
-                    <span class="block text-xs text-slate-400 mb-1">AcoustID</span>
-                    <input class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-slate-100" bind:value={proposedMetadata.acoustid} on:keydown={handleInputKeydown} />
-                  </label>
-
-                  <label>
-                    <span class="block text-xs text-slate-400 mb-1">Fingerprint Duration (s)</span>
-                    <input
-                      class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-slate-300"
-                      value={proposedMetadata.acoustid_fingerprint_duration || ''}
-                      readonly
-                    />
-                  </label>
-
-                  <label class="sm:col-span-2">
-                    <span class="block text-xs text-slate-400 mb-1">AcoustID Fingerprint (Submission Payload)</span>
-                    <textarea
-                      class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-slate-300 min-h-[90px]"
-                      value={proposedMetadata.acoustid_fingerprint || ''}
-                      readonly
-                    ></textarea>
-                  </label>
-
-                  <label class="sm:col-span-2">
-                    <span class="block text-xs text-slate-400 mb-1">ISRC</span>
-                    <input class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-slate-100" bind:value={proposedMetadata.isrc} on:keydown={handleInputKeydown} />
-                  </label>
-
-                  <label class="sm:col-span-2">
-                    <span class="block text-xs text-slate-400 mb-1">Comments</span>
-                    <textarea class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-slate-100 min-h-[90px]" bind:value={proposedMetadata.comments}></textarea>
-                  </label>
-                </div>
-              </details>
-            </div>
-            <p class="mt-3 text-xs text-slate-400">
-              {#if autosavePending}
-                Autosave pending...
-              {:else if savingDraft}
-                Saving draft...
-              {:else}
-                Changes are autosaved 1s after typing stops.
-              {/if}
-            </p>
-          </section>
-        </div>
+        <button
+          class="px-4 py-2 rounded-lg bg-cyan-600 text-white hover:bg-cyan-500 disabled:opacity-60 inline-flex items-center justify-center gap-2 active:scale-95 transition-all duration-200 text-sm font-medium"
+          on:click={approveAndImport}
+          disabled={approving || savingDraft || rejecting}
+        >
+          {#if approving}
+            <svg class="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+            </svg>
+            Approving...
+          {:else}
+            Approve & Import
+          {/if}
+        </button>
       </div>
-
-      <div class="px-5 py-3 border-t border-slate-800 bg-slate-950/60">
-        <p class="text-xs uppercase tracking-wide text-slate-400 mb-2">Track Preview</p>
-        {#if streamUrl}
-          <audio controls src={streamUrl} class="w-full h-10">
-            Your browser does not support audio playback.
-          </audio>
-        {/if}
-      </div>
-
-      {#if lookupStatus}
-        <div class="absolute bottom-20 left-6 right-6 z-50 pointer-events-auto" style="position: absolute; bottom: 5rem; left: 1.5rem; right: 1.5rem; z-index: 50;">
-          <div class="alert alert-{lookupStatus.type} text-xs py-2 px-4 shadow-2xl flex items-center justify-between transition-all rounded-xl border backdrop-blur-md {
-            lookupStatus.type === 'success' ? 'bg-emerald-950/90 border-emerald-500/50 text-emerald-200' :
-            lookupStatus.type === 'warning' ? 'bg-amber-950/90 border-amber-500/50 text-amber-200' :
-            lookupStatus.type === 'error' ? 'bg-rose-950/90 border-rose-500/50 text-rose-200' :
-            'bg-cyan-950/90 border-cyan-500/50 text-cyan-200'
-          }">
-            <div class="flex items-center gap-2.5">
-              <span class="text-sm">{lookupStatus.type === 'success' ? '✓' : lookupStatus.type === 'warning' ? '⚠️' : lookupStatus.type === 'error' ? '✕' : 'ℹ'}</span>
-              <span class="font-medium">{lookupStatus.message}</span>
-            </div>
-            <button class="btn btn-ghost btn-xs btn-circle text-slate-400 hover:text-slate-100 hover:bg-slate-800" on:click={() => lookupStatus = null}>✕</button>
-          </div>
-        </div>
-      {/if}
-
-      <div class="px-5 py-4 border-t border-slate-800 flex flex-col-reverse sm:flex-row justify-between items-center gap-2 sm:gap-3 bg-slate-900/95 backdrop-blur sticky bottom-0 z-40" style="position: sticky; bottom: 0;">
-        <div class="flex items-center gap-2 w-full sm:w-auto">
-          <button
-            class="px-4 py-2 rounded-lg bg-rose-700/80 hover:bg-rose-600 text-white disabled:opacity-60 inline-flex items-center justify-center gap-2 active:scale-95 transition-all duration-200 text-sm font-medium"
-            on:click={rejectAndDelete}
-            disabled={rejecting || approving || savingDraft}
-            title="Reject track candidate and delete physical file from disk"
-          >
-            {#if rejecting}
-              <span class="loading loading-spinner loading-xs animate-spin inline-block w-4 h-4 border-2 border-current border-t-transparent rounded-full"></span> Deleting...
-            {:else}
-              🗑️ Reject & Delete
-            {/if}
-          </button>
-        </div>
-
-        <div class="flex flex-wrap items-center justify-end gap-2 sm:gap-3 w-full sm:w-auto">
-          <button
-            class="px-4 py-2 rounded-lg bg-slate-800 text-slate-200 hover:bg-slate-700 disabled:opacity-60 active:scale-95 transition-all duration-200 text-sm"
-            on:click={closeModal}
-            disabled={savingDraft || approving || rejecting}
-          >
-            Cancel
-          </button>
-
-          <button
-            class="px-4 py-2 rounded-lg bg-amber-600 text-white hover:bg-amber-500 disabled:opacity-60 active:scale-95 transition-all duration-200 text-sm"
-            on:click={() => saveDraft({ silent: false })}
-            disabled={savingDraft || approving || rejecting}
-          >
-            {savingDraft ? 'Saving...' : 'Save Draft'}
-          </button>
-
-          <button
-            class="px-4 py-2 rounded-lg bg-slate-700 text-slate-100 hover:bg-slate-600 disabled:opacity-60 active:scale-95 transition-all duration-200 text-sm"
-            on:click={undoLastChange}
-            disabled={savingDraft || approving || rejecting || metadataHistory.length < 2}
-            title="Undo last metadata edit"
-          >
-            Undo
-          </button>
-
-          <button
-            class="px-4 py-2 rounded-lg bg-indigo-700 text-white hover:bg-indigo-600 disabled:opacity-60 inline-flex items-center justify-center gap-2 active:scale-95 transition-all duration-200 text-sm"
-            on:click={runMusicBrainzLookup}
-            disabled={isScanningAcoustID || isLookingUpMB || isLookingUpISRC || approving || savingDraft || rejecting}
-          >
-            {#if isLookingUpMB}
-              <span class="loading loading-spinner loading-xs animate-spin inline-block w-4 h-4 border-2 border-current border-t-transparent rounded-full"></span> Looking up...
-            {:else}
-              🔍 MusicBrainz Lookup
-            {/if}
-          </button>
-
-          <button
-            class="px-4 py-2 rounded-lg bg-emerald-700 text-white hover:bg-emerald-600 disabled:opacity-60 inline-flex items-center justify-center gap-2 active:scale-95 transition-all duration-200 text-sm"
-            on:click={runAcoustIDLookup}
-            disabled={isScanningAcoustID || isLookingUpMB || isLookingUpISRC || approving || savingDraft || rejecting}
-          >
-            {#if isScanningAcoustID}
-              <span class="loading loading-spinner loading-xs animate-spin inline-block w-4 h-4 border-2 border-current border-t-transparent rounded-full"></span> Scanning...
-            {:else}
-              🧬 AcoustID Scan
-            {/if}
-          </button>
-
-          <button
-            class="px-4 py-2 rounded-lg bg-orange-700 text-white hover:bg-orange-600 disabled:opacity-60 inline-flex items-center justify-center gap-2 active:scale-95 transition-all duration-200 text-sm"
-            on:click={runISRCLookup}
-            disabled={isScanningAcoustID || isLookingUpMB || isLookingUpISRC || approving || savingDraft || rejecting}
-          >
-            {#if isLookingUpISRC}
-              <span class="loading loading-spinner loading-xs animate-spin inline-block w-4 h-4 border-2 border-current border-t-transparent rounded-full"></span> Looking up...
-            {:else}
-              🎵 ISRC Lookup
-            {/if}
-          </button>
-
-          <button
-            class="px-4 py-2 rounded-lg bg-cyan-600 text-white hover:bg-cyan-500 disabled:opacity-60 inline-flex items-center justify-center gap-2 active:scale-95 transition-all duration-200 text-sm font-medium"
-            on:click={approveAndImport}
-            disabled={approving || savingDraft || rejecting}
-          >
-            {#if approving}
-              <svg class="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
-              </svg>
-              Approving...
-            {:else}
-              Approve & Import
-            {/if}
-          </button>
-        </div>
-      </div>
-    </div>
+    </footer>
   </div>
 </div>
 

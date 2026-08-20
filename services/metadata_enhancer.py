@@ -286,6 +286,27 @@ class RetroactiveEnhancer:
             except Exception as e:
                 logger.warning(f"Failed to read native tags via echosync_core for {file_path.name}: {e}")
 
+            if not track_obj:
+                track_obj = EchosyncTrack(raw_title="", artist_name="", album_title="")
+
+            # Filename fallback for files lacking embedded tags (common in raw WAV downloads)
+            if not track_obj.artist_name or not (track_obj.title or track_obj.raw_title):
+                try:
+                    from core.matching_engine.track_parser import TrackParser
+                    parsed = TrackParser.parse_filename(file_path.name)
+                    if parsed:
+                        if getattr(parsed, 'artist_name', None) and not track_obj.artist_name:
+                            track_obj.artist_name = parsed.artist_name
+                        if getattr(parsed, 'title', None) and not (track_obj.title or track_obj.raw_title):
+                            track_obj.title = parsed.title
+                            track_obj.raw_title = parsed.title
+                        if getattr(parsed, 'display_title', None) and not track_obj.display_title:
+                            track_obj.display_title = parsed.display_title
+                        if getattr(parsed, 'album_title', None) and not track_obj.album_title:
+                            track_obj.album_title = parsed.album_title
+                except Exception as tp_err:
+                    logger.debug(f"TrackParser filename fallback error for {file_path.name}: {tp_err}")
+
             # Priority 1: Fast path: Check if tags contain an embedded MBID
             if track_obj and track_obj.musicbrainz_id and metadata_provider:
                 logger.info(f"Found MBID {track_obj.musicbrainz_id} in local_metadata tags for {file_path.name}")
