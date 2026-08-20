@@ -10,6 +10,7 @@
 
   let savingDraft = false;
   let approving = false;
+  let rejecting = false;
   let autosavePending = false;
   let autosaveTimer = null;
   let initializedTaskId = null;
@@ -254,6 +255,29 @@
     } finally {
       approving = false;
       dispatch('approveend', { taskId: task.id });
+    }
+  }
+
+  async function rejectAndDelete() {
+    if (!task?.id || rejecting || approving || savingDraft) return;
+    const filename = getFilename(task?.file_path);
+    const confirmDelete = window.confirm(
+      `Are you sure you want to reject this track and permanently delete the physical file from disk?\n\nFile: ${filename}`
+    );
+    if (!confirmDelete) return;
+
+    clearAutosaveTimer();
+    rejecting = true;
+    try {
+      await apiClient.post(`/core/metadata_review/${task.id}/reject`);
+      feedback.addToast('Track rejected and file deleted from disk', 'success');
+      dispatch('rejected', { taskId: task.id, item: task });
+      dispatch('close');
+    } catch (error) {
+      console.error('Failed to reject and delete file:', error);
+      feedback.addToast(error?.response?.data?.detail || 'Failed to reject and delete file', 'error');
+    } finally {
+      rejecting = false;
     }
   }
 
@@ -776,15 +800,15 @@
       </div>
 
       {#if lookupStatus}
-        <div class="px-5 pt-3 bg-slate-900/80 border-t border-slate-800">
-          <div class="alert alert-{lookupStatus.type} text-xs py-1.5 px-3 mb-0 flex items-center justify-between transition-all rounded-lg border {
-            lookupStatus.type === 'success' ? 'bg-emerald-950/60 border-emerald-500/50 text-emerald-200' :
-            lookupStatus.type === 'warning' ? 'bg-amber-950/60 border-amber-500/50 text-amber-200' :
-            lookupStatus.type === 'error' ? 'bg-rose-950/60 border-rose-500/50 text-rose-200' :
-            'bg-cyan-950/60 border-cyan-500/50 text-cyan-200'
+        <div class="absolute bottom-20 left-6 right-6 z-50 pointer-events-auto" style="position: absolute; bottom: 5rem; left: 1.5rem; right: 1.5rem; z-index: 50;">
+          <div class="alert alert-{lookupStatus.type} text-xs py-2 px-4 shadow-2xl flex items-center justify-between transition-all rounded-xl border backdrop-blur-md {
+            lookupStatus.type === 'success' ? 'bg-emerald-950/90 border-emerald-500/50 text-emerald-200' :
+            lookupStatus.type === 'warning' ? 'bg-amber-950/90 border-amber-500/50 text-amber-200' :
+            lookupStatus.type === 'error' ? 'bg-rose-950/90 border-rose-500/50 text-rose-200' :
+            'bg-cyan-950/90 border-cyan-500/50 text-cyan-200'
           }">
-            <div class="flex items-center gap-2">
-              <span>{lookupStatus.type === 'success' ? '✓' : lookupStatus.type === 'warning' ? '⚠️' : lookupStatus.type === 'error' ? '✕' : 'ℹ'}</span>
+            <div class="flex items-center gap-2.5">
+              <span class="text-sm">{lookupStatus.type === 'success' ? '✓' : lookupStatus.type === 'warning' ? '⚠️' : lookupStatus.type === 'error' ? '✕' : 'ℹ'}</span>
               <span class="font-medium">{lookupStatus.message}</span>
             </div>
             <button class="btn btn-ghost btn-xs btn-circle text-slate-400 hover:text-slate-100 hover:bg-slate-800" on:click={() => lookupStatus = null}>✕</button>
@@ -792,83 +816,100 @@
         </div>
       {/if}
 
-      <div class="px-5 py-4 border-t border-slate-800 flex flex-col-reverse sm:flex-row justify-end gap-2 sm:gap-3 bg-slate-900/80">
-        <button
-          class="px-4 py-2 rounded-lg bg-slate-800 text-slate-200 hover:bg-slate-700 disabled:opacity-60 active:scale-95 transition-all duration-200"
-          on:click={closeModal}
-          disabled={savingDraft || approving}
-        >
-          Cancel
-        </button>
+      <div class="px-5 py-4 border-t border-slate-800 flex flex-col-reverse sm:flex-row justify-between items-center gap-2 sm:gap-3 bg-slate-900/95 backdrop-blur sticky bottom-0 z-40" style="position: sticky; bottom: 0;">
+        <div class="flex items-center gap-2 w-full sm:w-auto">
+          <button
+            class="px-4 py-2 rounded-lg bg-rose-700/80 hover:bg-rose-600 text-white disabled:opacity-60 inline-flex items-center justify-center gap-2 active:scale-95 transition-all duration-200 text-sm font-medium"
+            on:click={rejectAndDelete}
+            disabled={rejecting || approving || savingDraft}
+            title="Reject track candidate and delete physical file from disk"
+          >
+            {#if rejecting}
+              <span class="loading loading-spinner loading-xs animate-spin inline-block w-4 h-4 border-2 border-current border-t-transparent rounded-full"></span> Deleting...
+            {:else}
+              🗑️ Reject & Delete
+            {/if}
+          </button>
+        </div>
 
-        <button
-          class="px-4 py-2 rounded-lg bg-amber-600 text-white hover:bg-amber-500 disabled:opacity-60 active:scale-95 transition-all duration-200"
-          on:click={() => saveDraft({ silent: false })}
-          disabled={savingDraft || approving}
-        >
-          {savingDraft ? 'Saving...' : 'Save Draft'}
-        </button>
+        <div class="flex flex-wrap items-center justify-end gap-2 sm:gap-3 w-full sm:w-auto">
+          <button
+            class="px-4 py-2 rounded-lg bg-slate-800 text-slate-200 hover:bg-slate-700 disabled:opacity-60 active:scale-95 transition-all duration-200 text-sm"
+            on:click={closeModal}
+            disabled={savingDraft || approving || rejecting}
+          >
+            Cancel
+          </button>
 
-        <button
-          class="px-4 py-2 rounded-lg bg-slate-700 text-slate-100 hover:bg-slate-600 disabled:opacity-60 active:scale-95 transition-all duration-200"
-          on:click={undoLastChange}
-          disabled={savingDraft || approving || metadataHistory.length < 2}
-          title="Undo last metadata edit"
-        >
-          Undo
-        </button>
+          <button
+            class="px-4 py-2 rounded-lg bg-amber-600 text-white hover:bg-amber-500 disabled:opacity-60 active:scale-95 transition-all duration-200 text-sm"
+            on:click={() => saveDraft({ silent: false })}
+            disabled={savingDraft || approving || rejecting}
+          >
+            {savingDraft ? 'Saving...' : 'Save Draft'}
+          </button>
 
-        <button
-          class="px-4 py-2 rounded-lg bg-indigo-700 text-white hover:bg-indigo-600 disabled:opacity-60 inline-flex items-center justify-center gap-2 active:scale-95 transition-all duration-200"
-          on:click={runMusicBrainzLookup}
-          disabled={isScanningAcoustID || isLookingUpMB || isLookingUpISRC || approving || savingDraft}
-        >
-          {#if isLookingUpMB}
-            <span class="loading loading-spinner loading-xs animate-spin inline-block w-4 h-4 border-2 border-current border-t-transparent rounded-full"></span> Looking up...
-          {:else}
-            🔍 MusicBrainz Lookup
-          {/if}
-        </button>
+          <button
+            class="px-4 py-2 rounded-lg bg-slate-700 text-slate-100 hover:bg-slate-600 disabled:opacity-60 active:scale-95 transition-all duration-200 text-sm"
+            on:click={undoLastChange}
+            disabled={savingDraft || approving || rejecting || metadataHistory.length < 2}
+            title="Undo last metadata edit"
+          >
+            Undo
+          </button>
 
-        <button
-          class="px-4 py-2 rounded-lg bg-emerald-700 text-white hover:bg-emerald-600 disabled:opacity-60 inline-flex items-center justify-center gap-2 active:scale-95 transition-all duration-200"
-          on:click={runAcoustIDLookup}
-          disabled={isScanningAcoustID || isLookingUpMB || isLookingUpISRC || approving || savingDraft}
-        >
-          {#if isScanningAcoustID}
-            <span class="loading loading-spinner loading-xs animate-spin inline-block w-4 h-4 border-2 border-current border-t-transparent rounded-full"></span> Scanning...
-          {:else}
-            🧬 AcoustID Scan
-          {/if}
-        </button>
+          <button
+            class="px-4 py-2 rounded-lg bg-indigo-700 text-white hover:bg-indigo-600 disabled:opacity-60 inline-flex items-center justify-center gap-2 active:scale-95 transition-all duration-200 text-sm"
+            on:click={runMusicBrainzLookup}
+            disabled={isScanningAcoustID || isLookingUpMB || isLookingUpISRC || approving || savingDraft || rejecting}
+          >
+            {#if isLookingUpMB}
+              <span class="loading loading-spinner loading-xs animate-spin inline-block w-4 h-4 border-2 border-current border-t-transparent rounded-full"></span> Looking up...
+            {:else}
+              🔍 MusicBrainz Lookup
+            {/if}
+          </button>
 
-        <button
-          class="px-4 py-2 rounded-lg bg-orange-700 text-white hover:bg-orange-600 disabled:opacity-60 inline-flex items-center justify-center gap-2 active:scale-95 transition-all duration-200"
-          on:click={runISRCLookup}
-          disabled={isScanningAcoustID || isLookingUpMB || isLookingUpISRC || approving || savingDraft}
-        >
-          {#if isLookingUpISRC}
-            <span class="loading loading-spinner loading-xs animate-spin inline-block w-4 h-4 border-2 border-current border-t-transparent rounded-full"></span> Looking up...
-          {:else}
-            🎵 ISRC Lookup
-          {/if}
-        </button>
+          <button
+            class="px-4 py-2 rounded-lg bg-emerald-700 text-white hover:bg-emerald-600 disabled:opacity-60 inline-flex items-center justify-center gap-2 active:scale-95 transition-all duration-200 text-sm"
+            on:click={runAcoustIDLookup}
+            disabled={isScanningAcoustID || isLookingUpMB || isLookingUpISRC || approving || savingDraft || rejecting}
+          >
+            {#if isScanningAcoustID}
+              <span class="loading loading-spinner loading-xs animate-spin inline-block w-4 h-4 border-2 border-current border-t-transparent rounded-full"></span> Scanning...
+            {:else}
+              🧬 AcoustID Scan
+            {/if}
+          </button>
 
-        <button
-          class="px-4 py-2 rounded-lg bg-cyan-600 text-white hover:bg-cyan-500 disabled:opacity-60 inline-flex items-center justify-center gap-2 active:scale-95 transition-all duration-200"
-          on:click={approveAndImport}
-          disabled={approving || savingDraft}
-        >
-          {#if approving}
-            <svg class="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
-            </svg>
-            Approving...
-          {:else}
-            Approve & Import
-          {/if}
-        </button>
+          <button
+            class="px-4 py-2 rounded-lg bg-orange-700 text-white hover:bg-orange-600 disabled:opacity-60 inline-flex items-center justify-center gap-2 active:scale-95 transition-all duration-200 text-sm"
+            on:click={runISRCLookup}
+            disabled={isScanningAcoustID || isLookingUpMB || isLookingUpISRC || approving || savingDraft || rejecting}
+          >
+            {#if isLookingUpISRC}
+              <span class="loading loading-spinner loading-xs animate-spin inline-block w-4 h-4 border-2 border-current border-t-transparent rounded-full"></span> Looking up...
+            {:else}
+              🎵 ISRC Lookup
+            {/if}
+          </button>
+
+          <button
+            class="px-4 py-2 rounded-lg bg-cyan-600 text-white hover:bg-cyan-500 disabled:opacity-60 inline-flex items-center justify-center gap-2 active:scale-95 transition-all duration-200 text-sm font-medium"
+            on:click={approveAndImport}
+            disabled={approving || savingDraft || rejecting}
+          >
+            {#if approving}
+              <svg class="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+              </svg>
+              Approving...
+            {:else}
+              Approve & Import
+            {/if}
+          </button>
+        </div>
       </div>
     </div>
   </div>

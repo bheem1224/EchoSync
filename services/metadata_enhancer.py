@@ -23,6 +23,7 @@ from core.matching_engine.fingerprinting import FingerprintGenerator
 from core.matching_engine.matching_engine import WeightedMatchingEngine
 from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
 from core.matching_engine.scoring_profile import PROFILE_EXACT_SYNC
+from core.matching_engine.text_utils import normalize_track_comparison_fields, extract_version_info
 from core.db.echo_sync_track import EchosyncTrack
 from database.working_database import get_working_database, ReviewTask
 import echosync_core
@@ -153,6 +154,50 @@ def _tagging_write(file_path: Any, tags: Dict[str, Any]) -> None:
         logger.warning("_tagging_write: failed writing tags to %s via echosync_core: %s", path.name, e)
 
 
+def build_native_tag_payload(track: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Construct standardized downstream physical tag payload for audio writers.
+    
+    Ensures:
+    - Primary TITLE receives display_title (including clean edition/version string).
+    - Sort title TSOT receives clean canonical title.
+    - SUBTITLE / VERSION / TIT3 receives extracted edition/version string.
+    - MBID, ISRC, AcoustID, track/disc numbers, artist, album, date are populated.
+    """
+    version = track.get("version") or track.get("edition")
+    raw_title = track.get("title", "") or ""
+    
+    # Construct display title if version exists and is not already present
+    if version and str(version).lower() not in raw_title.lower():
+        display_title = f"{raw_title} ({version})"
+    else:
+        display_title = track.get("display_title") or raw_title
+        
+    mbid = track.get("mbid") or track.get("musicbrainz_id") or track.get("recording_id")
+    year_val = track.get("release_year") or track.get("year") or track.get("date")
+
+    payload = {
+        "title": display_title,
+        "display_title": display_title,
+        "sort_title": raw_title,
+        "subtitle": str(version) if version else "",
+        "version": str(version) if version else "",
+        "artist": track.get("artist") or track.get("artist_name") or "",
+        "album": track.get("album_title") or track.get("album") or "",
+        "date": str(year_val) if year_val is not None else "",
+        "year": str(year_val) if year_val is not None else "",
+        "track_number": str(track.get("track_number")) if track.get("track_number") is not None else "",
+        "disc_number": str(track.get("disc_number")) if track.get("disc_number") is not None else "",
+        "isrc": track.get("isrc") or "",
+        "musicbrainz_trackid": mbid or "",
+        "musicbrainz_id": mbid or "",
+        "recording_id": mbid or "",
+        "acoustid_id": track.get("acoustid_id") or "",
+        "cover_art_url": track.get("cover_art_url") or "",
+    }
+    return payload
+
+
 class RetroactiveEnhancer:
     """Background service for library-wide batch metadata enhancement."""
 
@@ -189,9 +234,12 @@ class RetroactiveEnhancer:
         confidence = 0.0
 
         try:
-            # Priority 1: Native file tags (parsed via echosync_core)
+            # Step 1: Extract native file tags via echosync_core
             track_obj = None
             raw_tags = {}
+            duration_ms = None
+            duration_sec = None
+
             try:
                 import echosync_core
                 raw_tags = echosync_core.extract_metadata(str(file_path)) or {}
@@ -204,16 +252,17 @@ class RetroactiveEnhancer:
                 elif raw_tags.get("duration") is not None:
                     duration_sec = float(raw_tags["duration"])
                     duration_ms = int(duration_sec * 1000)
-                else:
-                    duration_ms = None
-                    duration_sec = None
 
                 mbid = raw_tags.get("mbid") or raw_tags.get("musicbrainz_id") or raw_tags.get("musicbrainz_trackid")
 
+                raw_t = raw_tags.get("title") or ""
+                raw_a = raw_tags.get("artist") or raw_tags.get("artist_name") or ""
+                raw_alb = raw_tags.get("album") or raw_tags.get("album_title") or ""
+
                 track_obj = EchosyncTrack(
-                    raw_title=raw_tags.get("title") or "",
-                    artist_name=raw_tags.get("artist") or raw_tags.get("artist_name") or "",
-                    album_title=raw_tags.get("album") or raw_tags.get("album_title") or ""
+                    raw_title=raw_t,
+                    artist_name=raw_a,
+                    album_title=raw_alb
                 )
                 if duration_ms:
                     track_obj.duration = int(duration_ms)
@@ -237,148 +286,172 @@ class RetroactiveEnhancer:
             except Exception as e:
                 logger.warning(f"Failed to read native tags via echosync_core for {file_path.name}: {e}")
 
-            if track_obj:
-                # Fast path: Check if tags contain an embedded MBID
-                if track_obj.musicbrainz_id and metadata_provider:
-                    logger.info(f"Found MBID {track_obj.musicbrainz_id} in local_metadata tags for {file_path.name}")
-                    try:
-                        metadata = metadata_provider.get_metadata(track_obj.musicbrainz_id)
-                        if metadata:
-                            return metadata, 0.99
-                    except Exception as e:
-                        logger.warning(f"Failed to fetch metadata for tag MBID {track_obj.musicbrainz_id}: {e}")
-
-                if track_obj.title and track_obj.artist_name and metadata_provider:
-                    logger.debug(f"Attempting search fallback using local_metadata tags for {file_path.name}")
-                    try:
-                        results = metadata_provider.search_metadata(track_obj, limit=10)
-                        if results:
-                            if isinstance(results, EchosyncTrack):
-                                results_list = [results]
-                            elif isinstance(results, (list, tuple)):
-                                results_list = list(results)
-                            else:
-                                results_list = [results]
-
-                            candidate_tracks = []
-                            for result in results_list:
-                                if isinstance(result, EchosyncTrack):
-                                    candidate = result
-                                    mbid = result.musicbrainz_id
-                                    if not mbid and isinstance(result.identifiers, dict):
-                                        mbid = result.identifiers.get('musicbrainz_recording_id') or result.identifiers.get('mbid')
-                                elif isinstance(result, dict):
-                                    candidate = self._search_result_to_track(result)
-                                    mbid = result.get('mbid') or result.get('recording_id')
-                                else:
-                                    candidate = None
-                                    mbid = None
-
-                                if candidate:
-                                    candidate_tracks.append((candidate, mbid))
-
-                            if candidate_tracks:
-                                from core.matching_engine.scoring_profile import PROFILE_EXACT_SYNC
-                                from core.matching_engine.matching_engine import WeightedMatchingEngine
-                                engine_cls = ServiceRegistry.resolve('matching_engine') or WeightedMatchingEngine
-                                matcher = engine_cls(PROFILE_EXACT_SYNC)
-                                best_score = 0.0
-                                best_mbid = None
-                                best_candidate = None
-
-                                for candidate, mbid in candidate_tracks:
-                                    match_result = matcher.calculate_match(track_obj, candidate)
-                                    score = match_result.confidence_score if match_result else 0.0
-                                    if score > best_score:
-                                        best_score = score
-                                        best_mbid = mbid
-                                        best_candidate = candidate
-
-                                if best_score >= 85.0:
-                                    logger.info(f"✓ Matched '{file_path.name}' via local_metadata text search (score: {best_score:.1f}%)")
-                                    if best_mbid:
-                                        metadata = metadata_provider.get_metadata(best_mbid)
-                                        if metadata:
-                                            return metadata, best_score / 100.0
-                                    if best_candidate:
-                                        return best_candidate, best_score / 100.0
-                        else:
-                            logger.debug(f"No search results for fallback query using local_metadata")
-                    except Exception as e:
-                        logger.warning(f"Fallback search using local_metadata failed: {e}", exc_info=True)
-
-            # Priority 1.5: ISRC Waterfall Resolution (if file tags contain an ISRC)
-            if not metadata:
-                isrc_val = (raw_tags.get("isrc") if isinstance(raw_tags, dict) else None) or (track_obj.isrc if track_obj else None)
-                if isrc_val:
-                    try:
-                        from services.isrc_lookup_service import dispatch_isrc_lookup
-                        isrc_track = dispatch_isrc_lookup(str(isrc_val).strip())
-                        if isrc_track:
-                            src_name = (
-                                (isrc_track.identifiers.get("source") if isinstance(isrc_track.identifiers, dict) else None)
-                                or "ISRC"
-                            )
-                            logger.info(f"Identified file via ISRC waterfall from provider: {src_name}")
-                            return isrc_track, 0.92
-                    except Exception as isrc_err:
-                        logger.warning(f"ISRC waterfall lookup error for {file_path.name}: {isrc_err}")
-
-            # Priority 2: AcoustID fingerprinting matches (if native tags are missing or search failed)
-            if not metadata:
+            # Priority 1: Fast path: Check if tags contain an embedded MBID
+            if track_obj and track_obj.musicbrainz_id and metadata_provider:
+                logger.info(f"Found MBID {track_obj.musicbrainz_id} in local_metadata tags for {file_path.name}")
                 try:
-                    fingerprint = FingerprintGenerator.generate(str(file_path))
-                    duration_sec = None
-                    if track_obj and track_obj.duration:
-                        duration_sec = track_obj.duration / 1000.0
-                    elif raw_tags:
-                        raw_dur_ms = raw_tags.get("duration_ms")
-                        if raw_dur_ms is not None:
-                            duration_sec = int(raw_dur_ms) / 1000.0
-                        elif raw_tags.get("duration") is not None:
-                            duration_sec = float(raw_tags["duration"])
-                        else:
-                            duration_sec = None
-                    else:
-                        try:
-                            import echosync_core
-                            raw_tags = echosync_core.extract_metadata(str(file_path)) or {}
-                            raw_dur_ms = raw_tags.get("duration_ms")
-                            if raw_dur_ms is not None:
-                                duration_sec = int(raw_dur_ms) / 1000.0
-                            elif raw_tags.get("duration") is not None:
-                                duration_sec = float(raw_tags["duration"])
-                            else:
-                                duration_sec = None
-                        except Exception:
-                            duration_sec = None
+                    metadata = metadata_provider.get_metadata(track_obj.musicbrainz_id)
+                    if metadata:
+                        return metadata, 0.99
+                except Exception as e:
+                    logger.warning(f"Failed to fetch metadata for tag MBID {track_obj.musicbrainz_id}: {e}")
 
-                    if fingerprint and duration_sec and fingerprint_provider:
-                        logger.debug(
-                            f"→ AcoustID Lookup: {file_path.name}\n"
-                            f"  Duration: {duration_sec}s | Fingerprint: {len(fingerprint)} chars"
-                        )
+            # Priority 2: First-Class AcoustID Fingerprinting Ingestion
+            # Generate Chromaprint fingerprint for unverified ingested files
+            fingerprint = None
+            try:
+                fingerprint = FingerprintGenerator.generate(str(file_path))
+            except Exception as fp_err:
+                logger.debug(f"Fingerprint generation failed for {file_path.name}: {fp_err}")
+
+            if fingerprint and duration_sec and fingerprint_provider:
+                logger.debug(
+                    f"→ AcoustID Lookup: {file_path.name}\n"
+                    f"  Duration: {duration_sec:.1f}s | Fingerprint: {len(fingerprint)} chars"
+                )
+                try:
+                    acoustid_id = None
+                    mbids = []
+                    score = None
+                    if hasattr(fingerprint_provider, "resolve_fingerprint_details"):
+                        details = fingerprint_provider.resolve_fingerprint_details(fingerprint, int(duration_sec))
+                        if isinstance(details, dict):
+                            acoustid_id = details.get("acoustid_id")
+                            mbids = details.get("mbids") or []
+                            score = details.get("score")
+                    elif hasattr(fingerprint_provider, "resolve_fingerprint"):
+                        mbids = fingerprint_provider.resolve_fingerprint(fingerprint, int(duration_sec)) or []
+
+                    if mbids and metadata_provider:
+                        top_mbid = mbids[0]
+                        logger.info(f"✓ AcoustID identified: {file_path.name} → MBID: {top_mbid}")
                         try:
-                            mbids = fingerprint_provider.resolve_fingerprint(fingerprint, int(duration_sec))
-                            if mbids and metadata_provider:
-                                mbid = mbids[0]
-                                logger.info(f"✓ AcoustID identified: {file_path.name} → MBID: {mbid}")
-                                try:
-                                    metadata = metadata_provider.get_metadata(mbid)
-                                    if metadata:
-                                        confidence = 0.95
-                                        logger.info(f"  ✓ Metadata fetched: {metadata.get('title')} by {metadata.get('artist')}")
-                                        return metadata, confidence
-                                except Exception as e:
-                                    logger.warning(f"Failed to fetch metadata for MBID {mbid}: {e}")
-                            else:
-                                logger.debug(f"✗ No MBID found from AcoustID for {file_path.name}")
+                            fetched = metadata_provider.get_metadata(top_mbid)
+                            if fetched:
+                                # Check duration delta between file and MusicBrainz recording
+                                mb_dur = fetched.get('length') or fetched.get('duration_ms') or fetched.get('duration')
+                                if mb_dur:
+                                    mb_dur_ms = int(float(mb_dur) * 1000) if float(mb_dur) < 10000 else int(mb_dur)
+                                    dur_delta = abs(int(duration_ms) - mb_dur_ms) if duration_ms else 0
+                                else:
+                                    dur_delta = 0
+
+                                # Confirmed MBID with duration delta <= 2000ms gets confidence >= 0.90
+                                if dur_delta <= 2000:
+                                    confidence = 0.95
+                                else:
+                                    confidence = 0.88
+
+                                if acoustid_id:
+                                    fetched["acoustid_id"] = acoustid_id
+                                fetched["musicbrainz_id"] = top_mbid
+                                fetched["recording_id"] = top_mbid
+
+                                # Normalize artist credits and extract version/edition info
+                                raw_t = fetched.get("title") or ""
+                                raw_a = fetched.get("artist") or ""
+                                clean_t, clean_a = normalize_track_comparison_fields(raw_t, raw_a)
+                                _, ver_info = extract_version_info(raw_t)
+                                if ver_info and not fetched.get("version"):
+                                    fetched["version"] = ver_info
+
+                                logger.info(
+                                    f"  ✓ AcoustID metadata fetched: '{clean_t}' by '{clean_a}' "
+                                    f"(duration delta: {dur_delta}ms, confidence: {confidence:.2f})"
+                                )
+                                return fetched, confidence
                         except Exception as e:
-                            logger.warning(f"AcoustID fingerprint resolution failed: {e}")
+                            logger.warning(f"Failed to fetch metadata for MBID {top_mbid}: {e}")
+                    else:
+                        logger.debug(f"✗ No MBID found from AcoustID for {file_path.name}")
                 except Exception as e:
                     logger.warning(f"AcoustID check failed: {e}")
 
-            # Step D: If no tags are found or search failed, halt execution. Do not guess.
+            # Priority 3: ISRC Waterfall Resolution (if file tags contain an ISRC)
+            isrc_val = (raw_tags.get("isrc") if isinstance(raw_tags, dict) else None) or (track_obj.isrc if track_obj else None)
+            if isrc_val:
+                try:
+                    from services.isrc_lookup_service import dispatch_isrc_lookup
+                    isrc_track = dispatch_isrc_lookup(str(isrc_val).strip())
+                    if isrc_track:
+                        src_name = (
+                            (isrc_track.identifiers.get("source") if isinstance(isrc_track.identifiers, dict) else None)
+                            or "ISRC"
+                        )
+                        logger.info(f"Identified file via ISRC waterfall from provider: {src_name}")
+                        return isrc_track, 0.92
+                except Exception as isrc_err:
+                    logger.warning(f"ISRC waterfall lookup error for {file_path.name}: {isrc_err}")
+
+            # Priority 4: Local metadata text search fallback
+            if track_obj and track_obj.title and track_obj.artist_name and metadata_provider:
+                logger.debug(f"Attempting search fallback using local_metadata tags for {file_path.name}")
+                try:
+                    # Sanitize noise in artist/title before querying/matching
+                    clean_t, clean_a = normalize_track_comparison_fields(track_obj.title, track_obj.artist_name)
+                    search_query_track = EchosyncTrack(
+                        raw_title=clean_t,
+                        artist_name=clean_a,
+                        album_title=track_obj.album_title,
+                        duration=track_obj.duration
+                    )
+                    results = metadata_provider.search_metadata(search_query_track, limit=10)
+                    if results:
+                        if isinstance(results, EchosyncTrack):
+                            results_list = [results]
+                        elif isinstance(results, (list, tuple)):
+                            results_list = list(results)
+                        else:
+                            results_list = [results]
+
+                        candidate_tracks = []
+                        for result in results_list:
+                            if isinstance(result, EchosyncTrack):
+                                candidate = result
+                                mbid = result.musicbrainz_id
+                                if not mbid and isinstance(result.identifiers, dict):
+                                    mbid = result.identifiers.get('musicbrainz_recording_id') or result.identifiers.get('mbid')
+                            elif isinstance(result, dict):
+                                candidate = self._search_result_to_track(result)
+                                mbid = result.get('mbid') or result.get('recording_id')
+                            else:
+                                candidate = None
+                                mbid = None
+
+                            if candidate:
+                                candidate_tracks.append((candidate, mbid))
+
+                        if candidate_tracks:
+                            from core.matching_engine.scoring_profile import PROFILE_EXACT_SYNC
+                            from core.matching_engine.matching_engine import WeightedMatchingEngine
+                            engine_cls = ServiceRegistry.resolve('matching_engine') or WeightedMatchingEngine
+                            matcher = engine_cls(PROFILE_EXACT_SYNC)
+                            best_score = 0.0
+                            best_mbid = None
+                            best_candidate = None
+
+                            for candidate, mbid in candidate_tracks:
+                                match_result = matcher.calculate_match(search_query_track, candidate)
+                                score = match_result.confidence_score if match_result else 0.0
+                                if score > best_score:
+                                    best_score = score
+                                    best_mbid = mbid
+                                    best_candidate = candidate
+
+                            if best_score >= 85.0:
+                                logger.info(f"✓ Matched '{file_path.name}' via local_metadata text search (score: {best_score:.1f}%)")
+                                if best_mbid:
+                                    metadata = metadata_provider.get_metadata(best_mbid)
+                                    if metadata:
+                                        return metadata, best_score / 100.0
+                                if best_candidate:
+                                    return best_candidate, best_score / 100.0
+                    else:
+                        logger.debug(f"No search results for fallback query using local_metadata")
+                except Exception as e:
+                    logger.warning(f"Fallback search using local_metadata failed: {e}", exc_info=True)
+
+            # If all methods failed, return None, 0.0 for manual review
             logger.warning(f"All metadata identification methods failed for {file_path.name}. File will be queued for manual review.")
             return None, 0.0
 
@@ -413,32 +486,8 @@ class RetroactiveEnhancer:
         then writes them via echosync_core.  Called by ``auto_importer.finalize_import``
         before the file is moved into the library.
         """
-        tags_to_write: Dict[str, Any] = {}
-
-        field_map = {
-            'title':        'title',
-            'artist':       'artist',
-            'album':        'album',
-            'date':         'date',
-            'track_number': 'track_number',
-            'disc_number':  'disc_number',
-            'isrc':         'isrc',
-            'recording_id': 'recording_id',
-            'musicbrainz_id': 'musicbrainz_id',
-            'acoustid_id':  'acoustid_id',
-            'cover_art_url': 'cover_art_url',
-        }
-
-        for src_key, dst_key in field_map.items():
-            value = metadata.get(src_key)
-            if value is not None and value != '':
-                tags_to_write[dst_key] = value
-
-        # Ensure both MBID keys stay in sync (some tag readers check one, others the other).
-        if tags_to_write.get('musicbrainz_id') and not tags_to_write.get('recording_id'):
-            tags_to_write['recording_id'] = tags_to_write['musicbrainz_id']
-        elif tags_to_write.get('recording_id') and not tags_to_write.get('musicbrainz_id'):
-            tags_to_write['musicbrainz_id'] = tags_to_write['recording_id']
+        payload = build_native_tag_payload(metadata)
+        tags_to_write = {k: v for k, v in payload.items() if v not in (None, '')}
 
         if not tags_to_write:
             logger.debug("tag_file: no writable tags for %s — skipping write.", file_path.name)

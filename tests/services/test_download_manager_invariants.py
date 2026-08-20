@@ -217,3 +217,78 @@ def test_process_downloads_now_delegates_when_background_loop_active(dm):
         dm.process_downloads_now()
         mock_requeue.assert_not_called()
 
+
+def test_normalize_track_comparison_fields():
+    from core.matching_engine.text_utils import normalize_track_comparison_fields
+
+    title, artist = normalize_track_comparison_fields(
+        "One More Time (Radio Edit) [Remastered]",
+        "Daft Punk feat. Romanthony"
+    )
+    assert title == "One More Time"
+    assert artist == "Daft Punk"
+
+
+def test_strategy_precedence_weights():
+    from services.download_manager import calculate_weighted_candidate_score, STRATEGY_WEIGHTS
+
+    assert STRATEGY_WEIGHTS["isrc"] == 1.00
+    assert STRATEGY_WEIGHTS["strict_metadata"] == 0.95
+    assert STRATEGY_WEIGHTS["fuzzy_artist_title"] == 0.80
+    assert STRATEGY_WEIGHTS["loose_title_duration"] == 0.60
+
+    score = 100.0
+    assert calculate_weighted_candidate_score(score, "isrc") == 100.0
+    assert calculate_weighted_candidate_score(score, "strict_metadata") == 95.0
+    assert calculate_weighted_candidate_score(score, "fuzzy_artist_title") == 80.0
+    assert calculate_weighted_candidate_score(score, "loose_title_duration") == 60.0
+
+
+def test_acoustid_first_class_ingestion_promotes_confidence(monkeypatch):
+    from services.metadata_enhancer import RetroactiveEnhancer
+    enhancer = RetroactiveEnhancer()
+
+    # Mock FingerprintGenerator
+    monkeypatch.setattr("core.matching_engine.fingerprinting.FingerprintGenerator.generate", lambda p: "test_fingerprint_123")
+
+    # Mock fingerprint provider returning MBID
+    mock_fp_prov = MagicMock()
+    mock_fp_prov.resolve_fingerprint_details.return_value = {
+        "acoustid_id": "acoustid_uuid_123",
+        "mbids": ["mbid_rec_456"],
+        "score": 0.99
+    }
+
+    # Mock metadata provider returning metadata
+    mock_meta_prov = MagicMock()
+    mock_meta_prov.get_metadata.return_value = {
+        "title": "Around the World",
+        "artist": "Daft Punk",
+        "album": "Homework",
+        "length": 239000,
+        "duration_ms": 239000
+    }
+
+    def _get_plugin_mock(cap, **kwargs):
+        from core.enums import Capability
+        if cap == Capability.RESOLVE_FINGERPRINT:
+            return mock_fp_prov
+        elif cap == Capability.FETCH_METADATA:
+            return mock_meta_prov
+        return None
+
+    monkeypatch.setattr(enhancer, "_get_plugin", _get_plugin_mock)
+    monkeypatch.setattr("echosync_core.extract_metadata", lambda p: {
+        "title": "Around the World (Radio Edit)",
+        "artist": "Daft Punk feat. Somebody",
+        "duration_ms": 240000 # 1000ms delta <= 2000ms
+    })
+
+    metadata, confidence = enhancer.identify_file(Path("/data/downloads/Around The World.mp3"))
+
+    assert metadata is not None
+    assert confidence >= 0.90
+    assert metadata.get("musicbrainz_id") == "mbid_rec_456"
+    assert metadata.get("acoustid_id") == "acoustid_uuid_123"
+
+

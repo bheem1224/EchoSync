@@ -666,4 +666,17 @@ def parse_int_safe(val: Any) -> Optional[int]:
             return int(m.group(1))
         except (ValueError, TypeError):
             return None
-    return None
+    return None
+
+
+FEATURE_ARTIST_REGEX = re.compile(r"\s+(?:feat\.?|ft\.?|featuring|with)\s+.+", re.IGNORECASE)
+VERSION_TAG_REGEX = re.compile(r"\s*[\(\[](?:radio edit|remastered|remaster|deluxe|version|edit|bonus track)[\)\]]", re.IGNORECASE)
+
+def normalize_track_comparison_fields(title: Optional[str], artist: Optional[str]) -> Tuple[str, str]:
+    """
+    Standardize edition/version and featured artist noise from title and artist fields.
+    Extracts/cleans version tags and featured collaborators without destroying the core strings.
+    """
+    clean_title = VERSION_TAG_REGEX.sub("", title or "").strip()
+    clean_artist = FEATURE_ARTIST_REGEX.sub("", artist or "").strip()
+    return clean_title, clean_artist

@@ -107,8 +107,18 @@
 
   async function handleModalApprove(e) {
       const { item } = e.detail || {};
-      if (!item) return;
-      const taskId = item.id;
+      const taskId = item?.id || selectedTask?.id;
+      if (!taskId) return;
+
+      tasks = tasks.filter(t => t.id !== taskId);
+      clearRowState(taskId);
+      closeReviewModal();
+  }
+
+  async function handleModalReject(e) {
+      const { item } = e.detail || {};
+      const taskId = item?.id || selectedTask?.id;
+      if (!taskId) return;
 
       tasks = tasks.filter(t => t.id !== taskId);
       clearRowState(taskId);
@@ -222,6 +232,7 @@
       on:close={() => closeReviewModal()}
       on:saved={(e) => handleModalSaveDraft({ detail: { proposedMetadata: e.detail?.metadata || e.detail?.proposedMetadata, item: selectedTask } })}
       on:approved={(e) => handleModalApprove({ detail: { proposedMetadata: e.detail?.metadata || e.detail?.proposedMetadata, item: selectedTask } })}
+      on:rejected={(e) => handleModalReject({ detail: { item: selectedTask } })}
     />
 {/if}
 

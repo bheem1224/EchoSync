@@ -36,6 +36,23 @@ from database.working_database import get_working_database, DownloadQueue
 
 logger = logging.getLogger("download_manager")
 
+# Strategy Precedence Weight Matrix
+STRATEGY_WEIGHTS: Dict[str, float] = {
+    "isrc": 1.00,
+    "strict_metadata": 0.95,
+    "artist+title": 0.95,
+    "album+title": 0.95,
+    "fuzzy_artist_title": 0.80,
+    "artist+broad+filter": 0.80,
+    "loose_title_duration": 0.60,
+    "title+strict-duration": 0.60,
+}
+
+def calculate_weighted_candidate_score(candidate_score: float, strategy: str) -> float:
+    """Apply strategy precedence weight to raw candidate matching score."""
+    weight = STRATEGY_WEIGHTS.get(strategy, 0.50)
+    return candidate_score * weight
+
 class DownloadManager:
     """
     Central orchestrator for managing the download queue and provider interactions.
@@ -801,6 +818,8 @@ class DownloadManager:
                             if (pid and pid in blacklisted_candidates) or (comp_id and comp_id in blacklisted_candidates):
                                 logger.info(f"    Skipping blacklisted candidate '{pid}' from user '{username}'")
                                 continue
+                            c.identifiers['discovery_strategy'] = strategy.get('strategy_type') or strategy.get('name')
+                            c.identifiers['strategy_name'] = strategy.get('name')
                             valid_results.append(c)
                         enriched_results = [self._enrich_candidate_metadata(c) for c in valid_results]
                         provider_candidates.extend(enriched_results)
@@ -812,10 +831,12 @@ class DownloadManager:
                     match_result = matcher.calculate_match(
                         target_track, sniper_winner
                     )
-                    provider_best_score = match_result.confidence_score
+                    raw_score = match_result.confidence_score
+                    strat = sniper_winner.identifiers.get('discovery_strategy') or sniper_winner.identifiers.get('strategy_name') or 'strict_metadata'
+                    provider_best_score = calculate_weighted_candidate_score(raw_score, strat)
                     logger.info(
-                        f"  Sniper winner confirmed: score={provider_best_score:.1f} "
-                        f"from {provider.name}"
+                        f"  Sniper winner confirmed: raw_score={raw_score:.1f}, weighted_score={provider_best_score:.1f} "
+                        f"from {provider.name} (strategy={strat})"
                     )
                     if provider_best_score >= 70.0:
                         scored_candidates.append((sniper_winner, provider_best_score, provider))
@@ -846,11 +867,25 @@ class DownloadManager:
                     if not tier_candidates:
                         continue
 
-                    # Score candidates via WeightedMatchingEngine (no pre-filter bypass)
+                    # Score candidates via WeightedMatchingEngine with Strategy Precedence Weighting
                     for candidate in tier_candidates:
                         match_result = matcher.calculate_match(target_track, candidate)
-                        if match_result.confidence_score >= 70.0:
-                            scored_candidates.append((candidate, match_result.confidence_score, provider))
+                        raw_score = match_result.confidence_score
+                        strat = candidate.identifiers.get('discovery_strategy') or candidate.identifiers.get('strategy_name') or 'strict_metadata'
+                        weighted_score = calculate_weighted_candidate_score(raw_score, strat)
+
+                        # Ensure quality/bitrate bonuses cannot override a higher-tier strategy
+                        # unless the lower-tier candidate meets strict artist/title normalization criteria.
+                        if strat in ("loose_title_duration", "title+strict-duration"):
+                            cand_artist = normalize_artist(candidate.artist_name or "")
+                            target_artist = normalize_artist(target_track.artist_name or "")
+                            cand_title = normalize_title(candidate.title or "")
+                            target_title = normalize_title(target_track.title or "")
+                            if not (cand_artist and target_artist and cand_artist == target_artist and cand_title == target_title):
+                                weighted_score = min(weighted_score, raw_score * 0.60)
+
+                        if weighted_score >= 70.0:
+                            scored_candidates.append((candidate, weighted_score, provider))
                             found_in_tier = True
 
                     # Keep only Top-3 scoring candidates globally to bound memory utilization
@@ -1156,46 +1191,56 @@ class DownloadManager:
         if search_title != track.title:
             logger.info(f"Normalized title for search: '{track.title}' -> '{search_title}'")
 
-        # Strategy 1: Artist + Title
+        # Strategy 1 (ISRC / Strict GUID if available)
+        if getattr(track, "isrc", None):
+            strategies.append({
+                "name": "isrc",
+                "strategy_type": "isrc",
+                "query": str(track.isrc).strip().upper(),
+                "duration_tolerance_ms": int(base_duration_tolerance_ms),
+            })
+
+        # Strategy 2: Artist + Title (Strict Metadata)
         if track.artist_name and search_title:
             normalized_artist = normalize_artist(track.artist_name)
             strategies.append({
                 "name": "artist+title",
+                "strategy_type": "strict_metadata",
                 "query": f"{normalized_artist} {search_title}",
                 "duration_tolerance_ms": int(base_duration_tolerance_ms),
             })
 
-        # Strategy 2: Album + Title
+        # Strategy 2b: Album + Title (Strict Metadata)
         if track.album_title and search_title:
             from core.matching_engine.text_utils import normalize_album
             normalized_album = normalize_album(track.album_title)
             if normalized_album and normalized_album != search_title:
                 strategies.append({
                     "name": "album+title",
+                    "strategy_type": "strict_metadata",
                     "query": f"{normalized_album} {search_title}",
                     "duration_tolerance_ms": int(base_duration_tolerance_ms),
                 })
 
-        # Strategy 3: Title only + stricter duration window
-        if search_title:
-            stricter_tolerance = max(1000, int(base_duration_tolerance_ms * 0.5))
-            strategies.append({
-                "name": "title+strict-duration",
-                "query": search_title,
-                "duration_tolerance_ms": stricter_tolerance,
-            })
-
-        # Strategy 4: Artist broad + client-side title filter
-        # Mimics the P2P power-user tactic: search by artist name only to bypass
-        # poorly-indexed servers, then rely on client-side filename filtering to
-        # surface results containing the track title.
+        # Strategy 3: Artist broad + client-side title filter (Fuzzy Artist + Title + Duration)
         if track.artist_name and search_title:
             normalized_artist = normalize_artist(track.artist_name)
             strategies.append({
                 "name": "artist+broad+filter",
+                "strategy_type": "fuzzy_artist_title",
                 "query": normalized_artist,
                 "duration_tolerance_ms": int(base_duration_tolerance_ms),
                 "includes": [search_title],   # enforced client-side by the provider adapter
+            })
+
+        # Strategy 4: Title only + stricter duration window (Loose Title + Duration)
+        if search_title:
+            stricter_tolerance = max(1000, int(base_duration_tolerance_ms * 0.5))
+            strategies.append({
+                "name": "title+strict-duration",
+                "strategy_type": "loose_title_duration",
+                "query": search_title,
+                "duration_tolerance_ms": stricter_tolerance,
             })
 
         # De-duplicate by normalized query while preserving order and strategy metadata

@@ -690,6 +690,79 @@ def approve_review_queue_item(task_id: int, payload: ApproveReviewQueueRequest, 
         raise HTTPException(status_code=500, detail="Failed to approve review task")
 
 
+@router.post("/{task_id}/reject")
+@router.delete("/{task_id}")
+def reject_and_delete_review_queue_item(task_id: int, _=Depends(require_auth)):
+    """
+    Reject a review task, securely delete the physical unverified file from disk,
+    update the ReviewTask status to 'rejected', and emit REVIEW_TASK_REJECTED event.
+    """
+    db = get_working_database()
+    try:
+        with db.session_scope() as session:
+            task = session.query(ReviewTask).filter(ReviewTask.id == task_id).first()
+            if not task:
+                raise HTTPException(status_code=404, detail="Task not found")
+
+            # Validate jail / storage containment
+            file_path_str = task.file_path
+            resolved_file = None
+            if file_path_str:
+                resolved_file = _resolve_task_file(task)
+                if not resolved_file:
+                    try:
+                        p = Path(file_path_str).expanduser().resolve()
+                        dl_dir = config_manager.get('storage.download_dir') or config_manager.get('download_dir')
+                        lib_dir = config_manager.get('storage.library_dir') or config_manager.get('library_dir')
+                        poor_dir = config_manager.get('storage.poor_metadata_dir')
+                        
+                        allowed = []
+                        if dl_dir: allowed.append(Path(dl_dir).resolve())
+                        if lib_dir: allowed.append(Path(lib_dir).resolve())
+                        if poor_dir: allowed.append(Path(poor_dir).resolve())
+                        
+                        for a in allowed:
+                            try:
+                                if p.is_relative_to(a):
+                                    resolved_file = p
+                                    break
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+
+                # Delete the physical file if it exists and is within allowed directory
+                if resolved_file and resolved_file.exists() and resolved_file.is_file():
+                    try:
+                        import os
+                        os.unlink(str(resolved_file))
+                        logger.info(f"Deleted physical file for rejected task {task_id}: {resolved_file}")
+                    except Exception as del_err:
+                        logger.warning(f"Failed to unlink file {resolved_file} for task {task_id}: {del_err}")
+
+            # Update status to rejected
+            task.status = "rejected"
+            file_path_copy = task.file_path
+
+            # Emit event via event_bus
+            try:
+                from core.event_bus import event_bus
+                event_bus.publish("REVIEW_TASK_REJECTED", {
+                    "event": "REVIEW_TASK_REJECTED",
+                    "task_id": task.id,
+                    "file_path": file_path_copy,
+                })
+            except Exception as eb_err:
+                logger.warning(f"Failed to publish REVIEW_TASK_REJECTED event: {eb_err}")
+
+            return {"success": True, "id": task.id, "status": "rejected"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to reject review task {task_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to reject review task")
+
+
 @router.get("/{task_id}/stream")
 def stream_review_queue_item(task_id: int):
     """Stream raw audio file for a review task with Range support."""
