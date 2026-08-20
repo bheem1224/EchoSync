@@ -45,7 +45,7 @@ import os
 import threading
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Optional, Generator, Set
+from typing import Any, Optional, Generator, Set, Tuple
 
 from watchdog.events import FileSystemEventHandler, FileSystemEvent  # type: ignore[import-untyped]
 from watchdog.observers import Observer  # type: ignore[import-untyped]
@@ -97,16 +97,19 @@ def suppress_path(path: str) -> Generator[None, None, None]:
         with _transfer_lock:
             _in_flight_transfers.discard(norm)
 
+_TEMP_EXTENSIONS: Tuple[str, ...] = ('.tmp', '.part', '.crdownload')
+
 def _is_path_ignored(file_path: str, ignored_directories: Optional[Set[str]] = None) -> bool:
     """Check if a file path belongs to an ignored directory or temp pattern."""
     if ignored_directories is None:
-        ignored_directories = {"poor_metadata", "incomplete", ".tmp", ".part"}
+        ignored_directories = {"poor_metadata", "incomplete"}
     try:
         p = Path(file_path)
         parts_lower = {part.lower().strip("/\\") for part in p.parts}
         if bool(parts_lower.intersection(ignored_directories)):
             return True
-        if any(p.name.lower().endswith(ext) for ext in (".tmp", ".part")):
+        name_lower = p.name.lower()
+        if name_lower.endswith(_TEMP_EXTENSIONS) or any(part.lower().endswith(_TEMP_EXTENSIONS) for part in p.parts):
             return True
     except Exception:
         pass

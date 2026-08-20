@@ -166,8 +166,54 @@ def test_library_watcher_suppress_path_and_path_ignored(tmp_path):
     # Test path exclusions
     poor_path = tmp_path / "poor_metadata" / "track.flac"
     tmp_file = tmp_path / "downloads" / "track.tmp"
+    part_file = tmp_path / "downloads" / "audio.flac.part"
+    crdownload_file = tmp_path / "downloads" / "stream.mp3.crdownload"
     regular_file = tmp_path / "downloads" / "track.flac"
 
     assert _is_path_ignored(str(poor_path))
     assert _is_path_ignored(str(tmp_file))
+    assert _is_path_ignored(str(part_file))
+    assert _is_path_ignored(str(crdownload_file))
     assert not _is_path_ignored(str(regular_file))
+
+
+def test_jit_in_library_check_transitions_to_completed(dm, mock_db, mock_work_db):
+    # Seed track into mock_db
+    with mock_db.session_scope() as session:
+        artist = Artist(name="Daft Punk")
+        session.add(artist)
+        session.flush()
+        track = Track(title="One More Time", artist_id=artist.id, artist=artist)
+        session.add(track)
+
+    with mock_work_db.session_scope() as session:
+        item = DownloadQueue(
+            sync_id="sync-jit-1",
+            status="queued",
+            echo_sync_track={"artist_name": "Daft Punk", "title": "One More Time"},
+        )
+        session.add(item)
+        session.commit()
+        item_id = item.id
+
+    import asyncio
+    asyncio.run(dm._process_queued_items())
+
+    with mock_work_db.session_scope() as session:
+        refreshed = session.query(DownloadQueue).filter_by(id=item_id).first()
+        assert refreshed.status == "completed"
+
+
+def test_process_downloads_now_delegates_when_background_loop_active(dm):
+    mock_loop = MagicMock()
+    mock_loop.is_running.return_value = True
+    mock_task = MagicMock()
+    mock_task.done.return_value = False
+
+    dm._loop = mock_loop
+    dm._loop_task = mock_task
+
+    with patch.object(dm, "_requeue_retryable_failed_items") as mock_requeue:
+        dm.process_downloads_now()
+        mock_requeue.assert_not_called()
+

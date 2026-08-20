@@ -551,86 +551,81 @@ class DownloadManager:
 
     async def _process_queued_items(self):
         """Pick up queued items and attempt to find/start them using waterfall provider strategy"""
-        providers = self._get_active_download_providers()
-        if not providers:
-            logger.debug("Skipping queue processing: No active download providers.")
+        if not hasattr(self, '_processing_queue_lock') or self._processing_queue_lock is None:
+            self._processing_queue_lock = asyncio.Lock()
+
+        if self._processing_queue_lock.locked():
+            logger.debug("Queue processing already in progress; skipping duplicate run.")
             return
 
-        # Fetch queued items from DB
-        queued_ids = []
-        with self.work_db.session_scope() as session:
-            # Get up to 30 queued items to enable concurrent searches
-            items = (
-                session.query(DownloadQueue)
-                .filter(DownloadQueue.status.ilike("queued"))
-                .order_by(
-                    DownloadQueue.retry_count.asc().nullsfirst(),
-                    DownloadQueue.created_at.desc()
+        async with self._processing_queue_lock:
+            providers = self._get_active_download_providers()
+            if not providers:
+                logger.debug("Skipping queue processing: No active download providers.")
+                return
+
+            # Fetch queued items from DB
+            queued_ids = []
+            with self.work_db.session_scope() as session:
+                # Get up to 30 queued items to enable concurrent searches
+                items = (
+                    session.query(DownloadQueue)
+                    .filter(DownloadQueue.status.ilike("queued"))
+                    .order_by(
+                        DownloadQueue.retry_count.asc().nullsfirst(),
+                        DownloadQueue.created_at.desc()
+                    )
+                    .limit(30)
+                    .all()
                 )
-                .limit(30)
-                .all()
-            )
-            
-            if items:
-                # Single bulk pre-check against music_library.db
-                to_delete_ids = []
-                with self.db.session_scope() as music_sess:
-                    for item in items:
-                        track_dict = item.echo_sync_track or {}
-                        artist = normalize_artist(track_dict.get("artist_name") or track_dict.get("artist") or "")
-                        title = normalize_title(track_dict.get("title") or track_dict.get("raw_title") or "")
-                        if not artist or not title:
-                            continue
-                        exists = music_sess.query(
-                            music_sess.query(Track).join(Artist).filter(
-                                Artist.name.ilike(artist), 
-                                Track.title.ilike(title)
-                            ).exists()
-                        ).scalar()
-                        if exists:
-                            to_delete_ids.append(item.id)
-                
-                if to_delete_ids:
-                    session.query(DownloadQueue).filter(DownloadQueue.id.in_(to_delete_ids)).delete(synchronize_session=False)
-                    session.commit()
-                    logger.debug(f"Purged {len(to_delete_ids)} queued downloads: already present in library.")
-                    
-                items = [item for item in items if item.id not in to_delete_ids]
-                
+
                 if items:
                     logger.info(f"Found {len(items)} queued items for processing.")
 
-            for item in items:
-                # Mark as processing so other workers (if any) don't grab it
-                item.status = "searching"
-                item.updated_at = utc_now()
-                queued_ids.append(item.id)
+                for item in items:
+                    track_dict = item.echo_sync_track or {}
+                    artist = normalize_artist(track_dict.get("artist_name") or track_dict.get("artist") or "")
+                    title = normalize_title(track_dict.get("title") or track_dict.get("raw_title") or "")
+                    album = track_dict.get("album_title") or track_dict.get("album")
+                    duration = track_dict.get("duration") or track_dict.get("duration_ms")
 
-        if not queued_ids:
-            return
+                    # JIT check: if track already in library, mark completed and bypass search
+                    if artist and title and self._track_exists_in_library(artist, title, album=album, duration=duration):
+                        logger.info(f"JIT Check: Track '{artist} - {title}' already exists in library. Transitioning status to 'completed'.")
+                        item.status = "completed"
+                        item.updated_at = utc_now()
+                        continue
 
-        # Determine concurrency dynamically from active provider capabilities
-        if providers:
-            provider = providers[0]
-            concurrency = getattr(provider.capabilities, 'max_concurrency', 3) if hasattr(provider, 'capabilities') else 3
-        else:
-            concurrency = 3
-        semaphore = asyncio.Semaphore(concurrency)
+                    # Mark as processing so other workers (if any) don't grab it
+                    item.status = "searching"
+                    item.updated_at = utc_now()
+                    queued_ids.append(item.id)
 
-        async def _throttled_download(download_id):
-            async with semaphore:
-                return await self._execute_waterfall_search_and_download(download_id, providers)
+            if not queued_ids:
+                return
 
-        # Dispatch tasks via asyncio.gather with concurrency throttling
-        tasks = [asyncio.create_task(_throttled_download(did)) for did in queued_ids]
-        
-        # Wait for all searches to complete
-        if tasks:
-            logger.info(f"Started {len(tasks)} search tasks (throttled to {concurrency} concurrent) with {len(providers)} providers in waterfall priority order")
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-            failed = sum(1 for r in results if isinstance(r, Exception))
-            if failed > 0:
-                logger.warning(f"Completed {len(tasks)} searches with {failed} errors")
+            # Determine concurrency dynamically from active provider capabilities
+            if providers:
+                provider = providers[0]
+                concurrency = getattr(provider.capabilities, 'max_concurrency', 3) if hasattr(provider, 'capabilities') else 3
+            else:
+                concurrency = 3
+            semaphore = asyncio.Semaphore(concurrency)
+
+            async def _throttled_download(download_id):
+                async with semaphore:
+                    return await self._execute_waterfall_search_and_download(download_id, providers)
+
+            # Dispatch tasks via asyncio.gather with concurrency throttling
+            tasks = [asyncio.create_task(_throttled_download(did)) for did in queued_ids]
+            
+            # Wait for all searches to complete
+            if tasks:
+                logger.info(f"Started {len(tasks)} search tasks (throttled to {concurrency} concurrent) with {len(providers)} providers in waterfall priority order")
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+                failed = sum(1 for r in results if isinstance(r, Exception))
+                if failed > 0:
+                    logger.warning(f"Completed {len(tasks)} searches with {failed} errors")
 
     async def _execute_waterfall_search_and_download(self, download_id: int, providers: List[PluginBase]):
         """
@@ -671,11 +666,8 @@ class DownloadManager:
         duration_ms = getattr(target_track, 'duration', None)
         if self._track_exists_in_library(target_track.artist_name, target_track.title,
                                           album=album_name, duration=duration_ms):
-            logger.debug(f"Purged track '{target_track.title}' from download queue: already present in library.")
-            with self.work_db.session_scope() as sess:
-                item = sess.query(DownloadQueue).get(download_id)
-                if item:
-                    sess.delete(item)
+            logger.info(f"JIT Check: Track '{target_track.artist_name} - {target_track.title}' already present in library. Transitioning status to 'completed'.")
+            self._update_status(download_id, "completed")
             return
 
         # Keep provider query broad; matching engine handles duration scoring/gating.
@@ -1714,12 +1706,14 @@ class DownloadManager:
     def process_downloads_now(self):
         """Run one processing cycle. Safe to call from any sync or async context.
 
-        When the async auto-start loop is active (``self._loop`` set by
-        ``start_background_task``), the cycle is submitted to that loop so it
-        does not conflict with the running Task. If called from within an active
-        event loop without a background daemon loop, a Task is scheduled on that loop.
-        Otherwise a fresh event loop is created via ``asyncio.run()``.
+        When the background worker loop is actively running (self._loop_task),
+        scheduled job triggers delegate to it to prevent concurrent queue consumption races.
         """
+        # If the background processing loop is already running, delegate directly to the existing worker loop
+        if self._loop_task and not self._loop_task.done() and self._loop and self._loop.is_running():
+            logger.info("DownloadManager: background processing loop is active; delegating queue consumption to existing worker loop.")
+            return
+
         async def _cycle():
             requeued = self._requeue_retryable_failed_items(limit=50)
             if requeued > 0:

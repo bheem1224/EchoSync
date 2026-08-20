@@ -30,7 +30,7 @@ import os
 import threading
 from datetime import timedelta
 from pathlib import Path
-from typing import List, Dict, Any, Optional, Set
+from typing import List, Dict, Any, Optional, Set, Tuple
 
 from watchdog.events import FileSystemEventHandler, FileSystemEvent  # type: ignore[import-untyped]
 from watchdog.observers import Observer  # type: ignore[import-untyped]
@@ -61,16 +61,20 @@ _DEBOUNCE_SECONDS: float = 5.0
 _REVIEW_QUEUE_BACKOFF: timedelta = timedelta(hours=48)
 
 
+_TEMP_EXTENSIONS: Tuple[str, ...] = ('.tmp', '.part', '.crdownload')
+
+
 def _is_path_component_ignored(file_path: str | Path, ignored_directories: Optional[Set[str]] = None) -> bool:
     """Check if a file or directory path contains an ignored path component."""
     if ignored_directories is None:
-        ignored_directories = {"poor_metadata", "incomplete", ".tmp", ".part"}
+        ignored_directories = {"poor_metadata", "incomplete"}
     try:
         p = Path(file_path)
         parts_lower = {part.lower().strip("/\\") for part in p.parts}
         if bool(parts_lower.intersection(ignored_directories)):
             return True
-        if any(p.name.lower().endswith(ext) for ext in (".tmp", ".part")):
+        name_lower = p.name.lower()
+        if name_lower.endswith(_TEMP_EXTENSIONS) or any(part.lower().endswith(_TEMP_EXTENSIONS) for part in p.parts):
             return True
     except Exception:
         pass
