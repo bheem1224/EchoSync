@@ -71,6 +71,19 @@ class MatchResult:
     is_near_miss: bool = False
 
 
+REMASTER_STRIP_REGEX = re.compile(
+    r"\s*[-–—\(\[]\s*(?:\d{4}\s+)?remaster(?:ed)?(?:\s+\d{4})?\s*[\)\]]?",
+    re.IGNORECASE
+)
+
+
+def sanitize_title_for_comparison(title: str) -> str:
+    """Strip remaster suffixes from title before computing equality or fuzzy comparison."""
+    if not title:
+        return ""
+    return REMASTER_STRIP_REGEX.sub("", title).strip()
+
+
 class WeightedMatchingEngine:
     """
     Core weighted matching engine implementing 5-step gating logic
@@ -85,13 +98,53 @@ class WeightedMatchingEngine:
             return False
         return bool(_ISRC_PATTERN.match(cleaned_isrc))
 
+    REMASTER_STRIP_REGEX = re.compile(
+        r"\s*[-–—\(\[]\s*(?:\d{4}\s+)?remaster(?:ed)?(?:\s+\d{4})?\s*[\)\]]?",
+        re.IGNORECASE
+    )
+
     VERSION_KEYWORDS = {
         'remix', 'rmx', 'mix', 'edit', 'extended', 'instrumental',
         'acapella', 'bootleg', 'cover', 'remaster', 'remastered',
         'original', 'club', 'radio', 'radio edit', 'house', 'deep', 'progressive',
         'version', 'ver', 'alternative', 'alt', 'acoustic', 'live',
-        'clean', 'edited', 'censored'
+        'clean', 'edited', 'censored', 'piano'
     }
+
+    VERSION_SYNONYMS = {
+        # Piano / Acoustic group
+        'piano': 'acoustic_piano',
+        'piano version': 'acoustic_piano',
+        'piano mix': 'acoustic_piano',
+        'acoustic': 'acoustic_piano',
+        'acoustic version': 'acoustic_piano',
+        'unplugged': 'acoustic_piano',
+
+        # Radio / Single Edit group
+        'radio edit': 'radio_single',
+        'radio version': 'radio_single',
+        'radio mix': 'radio_single',
+        'single version': 'radio_single',
+        'single edit': 'radio_single',
+
+        # Extended / Club mix group
+        'extended': 'extended_club',
+        'extended mix': 'extended_club',
+        'extended version': 'extended_club',
+        'club mix': 'extended_club',
+        'club version': 'extended_club',
+
+        # Remaster group
+        'remaster': 'remaster',
+        'remastered': 'remaster',
+    }
+
+    @staticmethod
+    def sanitize_title_for_comparison(title: str) -> str:
+        """Strip remaster suffixes from title before computing equality or fuzzy comparison."""
+        if not title:
+            return ""
+        return WeightedMatchingEngine.REMASTER_STRIP_REGEX.sub("", title).strip()
 
     EDITION_KEYWORDS = {
         'deluxe', 'standard', 'explicit', 'clean', 'edited', 'censored', 'remaster',
@@ -244,9 +297,11 @@ class WeightedMatchingEngine:
                     reasoning=" | ".join(reasoning_parts)
                 ), target_source, target_identifier)
 
-        # Title must be exact match (normalized)
-        source_title_norm = self._normalize_string_for_comparison(source.title or "")
-        candidate_title_norm = self._normalize_string_for_comparison(candidate.title or "")
+        # Title must be exact match (normalized, ignoring remaster suffixes)
+        source_title_clean = self.sanitize_title_for_comparison(source.title or "")
+        candidate_title_clean = self.sanitize_title_for_comparison(candidate.title or "")
+        source_title_norm = self._normalize_string_for_comparison(source_title_clean)
+        candidate_title_norm = self._normalize_string_for_comparison(candidate_title_clean)
 
         if source_title_norm != candidate_title_norm:
             reasoning_parts.append(f"Title mismatch: '{source.title}' != '{candidate.title}'")
@@ -775,24 +830,35 @@ class WeightedMatchingEngine:
         if not source_edition and not candidate_edition:
             return True, "Both tracks have no version info (prefer originals)"
 
+        source_version_lower = source_edition.lower()
+        candidate_version_lower = candidate_edition.lower()
+
+        # Check if one is None/empty (Original) and the other is Remaster/Deluxe/Remastered
+        # When duration delta <= 3000ms, they are considered compatible.
+        is_source_remaster = bool(re.search(r'\b(?:remaster(?:ed)?|deluxe|\d{4}\s+remaster)\b', source_version_lower))
+        is_cand_remaster = bool(re.search(r'\b(?:remaster(?:ed)?|deluxe|\d{4}\s+remaster)\b', candidate_version_lower))
+
+        if (not source_edition and is_cand_remaster) or (not candidate_edition and is_source_remaster):
+            if source.duration and candidate.duration:
+                dur_delta = abs(source.duration - candidate.duration)
+                if dur_delta <= 3000:
+                    return True, f"Remaster edition matches original cut (duration delta: {dur_delta}ms <= 3000ms)"
+                else:
+                    return False, f"Remaster duration mismatch ({dur_delta}ms > 3000ms)"
+            return True, "Remaster edition matches original cut"
+
         # If source has no version but candidate does, check if candidate is an unwanted variant
         # When user wants original, reject remix/live/acoustic/instrumental/demo/clean/edited
         if not source_edition and candidate_edition:
-            candidate_lower = candidate_edition.lower()
             unwanted_versions = frozenset({'remix', 'live', 'acoustic', 'instrumental', 'demo', 'radio edit', 'club', 'clean', 'edited', 'censored'})
-            if any(unwanted in candidate_lower for unwanted in unwanted_versions):
+            if any(unwanted in candidate_version_lower for unwanted in unwanted_versions):
                 return False, f"Source wants original but candidate is '{candidate_edition}' (version mismatch)"
             # Remaster/deluxe/etc are usually acceptable if source has no version preference
             return True, f"Candidate is '{candidate_edition}' (remaster/edition okay)"
 
-        # If candidate has no version but source specifies one, usually okay
-        # (candidate might be original or just missing metadata)
+        # If candidate has no version but source specifies one, check if source is an unwanted variant
         if source_edition and not candidate_edition:
             return True, "Candidate has no version info (might be original)"
-
-        # Both have editions - check if they're the same or related
-        source_version_lower = source_edition.lower()
-        candidate_version_lower = candidate_edition.lower()
 
         # Exact match
         if source_version_lower == candidate_version_lower:
@@ -1092,7 +1158,7 @@ class WeightedMatchingEngine:
 
     def _extract_version_keywords(self, version_str: str) -> set:
         """
-        Extract recognized version keywords from version string
+        Extract recognized version keywords and canonical synonym groups from version string.
 
         Returns:
             Set of matched keywords
@@ -1104,6 +1170,10 @@ class WeightedMatchingEngine:
         for keyword in self.VERSION_KEYWORDS:
             if keyword in version_lower:
                 matched.add(keyword)
+
+        for syn_phrase, canon_group in self.VERSION_SYNONYMS.items():
+            if syn_phrase in version_lower:
+                matched.add(canon_group)
 
         return matched
 

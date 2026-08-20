@@ -82,6 +82,7 @@ _OST_SAFE_RE = re.compile(
     r'|radio|single'                                 # release format descriptors
     r'|version|edit|mix'                             # common music metadata
     r'|official|song|shanty'                         # descriptor words
+    r'|sea|uefa|euro|anthem|from|la'                 # expanded descriptor words: sea shanty, euro 2024, from "...", la la la, anthem
     r'|deluxe'                                       # edition descriptor
     r'|\d'                                           # digits for years / track numbers (2013, 2024)
     r')+$',
@@ -353,13 +354,14 @@ def _fetch_tier1_candidates(conn, search_title, base_search_title, track_artist,
         FROM tracks t
         JOIN artists a ON t.artist_id = a.id
         LEFT JOIN albums al ON t.album_id = al.id
+        LEFT JOIN artists alb_a ON al.artist_id = alb_a.id
         JOIN local_media lm ON t.id = lm.track_id
         WHERE ({base_where}{exp_where})
         ORDER BY
-            (LOWER(a.name) = LOWER(:artist_exact)) DESC,
+            (LOWER(a.name) = LOWER(:artist_exact) OR (a.sort_name IS NOT NULL AND LOWER(a.sort_name) = LOWER(:artist_exact)) OR (alb_a.name IS NOT NULL AND LOWER(alb_a.name) = LOWER(:artist_exact))) DESC,
             (LOWER(t.title) = LOWER(:title_exact)) DESC,
             ABS(t.duration - :duration) ASC
-        LIMIT 20
+        LIMIT 50
     """)
 
     return conn.execute(sql, params).fetchall()
@@ -432,7 +434,7 @@ def _fetch_tier2_candidates(conn, search_title, track_duration, duration_window_
         JOIN local_media lm ON t.id = lm.track_id
         WHERE ({base_where}{exp_where})
         ORDER BY ABS(t.duration - :duration) ASC
-        LIMIT 10
+        LIMIT 30
     """)
 
     return conn.execute(sql, params).fetchall()
