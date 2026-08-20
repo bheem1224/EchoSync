@@ -40,12 +40,6 @@ from .caching import (
     clear_cache,
     cleanup_expired_cache,
 )
-from .auto_importer import (
-    AutoImporter,
-    get_auto_importer,
-    start_auto_import,
-    stop_auto_import,
-)
 from .matching_engine import (
     FingerprintMatcher,
 )
@@ -75,17 +69,6 @@ __all__ = [
     'get_cache',
     'clear_cache',
     'cleanup_expired_cache',
-    # Post-processing
-    'PostProcessor',
-    'AudioFormat',
-    'TagWriteResult',
-    'FileOrganizeResult',
-    'get_post_processor',
-    # Auto-import service
-    'AutoImporter',
-    'get_auto_importer',
-    'start_auto_import',
-    'stop_auto_import',
     # Fingerprinting
     'FingerprintMatcher',
 ]

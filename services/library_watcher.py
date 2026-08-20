@@ -43,8 +43,9 @@ Minimum file size guard (64 KB):
 
 import os
 import threading
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, Generator, Set
 
 from watchdog.events import FileSystemEventHandler, FileSystemEvent  # type: ignore[import-untyped]
 from watchdog.observers import Observer  # type: ignore[import-untyped]
@@ -73,6 +74,43 @@ _MIN_FILE_BYTES: int = 64 * 1024  # 64 KB
 # Settling delay.  Timer resets if the same path fires another event within
 # this window, guaranteeing tags are read only after the write is complete.
 _DEBOUNCE_SECONDS: float = 1.5
+
+# ── In-Flight Transfer Lock Suppression Registry ──────────────────────────────
+_in_flight_transfers: Set[str] = set()
+_transfer_lock = threading.Lock()
+
+def is_path_suppressed(path: str) -> bool:
+    """Check if a path is currently registered as an in-flight transfer."""
+    norm = str(Path(path).resolve()).lower()
+    with _transfer_lock:
+        return norm in _in_flight_transfers
+
+@contextmanager
+def suppress_path(path: str) -> Generator[None, None, None]:
+    """Context manager to suppress library watcher events during atomic moves."""
+    norm = str(Path(path).resolve()).lower()
+    with _transfer_lock:
+        _in_flight_transfers.add(norm)
+    try:
+        yield
+    finally:
+        with _transfer_lock:
+            _in_flight_transfers.discard(norm)
+
+def _is_path_ignored(file_path: str, ignored_directories: Optional[Set[str]] = None) -> bool:
+    """Check if a file path belongs to an ignored directory or temp pattern."""
+    if ignored_directories is None:
+        ignored_directories = {"poor_metadata", "incomplete", ".tmp", ".part"}
+    try:
+        p = Path(file_path)
+        parts_lower = {part.lower().strip("/\\") for part in p.parts}
+        if bool(parts_lower.intersection(ignored_directories)):
+            return True
+        if any(p.name.lower().endswith(ext) for ext in (".tmp", ".part")):
+            return True
+    except Exception:
+        pass
+    return False
 
 
 class _AudioEventHandler(FileSystemEventHandler):
@@ -103,8 +141,7 @@ class _AudioEventHandler(FileSystemEventHandler):
 
     def _schedule(self, raw_path: str) -> None:
         """(Re-)schedule processing for a path after the debounce window."""
-        normalized_path = raw_path.replace("\\", "/").lower()
-        if any(ignored in normalized_path for ignored in ['/poor_metadata', '/incomplete', 'poor_metadata', 'incomplete', '.tmp', '.part']):
+        if _is_path_ignored(raw_path):
             return
 
         path = Path(raw_path)
@@ -112,6 +149,9 @@ class _AudioEventHandler(FileSystemEventHandler):
             return
 
         abs_path = str(path.resolve())
+        if is_path_suppressed(abs_path):
+            logger.debug("Watcher: skipping suppressed in-flight path: %s", path.name)
+            return
 
         with self._lock:
             existing = self._pending.pop(abs_path, None)
@@ -131,6 +171,10 @@ class _AudioEventHandler(FileSystemEventHandler):
         """Called by the timer once the debounce window has elapsed."""
         with self._lock:
             self._pending.pop(abs_path, None)
+
+        if is_path_suppressed(abs_path):
+            logger.debug("Watcher: skipping suppressed path at fire time: %s", abs_path)
+            return
 
         _process_new_file(Path(abs_path))
 

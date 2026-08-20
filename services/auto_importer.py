@@ -30,14 +30,16 @@ import os
 import threading
 from datetime import timedelta
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Set
 
 from watchdog.events import FileSystemEventHandler, FileSystemEvent  # type: ignore[import-untyped]
 from watchdog.observers import Observer  # type: ignore[import-untyped]
 
+from core.event_bus import event_bus
 from core.settings import config_manager
 from core.job_queue import register_job
 from core.tiered_logger import get_logger
+from time_utils import utc_now
 from services.metadata_enhancer import RetroactiveEnhancer
 from database.working_database import get_working_database, ReviewTask
 
@@ -59,6 +61,22 @@ _DEBOUNCE_SECONDS: float = 5.0
 _REVIEW_QUEUE_BACKOFF: timedelta = timedelta(hours=48)
 
 
+def _is_path_component_ignored(file_path: str | Path, ignored_directories: Optional[Set[str]] = None) -> bool:
+    """Check if a file or directory path contains an ignored path component."""
+    if ignored_directories is None:
+        ignored_directories = {"poor_metadata", "incomplete", ".tmp", ".part"}
+    try:
+        p = Path(file_path)
+        parts_lower = {part.lower().strip("/\\") for part in p.parts}
+        if bool(parts_lower.intersection(ignored_directories)):
+            return True
+        if any(p.name.lower().endswith(ext) for ext in (".tmp", ".part")):
+            return True
+    except Exception:
+        pass
+    return False
+
+
 class AutoImportService:
     _instance = None
     _instance_lock = threading.Lock()
@@ -76,6 +94,72 @@ class AutoImportService:
         self._handler: "_DownloadDirEventHandler | None" = None
         self._register_jobs()
         self._start_watcher()
+
+        event_bus.subscribe("TRACK_IMPORTED", self._on_track_imported)
+
+    def _on_track_imported(self, payload: dict) -> None:
+        """Handle TRACK_IMPORTED by evicting matching pending ReviewTasks and /poor_metadata orphans."""
+        try:
+            track_data = payload.get("track")
+            if not track_data or not isinstance(track_data, dict):
+                return
+
+            target_isrc = (track_data.get("isrc") or "").strip().upper()
+            target_artist = (track_data.get("artist_name") or track_data.get("artist") or "").strip().lower()
+            target_title = (track_data.get("title") or track_data.get("raw_title") or "").strip().lower()
+            target_dur = track_data.get("duration_ms") or track_data.get("duration")
+
+            if not target_isrc and (not target_artist or not target_title):
+                return
+
+            work_db = get_working_database()
+            evicted_count = 0
+            with work_db.session_scope() as session:
+                pending_tasks = session.query(ReviewTask).filter(ReviewTask.status == "pending").all()
+                for task in pending_tasks:
+                    cand_meta = task.detected_metadata or {}
+                    cand_data = task.track_data or {}
+                    cand_isrc = (cand_meta.get("isrc") or cand_data.get("isrc") or "").strip().upper()
+
+                    is_match = False
+                    if target_isrc and cand_isrc and target_isrc == cand_isrc:
+                        is_match = True
+                    else:
+                        cand_artist = (cand_meta.get("artist") or cand_data.get("artist") or cand_data.get("artist_name") or "").strip().lower()
+                        cand_title = (cand_meta.get("title") or cand_data.get("title") or cand_data.get("raw_title") or "").strip().lower()
+
+                        if target_artist and target_title and cand_artist and cand_title:
+                            if target_artist == cand_artist and target_title == cand_title:
+                                cand_dur = cand_data.get("duration_ms") or cand_data.get("duration") or cand_meta.get("duration_ms")
+                                if target_dur and cand_dur:
+                                    try:
+                                        if abs(int(target_dur) - int(cand_dur)) <= 2000:
+                                            is_match = True
+                                    except (ValueError, TypeError):
+                                        is_match = True
+                                else:
+                                    is_match = True
+
+                    if is_match:
+                        logger.info("Evicting ReviewTask #%s for newly imported track: %s - %s", task.id, target_artist, target_title)
+                        task.status = "approved"
+                        task.updated_at = utc_now()
+                        evicted_count += 1
+
+                        # Clean up orphan in /poor_metadata if applicable
+                        if task.file_path:
+                            try:
+                                file_p = Path(task.file_path)
+                                if "poor_metadata" in {p.lower() for p in file_p.parts} and file_p.exists():
+                                    file_p.unlink(missing_ok=True)
+                                    logger.info("Deleted quarantined orphan file: %s", task.file_path)
+                            except Exception as fe:
+                                logger.debug("Failed to delete quarantined file %s: %s", task.file_path, fe)
+
+            if evicted_count > 0:
+                logger.info("Evicted %d stale review tasks matching imported track.", evicted_count)
+        except Exception as e:
+            logger.error("Error handling TRACK_IMPORTED in auto_importer: %s", e, exc_info=True)
 
     @classmethod
     def get_instance(cls):
@@ -275,13 +359,12 @@ class AutoImportService:
 
             for root, dirs, files in os.walk(download_dir):
                 # Filter out poor_metadata, incomplete, and temporary directories
-                dirs[:] = [d for d in dirs if not any(ignored in d.lower() for ignored in ['poor_metadata', 'incomplete', '.tmp', '.part'])]
+                dirs[:] = [d for d in dirs if not _is_path_component_ignored(Path(root) / d)]
                 logger.debug(f"Scanning directory: {root}")
                 logger.debug(f"Found {len(files)} files in {root}")
                 for file in files:
                     path = Path(root) / file
-                    normalized_str = str(path).replace("\\", "/").lower()
-                    if any(ignored in normalized_str for ignored in ['/poor_metadata', '/incomplete', 'poor_metadata', 'incomplete', '.tmp', '.part']):
+                    if _is_path_component_ignored(path):
                         continue
 
                     logger.debug(f"Checking file: {path}")
@@ -588,12 +671,14 @@ class AutoImportService:
                     counter += 1
 
             from core.io_gatekeeper import Gatekeeper
+            from services.library_watcher import suppress_path
 
-            moved_to = Gatekeeper.authorize_and_execute({
-                "operation": "safe_move",
-                "src": str(file_path),
-                "dst": str(dest_path)
-            })
+            with suppress_path(str(dest_path)):
+                moved_to = Gatekeeper.authorize_and_execute({
+                    "operation": "safe_move",
+                    "src": str(file_path),
+                    "dst": str(dest_path)
+                })
             logger.info(f"Moved {file_path.name} → {moved_to}")
 
         except Exception as e:
@@ -653,6 +738,11 @@ class _DownloadDirEventHandler(FileSystemEventHandler):
             return
         self._schedule(os.fsdecode(event.src_path))
 
+    def on_modified(self, event: FileSystemEvent) -> None:
+        if event.is_directory:
+            return
+        self._schedule(os.fsdecode(event.src_path))
+
     def on_moved(self, event: FileSystemEvent) -> None:
         # on_moved fires when a download manager renames a .part/.tmp → .flac etc.
         # We care about the *destination* path.
@@ -665,8 +755,7 @@ class _DownloadDirEventHandler(FileSystemEventHandler):
 
     def _schedule(self, raw_path: str) -> None:
         """(Re-)schedule processing for *raw_path* after the debounce window."""
-        normalized_path = raw_path.replace("\\", "/").lower()
-        if any(ignored in normalized_path for ignored in ['/poor_metadata', '/incomplete', 'poor_metadata', 'incomplete', '.tmp', '.part']):
+        if _is_path_component_ignored(raw_path):
             return
 
         path = Path(raw_path)
