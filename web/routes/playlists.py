@@ -347,6 +347,21 @@ def _fetch_tier1_candidates(conn, search_title, base_search_title, track_artist,
         exp_parts.append(_am(pkey))
     exp_where = ("\n        OR " + "\n        OR ".join(exp_parts)) if exp_parts else ""
 
+    from core.matching_engine.text_utils import split_artist_collaborators
+    primary_art, collabs = split_artist_collaborators(track_artist or "")
+    all_artists = ([primary_art] + collabs) if primary_art else ([track_artist] if track_artist else [])
+
+    artist_order_parts = [
+        "(LOWER(a.name) = LOWER(:artist_exact) OR (a.sort_name IS NOT NULL AND LOWER(a.sort_name) = LOWER(:artist_exact)) OR (alb_a.name IS NOT NULL AND LOWER(alb_a.name) = LOWER(:artist_exact)))"
+    ]
+    for i, art in enumerate(all_artists):
+        k = f"art_token_{i}"
+        params[k] = art
+        artist_order_parts.append(
+            f"(LOWER(a.name) = LOWER(:{k}) OR (a.sort_name IS NOT NULL AND LOWER(a.sort_name) = LOWER(:{k})) OR (alb_a.name IS NOT NULL AND LOWER(alb_a.name) = LOWER(:{k})))"
+        )
+    artist_order_sql = " OR ".join(artist_order_parts)
+
     sql = _sql(f"""
         SELECT DISTINCT t.id, t.title, t.duration, t.edition,
                a.name AS artist_name, a.id AS artist_id,
@@ -358,7 +373,7 @@ def _fetch_tier1_candidates(conn, search_title, base_search_title, track_artist,
         JOIN local_media lm ON t.id = lm.track_id
         WHERE ({base_where}{exp_where})
         ORDER BY
-            (LOWER(a.name) = LOWER(:artist_exact) OR (a.sort_name IS NOT NULL AND LOWER(a.sort_name) = LOWER(:artist_exact)) OR (alb_a.name IS NOT NULL AND LOWER(alb_a.name) = LOWER(:artist_exact))) DESC,
+            ({artist_order_sql}) DESC,
             (LOWER(t.title) = LOWER(:title_exact)) DESC,
             ABS(t.duration - :duration) ASC
         LIMIT 50

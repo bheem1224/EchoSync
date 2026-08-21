@@ -99,6 +99,10 @@ _NORM_ALPHANUM_RE = re.compile(r'[^\w\s\-\'\"]')
 _NORM_MULTIPLE_AMP_RE = re.compile(r'\s*&\s*')
 _NORM_AUDIO_TERMS_PATTERN = r'\s*[-~]?\s*(?:\b|\()(?:official\s+(?:music\s+|lyric\s+)?video|official\s+audio|audio|video|lyric\s+video|lyrics?)(?:\b|\))'
 _NORM_AUDIO_TERMS_RE = re.compile(_NORM_AUDIO_TERMS_PATTERN, flags=re.IGNORECASE)
+_NORM_PROMO_EVENT_RE = re.compile(
+    r'\s*[-–—]\s*(?:(?:The\s+)?Official\s+.*?(?:Song|Theme).*?|.*?Anthem.*?|From\s+(?:the\s+)?(?:series|soundtrack|film|movie).*?)(?=$|\s*[\(\[])',
+    flags=re.IGNORECASE
+)
 
 
 def normalize_chars(text: Optional[str]) -> str:
@@ -282,6 +286,9 @@ def normalize_title(title: Optional[str], plugin_context: Optional[Dict[str, Any
     ]
     for pattern in ost_patterns:
         normalized = re.sub(pattern, '', normalized, flags=re.IGNORECASE)
+
+    # Remove promotional descriptors and event anthem suffixes (e.g. Official UEFA EURO 2024 Song, Coca-Cola® Anthem)
+    normalized = _NORM_PROMO_EVENT_RE.sub('', normalized)
 
     # Strip ASCII-bracketed content that survived (e.g. version/edit labels).
     # CJK brackets are intentionally preserved — the CJK plugin reads them via

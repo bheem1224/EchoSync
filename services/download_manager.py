@@ -910,7 +910,7 @@ class DownloadManager:
                         viable_matches = 0
                         has_snipe_match = False
                         for cand in enriched_results:
-                            match_res = matcher.calculate_match(target_track, cand)
+                            match_res = matcher.calculate_match(target_track, cand, context="download")
                             raw_score = match_res.confidence_score
                             if raw_score >= perfect_match_threshold:
                                 has_snipe_match = True
@@ -930,7 +930,7 @@ class DownloadManager:
                 # ── Fast-path: sniper winner bypasses full dedup + scoring ────────────
                 if sniper_winner is not None:
                     match_result = matcher.calculate_match(
-                        target_track, sniper_winner
+                        target_track, sniper_winner, context="download"
                     )
                     raw_score = match_result.confidence_score
                     strat = sniper_winner.identifiers.get('discovery_strategy') or sniper_winner.identifiers.get('strategy_name') or 'strict_metadata'
@@ -969,7 +969,7 @@ class DownloadManager:
 
                     # Score candidates via WeightedMatchingEngine on pure raw match merit
                     for candidate in tier_candidates:
-                        match_result = matcher.calculate_match(target_track, candidate)
+                        match_result = matcher.calculate_match(target_track, candidate, context="download")
                         raw_score = match_result.confidence_score
 
                         if raw_score >= 70.0:

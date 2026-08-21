@@ -77,6 +77,106 @@ REMASTER_STRIP_REGEX = re.compile(
 )
 
 
+def evaluate_version_compatibility(
+    source_version: Optional[str],
+    candidate_version: Optional[str],
+    context: str = "sync",
+    duration_delta_ms: Optional[int] = None,
+) -> Tuple[bool, float, str]:
+    """
+    Evaluate edition / version compatibility and return (is_compatible, penalty, reasoning).
+
+    Edition Penalty Hierarchy:
+    - Deluxe Edition penalty: -1.0 (preferred over remasters since audio master is identical).
+    - Remaster penalty: -2.5 (applied in 'sync' context only).
+    - In 'download' context: Allow Deluxe (-1.0); strictly REJECT Remaster if original was requested.
+    """
+    src_v = (source_version or "").strip()
+    cand_v = (candidate_version or "").strip()
+    src_lower = src_v.lower()
+    cand_lower = cand_v.lower()
+
+    # If both have no version info, exact match
+    if not src_lower and not cand_lower:
+        return True, 0.0, "Both tracks have no version info (prefer studio originals)"
+
+    # Exact string match
+    if src_lower == cand_lower:
+        return True, 0.0, f"Exact version match: '{src_v}'"
+
+    is_cand_deluxe = bool(re.search(r'\b(?:deluxe(?:\s+edition)?)\b', cand_lower))
+    is_cand_remaster = bool(re.search(r'\b(?:remaster(?:ed)?|\d{4}\s+remaster)\b', cand_lower))
+    is_src_deluxe = bool(re.search(r'\b(?:deluxe(?:\s+edition)?)\b', src_lower))
+    is_src_remaster = bool(re.search(r'\b(?:remaster(?:ed)?|\d{4}\s+remaster)\b', src_lower))
+
+    # Source has no edition (Original cut requested)
+    if not src_lower:
+        unwanted_versions = frozenset({'remix', 'live', 'acoustic', 'instrumental', 'demo', 'radio edit', 'club', 'clean', 'edited', 'censored'})
+        if any(unwanted in cand_lower for unwanted in unwanted_versions):
+            return False, 0.0, f"Source requested original but candidate is '{cand_v}' (version mismatch)"
+
+        if is_cand_deluxe:
+            if duration_delta_ms is not None and duration_delta_ms > 10000:
+                return False, 0.0, f"Deluxe Edition duration mismatch ({duration_delta_ms}ms > 10000ms)"
+            return True, 1.0, f"Candidate is Deluxe Edition fallback ({context} mode, -1.0 penalty)"
+
+        if is_cand_remaster:
+            if context == "download":
+                return False, 0.0, "Strict fidelity on downloads: Remastered candidate rejected when original requested"
+            # context == "sync"
+            if duration_delta_ms is not None and duration_delta_ms > 5000:
+                return False, 0.0, f"Remaster duration mismatch on sync ({duration_delta_ms}ms > 5000ms)"
+            return True, 2.5, f"Candidate is Remastered fallback on sync ({duration_delta_ms or 0}ms delta <= 5000ms, -2.5 penalty)"
+
+        return True, 0.0, f"Candidate edition '{cand_v}' accepted"
+
+    # Candidate has no version but source specified one
+    if not cand_lower and src_lower:
+        return True, 0.0, "Candidate has no version info (might be original cut)"
+
+    # Version synonyms check (e.g. Piano Version vs Acoustic vs Piano, Radio Edit vs Radio Version vs Single Version)
+    _VERSION_SYNONYMS = {
+        'piano': 'acoustic_piano',
+        'piano version': 'acoustic_piano',
+        'piano mix': 'acoustic_piano',
+        'acoustic': 'acoustic_piano',
+        'acoustic version': 'acoustic_piano',
+        'unplugged': 'acoustic_piano',
+
+        'radio edit': 'radio_single',
+        'radio version': 'radio_single',
+        'radio mix': 'radio_single',
+        'single version': 'radio_single',
+        'single edit': 'radio_single',
+
+        'extended': 'extended_club',
+        'extended mix': 'extended_club',
+        'extended version': 'extended_club',
+        'club mix': 'extended_club',
+        'club version': 'extended_club',
+
+        'remaster': 'remaster',
+        'remastered': 'remaster',
+        'deluxe': 'deluxe',
+        'deluxe edition': 'deluxe',
+    }
+    src_syn = _VERSION_SYNONYMS.get(src_lower)
+    cand_syn = _VERSION_SYNONYMS.get(cand_lower)
+    if src_syn and cand_syn and src_syn == cand_syn:
+        return True, 0.0, f"Version synonyms match: '{src_v}' ≡ '{cand_v}'"
+
+    # Both tracks share same edition family
+    if (is_src_deluxe and is_cand_deluxe) or (is_src_remaster and is_cand_remaster):
+        return True, 0.0, f"Both tracks share edition family: '{src_v}' vs '{cand_v}'"
+
+    # Check clean vs explicit
+    clean_keywords = frozenset({'clean', 'edited', 'censored'})
+    if any(c in cand_lower for c in clean_keywords) and not any(c in src_lower for c in clean_keywords):
+        return False, 0.0, f"Candidate is clean/edited ('{cand_v}') while source is original/explicit"
+
+    return False, 0.0, f"Version mismatch: '{src_v}' vs '{cand_v}'"
+
+
 def sanitize_title_for_comparison(title: str) -> str:
     """Strip remaster suffixes from title before computing equality or fuzzy comparison."""
     if not title:
@@ -179,12 +279,13 @@ class WeightedMatchingEngine:
         candidate: EchosyncTrack,
         target_source: Optional[str] = None,
         target_identifier: Optional[str] = None,
+        context: str = "sync",
     ) -> MatchResult:
         """
         Calculate match confidence between source and candidate tracks
         """
         from core.hook_manager import hook_manager
-        hook_result = hook_manager.apply_filters('ON_ENGINE_EVALUATE', {'skip': False, 'result': None}, source=source, candidate=candidate, target_source=target_source, target_identifier=target_identifier)
+        hook_result = hook_manager.apply_filters('ON_ENGINE_EVALUATE', {'skip': False, 'result': None}, source=source, candidate=candidate, target_source=target_source, target_identifier=target_identifier, context=context)
         if hook_result and isinstance(hook_result, dict) and hook_result.get('skip'):
             return hook_result.get('result')
 
@@ -238,7 +339,7 @@ class WeightedMatchingEngine:
 
         # Continue with standard matching...
         return self._attach_target_context(
-            self._calculate_standard_match(source, candidate),
+            self._calculate_standard_match(source, candidate, context=context),
             target_source,
             target_identifier,
         )
@@ -400,7 +501,8 @@ class WeightedMatchingEngine:
     def _calculate_standard_match(
         self,
         source: EchosyncTrack,
-        candidate: EchosyncTrack
+        candidate: EchosyncTrack,
+        context: str = "sync",
     ) -> MatchResult:
         """
         Standard matching logic (original calculate_match implementation)
@@ -437,7 +539,7 @@ class WeightedMatchingEngine:
                 reasoning_parts.append("Fingerprint available but no match")
 
         # ===== STEP 1: VERSION CHECK =====
-        version_match, version_reasoning = self._check_version_match(source, candidate)
+        version_match, version_reasoning, ver_penalty = self._check_version_match(source, candidate, context=context)
 
         if not version_match:
             version_penalty = self.weights.version_mismatch_penalty
@@ -455,9 +557,11 @@ class WeightedMatchingEngine:
                 quality_bonus_applied=0.0,
                 version_penalty_applied=version_penalty,
                 edition_penalty_applied=0.0,
-                reasoning=" | ".join(reasoning_parts) + " | REJECTED: Version mismatch is critical failure"
+                reasoning=" | ".join(reasoning_parts) + f" | REJECTED: {version_reasoning}"
             )
         else:
+            if ver_penalty > 0.0:
+                edition_penalty += ver_penalty
             reasoning_parts.append(f"Version match: {version_reasoning}")
 
         # ===== STEP 2: EDITION/TRACK CHECK =====
@@ -815,83 +919,50 @@ class WeightedMatchingEngine:
             result.target_exists = bool(target_identifier)
         return result
 
-    def _check_version_match(self, source: EchosyncTrack, candidate: EchosyncTrack) -> Tuple[bool, str]:
+    def _check_version_match(
+        self,
+        source: EchosyncTrack,
+        candidate: EchosyncTrack,
+        context: str = "sync",
+    ) -> Tuple[bool, str, float]:
         """
-        Check if versions match
+        Check if versions match in the given context ('sync' or 'download').
 
         Returns:
-            (matches: bool, reasoning: str)
+            (matches: bool, reasoning: str, penalty: float)
         """
-
         source_edition = (source.edition or getattr(source, 'version', None) or "").strip()
         candidate_edition = (candidate.edition or getattr(candidate, 'version', None) or "").strip()
 
-        # If both have no edition, perfect match (prefer studio originals)
-        if not source_edition and not candidate_edition:
-            return True, "Both tracks have no version info (prefer originals)"
+        duration_delta_ms = None
+        if source.duration and candidate.duration:
+            duration_delta_ms = abs(source.duration - candidate.duration)
+
+        is_compat, penalty, reason = evaluate_version_compatibility(
+            source_edition,
+            candidate_edition,
+            context=context,
+            duration_delta_ms=duration_delta_ms,
+        )
+        if not is_compat:
+            return False, reason, 0.0
 
         source_version_lower = source_edition.lower()
         candidate_version_lower = candidate_edition.lower()
 
-        # Check if one is None/empty (Original) and the other is Remaster/Deluxe/Remastered
-        # When duration delta <= 3000ms, they are considered compatible.
-        is_source_remaster = bool(re.search(r'\b(?:remaster(?:ed)?|deluxe|\d{4}\s+remaster)\b', source_version_lower))
-        is_cand_remaster = bool(re.search(r'\b(?:remaster(?:ed)?|deluxe|\d{4}\s+remaster)\b', candidate_version_lower))
+        # Check keyword extraction overlap for other custom variant strings
+        if source_version_lower and candidate_version_lower and source_version_lower != candidate_version_lower:
+            source_keywords = self._extract_version_keywords(source_version_lower)
+            candidate_keywords = self._extract_version_keywords(candidate_version_lower)
 
-        if (not source_edition and is_cand_remaster) or (not candidate_edition and is_source_remaster):
-            if source.duration and candidate.duration:
-                dur_delta = abs(source.duration - candidate.duration)
-                if dur_delta <= 3000:
-                    return True, f"Remaster edition matches original cut (duration delta: {dur_delta}ms <= 3000ms)"
-                else:
-                    return False, f"Remaster duration mismatch ({dur_delta}ms > 3000ms)"
-            return True, "Remaster edition matches original cut"
+            if source_keywords and candidate_keywords:
+                overlap = source_keywords & candidate_keywords
+                if not overlap and (('remix' in source_keywords) != ('remix' in candidate_keywords)):
+                    return False, "One is remix, other is original", 0.0
+                if overlap:
+                    return True, f"Version keywords match: {overlap}", penalty
 
-        # If source has no version but candidate does, check if candidate is an unwanted variant
-        # When user wants original, reject remix/live/acoustic/instrumental/demo/clean/edited
-        if not source_edition and candidate_edition:
-            unwanted_versions = frozenset({'remix', 'live', 'acoustic', 'instrumental', 'demo', 'radio edit', 'club', 'clean', 'edited', 'censored'})
-            if any(unwanted in candidate_version_lower for unwanted in unwanted_versions):
-                return False, f"Source wants original but candidate is '{candidate_edition}' (version mismatch)"
-            # Remaster/deluxe/etc are usually acceptable if source has no version preference
-            return True, f"Candidate is '{candidate_edition}' (remaster/edition okay)"
-
-        # If candidate has no version but source specifies one, check if source is an unwanted variant
-        if source_edition and not candidate_edition:
-            return True, "Candidate has no version info (might be original)"
-
-        # Exact match
-        if source_version_lower == candidate_version_lower:
-            return True, f"Versions match: '{source_edition}'"
-
-        # Check if candidate is clean/edited/censored when source is explicit/original
-        clean_keywords = frozenset({'clean', 'edited', 'censored'})
-        if any(c in candidate_version_lower for c in clean_keywords) and not any(c in source_version_lower for c in clean_keywords):
-            return False, f"Candidate is clean/edited ('{candidate_edition}') while source is original/explicit"
-
-        # Check if both have version keywords from same family
-        source_keywords = self._extract_version_keywords(source_version_lower)
-        candidate_keywords = self._extract_version_keywords(candidate_version_lower)
-
-        # If no recognizable keywords, consider fuzzy match
-        if not source_keywords and not candidate_keywords:
-            return True, "Both have unrecognized version formats"
-
-        # If either is empty, mismatch
-        if not source_keywords or not candidate_keywords:
-            return False, f"'{source_edition}' vs '{candidate_edition}' (different types)"
-
-        # Check for keyword overlap
-        overlap = source_keywords & candidate_keywords
-        if overlap:
-            return True, f"Version keywords match: {overlap}"
-
-        # If "remix" in one but not other, that's a mismatch
-        if ('remix' in source_keywords) != ('remix' in candidate_keywords):
-            return False, f"One is remix, other is original"
-
-        # Otherwise, consider it a version mismatch
-        return False, f"Different versions: '{source_edition}' vs '{candidate_edition}'"
+        return True, reason, penalty
 
     def _check_edition_match(self, source: EchosyncTrack, candidate: EchosyncTrack) -> Tuple[bool, str]:
         """

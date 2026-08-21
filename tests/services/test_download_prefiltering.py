@@ -139,7 +139,7 @@ class TestDownloadManagerMatchingAndFallback:
                 self.confidence_score = score
 
         class FakeMatcher:
-            def calculate_match(self, target, candidate):
+            def calculate_match(self, target, candidate, *args, **kwargs):
                 return FakeMatchResult(95.0)
 
         manager._get_matching_engine = lambda profile=None: FakeMatcher()
@@ -244,7 +244,7 @@ class TestDownloadManagerMatchingAndFallback:
                 self.confidence_score = score
 
         class FakeMatcher:
-            def calculate_match(self, target, candidate):
+            def calculate_match(self, target, candidate, *args, **kwargs):
                 # Give peerA higher score (95) and peerB lower score (85)
                 score = 95.0 if candidate.identifiers["username"] == "peerA" else 85.0
                 return FakeMatchResult(score)
