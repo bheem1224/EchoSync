@@ -229,19 +229,27 @@ def test_normalize_track_comparison_fields():
     assert artist == "Daft Punk"
 
 
-def test_strategy_precedence_weights():
-    from services.download_manager import calculate_weighted_candidate_score, STRATEGY_WEIGHTS
+def test_raw_matching_score_evaluation():
+    from core.matching_engine.matching_engine import WeightedMatchingEngine
+    from core.matching_engine.scoring_profile import PROFILE_DOWNLOAD_SEARCH
+    from core.db.echo_sync_track import EchosyncTrack
 
-    assert STRATEGY_WEIGHTS["isrc"] == 1.00
-    assert STRATEGY_WEIGHTS["strict_metadata"] == 0.95
-    assert STRATEGY_WEIGHTS["fuzzy_artist_title"] == 0.80
-    assert STRATEGY_WEIGHTS["loose_title_duration"] == 0.60
+    target = EchosyncTrack(
+        raw_title="Around the World",
+        artist_name="Daft Punk",
+        album_title="Homework",
+        duration=429000,
+    )
+    candidate = EchosyncTrack(
+        raw_title="Around the World",
+        artist_name="Daft Punk",
+        album_title="Homework",
+        duration=429000,
+    )
 
-    score = 100.0
-    assert calculate_weighted_candidate_score(score, "isrc") == 100.0
-    assert calculate_weighted_candidate_score(score, "strict_metadata") == 95.0
-    assert calculate_weighted_candidate_score(score, "fuzzy_artist_title") == 80.0
-    assert calculate_weighted_candidate_score(score, "loose_title_duration") == 60.0
+    engine = WeightedMatchingEngine(PROFILE_DOWNLOAD_SEARCH)
+    result = engine.calculate_match(target, candidate)
+    assert result.confidence_score >= 90.0
 
 
 def test_acoustid_first_class_ingestion_promotes_confidence(monkeypatch):

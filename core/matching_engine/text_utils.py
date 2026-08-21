@@ -6,7 +6,7 @@ to normalize track data before creating EchosyncTrack objects.
 """
 
 import re
-from typing import Optional, Tuple, Dict, Any
+from typing import Optional, Tuple, Dict, Any, List
 import base64
 
 
@@ -347,6 +347,49 @@ def normalize_artist(artist: Optional[str]) -> str:
     normalized = _NORM_COLLAPSE_SPACE_RE.sub(' ', normalized)
     
     return normalized.strip()
+
+
+_COLLAB_SPLIT_PATTERN = re.compile(
+    r'(?:\s+&\s+|\s*[/,+]\s*|\s+\bx\b\s+|\s+\bfeat\.?\s*|\s+\bft\.?\s*|\s+\bfeaturing\s*|\s+\bwith\s*|\s+\band\s+)',
+    flags=re.IGNORECASE
+)
+_WIRE_SANITIZE_PATTERN = re.compile(r'[\&\\\/\!\'\"\+\#\@\[\]\(\)\{\}\*\^\$\:\;\,\.\?\~]')
+
+
+def split_artist_collaborators(artist: Optional[str]) -> Tuple[str, List[str]]:
+    """
+    Split a multi-artist string into a primary artist and a list of collaborators.
+    
+    Examples:
+        "W&W x AXMO" -> ("W&W", ["AXMO"]) or ("w w", ["axmo"])
+        "Artist A feat. Artist B & Artist C" -> ("Artist A", ["Artist B", "Artist C"])
+    """
+    if not artist:
+        return "", []
+    
+    raw_cleaned = normalize_chars(artist)
+    parts = [p.strip() for p in _COLLAB_SPLIT_PATTERN.split(raw_cleaned) if p and p.strip()]
+    if not parts:
+        return "", []
+    
+    primary = parts[0]
+    collaborators = parts[1:]
+    return primary, collaborators
+
+
+def sanitize_query_for_wire(text: Optional[str]) -> str:
+    """
+    Sanitize a search query string for wire transfer over token-strict P2P networks (like Soulseek).
+    Strips symbols/punctuation (&, /, \\, !, ', ", +, etc.) that break AND tokenization,
+    preserving alphanumeric keywords separated by single spaces.
+    """
+    if not text:
+        return ""
+    
+    cleaned = normalize_chars(text)
+    cleaned = _WIRE_SANITIZE_PATTERN.sub(' ', cleaned)
+    cleaned = _NORM_COLLAPSE_SPACE_RE.sub(' ', cleaned)
+    return cleaned.strip()
 
 
 def normalize_album(album: Optional[str]) -> str:

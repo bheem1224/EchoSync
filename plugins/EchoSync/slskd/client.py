@@ -63,31 +63,33 @@ class TrackResult(SearchResult):
         file_with_ext = path_parts[-1] if path_parts else self.filename
         clean_filename = Path(file_with_ext).stem
 
-        # 1. Parse Technical Metadata (Bit Depth / Sample Rate)
+        # 1. Parse Technical Metadata (Bit Depth / Sample Rate) only if not already set
         # Look for patterns like "24bit", "24-bit", "24b", "96kHz", "44.1kHz", "44100Hz"
         # Search in the full filename/path in case metadata is in directory structure
 
         # Bit Depth
-        bit_depth_match = re.search(r'(\d+)\s*[-_]?(?:bit|b)(?![a-zA-Z])', self.filename, re.IGNORECASE)
-        if bit_depth_match:
-            try:
-                self.bit_depth = int(bit_depth_match.group(1))
-            except ValueError:
-                pass
+        if self.bit_depth is None:
+            bit_depth_match = re.search(r'(\d+)\s*[-_]?(?:bit|b)(?![a-zA-Z])', self.filename, re.IGNORECASE)
+            if bit_depth_match:
+                try:
+                    self.bit_depth = int(bit_depth_match.group(1))
+                except ValueError:
+                    pass
 
         # Sample Rate
-        sample_rate_match = re.search(r'(\d+(?:\.\d+)?)\s*(?:k?hz)', self.filename, re.IGNORECASE)
-        if sample_rate_match:
-            try:
-                val_str = sample_rate_match.group(1)
-                unit_str = sample_rate_match.group(0).lower()
-                val = float(val_str)
-                if 'khz' in unit_str:
-                    self.sample_rate = int(val * 1000)
-                else:
-                    self.sample_rate = int(val)
-            except ValueError:
-                pass
+        if self.sample_rate is None:
+            sample_rate_match = re.search(r'(\d+(?:\.\d+)?)\s*(?:k?hz)', self.filename, re.IGNORECASE)
+            if sample_rate_match:
+                try:
+                    val_str = sample_rate_match.group(1)
+                    unit_str = sample_rate_match.group(0).lower()
+                    val = float(val_str)
+                    if 'khz' in unit_str:
+                        self.sample_rate = int(val * 1000)
+                    else:
+                        self.sample_rate = int(val)
+                except ValueError:
+                    pass
 
         # 2. Parse Artist/Title/Album if missing
         if not self.title or not self.artist:
@@ -152,6 +154,139 @@ class TrackResult(SearchResult):
                 if not self.album or self.album.lower() in ["unknown album", "unknown", ""]:
                     if parent_folder:
                         self.album = parent_folder
+
+
+def _is_raw_file_eligible(
+    raw_file: Dict[str, Any],
+    basic_filters: Optional[Dict[str, Any]] = None,
+    quality_profile: Optional[Dict[str, Any]] = None,
+    includes: Optional[List[str]] = None,
+    excludes: Optional[List[str]] = None,
+) -> bool:
+    """Zero-allocation gate checking raw JSON file descriptors prior to object creation."""
+    # 1. Reject locked files
+    if raw_file.get("isLocked") is True or raw_file.get("locked") is True or raw_file.get("is_locked") is True:
+        return False
+
+    filename = raw_file.get("filename", "")
+    if not filename:
+        return False
+
+    # 2. Extension check
+    file_ext = Path(filename).suffix.lower().lstrip(".")
+    audio_extensions = {'mp3', 'flac', 'ogg', 'aac', 'wma', 'wav', 'm4a', 'dsf', 'dff'}
+    if file_ext not in audio_extensions:
+        return False
+
+    allowed_extensions = basic_filters.get("allowed_extensions") if basic_filters else None
+    if allowed_extensions:
+        allowed_set = {e.lower().lstrip(".") for e in allowed_extensions}
+        if file_ext not in allowed_set:
+            return False
+
+    # 3. Reject duration deltas > tolerance
+    length_val = raw_file.get("length")
+    target_duration_ms = basic_filters.get("target_duration_ms") if basic_filters else None
+    duration_tolerance_ms = basic_filters.get("duration_tolerance_ms", 3000) if basic_filters else 3000
+    if length_val is not None and length_val != '' and target_duration_ms:
+        try:
+            duration_seconds = float(length_val)
+            target_seconds = float(target_duration_ms) / 1000.0
+            tol_seconds = float(duration_tolerance_ms) / 1000.0
+            if duration_seconds > 0 and abs(duration_seconds - target_seconds) > tol_seconds:
+                return False
+        except (ValueError, TypeError):
+            pass
+
+    # 4. Filter expression / includes / excludes check on raw filename
+    filter_expr = basic_filters.get("filter_expression") if basic_filters else None
+    if filter_expr and filter_expr.lower() not in filename.lower():
+        return False
+
+    if includes:
+        for inc in includes:
+            if isinstance(inc, str) and inc.strip() and inc.lower() not in filename.lower():
+                return False
+
+    if excludes:
+        for exc in excludes:
+            if isinstance(exc, str) and exc.strip() and exc.lower() in filename.lower():
+                return False
+
+    # 5. Format & Size verification across profile tiers
+    size_bytes = raw_file.get("size", 0) or 0
+    size_mb = size_bytes / (1024 * 1024) if size_bytes else 0
+
+    if quality_profile:
+        formats = quality_profile.get("formats", [])
+        if formats:
+            matching_tiers = [
+                f for f in formats
+                if (f.get("type") or f.get("format") or "").lower() == file_ext
+            ]
+            if matching_tiers:
+                tier_passed = False
+                for tier in matching_tiers:
+                    min_mb = tier.get("min_size_mb", 0)
+                    max_mb = tier.get("max_size_mb", 0)
+                    if min_mb and size_mb and size_mb < min_mb:
+                        continue
+                    if max_mb and size_mb and size_mb > max_mb:
+                        continue
+
+                    # Native bit depth check if present on raw_file
+                    raw_bd = raw_file.get("bitDepth") or raw_file.get("bit_depth")
+                    tier_bds = tier.get("bit_depths", [])
+                    if tier_bds and raw_bd is not None:
+                        if str(raw_bd).strip() not in [str(b).strip() for b in tier_bds]:
+                            continue
+
+                    # Native sample rate check if present on raw_file
+                    raw_sr = raw_file.get("sampleRate") or raw_file.get("sample_rate")
+                    tier_srs = tier.get("sample_rates", [])
+                    if tier_srs and raw_sr is not None:
+                        try:
+                            sr_val = float(raw_sr)
+                            sr_khz = f"{sr_val / 1000:.1f}".rstrip('0').rstrip('.')
+                            sr_hz = str(int(sr_val))
+                            allowed_sr = [str(s).strip().lower() for s in tier_srs]
+                            if sr_khz not in allowed_sr and sr_hz not in allowed_sr and str(int(sr_val)) not in allowed_sr:
+                                continue
+                        except (ValueError, TypeError):
+                            pass
+
+                    tier_passed = True
+                    break
+                if not tier_passed:
+                    return False
+
+        # Fake FLAC heuristic
+        if file_ext == "flac" and length_val and size_bytes:
+            try:
+                dur_sec = float(length_val)
+                if dur_sec > 0:
+                    advanced_filters = quality_profile.get("advanced_filters", {})
+                    fake_min_bps = int(advanced_filters.get("fake_flac_min_bytes_per_second", 70000))
+                    fake_min_kbps = int(advanced_filters.get("fake_flac_min_kbps", 500))
+                    approx_bps = size_bytes / dur_sec
+                    approx_kbps = (size_bytes * 8.0) / (dur_sec * 1000.0)
+                    if approx_bps < fake_min_bps or approx_kbps < fake_min_kbps:
+                        return False
+            except (ValueError, TypeError):
+                pass
+
+    # 6. Min bitrate check
+    min_bitrate = basic_filters.get("min_bitrate", 0) if basic_filters else 0
+    raw_bitrate = raw_file.get("bitRate") or raw_file.get("bitrate")
+    if min_bitrate > 0 and raw_bitrate:
+        try:
+            if int(raw_bitrate) < min_bitrate:
+                return False
+        except (ValueError, TypeError):
+            pass
+
+    return True
+
 
 class SlskdProvider(DownloaderProvider):
     """
@@ -411,22 +546,17 @@ class SlskdProvider(DownloaderProvider):
         responses_data: List[Dict[str, Any]],
         quality_profile: Optional[Dict[str, Any]] = None,
         cancel_event: Optional[Any] = None,
+        basic_filters: Optional[Dict[str, Any]] = None,
+        includes: Optional[List[str]] = None,
+        excludes: Optional[List[str]] = None,
     ) -> List[TrackResult]:
-        """Process search responses into TrackResult objects with provider-side pre-filtering.
+        """Process search responses into TrackResult objects with zero-allocation pre-filtering.
 
-        Provider-side pre-filtering is intentionally coarse and cheap. It rejects obviously
-        bad candidates (for example fake/transcoded FLACs) before they reach the Download
-        Manager and Matching Engine, reducing scoring overhead without moving orchestration
-        logic into the provider.
+        Provider-side pre-filtering directly inspects raw JSON file payloads. It rejects
+        locked files, duration outliers, tier bounds mismatches, and format criteria before
+        allocating Python domain objects or executing regex.
         """
         all_tracks = []
-
-        # Audio file extensions to filter for
-        audio_extensions = {'.mp3', '.flac', '.ogg', '.aac', '.wma', '.wav', '.m4a', '.dsf', '.dff'}
-
-        advanced_filters = (quality_profile or {}).get('advanced_filters', {}) if quality_profile else {}
-        fake_flac_min_bytes_per_second = int(advanced_filters.get('fake_flac_min_bytes_per_second', 70000))
-        fake_flac_min_kbps = int(advanced_filters.get('fake_flac_min_kbps', 500))
 
         index = 0
         for response_data in responses_data:
@@ -442,14 +572,18 @@ class SlskdProvider(DownloaderProvider):
                 if index % 500 == 0:
                     time.sleep(0.005)  # Yield GIL
 
+                if not _is_raw_file_eligible(
+                    file_data,
+                    basic_filters=basic_filters,
+                    quality_profile=quality_profile,
+                    includes=includes,
+                    excludes=excludes,
+                ):
+                    continue
+
                 filename = file_data.get('filename', '')
                 size = file_data.get('size', 0)
-
                 file_ext = Path(filename).suffix.lower().lstrip('.')
-
-                # Only process audio files
-                if f'.{file_ext}' not in audio_extensions:
-                    continue
 
                 # Normalize DSD extensions
                 if file_ext in ['dsf', 'dff']:
@@ -464,29 +598,14 @@ class SlskdProvider(DownloaderProvider):
                 duration_ms = None
                 try:
                     if length_val is not None and length_val != '':
-                        # Allow strings or numeric values (e.g. "245", 245.0)
                         duration_seconds = int(float(length_val))
                         duration_ms = duration_seconds * 1000
                 except Exception:
                     duration_ms = None
 
-                # Provider-side FLAC authenticity heuristic:
-                # Use simple size/duration bitrate math to reject likely fake transcodes.
-                if quality == 'flac' and duration_ms and duration_ms > 0 and size and size > 0:
-                    duration_seconds = duration_ms / 1000.0
-                    approx_bytes_per_second = size / duration_seconds
-                    approx_kbps = (size * 8.0) / (duration_seconds * 1000.0)
-                    if approx_bytes_per_second < fake_flac_min_bytes_per_second or approx_kbps < fake_flac_min_kbps:
-                        logger.debug(
-                            "Pre-filter rejected suspicious FLAC (likely transcode): %s "
-                            "bytes_per_second=%.0f threshold=%d approx_kbps=%.0f threshold=%d",
-                            filename,
-                            approx_bytes_per_second,
-                            fake_flac_min_bytes_per_second,
-                            approx_kbps,
-                            fake_flac_min_kbps,
-                        )
-                        continue
+                # Extract native bit_depth and sample_rate
+                bit_depth = file_data.get('bitDepth') or file_data.get('bit_depth')
+                sample_rate = file_data.get('sampleRate') or file_data.get('sample_rate')
 
                 # Create TrackResult (duration stored in milliseconds)
                 track = TrackResult(
@@ -496,6 +615,8 @@ class SlskdProvider(DownloaderProvider):
                     bitrate=file_data.get('bitRate'),
                     duration=duration_ms,
                     quality=quality,
+                    bit_depth=int(bit_depth) if bit_depth is not None else None,
+                    sample_rate=int(sample_rate) if sample_rate is not None else None,
                     free_upload_slots=response_data.get('freeUploadSlots', 0),
                     upload_speed=response_data.get('uploadSpeed', 0),
                     queue_length=response_data.get('queueLength', 0)
@@ -691,70 +812,33 @@ class SlskdProvider(DownloaderProvider):
             if not all_responses:
                 logger.info("Search complete but no responses received")
                 
-            # 3. Parse Results
-            track_results = self._process_search_responses(all_responses, quality_profile=quality_profile, cancel_event=cancel_event)
-            logger.info(f"Search yielded {len(track_results)} raw candidates")
+            # 3. Parse Results with Zero-Allocation Stream Pre-Filtering
+            track_results = self._process_search_responses(
+                all_responses,
+                quality_profile=quality_profile,
+                cancel_event=cancel_event,
+                basic_filters=basic_filters,
+                includes=includes,
+                excludes=excludes,
+            )
+            logger.info(f"Search yielded {len(track_results)} filtered candidates")
 
             if cancel_event and cancel_event.is_set():
                 return []
 
-            # 4. Apply Coarse Filters (Extensions, Min Bitrate, Duration)
+            # 4. Convert surviving TrackResult objects to EchosyncTrack
             valid_tracks = []
-            allowed_extensions = basic_filters.get('allowed_extensions') if basic_filters else None
-            min_bitrate = basic_filters.get('min_bitrate', 0) if basic_filters else 0
             for idx, tr in enumerate(track_results):
                 if cancel_event and cancel_event.is_set():
                     return []
                 if idx > 0 and idx % 500 == 0:
                     time.sleep(0.005)  # Yield GIL
 
-                # Extension Check
-                if allowed_extensions:
-                    ext = Path(tr.filename).suffix.lower().lstrip('.')
-                    if ext not in allowed_extensions:
-                        continue
-
-                # Bitrate Check (skip if None, assume okay or let MatchingEngine decide)
-                if min_bitrate > 0 and tr.bitrate and tr.bitrate < min_bitrate:
-                    continue
-                
-                # Convert to EchosyncTrack
                 echo_track = self._convert_to_echosync_track(tr)
                 if echo_track:
                     valid_tracks.append(echo_track)
 
-            logger.info(f"After coarse filtering: {len(valid_tracks)} candidates")
-
-            # Apply client-side includes / excludes text filter (for broad searches).
-            # 'includes' terms must ALL appear in the filename (AND semantics).
-            # 'excludes' terms cause the result to be dropped if ANY match (OR semantics).
-            if includes:
-                includes_lower = [t.lower() for t in includes if isinstance(t, str) and t.strip()]
-                if includes_lower:
-                    valid_tracks = [
-                        t for t in valid_tracks
-                        if all(
-                            inc in (t.media[0].file_path if getattr(t, 'media', None) and len(t.media) > 0 else (t.raw_title or "")).lower()
-                            for inc in includes_lower
-                        )
-                    ]
-                    logger.info(
-                        f"After includes filter {includes_lower!r}: {len(valid_tracks)} candidates"
-                    )
-            if excludes:
-                excludes_lower = [t.lower() for t in excludes if isinstance(t, str) and t.strip()]
-                if excludes_lower:
-                    valid_tracks = [
-                        t for t in valid_tracks
-                        if not any(
-                            exc in (t.media[0].file_path if getattr(t, 'media', None) and len(t.media) > 0 else (t.raw_title or "")).lower()
-                            for exc in excludes_lower
-                        )
-                    ]
-                    logger.info(
-                        f"After excludes filter {excludes_lower!r}: {len(valid_tracks)} candidates"
-                    )
-
+            logger.info(f"Total valid candidate tracks: {len(valid_tracks)}")
             return valid_tracks
 
         except Exception as e:

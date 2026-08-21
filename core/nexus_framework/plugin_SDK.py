@@ -1348,6 +1348,8 @@ class ProviderCapabilities:
             caps.append(Capability.FETCH_METADATA)
         if getattr(self, 'supports_isrc_lookup', False):
             caps.append(Capability.FETCH_BY_ISRC)
+        if getattr(self, 'supports_pre_filtering', False):
+            caps.append(Capability.CLIENT_PREFILTER)
         return caps
 
 class PlaylistSupport(Enum):

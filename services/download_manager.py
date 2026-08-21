@@ -15,7 +15,9 @@ Design Principle: "Central Control"
 """
 
 import asyncio
+from dataclasses import dataclass
 import inspect
+from core.enums import Capability
 from core.hook_manager import hook_manager
 import logging
 import re
@@ -26,7 +28,14 @@ from core.db.echo_sync_track import EchosyncTrack
 from core.matching_engine.matching_engine import WeightedMatchingEngine
 from core.matching_engine.scoring_profile import PROFILE_DOWNLOAD_SEARCH
 from core.matching_engine.track_parser import TrackParser
-from core.matching_engine.text_utils import normalize_artist, normalize_title, extract_version_info, extract_edition
+from core.matching_engine.text_utils import (
+    normalize_artist,
+    normalize_title,
+    extract_version_info,
+    extract_edition,
+    split_artist_collaborators,
+    sanitize_query_for_wire,
+)
 from core.settings import config_manager
 from time_utils import utc_now
 from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
@@ -36,22 +45,77 @@ from database.working_database import get_working_database, DownloadQueue
 
 logger = logging.getLogger("download_manager")
 
-# Strategy Precedence Weight Matrix
-STRATEGY_WEIGHTS: Dict[str, float] = {
-    "isrc": 1.00,
-    "strict_metadata": 0.95,
-    "artist+title": 0.95,
-    "album+title": 0.95,
-    "fuzzy_artist_title": 0.80,
-    "artist+broad+filter": 0.80,
-    "loose_title_duration": 0.60,
-    "title+strict-duration": 0.60,
-}
+@dataclass
+class SearchStrategyIntent:
+    id: str
+    name: str
+    strategy_type: str
+    wire_query: str
+    filter_expression: Optional[str] = None
+    includes: Optional[List[str]] = None
+    excludes: Optional[List[str]] = None
+    required_capability: Optional[Capability] = None
+    target_duration_ms: Optional[int] = None
+    duration_tolerance_ms: int = 3000
 
-def calculate_weighted_candidate_score(candidate_score: float, strategy: str) -> float:
-    """Apply strategy precedence weight to raw candidate matching score."""
-    weight = STRATEGY_WEIGHTS.get(strategy, 0.50)
-    return candidate_score * weight
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "id": self.id,
+            "name": self.name,
+            "strategy_type": self.strategy_type,
+            "query": self.wire_query,
+            "wire_query": self.wire_query,
+            "filter_expression": self.filter_expression,
+            "includes": self.includes,
+            "excludes": self.excludes,
+            "required_capability": self.required_capability,
+            "duration_tolerance_ms": self.duration_tolerance_ms,
+            "target_duration_ms": self.target_duration_ms,
+        }
+
+    def __getitem__(self, key: str) -> Any:
+        if key == "query":
+            return self.wire_query
+        return getattr(self, key)
+
+    def get(self, key: str, default: Any = None) -> Any:
+        if key == "query":
+            return self.wire_query
+        return getattr(self, key, default)
+
+
+def _provider_supports_capability(provider: Any, capability: Optional[Capability]) -> bool:
+    """Check if provider advertises the required capability."""
+    if capability is None:
+        return True
+    caps = getattr(provider, 'capabilities', None)
+    if hasattr(caps, 'to_enum_list') and callable(getattr(caps, 'to_enum_list')):
+        enum_list = caps.to_enum_list()
+        if isinstance(enum_list, list):
+            return capability in enum_list
+    if isinstance(caps, list):
+        return capability in caps
+    if hasattr(provider, 'supports_capability') and callable(getattr(provider, 'supports_capability')):
+        res = provider.supports_capability(capability)
+        if isinstance(res, bool):
+            return res
+    if capability == Capability.CLIENT_PREFILTER:
+        sup = getattr(provider, 'supports_pre_filtering', None)
+        if sup is not None and isinstance(sup, bool):
+            return sup
+        caps_sup = getattr(getattr(provider, 'capabilities', None), 'supports_pre_filtering', None)
+        if caps_sup is not None and isinstance(caps_sup, bool):
+            return caps_sup
+    if capability == Capability.FETCH_BY_ISRC:
+        sup = getattr(provider, 'supports_isrc', None)
+        if sup is not None and isinstance(sup, bool):
+            return sup
+        caps_sup = getattr(getattr(provider, 'capabilities', None), 'supports_isrc_lookup', None)
+        if caps_sup is not None and isinstance(caps_sup, bool):
+            return caps_sup
+    return False
+
+
 
 class DownloadManager:
     """
@@ -734,9 +798,24 @@ class DownloadManager:
                 logger.info(f"\n=== Provider {provider_idx}/{len(providers)}: {provider.name} ===")
                 provider_candidates = []
 
-                # Try all strategies for this provider
+                # Filter strategy ladder against this provider's capabilities
+                provider_strategies = [
+                    s for s in strategies
+                    if _provider_supports_capability(
+                        provider,
+                        getattr(s, 'required_capability', None) if not isinstance(s, dict) else s.get('required_capability')
+                    )
+                ]
+                logger.info(f"Provider {provider.name} supports {len(provider_strategies)}/{len(strategies)} strategies")
+                if not provider_strategies:
+                    logger.info(f"Provider {provider.name} supports none of the requested strategies, skipping...")
+                    continue
+
+                matcher = self._get_matching_engine(quality_profile)
+
+                # Try all supported strategies for this provider
                 sniper_winner: Optional[EchosyncTrack] = None
-                for strategy_idx, strategy in enumerate(strategies, 1):
+                for strategy_idx, strategy in enumerate(provider_strategies, 1):
                     # Cooperative Cancellation Check: terminate early if requested
                     try:
                         from core.task_manager.supervisor import supervisor as _sup
@@ -748,17 +827,20 @@ class DownloadManager:
                         self._update_status(download_id, "failed")
                         return
 
-                    query = strategy["query"]
-                    strategy_tolerance = strategy["duration_tolerance_ms"]
-                    strategy_name = strategy["name"]
-                    strategy_includes = strategy.get("includes")
-                    strategy_excludes = strategy.get("excludes")
+                    query = getattr(strategy, 'wire_query', None) or (strategy["query"] if isinstance(strategy, dict) else "")
+                    strategy_tolerance = getattr(strategy, 'duration_tolerance_ms', None) or (strategy["duration_tolerance_ms"] if isinstance(strategy, dict) else duration_tolerance_ms)
+                    strategy_name = getattr(strategy, 'name', None) or (strategy["name"] if isinstance(strategy, dict) else "")
+                    strategy_includes = getattr(strategy, 'includes', None) or (strategy.get("includes") if isinstance(strategy, dict) else None)
+                    strategy_excludes = getattr(strategy, 'excludes', None) or (strategy.get("excludes") if isinstance(strategy, dict) else None)
+                    strategy_filter_expr = getattr(strategy, 'filter_expression', None) or (strategy.get("filter_expression") if isinstance(strategy, dict) else None)
 
                     strategy_filters = dict(basic_filters)
                     strategy_filters["duration_tolerance_ms"] = strategy_tolerance
+                    if strategy_filter_expr:
+                        strategy_filters["filter_expression"] = strategy_filter_expr
 
                     logger.info(
-                        f"  Strategy {strategy_idx}/{len(strategies)} [{strategy_name}] "
+                        f"  Strategy {strategy_idx}/{len(provider_strategies)} [{strategy_name}] "
                         f"via {provider.name}: query='{query}'"
                     )
 
@@ -818,11 +900,30 @@ class DownloadManager:
                             if (pid and pid in blacklisted_candidates) or (comp_id and comp_id in blacklisted_candidates):
                                 logger.info(f"    Skipping blacklisted candidate '{pid}' from user '{username}'")
                                 continue
-                            c.identifiers['discovery_strategy'] = strategy.get('strategy_type') or strategy.get('name')
-                            c.identifiers['strategy_name'] = strategy.get('name')
+                            c.identifiers['discovery_strategy'] = getattr(strategy, 'strategy_type', None) or (strategy.get('strategy_type') if isinstance(strategy, dict) else None) or strategy_name
+                            c.identifiers['strategy_name'] = strategy_name
                             valid_results.append(c)
                         enriched_results = [self._enrich_candidate_metadata(c) for c in valid_results]
                         provider_candidates.extend(enriched_results)
+
+                        # Check early short-circuit conditions on candidate pool
+                        viable_matches = 0
+                        has_snipe_match = False
+                        for cand in enriched_results:
+                            match_res = matcher.calculate_match(target_track, cand)
+                            raw_score = match_res.confidence_score
+                            if raw_score >= perfect_match_threshold:
+                                has_snipe_match = True
+                            if raw_score >= 75.0:
+                                viable_matches += 1
+
+                        if has_snipe_match or viable_matches >= 3:
+                            logger.info(
+                                f"  ⚡ Early short-circuit: Strategy {strategy_idx} yielded viable candidates "
+                                f"(has_snipe={has_snipe_match}, viable_matches={viable_matches}) "
+                                f"— skipping remaining strategies on {provider.name}."
+                            )
+                            break
 
                 matcher = self._get_matching_engine(quality_profile)
 
@@ -833,16 +934,15 @@ class DownloadManager:
                     )
                     raw_score = match_result.confidence_score
                     strat = sniper_winner.identifiers.get('discovery_strategy') or sniper_winner.identifiers.get('strategy_name') or 'strict_metadata'
-                    provider_best_score = calculate_weighted_candidate_score(raw_score, strat)
                     logger.info(
-                        f"  Sniper winner confirmed: raw_score={raw_score:.1f}, weighted_score={provider_best_score:.1f} "
+                        f"  Sniper winner confirmed: raw_score={raw_score:.1f} "
                         f"from {provider.name} (strategy={strat})"
                     )
-                    if provider_best_score >= 70.0:
-                        scored_candidates.append((sniper_winner, provider_best_score, provider))
-                        scored_candidates.sort(key=lambda x: x[1], reverse=True)
+                    if raw_score >= 70.0:
+                        scored_candidates.append((sniper_winner, raw_score, provider))
+                        scored_candidates.sort(key=lambda x: (x[1], x[0].identifiers.get('free_upload_slots', 0)), reverse=True)
                         scored_candidates = scored_candidates[:3]
-                    if provider_best_score >= perfect_match_threshold:
+                    if raw_score >= perfect_match_threshold:
                         break  # Exit provider loop — perfect match secured
                     continue
 
@@ -867,30 +967,18 @@ class DownloadManager:
                     if not tier_candidates:
                         continue
 
-                    # Score candidates via WeightedMatchingEngine with Strategy Precedence Weighting
+                    # Score candidates via WeightedMatchingEngine on pure raw match merit
                     for candidate in tier_candidates:
                         match_result = matcher.calculate_match(target_track, candidate)
                         raw_score = match_result.confidence_score
-                        strat = candidate.identifiers.get('discovery_strategy') or candidate.identifiers.get('strategy_name') or 'strict_metadata'
-                        weighted_score = calculate_weighted_candidate_score(raw_score, strat)
 
-                        # Ensure quality/bitrate bonuses cannot override a higher-tier strategy
-                        # unless the lower-tier candidate meets strict artist/title normalization criteria.
-                        if strat in ("loose_title_duration", "title+strict-duration"):
-                            cand_artist = normalize_artist(candidate.artist_name or "")
-                            target_artist = normalize_artist(target_track.artist_name or "")
-                            cand_title = normalize_title(candidate.title or "")
-                            target_title = normalize_title(target_track.title or "")
-                            if not (cand_artist and target_artist and cand_artist == target_artist and cand_title == target_title):
-                                weighted_score = min(weighted_score, raw_score * 0.60)
-
-                        if weighted_score >= 70.0:
-                            scored_candidates.append((candidate, weighted_score, provider))
+                        if raw_score >= 70.0:
+                            scored_candidates.append((candidate, raw_score, provider))
                             found_in_tier = True
 
                     # Keep only Top-3 scoring candidates globally to bound memory utilization
                     if scored_candidates:
-                        scored_candidates.sort(key=lambda x: x[1], reverse=True)
+                        scored_candidates.sort(key=lambda x: (x[1], x[0].identifiers.get('free_upload_slots', 0)), reverse=True)
                         scored_candidates = scored_candidates[:3]
 
                     if found_in_tier:
@@ -1175,15 +1263,19 @@ class DownloadManager:
             except Exception as e:
                 logger.error(f"Error checking status for {db_id}: {e}")
 
-    def _generate_search_strategies(self, track: EchosyncTrack, base_duration_tolerance_ms: int) -> List[Dict[str, Any]]:
+    def _generate_search_strategies(self, track: EchosyncTrack, base_duration_tolerance_ms: int) -> List[SearchStrategyIntent]:
         """Generate ordered search fallback strategies with per-strategy duration tolerance.
 
-        Strategy order:
-        1) artist + title
-        2) album + title
-        3) title only with stricter duration tolerance
+        Progressive Strategy Ladder:
+        1. ISRC Lookup (Requires Capability.FETCH_BY_ISRC)
+        2. Strict Artist + Title (Universal Baseline)
+        3. Broad Artist + Filter Title (Requires Capability.CLIENT_PREFILTER)
+        4. Title + Filter Artist (Requires Capability.CLIENT_PREFILTER)
+        5. Collaborator + Filter Title (Requires Capability.CLIENT_PREFILTER)
+        6. Strict Album + Title (Universal Baseline)
+        7. Title + Strict Duration Window (Universal Baseline)
         """
-        strategies: List[Dict[str, Any]] = []
+        strategies: List[SearchStrategyIntent] = []
 
         # Build a core title for provider search by stripping bracketed/parenthetical
         # qualifiers, then applying standard normalization.
@@ -1191,66 +1283,119 @@ class DownloadManager:
         if search_title != track.title:
             logger.info(f"Normalized title for search: '{track.title}' -> '{search_title}'")
 
-        # Strategy 1 (ISRC / Strict GUID if available)
+        primary_artist, collaborators = split_artist_collaborators(track.artist_name)
+        wire_primary_artist = sanitize_query_for_wire(primary_artist or track.artist_name or "")
+        wire_search_title = sanitize_query_for_wire(search_title)
+        target_dur = track.duration if track.duration else None
+
+        # Strategy 1 (ISRC / Strict GUID if available - requires Capability.FETCH_BY_ISRC)
         if getattr(track, "isrc", None):
-            strategies.append({
-                "name": "isrc",
-                "strategy_type": "isrc",
-                "query": str(track.isrc).strip().upper(),
-                "duration_tolerance_ms": int(base_duration_tolerance_ms),
-            })
+            strategies.append(SearchStrategyIntent(
+                id="isrc",
+                name="isrc",
+                strategy_type="isrc",
+                wire_query=str(track.isrc).strip().upper(),
+                required_capability=Capability.FETCH_BY_ISRC,
+                target_duration_ms=target_dur,
+                duration_tolerance_ms=int(base_duration_tolerance_ms),
+            ))
 
-        # Strategy 2: Artist + Title (Strict Metadata)
-        if track.artist_name and search_title:
-            normalized_artist = normalize_artist(track.artist_name)
-            strategies.append({
-                "name": "artist+title",
-                "strategy_type": "strict_metadata",
-                "query": f"{normalized_artist} {search_title}",
-                "duration_tolerance_ms": int(base_duration_tolerance_ms),
-            })
+        # Strategy 2: Artist + Title (Strict Metadata - Universal Baseline)
+        if wire_primary_artist and wire_search_title:
+            strategies.append(SearchStrategyIntent(
+                id="artist+title",
+                name="artist+title",
+                strategy_type="strict_metadata",
+                wire_query=f"{wire_primary_artist} {wire_search_title}".strip(),
+                required_capability=None,
+                target_duration_ms=target_dur,
+                duration_tolerance_ms=int(base_duration_tolerance_ms),
+            ))
 
-        # Strategy 2b: Album + Title (Strict Metadata)
-        if track.album_title and search_title:
+        # Strategy 3: Artist broad + client-side title filter (Requires Capability.CLIENT_PREFILTER)
+        if wire_primary_artist and search_title:
+            strategies.append(SearchStrategyIntent(
+                id="artist+broad+filter",
+                name="artist+broad+filter",
+                strategy_type="fuzzy_artist_title",
+                wire_query=wire_primary_artist,
+                filter_expression=search_title,
+                includes=[search_title],
+                required_capability=Capability.CLIENT_PREFILTER,
+                target_duration_ms=target_dur,
+                duration_tolerance_ms=int(base_duration_tolerance_ms),
+            ))
+
+        # Strategy 4: Title + client-side artist filter (Requires Capability.CLIENT_PREFILTER)
+        if wire_search_title and wire_primary_artist:
+            strategies.append(SearchStrategyIntent(
+                id="title+filter_artist",
+                name="title+filter_artist",
+                strategy_type="fuzzy_artist_title",
+                wire_query=wire_search_title,
+                filter_expression=wire_primary_artist,
+                includes=[wire_primary_artist],
+                required_capability=Capability.CLIENT_PREFILTER,
+                target_duration_ms=target_dur,
+                duration_tolerance_ms=int(base_duration_tolerance_ms),
+            ))
+
+        # Strategy 5: Collaborator + client-side title filter (Requires Capability.CLIENT_PREFILTER)
+        for idx, collab in enumerate(collaborators, 1):
+            wire_collab = sanitize_query_for_wire(collab)
+            if wire_collab and search_title:
+                strategies.append(SearchStrategyIntent(
+                    id=f"collab+filter_title_{idx}",
+                    name="collab+filter_title",
+                    strategy_type="fuzzy_artist_title",
+                    wire_query=wire_collab,
+                    filter_expression=search_title,
+                    includes=[search_title],
+                    required_capability=Capability.CLIENT_PREFILTER,
+                    target_duration_ms=target_dur,
+                    duration_tolerance_ms=int(base_duration_tolerance_ms),
+                ))
+
+        # Strategy 6: Album + Title (Strict Metadata - Universal Baseline)
+        if track.album_title and wire_search_title:
             from core.matching_engine.text_utils import normalize_album
             normalized_album = normalize_album(track.album_title)
-            if normalized_album and normalized_album != search_title:
-                strategies.append({
-                    "name": "album+title",
-                    "strategy_type": "strict_metadata",
-                    "query": f"{normalized_album} {search_title}",
-                    "duration_tolerance_ms": int(base_duration_tolerance_ms),
-                })
+            wire_album = sanitize_query_for_wire(normalized_album)
+            if wire_album and wire_album.lower() != wire_search_title.lower():
+                strategies.append(SearchStrategyIntent(
+                    id="album+title",
+                    name="album+title",
+                    strategy_type="strict_metadata",
+                    wire_query=f"{wire_album} {wire_search_title}".strip(),
+                    required_capability=None,
+                    target_duration_ms=target_dur,
+                    duration_tolerance_ms=int(base_duration_tolerance_ms),
+                ))
 
-        # Strategy 3: Artist broad + client-side title filter (Fuzzy Artist + Title + Duration)
-        if track.artist_name and search_title:
-            normalized_artist = normalize_artist(track.artist_name)
-            strategies.append({
-                "name": "artist+broad+filter",
-                "strategy_type": "fuzzy_artist_title",
-                "query": normalized_artist,
-                "duration_tolerance_ms": int(base_duration_tolerance_ms),
-                "includes": [search_title],   # enforced client-side by the provider adapter
-            })
-
-        # Strategy 4: Title only + stricter duration window (Loose Title + Duration)
-        if search_title:
+        # Strategy 7: Title only + stricter duration window (Loose Title + Duration - Universal Baseline)
+        if wire_search_title:
             stricter_tolerance = max(1000, int(base_duration_tolerance_ms * 0.5))
-            strategies.append({
-                "name": "title+strict-duration",
-                "strategy_type": "loose_title_duration",
-                "query": search_title,
-                "duration_tolerance_ms": stricter_tolerance,
-            })
+            strategies.append(SearchStrategyIntent(
+                id="title+strict-duration",
+                name="title+strict-duration",
+                strategy_type="loose_title_duration",
+                wire_query=wire_search_title,
+                required_capability=None,
+                target_duration_ms=target_dur,
+                duration_tolerance_ms=stricter_tolerance,
+            ))
 
-        # De-duplicate by normalized query while preserving order and strategy metadata
-        unique: List[Dict[str, Any]] = []
-        seen_queries = set()
+        # De-duplicate by (normalized query, required_capability, strategy_name) while preserving order
+        unique: List[SearchStrategyIntent] = []
+        seen_keys = set()
         for strategy in strategies:
-            key = (strategy.get("query") or "").strip().lower()
-            if key and key not in seen_queries:
+            query_str = getattr(strategy, 'wire_query', None) or (strategy.get("query") if isinstance(strategy, dict) else "")
+            req_cap = getattr(strategy, 'required_capability', None) if not isinstance(strategy, dict) else strategy.get('required_capability')
+            strat_name = getattr(strategy, 'name', None) if not isinstance(strategy, dict) else strategy.get('name')
+            key = ((query_str or "").strip().lower(), req_cap, strat_name)
+            if key and key not in seen_keys:
                 unique.append(strategy)
-                seen_queries.add(key)
+                seen_keys.add(key)
 
         return unique
 
