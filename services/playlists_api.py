@@ -16,6 +16,8 @@ from core.matching_engine.text_utils import (
     normalize_title,
     normalize_track_comparison_fields,
     split_artist_collaborators,
+    _OST_SAFE_RE,
+    _cmp_titles,
 )
 from core.tiered_logger import get_logger
 
@@ -44,10 +46,10 @@ def normalize_artist_for_search(artist: str) -> str:
 
 
 def sanitize_title_for_comparison(title: str) -> str:
-    """Strip remaster suffixes from title before comparison."""
+    """Strip remaster, remix, and version suffixes from title before comparison."""
     if not title:
         return ""
-    return REMASTER_STRIP_REGEX.sub("", title).strip()
+    return normalize_title(title) or REMASTER_STRIP_REGEX.sub("", title).strip()
 
 
 def get_library_candidates(session: Session, target_title: str, target_artist: str) -> List[Track]:

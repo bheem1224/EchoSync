@@ -103,6 +103,70 @@ _NORM_PROMO_EVENT_RE = re.compile(
     r'\s*[-–—]\s*(?:(?:The\s+)?Official\s+.*?(?:Song|Theme).*?|.*?Anthem.*?|From\s+(?:the\s+)?(?:series|soundtrack|film|movie).*?)(?=$|\s*[\(\[])',
     flags=re.IGNORECASE
 )
+_NORM_VERSION_DASH_RE = re.compile(
+    r'\s*[-–—]\s*(?:.*?\b(?:remix|rmx|bootleg|remaster(?:ed)?|deluxe(?:\s+edition)?|radio(?:\s+edit|\s+version|\s+mix)?|single(?:\s+version|\s+edit)?|extended(?:\s+mix|\s+version)?|club(?:\s+mix|\s+version)?|acoustic|piano|live|instrumental|soundtrack|ost)\b.*)$',
+    flags=re.IGNORECASE
+)
+
+_OST_SAFE_RE = re.compile(
+    r'^(?:'
+    r'\s'                                            # whitespace between tokens
+    r'|电视剧|网剧|影视剧|影視劇|电影'              # drama-type classifiers
+    r'|片头曲|片尾曲|主题曲|插曲|推广曲'             # song-role labels
+    r'|原声带|原声|配乐'                              # soundtrack labels
+    r'|ost|theme|opening|ending|soundtrack|original'  # English equivalents (original set)
+    r'|remastered|remaster'                          # remaster suffix variants
+    r'|acoustic|live'                                # performance/recording type
+    r'|radio|single|extended|club'                   # release format descriptors
+    r'|version|edit|mix|remix|bootleg'               # common music metadata
+    r'|official|song|shanty'                         # descriptor words
+    r'|sea|uefa|euro|anthem|from|la'                 # expanded descriptor words
+    r'|deluxe'                                       # edition descriptor
+    r'|pt|part|vol|volume'                           # part indicators
+    r'|viii|vii|iii|iv|vi|ix|ii|i|x'                 # Roman numerals (longest first)
+    r'|gabry|ponte|ice|pop'                          # common edit descriptors
+    r'|\d'                                           # digits for years / track numbers (2013, 2024, 1, 2)
+    r')+$',
+    re.IGNORECASE | re.UNICODE,
+)
+
+
+def _cmp_titles(
+    a: str,
+    b: str,
+    context_score: float = 0.0,
+    drama_ctx: bool = False,
+) -> float:
+    """Lightweight title similarity score (0–1), matching the engine's _fuzzy_match logic.
+
+    Lowercases, strips non-word/non-space characters, collapses whitespace, then runs
+    SequenceMatcher.  Used to pick the best candidate title or alias before scoring.
+    """
+    from difflib import SequenceMatcher
+    def _n(s: str) -> str:
+        s = s.lower()
+        s = re.sub(r'[^\w\s]', '', s)
+        return ' '.join(s.split())
+
+    a_n, b_n = _n(a), _n(b)
+    if not a_n or not b_n:
+        return 0.0
+    ratio = SequenceMatcher(None, a_n, b_n).ratio()
+
+    # ── Semantic Substring Failsafe ───────────────────────────────────────────
+    if ratio < 0.90 and (context_score >= 0.80 or drama_ctx):
+        shorter, longer = (a_n, b_n) if len(a_n) <= len(b_n) else (b_n, a_n)
+        if len(shorter) >= 3 and re.search(
+            r'(?<![\w])' + re.escape(shorter) + r'(?![\w])', longer
+        ):
+            delta_raw = re.sub(r'(?<![\w])' + re.escape(shorter) + r'(?![\w])', '', longer, count=1)
+            delta_words = re.sub(r'[^\w]', '', delta_raw, flags=re.UNICODE)
+            if not delta_words:
+                ratio = 0.95
+            elif _OST_SAFE_RE.match(delta_words):
+                ratio = 0.95
+
+    return ratio
 
 
 def normalize_chars(text: Optional[str]) -> str:
@@ -289,6 +353,9 @@ def normalize_title(title: Optional[str], plugin_context: Optional[Dict[str, Any
 
     # Remove promotional descriptors and event anthem suffixes (e.g. Official UEFA EURO 2024 Song, Coca-Cola® Anthem)
     normalized = _NORM_PROMO_EVENT_RE.sub('', normalized)
+
+    # Remove hyphen-delimited version / remix / remaster suffixes (e.g. - Mellen Gi Remix, - 2013 Remaster, - Radio Edit)
+    normalized = _NORM_VERSION_DASH_RE.sub('', normalized)
 
     # Strip ASCII-bracketed content that survived (e.g. version/edit labels).
     # CJK brackets are intentionally preserved — the CJK plugin reads them via

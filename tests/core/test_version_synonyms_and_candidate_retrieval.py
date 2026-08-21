@@ -140,6 +140,45 @@ def test_remaster_title_sanitization_tier2():
     assert "Title exact match" in res.reasoning
 
 
+def test_remix_subtype_equivalence_and_families():
+    from core.matching_engine.matching_engine import evaluate_version_compatibility
+
+    # Generic 'Remix' vs specific remix names
+    assert evaluate_version_compatibility("Remix", "Seeb Remix")[0] is True
+    assert evaluate_version_compatibility("Remix", "dotEXE remix")[0] is True
+    assert evaluate_version_compatibility("Remix", "Mellen Gi & Tommee Profitt Remix")[0] is True
+    assert evaluate_version_compatibility("Mellen Gi Remix", "Tommee Profitt Remix")[0] is True
+
+    # Piano Version vs Piano
+    assert evaluate_version_compatibility("Piano Version", "Piano")[0] is True
+    assert evaluate_version_compatibility("Piano", "Acoustic")[0] is True
+
+    # Year Remaster vs Remastered
+    assert evaluate_version_compatibility("2013 Remaster", "Remastered")[0] is True
+
+
+def test_tier2_title_sanitization_remix_inputs():
+    profile = ExactSyncProfile()
+    engine = WeightedMatchingEngine(profile)
+
+    source = EchosyncTrack(
+        raw_title="In the End - Mellen Gi Remix",
+        artist_name="Unknown Artist",
+        album_title="In the End",
+        duration=218000,
+    )
+    candidate = EchosyncTrack(
+        raw_title="In the End",
+        artist_name="Linkin Park",
+        album_title="Hybrid Theory",
+        duration=218500,
+    )
+
+    res = engine.calculate_title_duration_match(source, candidate)
+    assert res.confidence_score >= 90.0
+    assert "Title exact match" in res.reasoning
+
+
 def test_subtitle_descriptor_failsafe_tokens():
     # Descriptors like Sea Shanty, UEFA EURO 2024 Song, Soundtrack, From "...", etc.
     score_shanty = _cmp_titles("Wellerman", "Wellerman - Sea Shanty", context_score=0.95)
@@ -150,6 +189,19 @@ def test_subtitle_descriptor_failsafe_tokens():
 
     score_soundtrack = _cmp_titles("Theme", "Theme (Original Soundtrack Version)", context_score=0.95)
     assert score_soundtrack >= 0.90
+
+    # Part indicators & edit descriptors
+    score_pt2 = _cmp_titles("Title", "Title Pt II", context_score=0.95)
+    assert score_pt2 >= 0.90
+
+    score_part1 = _cmp_titles("Title", "Title Part 1", context_score=0.95)
+    assert score_part1 >= 0.90
+
+    score_vol1 = _cmp_titles("Title", "Title Vol 1", context_score=0.95)
+    assert score_vol1 >= 0.90
+
+    score_gabry = _cmp_titles("Blue (Da Ba Dee)", "Blue (Da Ba Dee) - Gabry Ponte Ice Pop Radio Edit", context_score=0.95)
+    assert score_gabry >= 0.90
 
 
 def test_get_library_candidates_multi_retention_and_various_artists():

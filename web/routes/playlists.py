@@ -79,12 +79,15 @@ _OST_SAFE_RE = re.compile(
     # \d covers year tokens (2013, 2024) and track numbers.
     r'|remastered|remaster'                          # remaster suffix variants
     r'|acoustic|live'                                # performance/recording type
-    r'|radio|single'                                 # release format descriptors
-    r'|version|edit|mix'                             # common music metadata
+    r'|radio|single|extended|club'                   # release format descriptors
+    r'|version|edit|mix|remix|bootleg'               # common music metadata
     r'|official|song|shanty'                         # descriptor words
     r'|sea|uefa|euro|anthem|from|la'                 # expanded descriptor words: sea shanty, euro 2024, from "...", la la la, anthem
     r'|deluxe'                                       # edition descriptor
-    r'|\d'                                           # digits for years / track numbers (2013, 2024)
+    r'|pt|part|vol|volume'                           # part indicators
+    r'|viii|vii|iii|iv|vi|ix|ii|i|x'                 # Roman numerals (longest first)
+    r'|gabry|ponte|ice|pop'                          # common edit descriptors
+    r'|\d'                                           # digits for years / track numbers (2013, 2024, 1, 2)
     r')+$',
     re.IGNORECASE | re.UNICODE,
 )
@@ -970,6 +973,13 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                         near_miss_candidate_id = None
 
                         if track_duration:
+                            # Sanitize source title for Tier 2 rescoring (strip remix/version/descriptor noise)
+                            from core.matching_engine.text_utils import normalize_title
+                            clean_t2_source_title = normalize_title(source_track.raw_title or source_track.title or "")
+                            if clean_t2_source_title:
+                                source_track.title = clean_t2_source_title
+                            t2_search_title = clean_t2_source_title or search_title
+
                             # Escalation Tier 2: widen to ±10000ms — wider than the engine's
                             # 8500ms Artist Match Duration Escalation ceiling so a confident
                             # artist match is never blocked at the SQL layer. Python scoring
@@ -981,7 +991,7 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
 
                             with db.engine.connect() as tier2_conn:
                                 candidates = _fetch_tier2_candidates(
-                                    tier2_conn, search_title, track_duration,
+                                    tier2_conn, t2_search_title, track_duration,
                                     sql_duration_tolerance_ms,
                                 )
 

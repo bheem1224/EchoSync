@@ -77,6 +77,42 @@ REMASTER_STRIP_REGEX = re.compile(
 )
 
 
+def get_version_family(version_str: Optional[str]) -> Optional[str]:
+    """
+    Extract canonical version family for a version/edition string.
+    Maps specific variants (e.g. 'Seeb Remix', 'Mellen Gi Remix', '2013 Remaster', 'Piano Version')
+    to their base version family ('remix', 'remaster', 'piano', 'deluxe', 'radio_single', 'extended_club', etc.).
+    """
+    if not version_str:
+        return None
+    v = version_str.lower().strip()
+    if not v:
+        return None
+
+    if "remix" in v or "rmx" in v or "bootleg" in v:
+        return "remix"
+    if "remaster" in v:
+        return "remaster"
+    if "piano" in v or "acoustic" in v or "unplugged" in v:
+        return "piano"
+    if "deluxe" in v:
+        return "deluxe"
+    if "radio" in v or "single" in v or "edit" in v:
+        return "radio_single"
+    if "extended" in v or "club" in v:
+        return "extended_club"
+    if "live" in v:
+        return "live"
+    if "instrumental" in v:
+        return "instrumental"
+    if "acapella" in v or "a cappella" in v:
+        return "acapella"
+    if "clean" in v or "edited" in v or "censored" in v:
+        return "clean"
+
+    return v
+
+
 def evaluate_version_compatibility(
     source_version: Optional[str],
     candidate_version: Optional[str],
@@ -90,6 +126,7 @@ def evaluate_version_compatibility(
     - Deluxe Edition penalty: -1.0 (preferred over remasters since audio master is identical).
     - Remaster penalty: -2.5 (applied in 'sync' context only).
     - In 'download' context: Allow Deluxe (-1.0); strictly REJECT Remaster if original was requested.
+    - Remix Equivalence: If both sides specify a remix (or generic 'Remix'), treat as compatible with 0.0 penalty.
     """
     src_v = (source_version or "").strip()
     cand_v = (candidate_version or "").strip()
@@ -104,23 +141,26 @@ def evaluate_version_compatibility(
     if src_lower == cand_lower:
         return True, 0.0, f"Exact version match: '{src_v}'"
 
-    is_cand_deluxe = bool(re.search(r'\b(?:deluxe(?:\s+edition)?)\b', cand_lower))
-    is_cand_remaster = bool(re.search(r'\b(?:remaster(?:ed)?|\d{4}\s+remaster)\b', cand_lower))
-    is_src_deluxe = bool(re.search(r'\b(?:deluxe(?:\s+edition)?)\b', src_lower))
-    is_src_remaster = bool(re.search(r'\b(?:remaster(?:ed)?|\d{4}\s+remaster)\b', src_lower))
+    src_fam = get_version_family(source_version)
+    cand_fam = get_version_family(candidate_version)
+
+    # If both belong to the same version family (e.g. both remix, both piano, both radio_single, etc.)
+    if src_fam and cand_fam and src_fam == cand_fam:
+        return True, 0.0, f"Version family match ({src_fam}): '{src_v}' ≡ '{cand_v}'"
 
     # Source has no edition (Original cut requested)
-    if not src_lower:
-        unwanted_versions = frozenset({'remix', 'live', 'acoustic', 'instrumental', 'demo', 'radio edit', 'club', 'clean', 'edited', 'censored'})
-        if any(unwanted in cand_lower for unwanted in unwanted_versions):
-            return False, 0.0, f"Source requested original but candidate is '{cand_v}' (version mismatch)"
+    if not src_fam:
+        # Check unwanted variants: remix, live, instrumental, clean, etc.
+        unwanted_families = frozenset({'remix', 'live', 'instrumental', 'clean', 'acapella'})
+        if cand_fam in unwanted_families:
+            return False, 0.0, f"Source requested original but candidate is '{cand_v}' (version family: {cand_fam})"
 
-        if is_cand_deluxe:
+        if cand_fam == "deluxe":
             if duration_delta_ms is not None and duration_delta_ms > 10000:
                 return False, 0.0, f"Deluxe Edition duration mismatch ({duration_delta_ms}ms > 10000ms)"
             return True, 1.0, f"Candidate is Deluxe Edition fallback ({context} mode, -1.0 penalty)"
 
-        if is_cand_remaster:
+        if cand_fam == "remaster":
             if context == "download":
                 return False, 0.0, "Strict fidelity on downloads: Remastered candidate rejected when original requested"
             # context == "sync"
@@ -131,63 +171,34 @@ def evaluate_version_compatibility(
         return True, 0.0, f"Candidate edition '{cand_v}' accepted"
 
     # Candidate has no version but source specified one
-    if not cand_lower and src_lower:
+    if not cand_fam and src_fam:
         return True, 0.0, "Candidate has no version info (might be original cut)"
-
-    # Version synonyms check (e.g. Piano Version vs Acoustic vs Piano, Radio Edit vs Radio Version vs Single Version)
-    _VERSION_SYNONYMS = {
-        'piano': 'acoustic_piano',
-        'piano version': 'acoustic_piano',
-        'piano mix': 'acoustic_piano',
-        'acoustic': 'acoustic_piano',
-        'acoustic version': 'acoustic_piano',
-        'unplugged': 'acoustic_piano',
-
-        'radio edit': 'radio_single',
-        'radio version': 'radio_single',
-        'radio mix': 'radio_single',
-        'single version': 'radio_single',
-        'single edit': 'radio_single',
-
-        'extended': 'extended_club',
-        'extended mix': 'extended_club',
-        'extended version': 'extended_club',
-        'club mix': 'extended_club',
-        'club version': 'extended_club',
-
-        'remaster': 'remaster',
-        'remastered': 'remaster',
-        'deluxe': 'deluxe',
-        'deluxe edition': 'deluxe',
-    }
-    src_syn = _VERSION_SYNONYMS.get(src_lower)
-    cand_syn = _VERSION_SYNONYMS.get(cand_lower)
-    if src_syn and cand_syn and src_syn == cand_syn:
-        return True, 0.0, f"Version synonyms match: '{src_v}' ≡ '{cand_v}'"
-
-    # Both tracks share same edition family
-    if (is_src_deluxe and is_cand_deluxe) or (is_src_remaster and is_cand_remaster):
-        return True, 0.0, f"Both tracks share edition family: '{src_v}' vs '{cand_v}'"
-
-    # Check clean vs explicit
-    clean_keywords = frozenset({'clean', 'edited', 'censored'})
-    if any(c in cand_lower for c in clean_keywords) and not any(c in src_lower for c in clean_keywords):
-        return False, 0.0, f"Candidate is clean/edited ('{cand_v}') while source is original/explicit"
 
     return False, 0.0, f"Version mismatch: '{src_v}' vs '{cand_v}'"
 
 
 def sanitize_title_for_comparison(title: str) -> str:
-    """Strip remaster suffixes from title before computing equality or fuzzy comparison."""
+    """Strip remaster, remix, and version suffixes from title before computing equality or fuzzy comparison."""
     if not title:
         return ""
-    return REMASTER_STRIP_REGEX.sub("", title).strip()
+    from core.matching_engine.text_utils import normalize_title
+    return normalize_title(title)
 
 
 class WeightedMatchingEngine:
     """
     Core weighted matching engine implementing 5-step gating logic
     """
+
+    @staticmethod
+    def sanitize_title_for_comparison(title: str) -> str:
+        return sanitize_title_for_comparison(title)
+
+    @staticmethod
+    def _normalize_string_for_comparison(s: str) -> str:
+        if not s:
+            return ""
+        return re.sub(r'[\s\W_]+', '', s, flags=re.UNICODE).lower()
 
     @staticmethod
     def is_valid_isrc(isrc_string: str) -> bool:
