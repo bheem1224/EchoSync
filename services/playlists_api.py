@@ -79,7 +79,7 @@ def check_cover_rejection(source_title: str, source_artist: str, candidate_diagn
         if t_sim >= 0.90:
             art_sim = _cmp_artists(source_artist, cand_artist)
             reasoning = cand_diag.get("reasoning", "")
-            if art_sim == 0.0 or "Artist boundary mismatch" in reasoning:
+            if art_sim < 0.60 or "Artist boundary mismatch" in reasoning:
                 return True
                 
     return False

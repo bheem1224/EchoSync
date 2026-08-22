@@ -257,14 +257,20 @@ def _cmp_titles(
     return ratio
 
 
+_TRIBUTE_DELTA_TOKENS = {
+    "tribute", "tribute band", "cover band", "karaoke", 
+    "sound-alike", "soundalike", "parody", "style of", "in the style of",
+    "celebration", "orchestra", "instrumental version", "piano tribute"
+}
+
+
 def _cmp_artists(a: str, b: str) -> float:
-    """Artist similarity score (0–1) with substring-containment boost.
+    """Artist similarity score (0–1) with hardened substring-containment boost.
 
     Normalises both strings identically to _cmp_titles, then returns the
     SequenceMatcher ratio OR 0.95 (whichever is higher) when one normalised
-    form is fully contained in the other.  The 0.95 floor handles credit-group
-    names like '摩登兄弟刘宇宁' vs '刘宇宁' and romanisation variants like
-    'Zhou Shen' (alias) vs '周深' (primary), without conflating unrelated artists.
+    form is fully contained in the other, UNLESS the delta difference contains
+    tribute/cover/karaoke qualifiers (e.g. 'The Maroon 5 Tribute Band' vs 'Maroon 5').
     """
     def _n(s: str) -> str:
         s = s.lower()
@@ -274,10 +280,23 @@ def _cmp_artists(a: str, b: str) -> float:
     a_n, b_n = _n(a), _n(b)
     if not a_n or not b_n:
         return 0.0
+    if a_n == b_n:
+        return 1.0
+
     ratio = SequenceMatcher(None, a_n, b_n).ratio()
-    # Substring containment: one name is fully inside the other — very likely the same artist.
     if a_n in b_n or b_n in a_n:
-        return max(ratio, 0.95)
+        shorter, longer = (a_n, b_n) if len(a_n) < len(b_n) else (b_n, a_n)
+        delta = re.sub(r'(?<![\w])' + re.escape(shorter) + r'(?![\w])', '', longer).strip()
+        delta_lower = delta.lower()
+        delta_tokens = set(re.findall(r'\b\w+\b', delta_lower))
+
+        has_tribute = any(
+            t in delta_lower or t in delta_tokens
+            for t in _TRIBUTE_DELTA_TOKENS
+        )
+        if not has_tribute:
+            return max(ratio, 0.95)
+
     return ratio
 
 

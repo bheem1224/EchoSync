@@ -198,3 +198,110 @@ def test_tier2_escalation_blocked_on_distinct_artist_cover():
     )
     assert is_cover_rejected is True
 
+
+def test_girls_like_you_cardi_b_version_matches_library_cut():
+    """Verify that 'Girls Like You - Cardi B Version' (3:55) matches local 'Girls Like You' (feat. Cardi B, 3:55)."""
+    engine = WeightedMatchingEngine(ExactSyncProfile())
+
+    source = EchosyncTrack(
+        raw_title="Girls Like You - Cardi B Version",
+        artist_name="Maroon 5",
+        album_title="Girls Like You",
+        duration=235545,  # 3:55
+        edition="Cardi B Version",
+    )
+    candidate = EchosyncTrack(
+        raw_title="Girls Like You",
+        artist_name="Maroon 5 feat. Cardi B",
+        album_title="Girls Like You",
+        duration=235545,  # 3:55
+    )
+
+    result = engine.calculate_match(source, candidate)
+    assert result.passed_version_check is True
+    assert result.confidence_score >= 85.0
+
+
+def test_single_version_studio_release_equivalence():
+    """Verify that 'All The Things She Said' matches 'All The Things She Said (Single Version)' when durations align."""
+    engine = WeightedMatchingEngine(ExactSyncProfile())
+
+    source = EchosyncTrack(
+        raw_title="All The Things She Said",
+        artist_name="t.A.T.u.",
+        album_title="200 km/h in the Wrong Lane",
+        duration=214440,
+    )
+    candidate = EchosyncTrack(
+        raw_title="All The Things She Said",
+        artist_name="t.A.T.u.",
+        album_title="200 km/h in the Wrong Lane",
+        duration=214440,
+        edition="Single Version",
+    )
+
+    result = engine.calculate_match(source, candidate)
+    assert result.passed_version_check is True
+    assert result.confidence_score >= 85.0
+
+
+def test_tribute_band_substring_rejection():
+    """Verify that 'Maroon 5' vs 'The Maroon 5 Tribute Band' does not receive containment boost and fails matching."""
+    from core.matching_engine.text_utils import _cmp_artists
+    engine = WeightedMatchingEngine(ExactSyncProfile())
+
+    art_score = _cmp_artists("Maroon 5", "The Maroon 5 Tribute Band")
+    assert art_score < 0.50
+
+    source = EchosyncTrack(
+        raw_title="Sugar",
+        artist_name="Maroon 5",
+        album_title="V",
+        duration=235000,
+    )
+    candidate = EchosyncTrack(
+        raw_title="Sugar",
+        artist_name="The Maroon 5 Tribute Band",
+        album_title="Tribute to Maroon 5",
+        duration=235000,
+    )
+
+    result = engine.calculate_match(source, candidate)
+    assert result.confidence_score == 0.0
+
+
+def test_compilation_soundtrack_performer_resolution():
+    """Verify that 'This Is Me' by 'Keala Settle' matches a track on a 'Various Artists' soundtrack album."""
+    engine = WeightedMatchingEngine(ExactSyncProfile())
+
+    source = EchosyncTrack(
+        raw_title="This Is Me",
+        artist_name="Keala Settle",
+        album_title="The Greatest Showman (Original Motion Picture Soundtrack)",
+        duration=234000,
+    )
+    candidate = EchosyncTrack(
+        raw_title="This Is Me",
+        artist_name="Various Artists",
+        album_title="The Greatest Showman (Original Motion Picture Soundtrack)",
+        album_artist="Various Artists",
+        duration=234000,
+    )
+
+    result = engine.calculate_match(source, candidate)
+    assert result.passed_version_check is True
+    assert result.confidence_score >= 85.0
+
+
+def test_recursive_stacked_parenthetical_decomposition():
+    """Verify that complex stacked parentheticals decompose cleanly into title, collaborators, soundtrack, and version."""
+    from core.matching_engine.text_utils import decompose_complex_title
+
+    raw = 'Rewrite The Stars (feat. Anne-Marie) [From "The Greatest Showman: Reimagined"] (Radio Edit)'
+    parsed = decompose_complex_title(raw)
+
+    assert parsed["clean_title"] == "Rewrite The Stars"
+    assert "Anne-Marie" in parsed["collaborators"]
+    assert "The Greatest Showman: Reimagined" in parsed["soundtrack"]
+    assert parsed["version"] == "Radio Edit"
+

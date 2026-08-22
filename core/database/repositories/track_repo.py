@@ -141,6 +141,11 @@ class TrackRepository:
             else:
                 t._raw_artist_tokens = ["Unknown Artist"]
 
+            # Also ensure album_artist (TPE2) is collected if present
+            alb_art = getattr(t, "album_artist", None)
+            if alb_art and alb_art.strip() and alb_art.strip().lower() != "unknown artist":
+                all_atomic_artist_names.add(alb_art.strip())
+
         artist_map = {}  # lower name -> artist_id
         if all_atomic_artist_names:
             existing_artists = session.query(Artist).filter(
@@ -179,15 +184,24 @@ class TrackRepository:
             t._resolved_artist_associations = associations
 
         # ── Step 0b: Batch Resolve & Upsert Albums ────────────────────────────
-        album_pairs = set()  # (album_title, artist_id)
+        # Decouple TPE1 (performer) from TPE2 (album artist / compilation).
+        # For compilation albums (e.g. "Various Artists"), Album.artist_id attaches to
+        # the compilation artist entity while Track.artist_id remains the track performer.
+        album_pairs = set()  # (album_title, album_artist_id)
         for t in tracks:
-            artist_id = getattr(t, "artist_id", None) or default_artist_id
+            alb_art = getattr(t, "album_artist", None)
+            if alb_art and alb_art.strip():
+                album_artist_id = artist_map.get(alb_art.strip().lower(), t.artist_id)
+            else:
+                album_artist_id = getattr(t, "artist_id", None) or default_artist_id
+
+            t._resolved_album_artist_id = album_artist_id
             alb = getattr(t, "album_title", None) or getattr(t, "album", None)
             if alb and alb.strip():
                 alb_clean = alb.strip()
-                album_pairs.add((alb_clean, artist_id))
+                album_pairs.add((alb_clean, album_artist_id))
 
-        album_map = {}  # (album_title.lower(), artist_id) -> album_id
+        album_map = {}  # (album_title.lower(), album_artist_id) -> album_id
         if album_pairs:
             all_album_titles = list({pair[0] for pair in album_pairs})
             all_artist_ids = list({pair[1] for pair in album_pairs})
@@ -213,7 +227,9 @@ class TrackRepository:
 
         # Update track objects with resolved IDs
         for t in tracks:
-            t.album_id = album_map.get((getattr(t, "album_title", None) or getattr(t, "album", ""), t.artist_id))
+            alb_str = (getattr(t, "album_title", None) or getattr(t, "album", "") or "").strip().lower()
+            alb_aid = getattr(t, "_resolved_album_artist_id", t.artist_id)
+            t.album_id = album_map.get((alb_str, alb_aid))
 
     def bulk_upsert_tracks(self_or_cls, session_or_tracks: Any, tracks: Optional[List[EchosyncTrack]] = None) -> int:
         if isinstance(self_or_cls, Session):

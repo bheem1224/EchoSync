@@ -184,6 +184,8 @@ def build_native_tag_payload(track: Dict[str, Any]) -> Dict[str, Any]:
         "version": str(version) if version else "",
         "artist": track.get("artist") or track.get("artist_name") or "",
         "album": track.get("album_title") or track.get("album") or "",
+        "album_artist": track.get("album_artist") or track.get("albumartist") or "",
+        "albumartist": track.get("album_artist") or track.get("albumartist") or "",
         "date": str(year_val) if year_val is not None else "",
         "year": str(year_val) if year_val is not None else "",
         "track_number": str(track.get("track_number")) if track.get("track_number") is not None else "",

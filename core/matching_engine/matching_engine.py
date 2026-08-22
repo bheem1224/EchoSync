@@ -179,8 +179,19 @@ def evaluate_version_compatibility(
     if (src_fam in ("sea_shanty", "shanty") and not cand_fam) or (cand_fam in ("sea_shanty", "shanty") and not src_fam):
         return True, 0.0, "Subtitle descriptor equivalence"
 
-    # Source has no edition (Original cut requested)
-    if not src_fam:
+    # Studio release formats & collaborator version equivalence against unannotated original
+    # (e.g., "Radio Edit", "Single Version", "Clean", "Cardi B Version" matching studio original when duration aligns)
+    studio_compatible_fams = {"radio_single", "clean", "sea_shanty", "shanty", "original"}
+    non_studio_fams = {"remix", "extended_club", "live", "instrumental", "karaoke", "acapella", "remaster", "deluxe", "piano", "demo"}
+
+    # Source has version, candidate has no version info
+    if src_fam and not cand_fam:
+        if (src_fam in studio_compatible_fams or src_fam not in non_studio_fams) and (duration_delta_ms is None or duration_delta_ms <= 5000):
+            return True, 0.0, f"Studio release equivalence: '{src_v}' ≡ Original"
+        return False, 0.0, f"Version mismatch: source requested '{src_v}' ({src_fam}) but candidate has no version info"
+
+    # Source has no version info, candidate has version
+    if not src_fam and cand_fam:
         if cand_fam == "deluxe":
             if context == "tier3_fallback":
                 if duration_delta_ms is not None and duration_delta_ms > 10000:
@@ -188,16 +199,10 @@ def evaluate_version_compatibility(
                 return True, 1.0, "Deluxe fallback permitted in Tier 3"
             return False, 0.0, "Deluxe candidate rejected in primary tiers"
 
-        if cand_fam in {'remaster', 'live', 'instrumental', 'karaoke', 'demo', 'remix', 'clean', 'acapella'}:
-            return False, 0.0, f"Version mismatch: source requested original, candidate is '{cand_v}'"
+        if (cand_fam in studio_compatible_fams or cand_fam not in non_studio_fams) and (duration_delta_ms is None or duration_delta_ms <= 5000):
+            return True, 0.0, f"Studio release equivalence: Original ≡ '{cand_v}'"
 
         return False, 0.0, f"Version mismatch: source requested original, candidate is '{cand_v}'"
-
-    # Candidate has no version but source specified one
-    if not cand_fam and src_fam:
-        if src_fam in ("sea_shanty", "shanty"):
-            return True, 0.0, "Subtitle descriptor equivalence"
-        return False, 0.0, f"Version mismatch: source requested '{src_v}' ({src_fam}) but candidate has no version info"
 
     return False, 0.0, f"Version mismatch: '{src_v}' vs '{cand_v}'"
 
@@ -704,6 +709,36 @@ class WeightedMatchingEngine:
                     f"raw_title contains CJK OST marker → artist_score forced to 1.0, "
                     f"duration_tolerance raised to {_pre_dur_override}ms"
                 )
+            else:
+                # General Compilation / Soundtrack Amnesty
+                cand_all_art = getattr(candidate, "all_artists", []) or []
+                src_art_lower = (source.artist_name or "").strip().lower()
+                performer_matched = False
+                for art_obj in cand_all_art:
+                    art_name = getattr(art_obj, "name", str(art_obj)).strip().lower()
+                    if art_name and (_cmp_artists(src_art_lower, art_name) >= 0.85 or src_art_lower in art_name or art_name in src_art_lower):
+                        performer_matched = True
+                        break
+
+                src_alb = getattr(source, "album_title", None) or getattr(source, "album_name", None)
+                cand_alb = getattr(candidate, "album_title", None) or getattr(candidate, "album_name", None)
+                album_matched = False
+                if src_alb and cand_alb:
+                    alb_ratio = SequenceMatcher(None, str(src_alb).strip().lower(), str(cand_alb).strip().lower()).ratio()
+                    if alb_ratio >= 0.75:
+                        album_matched = True
+
+                dur_matched = bool(
+                    source.duration and candidate.duration and abs(source.duration - candidate.duration) <= 5000
+                )
+
+                if performer_matched or (album_matched and dur_matched):
+                    _force_artist = True
+                    artist_fuzzy_score = 1.0
+                    reasoning_parts.append(
+                        f"Compilation / Various Artists Amnesty: title={title_fuzzy_score:.2f}, "
+                        f"performer_matched={performer_matched}, album_matched={album_matched} → artist_score forced to 1.0"
+                    )
 
         if fuzzy_score < self.weights.fuzzy_match_threshold:
             # ── Strong-pair rescues ────────────────────────────────────────────
