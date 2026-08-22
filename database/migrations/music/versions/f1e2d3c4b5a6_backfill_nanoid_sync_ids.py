@@ -1,7 +1,7 @@
 """backfill_nanoid_sync_ids
 
 Revision ID: f1e2d3c4b5a6
-Revises: 47fc0220d0f9
+Revises: e11aada610d5
 Create Date: 2026-08-22 00:00:00.000000
 
 """
@@ -15,7 +15,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = 'f1e2d3c4b5a6'
-down_revision: Union[str, None] = '47fc0220d0f9'
+down_revision: Union[str, None] = 'e11aada610d5'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
