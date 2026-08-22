@@ -23,6 +23,7 @@ from services.library_hygiene import DuplicateHygieneService
 from core.suggestion_engine.deletion import process_lifecycle_actions
 from core.suggestion_engine.consensus import calculate_consensus
 from core.jobs.reorganize_library_job import register_reorganize_library_job
+from core.jobs.decouple_media_job import register_decouple_media_job
 
 logger = get_logger("system_jobs")
 
@@ -891,6 +892,9 @@ def register_all_system_jobs():
 
         # Ad-hoc / manual system job for physical library reorganization
         register_reorganize_library_job(enabled=True)
+
+        # Ad-hoc / manual maintenance job to decouple collapsed multi-edition media records
+        register_decouple_media_job(enabled=True)
 
         logger.info("All system jobs registered successfully")
     except Exception as e:
