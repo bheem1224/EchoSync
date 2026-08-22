@@ -422,7 +422,7 @@ class TrackRepository:
                     "duration": stmt.excluded.duration,
                     "title": func.coalesce(stmt.excluded.title, Track.title),
                     "sort_title": func.coalesce(stmt.excluded.sort_title, Track.sort_title),
-                    "edition": func.coalesce(stmt.excluded.edition, Track.edition),
+                    "edition": stmt.excluded.edition,
                     "artist_id": func.coalesce(stmt.excluded.artist_id, Track.artist_id),
                     "album_id": func.coalesce(stmt.excluded.album_id, Track.album_id),
                     "track_number": func.coalesce(stmt.excluded.track_number, Track.track_number),

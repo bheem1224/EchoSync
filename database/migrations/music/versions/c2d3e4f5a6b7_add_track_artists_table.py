@@ -19,18 +19,23 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    # 1. Create track_artists table
-    op.create_table(
-        'track_artists',
-        sa.Column('id', sa.Integer(), primary_key=True, autoincrement=True),
-        sa.Column('track_id', sa.Integer(), sa.ForeignKey('tracks.id', ondelete='CASCADE'), nullable=False),
-        sa.Column('artist_id', sa.Integer(), sa.ForeignKey('artists.id', ondelete='CASCADE'), nullable=False),
-        sa.Column('role', sa.String(), nullable=False, server_default='primary'),
-        sa.Column('position', sa.Integer(), nullable=False, server_default='0'),
-        sa.UniqueConstraint('track_id', 'artist_id', 'role', name='uq_track_artist_role'),
-    )
-    op.create_index('ix_track_artists_track_id', 'track_artists', ['track_id'])
-    op.create_index('ix_track_artists_artist_id', 'track_artists', ['artist_id'])
+    conn = op.get_bind()
+    insp = sa.inspect(conn)
+    tables = insp.get_table_names()
+
+    # 1. Create track_artists table if not already created
+    if 'track_artists' not in tables:
+        op.create_table(
+            'track_artists',
+            sa.Column('id', sa.Integer(), primary_key=True, autoincrement=True),
+            sa.Column('track_id', sa.Integer(), sa.ForeignKey('tracks.id', ondelete='CASCADE'), nullable=False),
+            sa.Column('artist_id', sa.Integer(), sa.ForeignKey('artists.id', ondelete='CASCADE'), nullable=False),
+            sa.Column('role', sa.String(), nullable=False, server_default='primary'),
+            sa.Column('position', sa.Integer(), nullable=False, server_default='0'),
+            sa.UniqueConstraint('track_id', 'artist_id', 'role', name='uq_track_artist_role'),
+        )
+        op.create_index('ix_track_artists_track_id', 'track_artists', ['track_id'])
+        op.create_index('ix_track_artists_artist_id', 'track_artists', ['artist_id'])
 
     # 2. Backfill existing primary artists from tracks into track_artists
     conn = op.get_bind()

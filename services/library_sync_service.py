@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from core.io_gatekeeper import Gatekeeper
 from core.settings import config_manager
 from database import get_database, _canonicalize_path
+from services.library_watcher import is_path_suppressed
 from database.music_database import LocalMedia, Track
 from core.orchestrator.ingestion import _parse_telemetry_dict
 from core.database.repositories.track_repo import TrackRepository
@@ -71,6 +72,10 @@ class LibrarySyncService:
                     continue
                 
                 file_path = os.path.join(root, file)
+                if is_path_suppressed(file_path):
+                    logger.debug(f"Skipping suppressed in-flight path: {file_path}")
+                    continue
+
                 canon_path = _canonicalize_path(file_path)
                 current_disk_paths.add(canon_path)
 
