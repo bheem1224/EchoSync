@@ -54,3 +54,26 @@ def test_system_jobs_accept_kwargs(monkeypatch):
             # Other runtime exceptions (e.g. DB connection) are acceptable here as long as signature accepts kwargs
             pass
 
+
+def test_database_update_handles_unregistered_local_server(monkeypatch):
+    """Verify run_database_update gracefully skips Step 1 when Local Server plugin is not registered."""
+    from core.nexus_framework.plugin_loader import PluginRegistry
+
+    calls = []
+    class FakeJobQueue:
+        def register_job(self, **kwargs):
+            calls.append(kwargs)
+
+    monkeypatch.setattr(system_jobs, "job_queue", FakeJobQueue())
+    system_jobs.register_all_system_jobs()
+
+    by_name = {call["name"]: call for call in calls}
+    db_update_func = by_name["database_update"]["func"]
+
+    # Ensure local server plugin is unregistered
+    local_id = 1133147422
+    PluginRegistry._plugins.pop(local_id, None)
+
+    # Executing db_update_func should not raise ValueError or crash
+    db_update_func()
+

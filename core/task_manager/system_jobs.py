@@ -122,7 +122,7 @@ def register_database_update_job(interval_seconds: int = 21600, enabled: bool = 
             local_server_id = generate_plugin_id('echosync.local server')
             local_success = False
             
-            if not PluginRegistry.is_plugin_disabled(local_server_id):
+            if PluginRegistry.get_plugin_class(local_server_id) and not PluginRegistry.is_plugin_disabled(local_server_id):
                 try:
                     local_provider = PluginRegistry.create_instance(local_server_id)
                     if local_provider:
@@ -138,6 +138,8 @@ def register_database_update_job(interval_seconds: int = 21600, enabled: bool = 
                             local_success = True
                 except Exception as e:
                     logger.error(f"Failed to run primary local media server update: {e}", exc_info=True)
+            else:
+                logger.debug(f"Local server provider '{local_server_id}' not registered or disabled; skipping Step 1.")
             
             # Step 2: Run active media servers
             try:
