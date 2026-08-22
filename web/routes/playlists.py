@@ -596,6 +596,7 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                     valid_candidates = []
                     candidate_diagnostics = []
                     near_miss_candidate_id = None
+                    initial_candidates = list(candidates) if candidates else []
 
                     # Batch-fetch all track aliases for the candidate set so that
                     # per-candidate alias scoring below needs no extra DB round-trips.
@@ -1180,6 +1181,62 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                                         near_miss_candidate_id = candidate_row[0]
 
                                 tier2_mode = True
+
+                    # Tier 3 Deluxe Fallback:
+                    # Only considered when both Tier 1 and Tier 2 fail to find an acceptable match (best_score < 70).
+                    # Re-evaluates candidates with context="tier3_fallback" where deluxe editions are permitted (delta <= 10000ms).
+                    if best_score < 70 and initial_candidates:
+                        for candidate_row in initial_candidates:
+                            candidate_target_id = external_ids_map.get(candidate_row[0]) if target_source_canonical else None
+                            raw_title_candidate = candidate_row[1]
+                            edition_candidate = candidate_row[3]
+                            sort_title_candidate = None
+                            try:
+                                sort_title_candidate = candidate_row[6]
+                            except Exception:
+                                sort_title_candidate = None
+
+                            if edition_candidate is None and sort_title_candidate and sort_title_candidate != raw_title_candidate:
+                                version_pattern = r'\b(Remix|Mix|Live|Demo|Remaster|Deluxe|Edit|Version|Acoustic|Instrumental|Bonus|Extended|Original)\b'
+                                version_match = re.search(version_pattern, sort_title_candidate, re.IGNORECASE)
+                                if version_match:
+                                    edition_candidate = version_match.group(0)
+
+                            from core.matching_engine.text_utils import parse_duration_to_ms
+                            candidate_track = EchosyncTrack(
+                                raw_title=raw_title_candidate,
+                                artist_name=candidate_row[4],
+                                album_title=candidate_row[7] or "",
+                                duration=parse_duration_to_ms(candidate_row[2]) if candidate_row[2] else 0,
+                                edition=edition_candidate,
+                            )
+                            hook_manager.apply_filters(
+                                'pre_normalize_title',
+                                candidate_track.raw_title,
+                                plugin_context=candidate_track.plugin_context,
+                            )
+
+                            result = matching_engine.calculate_match(
+                                source_track, candidate_track,
+                                target_source=target_source_canonical or target_source,
+                                target_identifier=candidate_target_id,
+                                context="tier3_fallback",
+                            )
+
+                            if result.confidence_score >= 70:
+                                valid_candidates.append({
+                                    "id": candidate_row[0],
+                                    "score": result.confidence_score,
+                                    "target_identifier": candidate_target_id,
+                                    "title": candidate_track.title,
+                                    "artist": candidate_track.artist_name,
+                                })
+
+                            if result.confidence_score > best_score:
+                                best_score = result.confidence_score
+                                best_match = (candidate_row[0], result)
+                                best_match_track_id = candidate_row[0]
+                                best_match_target_id = candidate_target_id
 
                     if best_score >= 85:
                         library_match = "Found"

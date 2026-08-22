@@ -85,7 +85,7 @@ def test_remaster_edition_compatibility_with_original():
     profile = ExactSyncProfile()
     engine = WeightedMatchingEngine(profile)
 
-    # Source has no edition (Original)
+    # Source has no edition (Original cut requested)
     source = EchosyncTrack(
         raw_title="Karma Police",
         artist_name="Radiohead",
@@ -93,7 +93,7 @@ def test_remaster_edition_compatibility_with_original():
         edition="",
         duration=264000,
     )
-    # Candidate is 2013 Remaster with 500ms difference (within 3000ms)
+    # Candidate is 2013 Remaster -> strictly rejected when original requested
     candidate_remaster = EchosyncTrack(
         raw_title="Karma Police",
         artist_name="Radiohead",
@@ -103,19 +103,20 @@ def test_remaster_edition_compatibility_with_original():
     )
 
     res = engine.calculate_match(source, candidate_remaster)
-    assert res.passed_version_check is True
-    assert res.confidence_score >= 90.0
+    assert res.passed_version_check is False
+    assert res.confidence_score == 0.0
 
-    # If duration delta exceeds 3000ms, it should not pass
-    candidate_remaster_diff = EchosyncTrack(
+    # When source explicitly requests a Remaster, candidate remaster matches cleanly
+    source_remaster = EchosyncTrack(
         raw_title="Karma Police",
         artist_name="Radiohead",
         album_title="OK Computer",
         edition="2013 Remaster",
-        duration=270000,
+        duration=264000,
     )
-    res_diff = engine.calculate_match(source, candidate_remaster_diff)
-    assert res_diff.passed_version_check is False or res_diff.confidence_score < 90.0
+    res_remaster_match = engine.calculate_match(source_remaster, candidate_remaster)
+    assert res_remaster_match.passed_version_check is True
+    assert res_remaster_match.confidence_score >= 90.0
 
 
 def test_remaster_title_sanitization_tier2():
@@ -330,43 +331,39 @@ def test_promotional_event_title_sanitization():
 def test_edition_penalty_hierarchy_and_context_policies():
     """
     Verify edition penalty hierarchy and context-scoped policies:
-    - Deluxe Edition penalty: -1.0 (download & sync)
-    - Remaster penalty: -2.5 (sync only; strictly rejected on download when original requested)
+    - Deluxe Edition: strictly rejected in primary tiers (sync/download); permitted in tier3_fallback if delta <= 10000ms.
+    - Remaster: strictly rejected across all sync/download tiers when original requested.
     """
     from core.matching_engine.matching_engine import evaluate_version_compatibility
 
     # ── 1. Deluxe Edition fallback ──
-    # Download context: Allowed with 1.0 penalty if delta <= 10000ms
-    compat, pen, reason = evaluate_version_compatibility(None, "Deluxe Edition", context="download", duration_delta_ms=2000)
-    assert compat is True
-    assert pen == 1.0
+    # Primary tiers (download & sync): Rejected
+    compat_dl, _, _ = evaluate_version_compatibility(None, "Deluxe Edition", context="download", duration_delta_ms=2000)
+    assert compat_dl is False
 
-    # Sync context: Allowed with 1.0 penalty
-    compat, pen, reason = evaluate_version_compatibility(None, "Deluxe Edition", context="sync", duration_delta_ms=2000)
-    assert compat is True
-    assert pen == 1.0
+    compat_sync, _, _ = evaluate_version_compatibility(None, "Deluxe Edition", context="sync", duration_delta_ms=2000)
+    assert compat_sync is False
 
-    # Duration delta > 10,000ms: Rejected in both
-    compat, pen, reason = evaluate_version_compatibility(None, "Deluxe Edition", context="download", duration_delta_ms=12000)
-    assert compat is False
+    # Tier 3 fallback: Allowed with 1.0 penalty if delta <= 10000ms
+    compat_t3, pen_t3, _ = evaluate_version_compatibility(None, "Deluxe Edition", context="tier3_fallback", duration_delta_ms=2000)
+    assert compat_t3 is True
+    assert pen_t3 == 1.0
 
-    # ── 2. Remastered fallback ──
-    # Download context: Strictly REJECTED when original requested
-    compat, pen, reason = evaluate_version_compatibility(None, "Remastered", context="download", duration_delta_ms=500)
-    assert compat is False
+    # Duration delta > 10,000ms in Tier 3: Rejected
+    compat_t3_long, _, _ = evaluate_version_compatibility(None, "Deluxe Edition", context="tier3_fallback", duration_delta_ms=12000)
+    assert compat_t3_long is False
 
-    # Sync context: Allowed with 2.5 penalty when delta <= 5000ms
-    compat, pen, reason = evaluate_version_compatibility(None, "Remastered", context="sync", duration_delta_ms=1500)
-    assert compat is True
-    assert pen == 2.5
+    # ── 2. Remastered rejection ──
+    # Download and Sync contexts: Strictly REJECTED when original requested
+    compat_dl_remaster, _, _ = evaluate_version_compatibility(None, "Remastered", context="download", duration_delta_ms=500)
+    assert compat_dl_remaster is False
 
-    # Sync context: Rejected when delta > 5000ms
-    compat, pen, reason = evaluate_version_compatibility(None, "Remastered", context="sync", duration_delta_ms=6000)
-    assert compat is False
+    compat_sync_remaster, _, _ = evaluate_version_compatibility(None, "Remastered", context="sync", duration_delta_ms=1500)
+    assert compat_sync_remaster is False
 
 
 def test_matching_engine_context_scoped_scoring():
-    """Verify WeightedMatchingEngine adheres to download vs sync context policies."""
+    """Verify WeightedMatchingEngine adheres to primary vs tier3 fallback context policies."""
     profile = ExactSyncProfile()
     engine = WeightedMatchingEngine(profile)
 
@@ -391,27 +388,31 @@ def test_matching_engine_context_scoped_scoring():
         duration=367500,
     )
 
-    # In download mode: Deluxe passes with 1.0 penalty; Remaster is rejected
+    # In primary modes (download / sync): Deluxe is rejected, Remaster is rejected
     res_dl_deluxe = engine.calculate_match(source_orig, cand_deluxe, context="download")
-    assert res_dl_deluxe.passed_version_check is True
-    assert res_dl_deluxe.edition_penalty_applied == 1.0
+    assert res_dl_deluxe.passed_version_check is False
+    assert res_dl_deluxe.confidence_score == 0.0
 
     res_dl_remaster = engine.calculate_match(source_orig, cand_remaster, context="download")
     assert res_dl_remaster.passed_version_check is False
     assert res_dl_remaster.confidence_score == 0.0
 
-    # In sync mode: Deluxe passes with 1.0 penalty; Remaster passes with 2.5 penalty
     res_sync_deluxe = engine.calculate_match(source_orig, cand_deluxe, context="sync")
-    assert res_sync_deluxe.passed_version_check is True
-    assert res_sync_deluxe.edition_penalty_applied == 1.0
+    assert res_sync_deluxe.passed_version_check is False
+    assert res_sync_deluxe.confidence_score == 0.0
 
     res_sync_remaster = engine.calculate_match(source_orig, cand_remaster, context="sync")
-    assert res_sync_remaster.passed_version_check is True
-    assert res_sync_remaster.edition_penalty_applied == 2.5
+    assert res_sync_remaster.passed_version_check is False
+    assert res_sync_remaster.confidence_score == 0.0
+
+    # In Tier 3 fallback mode: Deluxe passes with 1.0 penalty
+    res_t3_deluxe = engine.calculate_match(source_orig, cand_deluxe, context="tier3_fallback")
+    assert res_t3_deluxe.passed_version_check is True
+    assert res_t3_deluxe.edition_penalty_applied == 1.0
 
 
 def test_tier2_strict_2000ms_duration_gate():
-    """Verify Tier 2 title-only fallback strictly enforces 2.0s duration ceiling."""
+    """Verify Tier 2 title-only fallback strictly enforces 2.0s base and 3.0s hard limit."""
     profile = ExactSyncProfile()
     engine = WeightedMatchingEngine(profile)
 
@@ -431,7 +432,7 @@ def test_tier2_strict_2000ms_duration_gate():
         raw_title="Midnight City",
         artist_name="Unknown Artist",
         album_title="Hurry Up, We're Dreaming",
-        duration=245500,  # 2500ms diff > 2000ms
+        duration=246500,  # 3500ms diff >= 3000ms hard limit
     )
 
     res_pass = engine.calculate_title_duration_match(source, cand_pass)
@@ -440,4 +441,4 @@ def test_tier2_strict_2000ms_duration_gate():
 
     res_fail = engine.calculate_title_duration_match(source, cand_fail)
     assert res_fail.confidence_score == 0.0
-    assert "Duration outside tolerance" in res_fail.reasoning
+    assert "Duration outside strict tolerance" in res_fail.reasoning

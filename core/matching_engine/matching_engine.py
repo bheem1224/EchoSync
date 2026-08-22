@@ -117,20 +117,43 @@ def get_version_family(version_str: Optional[str]) -> Optional[str]:
     return v
 
 
+def calculate_duration_score(delta_ms: int, strict: bool = False) -> float:
+    """
+    Continuous polynomial duration penalty decay curve (k=6).
+
+    - Standard (strict=False, Tier 1): T_base = 5000ms, Limit = 6000ms, k = 6.
+    - Strict (strict=True, Tier 2): T_base = 2000ms, Limit = 3000ms, k = 6.
+    """
+    delta = abs(delta_ms)
+    t_base = 2000 if strict else 5000
+    t_limit = 3000 if strict else 6000
+    k = 6
+
+    if delta <= t_base:
+        return 1.0
+    if delta >= t_limit:
+        return 0.0
+
+    decay = ((delta - t_base) / (t_limit - t_base)) ** k
+    return max(0.0, 1.0 - decay)
+
+
 def evaluate_version_compatibility(
     source_version: Optional[str],
     candidate_version: Optional[str],
-    context: str = "sync",
+    context: str = "standard",
     duration_delta_ms: Optional[int] = None,
 ) -> Tuple[bool, float, str]:
     """
     Evaluate edition / version compatibility and return (is_compatible, penalty, reasoning).
 
-    Edition Penalty Hierarchy:
-    - Deluxe Edition penalty: -1.0 (preferred over remasters since audio master is identical).
-    - Remaster penalty: -2.5 (applied in 'sync' context only).
-    - In 'download' context: Allow Deluxe (-1.0); strictly REJECT Remaster if original was requested.
-    - Remix Equivalence: If both sides specify a remix (or generic 'Remix'), treat as compatible with 0.0 penalty.
+    Rules:
+    - Identical version strings or version families match cleanly.
+    - When source requests original cut (no edition/version):
+      - Remasters ('remaster', 'remastered') are STRICTLY REJECTED with (False, 0.0, ...) across all sync/download tiers.
+      - Other variants ('live', 'instrumental', 'karaoke', 'demo', 'remix', 'clean', 'acapella', 'sea_shanty') are strictly rejected.
+      - Deluxe ('deluxe') is permitted ONLY if context == 'tier3_fallback' and duration_delta_ms <= 10000.
+        Otherwise rejected during primary Tier 1 / Tier 2 matching.
     """
     src_v = (source_version or "").strip()
     cand_v = (candidate_version or "").strip()
@@ -154,29 +177,21 @@ def evaluate_version_compatibility(
 
     # Source has no edition (Original cut requested)
     if not src_fam:
-        # Check unwanted variants: remix, live, instrumental, clean, etc.
-        unwanted_families = frozenset({'remix', 'live', 'instrumental', 'clean', 'acapella'})
-        if cand_fam in unwanted_families:
-            return False, 0.0, f"Source requested original but candidate is '{cand_v}' (version family: {cand_fam})"
-
         if cand_fam == "deluxe":
-            if duration_delta_ms is not None and duration_delta_ms > 10000:
-                return False, 0.0, f"Deluxe Edition duration mismatch ({duration_delta_ms}ms > 10000ms)"
-            return True, 1.0, f"Candidate is Deluxe Edition fallback ({context} mode, -1.0 penalty)"
+            if context == "tier3_fallback":
+                if duration_delta_ms is not None and duration_delta_ms > 10000:
+                    return False, 0.0, f"Deluxe Edition duration mismatch ({duration_delta_ms}ms > 10000ms)"
+                return True, 1.0, "Deluxe fallback permitted in Tier 3"
+            return False, 0.0, "Deluxe candidate rejected in primary tiers"
 
-        if cand_fam == "remaster":
-            if context == "download":
-                return False, 0.0, "Strict fidelity on downloads: Remastered candidate rejected when original requested"
-            # context == "sync"
-            if duration_delta_ms is not None and duration_delta_ms > 5000:
-                return False, 0.0, f"Remaster duration mismatch on sync ({duration_delta_ms}ms > 5000ms)"
-            return True, 2.5, f"Candidate is Remastered fallback on sync ({duration_delta_ms or 0}ms delta <= 5000ms, -2.5 penalty)"
+        if cand_fam in {'remaster', 'live', 'instrumental', 'karaoke', 'demo', 'remix', 'clean', 'acapella', 'sea_shanty'}:
+            return False, 0.0, f"Version mismatch: source requested original, candidate is '{cand_v}'"
 
-        return True, 0.0, f"Candidate edition '{cand_v}' accepted"
+        return False, 0.0, f"Version mismatch: source requested original, candidate is '{cand_v}'"
 
     # Candidate has no version but source specified one
     if not cand_fam and src_fam:
-        return True, 0.0, "Candidate has no version info (might be original cut)"
+        return False, 0.0, f"Version mismatch: source requested '{src_v}' ({src_fam}) but candidate has no version info"
 
     return False, 0.0, f"Version mismatch: '{src_v}' vs '{cand_v}'"
 
@@ -451,33 +466,26 @@ class WeightedMatchingEngine:
             ), target_source, target_identifier)
 
         duration_diff_ms = abs(source.duration - candidate.duration)
-        tolerance_ms = 2000  # 2 seconds strict tolerance for Tier 2
+        duration_score = calculate_duration_score(duration_diff_ms, strict=True)
 
-        # Allow plugins to relax the duration gate (e.g. CJK drama context boost).
+        # Allow plugins to boost score
         from core.hook_manager import hook_manager as _hm_t2
         _t2_mod = _hm_t2.apply_filters(
             'scoring_modifier', {},
             source=source, candidate=candidate,
-        )
-        _t2_dur_override: Optional[int] = (
-            int(_t2_mod['duration_override'])
-            if isinstance(_t2_mod, dict) and _t2_mod.get('duration_override')
-            else None
         )
         _t2_score_boost: float = (
             float(_t2_mod.get('boost', 0.0))
             if isinstance(_t2_mod, dict)
             else 0.0
         )
-        if _t2_dur_override is not None:
-            tolerance_ms = _t2_dur_override
 
-        if duration_diff_ms > tolerance_ms:
+        if duration_score == 0.0:
             reasoning_parts.append(
-                f"Duration outside tolerance: {duration_diff_ms}ms > {tolerance_ms}ms "
+                f"Duration outside strict tolerance: {duration_diff_ms}ms >= 3000ms limit "
                 f"({source.duration}ms vs {candidate.duration}ms)"
             )
-            return MatchResult(
+            return self._attach_target_context(MatchResult(
                 confidence_score=0.0,
                 passed_version_check=False,
                 passed_edition_check=False,
@@ -487,14 +495,13 @@ class WeightedMatchingEngine:
                 version_penalty_applied=0.0,
                 edition_penalty_applied=0.0,
                 reasoning=" | ".join(reasoning_parts)
-            )
+            ), target_source, target_identifier)
 
-        # Calculate confidence based on duration proximity
-        duration_score = 1.0 - (duration_diff_ms / tolerance_ms) * 0.1  # Max 10% deduction
+        # Calculate confidence based on polynomial duration decay score
         confidence = 90.0 + (duration_score * 10.0)  # 90-100% range
 
         reasoning_parts.append(
-            f"Duration match: {duration_diff_ms}ms difference (within {tolerance_ms}ms tolerance)"
+            f"Duration match: {duration_diff_ms}ms difference (duration_score={duration_score:.4f})"
         )
         if _t2_score_boost:
             confidence = min(100.0, confidence + _t2_score_boost)
@@ -806,21 +813,7 @@ class WeightedMatchingEngine:
         max_possible_score += self.weights.text_weight * 100
 
         # ===== STEP 4: DURATION MATCHING =====
-        # Artist Match Duration Escalation — when artist confidence is ≥ 0.95 the
-        # artist is definitively identified; slight duration drift from extra silence,
-        # streaming re-masters, or gapless album padding should not kill an otherwise
-        # strong match.  The tolerance is raised from the profile default up to 8500ms
-        # for this candidate only.  The same linear penalty formula (max −0.5 at the
-        # new edge) applies, so the scoring still degrades gracefully and a track 4 s
-        # off does not get the same score as one that is bang-on.
-        _artist_dur_tolerance: Optional[int] = None
-        if artist_fuzzy_score >= 0.95:
-            _artist_dur_tolerance = 8500
-            reasoning_parts.append(
-                f"Artist Match Duration Escalation: artist={artist_fuzzy_score:.2f} ≥ 0.95 "
-                f"→ duration tolerance raised to {_artist_dur_tolerance}ms"
-            )
-        duration_score = self._calculate_duration_match(source, candidate, _artist_dur_tolerance)
+        duration_score = self._calculate_duration_match(source, candidate)
         duration_contribution = duration_score * self.weights.duration_weight * 100
 
         reasoning_parts.append(
@@ -845,22 +838,6 @@ class WeightedMatchingEngine:
             if isinstance(_plugin_mod, dict)
             else 0.0
         )
-        _dur_override: Optional[int] = (
-            int(_plugin_mod['duration_override'])
-            if isinstance(_plugin_mod, dict) and _plugin_mod.get('duration_override')
-            else None
-        )
-        # If a plugin supplied a relaxed duration tolerance and the standard check
-        # already returned 0.0, re-evaluate before confirming a near-miss / fail.
-        if _dur_override is not None and duration_score == 0.0:
-            _rescored = self._calculate_duration_match(source, candidate, _dur_override)
-            if _rescored > 0.0:
-                duration_score = _rescored
-                duration_contribution = duration_score * self.weights.duration_weight * 100
-                reasoning_parts.append(
-                    f"Duration rescued by plugin (tolerance_override={_dur_override}ms → "
-                    f"new_score={duration_score:.2f})"
-                )
         if _score_boost:
             reasoning_parts.append(f"Plugin boost queued: +{_score_boost:.1f}")
         # ── End plugin modifiers ───────────────────────────────────────────────
@@ -916,6 +893,21 @@ class WeightedMatchingEngine:
             normalized_score = (score / max_possible_score) * 100
         else:
             normalized_score = 0.0
+
+        # ===== NON-DESTRUCTIVE ALBUM MATCH BONUS =====
+        # Normalized album similarity >= 0.85 grants an additive bonus (+2.0 pts clamped to 100.0).
+        # Missing or non-matching albums incur zero penalty.
+        src_album = getattr(source, "album_title", None) or getattr(source, "album_name", None)
+        cand_album = getattr(candidate, "album_title", None) or getattr(candidate, "album_name", None)
+        if src_album and cand_album:
+            from core.matching_engine.text_utils import normalize_text
+            src_alb_norm = normalize_text(str(src_album))
+            cand_alb_norm = normalize_text(str(cand_album))
+            if src_alb_norm and cand_alb_norm:
+                alb_sim = SequenceMatcher(None, src_alb_norm, cand_alb_norm).ratio()
+                if alb_sim >= 0.85:
+                    normalized_score = min(100.0, normalized_score + 2.0)
+                    reasoning_parts.append(f"Non-destructive album bonus: +2.0 (album_sim={alb_sim:.2f} >= 0.85)")
 
         # ===== SAFE DURATION BONUS =====
         # If duration is near-perfect match (<= 1500ms) AND artist fuzzy score >= 60%,
@@ -1183,11 +1175,6 @@ class WeightedMatchingEngine:
             
             scores.append(('artist', artist_score, self.weights.artist_weight))
 
-        # Album match (if available)
-        if source.album_title and candidate.album_title:
-            album_score = self._fuzzy_match(source.album_title, candidate.album_title)
-            scores.append(('album', album_score, self.weights.album_weight))
-
         # If no comparison possible, return fallback
         if not scores:
             return self.weights.text_match_fallback
@@ -1207,29 +1194,15 @@ class WeightedMatchingEngine:
         tolerance_override_ms: Optional[int] = None,
     ) -> float:
         """
-        Calculate duration match score
-
-        Returns:
-            Score 0.0-1.0 (1.0 = exact match, decreases with difference)
+        Calculate duration match score using continuous polynomial decay curve (k=6).
+        Base threshold T=5000ms, Limit=6000ms in Standard mode.
         """
-
         if not source.duration or not candidate.duration:
             # If either has no duration, return neutral score to avoid inflating confidence
             return 0.5
 
         diff_ms = abs(source.duration - candidate.duration)
-        tolerance_ms = (
-            tolerance_override_ms
-            if tolerance_override_ms is not None
-            else self.weights.duration_tolerance_ms
-        )
-
-        if diff_ms <= tolerance_ms:
-            # Within tolerance - score based on how close
-            return 1.0 - (diff_ms / tolerance_ms) * 0.5  # Max 0.5 deduction
-        else:
-            # Outside tolerance - fail
-            return 0.0
+        return calculate_duration_score(diff_ms, strict=False)
 
     def _fuzzy_match(self, a: str, b: str) -> float:
         """
