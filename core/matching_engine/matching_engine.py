@@ -107,6 +107,10 @@ def get_version_family(version_str: Optional[str]) -> Optional[str]:
         return "instrumental"
     if "acapella" in v or "a cappella" in v:
         return "acapella"
+    if "karaoke" in v:
+        return "karaoke"
+    if "sea shanty" in v or "shanty" in v:
+        return "sea_shanty"
     if "clean" in v or "edited" in v or "censored" in v:
         return "clean"
 
@@ -593,7 +597,26 @@ class WeightedMatchingEngine:
         # Store individual component scores for later use (e.g., duration bonus)
         artist_fuzzy_score = 0.0
         if source.artist_name and candidate.artist_name:
-            artist_fuzzy_score = self._fuzzy_match(source.artist_name, candidate.artist_name)
+            if source.artist_name.lower() != "various artists" and candidate.artist_name.lower() == "various artists":
+                artist_fuzzy_score = 0.0
+            else:
+                artist_fuzzy_score = self._fuzzy_match(source.artist_name, candidate.artist_name)
+                if artist_fuzzy_score < 0.8:
+                    is_subset, subset_score, _ = self._check_artist_subset_match(source, candidate)
+                    if is_subset:
+                        if source.duration and candidate.duration and abs(source.duration - candidate.duration) <= 2000:
+                            artist_fuzzy_score = subset_score
+                    else:
+                        source_tokens = self._tokenize_artists(source.artist_name)
+                        candidate_tokens = self._tokenize_artists(candidate.artist_name)
+                        if (
+                            source_tokens and candidate_tokens
+                            and not (source_tokens & candidate_tokens)
+                            and source.artist_name.strip().lower() != "various artists"
+                            and candidate.artist_name.strip().lower() != "various artists"
+                            and artist_fuzzy_score < 0.6
+                        ):
+                            artist_fuzzy_score = 0.0
 
         # Title score — computed here (once) so both the strong-pair rescues below
         # and the safe duration bonus further down share a single _fuzzy_match call.
@@ -723,7 +746,21 @@ class WeightedMatchingEngine:
             # romanised names, compilation credits) a near-exact title with a
             # tight duration window uniquely identifies the recording without
             # needing artist or album agreement.
-            if title_fuzzy_score >= 0.95 and source.duration and candidate.duration:
+            # Cover protection: strictly disabled when artist_fuzzy_score == 0.0
+            # or when both sides have explicit, non-overlapping distinct primary artists.
+            has_artist_boundary_collision = (
+                source.artist_name
+                and candidate.artist_name
+                and source.artist_name.strip().lower() != "various artists"
+                and candidate.artist_name.strip().lower() != "various artists"
+                and artist_fuzzy_score == 0.0
+            )
+            if (
+                title_fuzzy_score >= 0.95
+                and not has_artist_boundary_collision
+                and source.duration
+                and candidate.duration
+            ):
                 dur_diff_ms = abs(source.duration - candidate.duration)
                 if dur_diff_ms <= 2000:
                     td_dur_score = 1.0 - (dur_diff_ms / 2000) * 0.5
@@ -1129,6 +1166,20 @@ class WeightedMatchingEngine:
                         if duration_diff_ms <= 2000:  # 2 second tolerance for subset rescue
                             artist_score = subset_score  # Promote to 1.0
                             # Note: reasoning will be logged in the main matching flow
+                else:
+                    # Artist Boundary Enforcement:
+                    # If both source and candidate have explicit artist strings, neither is "Various Artists",
+                    # and token overlap is 0 with sequence similarity < 0.6, strictly set artist_score = 0.0
+                    source_tokens = self._tokenize_artists(source.artist_name)
+                    candidate_tokens = self._tokenize_artists(candidate.artist_name)
+                    if (
+                        source_tokens and candidate_tokens
+                        and not (source_tokens & candidate_tokens)
+                        and source.artist_name.strip().lower() != "various artists"
+                        and candidate.artist_name.strip().lower() != "various artists"
+                        and artist_score < 0.6
+                    ):
+                        artist_score = 0.0
             
             scores.append(('artist', artist_score, self.weights.artist_weight))
 

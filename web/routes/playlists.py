@@ -593,6 +593,7 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                     best_match = None
                     best_match_track_id = None
                     best_match_target_id = None
+                    valid_candidates = []
                     candidate_diagnostics = []
                     near_miss_candidate_id = None
 
@@ -942,6 +943,15 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                             "reasoning": result.reasoning,
                         })
 
+                        if result.confidence_score >= 70:
+                            valid_candidates.append({
+                                "id": candidate_row[0],
+                                "score": result.confidence_score,
+                                "target_identifier": candidate_target_id,
+                                "title": candidate_track.title,
+                                "artist": candidate_track.artist_name,
+                            })
+
                         if result.confidence_score > best_score:
                             best_score = result.confidence_score
                             best_match = (candidate_row[0], result)
@@ -967,6 +977,7 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                         )
 
                         candidates = []
+                        valid_candidates = []
                         candidate_diagnostics = []
                         best_score = 0
                         best_match = None
@@ -1150,6 +1161,15 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                                         "reasoning": result.reasoning,
                                     })
 
+                                    if result.confidence_score >= 70:
+                                        valid_candidates.append({
+                                            "id": candidate_row[0],
+                                            "score": result.confidence_score,
+                                            "target_identifier": candidate_target_id,
+                                            "title": candidate_track.title,
+                                            "artist": candidate_track.artist_name,
+                                        })
+
                                     if result.confidence_score > best_score:
                                         best_score = result.confidence_score
                                         best_match = (candidate_row[0], result)
@@ -1241,6 +1261,7 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                     "download_status": "-",
                     "matched_track_id": best_match_track_id,
                     "match_score": best_score,
+                    "candidate_matches": valid_candidates,
                     "target_source": target_source_canonical or target_source,
                     "target_identifier": best_match_target_id,
                     "target_exists": bool(best_match_target_id),
@@ -1268,7 +1289,13 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                 "download_status": "-",
             })
 
+    from services.playlists_api import resolve_duplicate_matches
+    all_tracks = resolve_duplicate_matches(all_tracks)
+
     total_tracks = len(all_tracks)
+    found_count = sum(1 for t in all_tracks if t.get("matched_track_id"))
+    missing_count = total_tracks - found_count
+
     try:
         matched_map = {}
         for t in all_tracks:
@@ -1310,6 +1337,7 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                 "isrc": track.get("isrc"),
                 "source_identifier": track.get("source_identifier"),
                 "source_track": track.get("source_track"),
+                "rejection_reason": track.get("rejection_reason"),
             })
 
     return {

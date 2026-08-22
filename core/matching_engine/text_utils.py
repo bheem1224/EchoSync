@@ -26,10 +26,10 @@ _OST_PATTERNS = [
 ]
 
 _VERSION_PATTERNS = [
-    (re.compile(r'\s*\(([^)]*(?:remix|version|edit|live|acoustic|instrumental|piano|lullaby|cover|sped up|slowed|remaster|radio|mix|club|clean|edited|censored)[^)]*)\)', flags=re.IGNORECASE), 1),
-    (re.compile(r'\s*\[([^\]]*(?:remix|version|edit|live|acoustic|instrumental|piano|lullaby|cover|sped up|slowed|remaster|radio|mix|club|clean|edited|censored)[^\]]*)\]', flags=re.IGNORECASE), 1),
-    (re.compile(r'\s*-\s*([^-]*(?:remix|version|edit|live at|live|acoustic|instrumental|piano|lullaby|cover|sped up|slowed|remaster|radio|mix|club|clean|edited|censored)[^-]*)$', flags=re.IGNORECASE), 1),
-    (re.compile(r'\s*-\s*((?:[A-Z][a-z]+\s+)*(?:Radio|Edit|Mix|Remix|Version|Clean|Edited|Censored)[^-]*)$', flags=re.IGNORECASE), 1),
+    (re.compile(r'\s*\(([^)]*(?:remix|version|edit|live|acoustic|instrumental|piano|lullaby|cover|sped up|slowed|remaster|radio|mix|club|clean|edited|censored|karaoke|sea shanty|shanty)[^)]*)\)', flags=re.IGNORECASE), 1),
+    (re.compile(r'\s*\[([^\]]*(?:remix|version|edit|live|acoustic|instrumental|piano|lullaby|cover|sped up|slowed|remaster|radio|mix|club|clean|edited|censored|karaoke|sea shanty|shanty)[^\]]*)\]', flags=re.IGNORECASE), 1),
+    (re.compile(r'\s*-\s*([^-]*(?:remix|version|edit|live at|live|acoustic|instrumental|piano|lullaby|cover|sped up|slowed|remaster|radio|mix|club|clean|edited|censored|karaoke|sea shanty|shanty)[^-]*)$', flags=re.IGNORECASE), 1),
+    (re.compile(r'\s*-\s*((?:[A-Z][a-z]+\s+)*(?:Radio|Edit|Mix|Remix|Version|Clean|Edited|Censored|Karaoke|Sea Shanty)[^-]*)$', flags=re.IGNORECASE), 1),
 ]
 
 _EDITION_PATTERNS = [
@@ -56,6 +56,8 @@ _EDITION_PATTERNS = [
     (re.compile(r'\b(piano)\s*(?:version|mix|cover)?\b', flags=re.IGNORECASE), 'Piano'),
     (re.compile(r'\b(lullaby)\s*(?:version)?\b', flags=re.IGNORECASE), 'Lullaby'),
     (re.compile(r'\b(cover)\s*(?:version)?\b', flags=re.IGNORECASE), 'Cover'),
+    (re.compile(r'\b(karaoke)\s*(?:version)?\b', flags=re.IGNORECASE), 'Karaoke'),
+    (re.compile(r'\b(sea\s*shanty|shanty)\b', flags=re.IGNORECASE), 'Sea Shanty'),
     (re.compile(r'\b(sped\s*up)\b', flags=re.IGNORECASE), 'Sped Up'),
     (re.compile(r'\b(slowed(?:\s*down)?)\b', flags=re.IGNORECASE), 'Slowed'),
     (re.compile(r'\b(original)\s*(?:version|mix)?\b', flags=re.IGNORECASE), 'Original'),

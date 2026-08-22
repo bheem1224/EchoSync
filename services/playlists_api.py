@@ -156,3 +156,55 @@ def get_library_candidates(session: Session, target_title: str, target_artist: s
 # Aliases for Tier 1 candidate querying
 query_tier1_candidates = get_library_candidates
 _fetch_tier1_candidates = get_library_candidates
+
+
+def resolve_duplicate_matches(all_tracks: List[dict]) -> List[dict]:
+    """
+    Greedy 1:1 Winner-Take-All Candidate Assignment.
+    
+    When multiple playlist source tracks match the same local track ID (e.g., covers or duplicate titles),
+    allocates the local track strictly to the source track with the highest match score.
+    
+    Losers evaluate remaining fallback candidates in their candidate pool (score >= 70)
+    or are marked as unmatched with explicit collision rejection reasoning.
+    """
+    claimed: dict[int, dict] = {}
+    
+    # Sort descending by match score to grant priority to best match
+    sorted_tracks = sorted(
+        [t for t in all_tracks if t.get("matched_track_id")],
+        key=lambda x: x.get("match_score", 0.0),
+        reverse=True
+    )
+    
+    for track in sorted_tracks:
+        tid = track["matched_track_id"]
+        if tid not in claimed:
+            claimed[tid] = track
+        else:
+            # Demote loser to fallback or unmatched
+            fallback_found = False
+            for fallback in track.get("candidate_matches", []):
+                f_id = fallback.get("id")
+                if f_id and f_id not in claimed and fallback.get("score", 0) >= 70:
+                    track["matched_track_id"] = f_id
+                    track["match_score"] = fallback["score"]
+                    track["target_identifier"] = fallback.get("target_identifier")
+                    track["target_exists"] = bool(fallback.get("target_identifier"))
+                    track["library_match"] = "Found" if fallback["score"] >= 85 else f"Found (score: {int(fallback['score'])}%)"
+                    claimed[f_id] = track
+                    fallback_found = True
+                    break
+            
+            if not fallback_found:
+                winner_artist = claimed[tid].get("artist", "Unknown")
+                track["matched_track_id"] = None
+                track["library_match"] = "Not Found"
+                track["target_identifier"] = None
+                track["target_exists"] = False
+                track["rejection_reason"] = f"Collision: local track assigned to higher confidence match ({winner_artist})"
+
+    return all_tracks
+
+
+_resolve_duplicate_matches = resolve_duplicate_matches
