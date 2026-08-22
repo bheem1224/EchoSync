@@ -325,12 +325,10 @@ class EchosyncTrack:
             else:
                 self.sort_title = self.title
 
-        # 6. Deterministic sync_id Assignment if None
+        # 6. Unique NanoID sync_id Assignment if None or empty
         if not self.sync_id:
-            title_norm = (self.title or self.raw_title or "").strip().lower()
-            artist_norm = (self.artist_name or "").strip().lower()
-            if title_norm and artist_norm:
-                self.sync_id = f"ss:track:meta:{title_norm}:{artist_norm}"
+            from database.music_database import generate_nanoid
+            self.sync_id = generate_nanoid()
 
     @property
     def artist(self) -> str:

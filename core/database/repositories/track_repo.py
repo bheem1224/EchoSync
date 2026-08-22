@@ -237,32 +237,101 @@ class TrackRepository:
         if any(getattr(t, "artist_id", None) is None for t in tracks):
             cls.resolve_artists_and_albums(session, tracks)
 
-        # Build sync_id for each track (strips query params)
-        def _build_sync_id(t: EchosyncTrack) -> str:
+        # Batch lookup existing tracks by (normalized_title, artist_id, normalized_edition) or sync_id
+        batch_titles = set()
+        batch_artist_ids = set()
+        batch_sync_ids = set()
+
+        for t in tracks:
+            norm_title = (getattr(t, "normalized_title", None) or getattr(t, "title", None) or getattr(t, "raw_title", "") or "").strip().lower()
+            if norm_title:
+                batch_titles.add(norm_title)
+            if getattr(t, "artist_id", None):
+                batch_artist_ids.add(t.artist_id)
             raw_sid = getattr(t, "sync_id", None)
-            if raw_sid:
-                return raw_sid.split("?")[0]
-            title_val = getattr(t, "title", None) or getattr(t, "raw_title", "") or ""
-            artist_val = getattr(t, "artist_name", None) or getattr(t, "artist", "") or ""
-            return f"ss:track:meta:{title_val.lower()}:{artist_val.lower()}"
+            if raw_sid and not raw_sid.startswith("ss:"):
+                batch_sync_ids.add(raw_sid.split("?")[0])
+
+        existing_track_map = {}  # (norm_title, artist_id, norm_edition) -> sync_id
+        existing_sync_ids_in_db = set()
+
+        if batch_titles and batch_artist_ids:
+            found_tracks = session.query(Track).filter(
+                Track.normalized_title.in_(list(batch_titles)),
+                Track.artist_id.in_(list(batch_artist_ids)),
+            ).all()
+            for ft in found_tracks:
+                ft_norm_title = (ft.normalized_title or ft.title.lower() or "").strip().lower()
+                ft_norm_ed = (ft.edition or "").strip().lower()
+                existing_track_map[(ft_norm_title, ft.artist_id, ft_norm_ed)] = ft.sync_id
+                existing_sync_ids_in_db.add(ft.sync_id)
+
+        if batch_sync_ids:
+            found_by_sync_id = session.query(Track).filter(
+                Track.sync_id.in_(list(batch_sync_ids))
+            ).all()
+            for ft in found_by_sync_id:
+                ft_norm_title = (ft.normalized_title or ft.title.lower() or "").strip().lower()
+                ft_norm_ed = (ft.edition or "").strip().lower()
+                existing_track_map[(ft_norm_title, ft.artist_id, ft_norm_ed)] = ft.sync_id
+                existing_sync_ids_in_db.add(ft.sync_id)
+
+        # Build / resolve sync_id for each track (ensures unique NanoIDs and version separation)
+        def _get_or_assign_sync_id(t: EchosyncTrack) -> str:
+            raw_sid = getattr(t, "sync_id", None)
+            # If raw_sid is already known in DB and not legacy, prioritize it
+            if raw_sid and not raw_sid.startswith("ss:") and raw_sid.split("?")[0] in existing_sync_ids_in_db:
+                sid = raw_sid.split("?")[0]
+                t.sync_id = sid
+                return sid
+
+            norm_title = (getattr(t, "normalized_title", None) or getattr(t, "title", None) or getattr(t, "raw_title", "") or "").strip().lower()
+            a_id = getattr(t, "artist_id", None) or default_artist_id
+            norm_ed = (getattr(t, "edition", None) or "").strip().lower()
+            key = (norm_title, a_id, norm_ed)
+
+            if key in existing_track_map:
+                sid = existing_track_map[key]
+                if sid.startswith("ss:"):
+                    sid = generate_nanoid()
+                    existing_track_map[key] = sid
+                t.sync_id = sid
+                return sid
+
+            # If track already has a non-legacy sync_id, use it, else generate fresh NanoID
+            if raw_sid and not raw_sid.startswith("ss:"):
+                sid = raw_sid.split("?")[0]
+            else:
+                sid = generate_nanoid()
+
+            existing_track_map[key] = sid
+            t.sync_id = sid
+            return sid
 
         # --- Phase 1: Batch UPSERT tracks ---
         track_values = []
         sync_ids_in_batch = []
+        seen_sync_ids = set()
+
         for t in tracks:
-            sync_id = _build_sync_id(t)
+            sync_id = _get_or_assign_sync_id(t)
             sync_ids_in_batch.append(sync_id)
+            if sync_id in seen_sync_ids:
+                continue
+            seen_sync_ids.add(sync_id)
+
             duration = getattr(t, "duration_ms", None) or getattr(t, "duration", None)
             mbid = getattr(t, "mbid", None) or getattr(t, "musicbrainz_id", None)
             track_title = getattr(t, "title", None) or getattr(t, "raw_title", None) or "Unknown Title"
 
             artist_id = getattr(t, "artist_id", None) or default_artist_id
             album_id = getattr(t, "album_id", None)
+            norm_title = (getattr(t, "normalized_title", None) or track_title).strip().lower()
 
             track_values.append({
                 "sync_id": sync_id,
                 "title": track_title,
-                "normalized_title": track_title.lower(),
+                "normalized_title": norm_title,
                 "sort_title": getattr(t, "sort_title", None),
                 "edition": getattr(t, "edition", None),
                 "artist_id": artist_id,
@@ -312,7 +381,7 @@ class TrackRepository:
 
         media_values = []
         for t in tracks:
-            sync_id = _build_sync_id(t)
+            sync_id = t.sync_id
             track_id = sync_id_to_track_id.get(sync_id)
             if not track_id:
                 continue  # Track insert failed or was filtered — skip media
@@ -389,7 +458,7 @@ class TrackRepository:
 
         ident_values = []
         for t in tracks:
-            sync_id = _build_sync_id(t)
+            sync_id = t.sync_id
             track_id = sync_id_to_track_id.get(sync_id)
             if not track_id:
                 continue
