@@ -199,6 +199,9 @@ def evaluate_version_compatibility(
                 return True, 1.0, "Deluxe fallback permitted in Tier 3"
             return False, 0.0, "Deluxe candidate rejected in primary tiers"
 
+        if cand_fam in non_studio_fams:
+            return False, 0.0, f"Version mismatch: source requested original, candidate is '{cand_v}'"
+
         if (cand_fam in studio_compatible_fams or cand_fam not in non_studio_fams) and (duration_delta_ms is None or duration_delta_ms <= 5000):
             return True, 0.0, f"Studio release equivalence: Original ≡ '{cand_v}'"
 
@@ -615,8 +618,11 @@ class WeightedMatchingEngine:
         # Store individual component scores for later use (e.g., duration bonus)
         artist_fuzzy_score = 0.0
         if source.artist_name and candidate.artist_name:
+            from core.matching_engine.text_utils import is_franchise_entity
             if source.artist_name.lower() != "various artists" and candidate.artist_name.lower() == "various artists":
                 artist_fuzzy_score = 0.0
+            elif is_franchise_entity(source.artist_name) or is_franchise_entity(candidate.artist_name):
+                artist_fuzzy_score = 0.90
             else:
                 artist_fuzzy_score = self._fuzzy_match(source.artist_name, candidate.artist_name)
                 if artist_fuzzy_score < 0.8:
@@ -1181,9 +1187,12 @@ class WeightedMatchingEngine:
 
         # Artist match with subset rescue
         if source.artist_name and candidate.artist_name:
+            from core.matching_engine.text_utils import is_franchise_entity
             # Prevent "Various Artists" from partially matching real names
             if source.artist_name.lower() != "various artists" and candidate.artist_name.lower() == "various artists":
                  artist_score = 0.0
+            elif is_franchise_entity(source.artist_name) or is_franchise_entity(candidate.artist_name):
+                 artist_score = 0.90
             else:
                  artist_score = self._fuzzy_match(source.artist_name, candidate.artist_name)
             

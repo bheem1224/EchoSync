@@ -2,6 +2,15 @@
 requires = ["maturin>=1.5,<2.0"]
 build-backend = "maturin"
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --maxfail=5 --durations=10"
+# Enforce isolation and fail fast on runaway suites
+filterwarnings = [
+    "error::ResourceWarning",
+    "ignore::DeprecationWarning"
+]
+
 [project]
 name = "echosync"
 version = "0.1.0"

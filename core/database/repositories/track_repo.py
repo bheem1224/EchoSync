@@ -630,7 +630,7 @@ class TrackRepository:
             for media in media_files[1:]:
                 path_str = media.file_path or ""
                 _, extracted_ver = extract_version_info(path_str)
-                extracted_ed = extracted_ver or "Remix"
+                extracted_ed = extracted_ver or parent_track.edition or None
 
                 new_sync_id = generate_nanoid(8)
                 new_track = Track(

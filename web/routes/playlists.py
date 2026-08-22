@@ -283,6 +283,10 @@ def _cmp_artists(a: str, b: str) -> float:
     if a_n == b_n:
         return 1.0
 
+    from core.matching_engine.text_utils import is_franchise_entity
+    if is_franchise_entity(a) or is_franchise_entity(b):
+        return 0.90
+
     ratio = SequenceMatcher(None, a_n, b_n).ratio()
     if a_n in b_n or b_n in a_n:
         shorter, longer = (a_n, b_n) if len(a_n) < len(b_n) else (b_n, a_n)

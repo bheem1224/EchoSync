@@ -63,13 +63,19 @@ def check_cover_rejection(source_title: str, source_artist: str, candidate_diagn
         return False
         
     src_norm = normalize_title(source_title)
-    from core.matching_engine.text_utils import _cmp_artists
+    from core.matching_engine.text_utils import _cmp_artists, is_franchise_entity
     from difflib import SequenceMatcher
+
+    if is_franchise_entity(source_artist):
+        return False
     
     for cand_diag in candidate_diagnostics:
         cand = cand_diag.get("candidate", {})
         cand_title = cand.get("title", "")
         cand_artist = cand.get("artist", "")
+
+        if is_franchise_entity(cand_artist):
+            continue
         
         cand_norm = normalize_title(cand_title)
         t_sim = SequenceMatcher(None, src_norm, cand_norm).ratio() if (src_norm and cand_norm) else 0.0

@@ -305,3 +305,59 @@ def test_recursive_stacked_parenthetical_decomposition():
     assert "The Greatest Showman: Reimagined" in parsed["soundtrack"]
     assert parsed["version"] == "Radio Edit"
 
+
+def test_whitespace_normalization_collapsing():
+    """Verify that consecutive whitespace in titles collapses to single space."""
+    from core.matching_engine.text_utils import normalize_title
+
+    norm = normalize_title("Wavin'  Flag")
+    assert norm == "wavin' flag"
+
+
+def test_franchise_publisher_soundtrack_matching():
+    """Verify that 'Legends Never Die' by 'League of Legends' matches 'Against the Current'."""
+    engine = WeightedMatchingEngine(ExactSyncProfile())
+
+    source = EchosyncTrack(
+        raw_title="Legends Never Die",
+        artist_name="League of Legends",
+        album_title="Legends Never Die",
+        duration=235000,
+    )
+    candidate = EchosyncTrack(
+        raw_title="Legends Never Die",
+        artist_name="Against the Current",
+        album_title="Legends Never Die",
+        duration=235000,
+    )
+
+    result = engine.calculate_match(source, candidate)
+    assert result.passed_version_check is True
+    assert result.confidence_score >= 85.0
+
+
+def test_clean_studio_track_edition_isolation():
+    """Verify that a studio track in an album folder does not inherit album edition tokens."""
+    engine = WeightedMatchingEngine(ExactSyncProfile())
+
+    # Studio candidate from a Deluxe album folder: track title is clean
+    candidate = EchosyncTrack(
+        raw_title="In the End",
+        artist_name="Linkin Park",
+        album_title="Hybrid Theory (Deluxe Edition)",
+        duration=217312,  # 3:37
+    )
+    # Verify Track.edition is None (not polluted by album edition)
+    assert candidate.edition is None
+
+    source = EchosyncTrack(
+        raw_title="In the End",
+        artist_name="Linkin Park",
+        album_title="Hybrid Theory",
+        duration=216880,  # 3:36
+    )
+
+    result = engine.calculate_match(source, candidate)
+    assert result.passed_version_check is True
+    assert result.confidence_score >= 85.0
+

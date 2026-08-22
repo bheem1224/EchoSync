@@ -177,6 +177,20 @@ _TRIBUTE_DELTA_TOKENS = {
     "celebration", "orchestra", "instrumental version", "piano tribute"
 }
 
+_FRANCHISE_PUBLISHER_ENTITIES = {
+    "league of legends", "riot games", "disney", 
+    "marvel", "epic games", "soundtrack", "various artists",
+    "original broadway cast"
+}
+
+
+def is_franchise_entity(artist_name: Optional[str]) -> bool:
+    """Check if an artist name represents a known franchise, publisher, or compilation umbrella."""
+    if not artist_name:
+        return False
+    norm = normalize_text(str(artist_name)).strip().lower()
+    return any(entity in norm for entity in _FRANCHISE_PUBLISHER_ENTITIES)
+
 
 def _cmp_artists(a: str, b: str) -> float:
     """Artist similarity score (0–1) with hardened substring-containment boost.
@@ -185,6 +199,7 @@ def _cmp_artists(a: str, b: str) -> float:
     SequenceMatcher ratio OR 0.95 (whichever is higher) when one normalised
     form is fully contained in the other, UNLESS the delta difference contains
     tribute/cover/karaoke qualifiers (e.g. 'The Maroon 5 Tribute Band' vs 'Maroon 5').
+    Also recognizes franchise/soundtrack publisher credits (e.g. 'League of Legends' vs 'Against the Current').
     """
     from difflib import SequenceMatcher
     def _n(s: str) -> str:
@@ -197,6 +212,10 @@ def _cmp_artists(a: str, b: str) -> float:
         return 0.0
     if a_n == b_n:
         return 1.0
+
+    # Franchise / Soundtrack Publisher Equivalence
+    if is_franchise_entity(a) or is_franchise_entity(b):
+        return 0.90
 
     ratio = SequenceMatcher(None, a_n, b_n).ratio()
     if a_n in b_n or b_n in a_n:
