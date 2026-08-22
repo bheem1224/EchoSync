@@ -106,7 +106,7 @@ _NORM_PROMO_EVENT_RE = re.compile(
     flags=re.IGNORECASE
 )
 _NORM_VERSION_DASH_RE = re.compile(
-    r'\s*[-–—]\s*(?:.*?\b(?:remix|rmx|bootleg|remaster(?:ed)?|deluxe(?:\s+edition)?|radio(?:\s+edit|\s+version|\s+mix)?|single(?:\s+version|\s+edit)?|extended(?:\s+mix|\s+version)?|club(?:\s+mix|\s+version)?|acoustic|piano|live|instrumental|soundtrack|ost)\b.*)$',
+    r'\s*[-–—]\s*(?:.*?\b(?:remix|rmx|bootleg|remaster(?:ed)?|deluxe(?:\s+edition)?|radio(?:\s+edit|\s+version|\s+mix)?|single(?:\s+version|\s+edit)?|extended(?:\s+mix|\s+version)?|club(?:\s+mix|\s+version)?|acoustic|piano|live|instrumental|soundtrack|ost|sea\s*shanty|shanty)\b.*)$',
     flags=re.IGNORECASE
 )
 
@@ -168,6 +168,28 @@ def _cmp_titles(
             elif _OST_SAFE_RE.match(delta_words):
                 ratio = 0.95
 
+    return ratio
+
+
+def _cmp_artists(a: str, b: str) -> float:
+    """Artist similarity score (0–1) with substring-containment boost.
+
+    Normalises both strings identically to _cmp_titles, then returns the
+    SequenceMatcher ratio OR 0.95 (whichever is higher) when one normalised
+    form is fully contained in the other.
+    """
+    from difflib import SequenceMatcher
+    def _n(s: str) -> str:
+        s = s.lower()
+        s = re.sub(r'[^\w\s]', '', s)
+        return ' '.join(s.split())
+
+    a_n, b_n = _n(a), _n(b)
+    if not a_n or not b_n:
+        return 0.0
+    ratio = SequenceMatcher(None, a_n, b_n).ratio()
+    if a_n in b_n or b_n in a_n:
+        return max(ratio, 0.95)
     return ratio
 
 

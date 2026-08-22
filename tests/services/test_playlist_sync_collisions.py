@@ -140,3 +140,61 @@ def test_version_family_extraction_karaoke_and_sea_shanty():
     assert get_version_family("Sea Shanty") == "sea_shanty"
     assert get_version_family("Wellerman (Sea Shanty)") == "sea_shanty"
     assert get_version_family("Acoustic Version") == "piano"  # grouped under acoustic/piano
+
+
+def test_wellerman_sea_shanty_version_equivalence():
+    """Verify that 'Wellerman - Sea Shanty' matches canonical 'Wellerman' via subtitle descriptor equivalence."""
+    engine = WeightedMatchingEngine(ExactSyncProfile())
+
+    source = EchosyncTrack(
+        raw_title="Wellerman - Sea Shanty",
+        artist_name="Nathan Evans",
+        album_title="Wellerman",
+        duration=155000,
+        edition="Sea Shanty",
+    )
+    candidate = EchosyncTrack(
+        raw_title="Wellerman",
+        artist_name="Nathan Evans",
+        album_title="Wellerman",
+        duration=155000,
+    )
+
+    result = engine.calculate_match(source, candidate)
+    assert result.passed_version_check is True
+    assert result.confidence_score >= 85.0
+    assert "Subtitle descriptor equivalence" in result.reasoning or result.version_penalty_applied == 0.0
+
+
+def test_tier2_escalation_blocked_on_distinct_artist_cover():
+    """Verify check_cover_rejection blocks Tier 2 escalation for distinct artist covers."""
+    from services.playlists_api import check_cover_rejection
+
+    candidate_diagnostics = [
+        {
+            "candidate": {
+                "title": "Rewrite The Stars",
+                "artist": "Zac Efron & Zendaya",
+                "duration": 217000,
+            },
+            "result": {
+                "score": 0.0,
+                "passed_version": True,
+                "passed_edition": True,
+                "fuzzy_text": 0.50,
+                "duration_score": 1.0,
+                "quality_bonus": 0.0,
+                "version_penalty": 0.0,
+                "edition_penalty": 0.0,
+            },
+            "reasoning": "Artist boundary mismatch: 'James Arthur & Anne-Marie' vs 'Zac Efron & Zendaya' are distinct artists (score: 0.0)",
+        }
+    ]
+
+    is_cover_rejected = check_cover_rejection(
+        source_title="Rewrite The Stars",
+        source_artist="James Arthur & Anne-Marie",
+        candidate_diagnostics=candidate_diagnostics,
+    )
+    assert is_cover_rejected is True
+

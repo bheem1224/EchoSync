@@ -557,6 +557,7 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
 
                 library_match = "Not Found"
                 best_score = 0
+                had_cover_rejection = False
 
                 try:
                     with db.engine.connect() as conn:
@@ -964,6 +965,13 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                         if result.is_near_miss and near_miss_candidate_id is None:
                             near_miss_candidate_id = candidate_row[0]
 
+                    from services.playlists_api import check_cover_rejection
+                    had_cover_rejection = check_cover_rejection(
+                        source_track.title or track_title,
+                        source_track.artist_name or track_artist,
+                        candidate_diagnostics,
+                    )
+
                     tier2_needed_due_to_version = (
                         not tier2_mode and len(candidates) > 0 and best_score == 0.0 and
                         all(not d["result"]["passed_version"] for d in candidate_diagnostics)
@@ -971,6 +979,15 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                     tier2_needed_due_to_failure = (
                         not tier2_mode and len(candidates) > 0 and best_score < 70 and track_duration
                     )
+
+                    if had_cover_rejection:
+                        logger.debug(
+                            f"[system] Tier 2 escalation skipped for '{track_title}' by '{track_artist}': "
+                            f"detected cover version by distinct artist."
+                        )
+                        tier2_needed_due_to_version = False
+                        tier2_needed_due_to_failure = False
+
                     if tier2_needed_due_to_version or tier2_needed_due_to_failure:
                         logger.debug(
                             (
@@ -1320,6 +1337,7 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                     "download_status": "-",
                     "matched_track_id": best_match_track_id,
                     "match_score": best_score,
+                    "rejection_reason": "Cover version detected: local tracks with title exist under distinct artist(s)" if (had_cover_rejection and best_score < 70) else None,
                     "candidate_matches": valid_candidates,
                     "target_source": target_source_canonical or target_source,
                     "target_identifier": best_match_target_id,

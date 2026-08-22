@@ -51,6 +51,40 @@ def sanitize_title_for_comparison(title: str) -> str:
     return normalize_title(title) or REMASTER_STRIP_REGEX.sub("", title).strip()
 
 
+def check_cover_rejection(source_title: str, source_artist: str, candidate_diagnostics: List[dict]) -> bool:
+    """
+    Determine if Tier 1 candidate evaluation rejected candidates solely due to
+    disjoint artist cover mismatch on high-similarity titles.
+    
+    If True, Tier 2 (title-only) escalation must be aborted to prevent covers
+    by distinct artists from falsely claiming physical library files.
+    """
+    if not source_title or not source_artist:
+        return False
+        
+    src_norm = normalize_title(source_title)
+    from core.matching_engine.text_utils import _cmp_artists
+    from difflib import SequenceMatcher
+    
+    for cand_diag in candidate_diagnostics:
+        cand = cand_diag.get("candidate", {})
+        cand_title = cand.get("title", "")
+        cand_artist = cand.get("artist", "")
+        
+        cand_norm = normalize_title(cand_title)
+        t_sim = SequenceMatcher(None, src_norm, cand_norm).ratio() if (src_norm and cand_norm) else 0.0
+        if t_sim < 0.90:
+            t_sim = _cmp_titles(source_title, cand_title)
+            
+        if t_sim >= 0.90:
+            art_sim = _cmp_artists(source_artist, cand_artist)
+            reasoning = cand_diag.get("reasoning", "")
+            if art_sim == 0.0 or "Artist boundary mismatch" in reasoning:
+                return True
+                
+    return False
+
+
 def get_library_candidates(session: Session, target_title: str, target_artist: str) -> List[Track]:
     """
     Fetch all matching candidate Track records for a given title and artist.

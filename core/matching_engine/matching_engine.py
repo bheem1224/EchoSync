@@ -175,6 +175,10 @@ def evaluate_version_compatibility(
     if src_fam and cand_fam and src_fam == cand_fam:
         return True, 0.0, f"Version family match ({src_fam}): '{src_v}' ≡ '{cand_v}'"
 
+    # Subtitle / Genre Descriptor Equivalence (e.g. "Sea Shanty")
+    if (src_fam in ("sea_shanty", "shanty") and not cand_fam) or (cand_fam in ("sea_shanty", "shanty") and not src_fam):
+        return True, 0.0, "Subtitle descriptor equivalence"
+
     # Source has no edition (Original cut requested)
     if not src_fam:
         if cand_fam == "deluxe":
@@ -184,13 +188,15 @@ def evaluate_version_compatibility(
                 return True, 1.0, "Deluxe fallback permitted in Tier 3"
             return False, 0.0, "Deluxe candidate rejected in primary tiers"
 
-        if cand_fam in {'remaster', 'live', 'instrumental', 'karaoke', 'demo', 'remix', 'clean', 'acapella', 'sea_shanty'}:
+        if cand_fam in {'remaster', 'live', 'instrumental', 'karaoke', 'demo', 'remix', 'clean', 'acapella'}:
             return False, 0.0, f"Version mismatch: source requested original, candidate is '{cand_v}'"
 
         return False, 0.0, f"Version mismatch: source requested original, candidate is '{cand_v}'"
 
     # Candidate has no version but source specified one
     if not cand_fam and src_fam:
+        if src_fam in ("sea_shanty", "shanty"):
+            return True, 0.0, "Subtitle descriptor equivalence"
         return False, 0.0, f"Version mismatch: source requested '{src_v}' ({src_fam}) but candidate has no version info"
 
     return False, 0.0, f"Version mismatch: '{src_v}' vs '{cand_v}'"
