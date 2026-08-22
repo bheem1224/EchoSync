@@ -361,3 +361,41 @@ def test_clean_studio_track_edition_isolation():
     assert result.passed_version_check is True
     assert result.confidence_score >= 85.0
 
+
+def test_tier2_evaluates_only_new_candidates():
+    """Verify that Tier 2 skips candidates already evaluated and rejected in Tier 1."""
+    from services.playlists_api import filter_unevaluated_candidates
+
+    evaluated_candidate_ids = {101}
+    tier2_raw_candidates = [
+        (101, "Sweater Weather (Remix)", 240000, "Remix", "The Neighbourhood", 1, None, "Album A"),
+        (102, "Sweater Weather", 240000, None, "The Neighbourhood", 1, None, "I Love You."),
+    ]
+
+    tier2_candidates = filter_unevaluated_candidates(tier2_raw_candidates, evaluated_candidate_ids)
+    assert len(tier2_candidates) == 1
+    assert tier2_candidates[0][0] == 102
+
+
+def test_tier2_scores_artist_bonus_on_new_candidate():
+    """Verify a candidate found in Tier 2 with the correct artist receives full match confidence."""
+    from services.playlists_api import evaluate_tier2_candidate
+
+    engine = WeightedMatchingEngine(ExactSyncProfile())
+    source = EchosyncTrack(
+        raw_title="Sweater Weather",
+        artist_name="The Neighbourhood",
+        album_title="I Love You.",
+        duration=240000,
+    )
+    candidate = EchosyncTrack(
+        raw_title="Sweater Weather",
+        artist_name="The Neighbourhood",
+        album_title="I Love You.",
+        duration=240500,
+    )
+
+    result = evaluate_tier2_candidate(engine, source, candidate, artist_score=1.0)
+    assert result.passed_version_check is True
+    assert result.confidence_score >= 90.0
+

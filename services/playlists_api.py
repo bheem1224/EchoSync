@@ -251,4 +251,52 @@ def resolve_duplicate_matches(all_tracks: List[dict]) -> List[dict]:
     return all_tracks
 
 
+def filter_unevaluated_candidates(candidates: List, evaluated_candidate_ids: set) -> List:
+    """Filter candidates that have not yet been evaluated in earlier matching tiers."""
+    filtered = []
+    for cand in candidates:
+        cand_id = cand.id if hasattr(cand, "id") else (cand[0] if isinstance(cand, (tuple, list)) else cand.get("id"))
+        if cand_id not in evaluated_candidate_ids:
+            filtered.append(cand)
+    return filtered
+
+
+def evaluate_tier2_candidate(
+    matching_engine,
+    source_track,
+    candidate_track,
+    artist_score: float = 0.0,
+    target_source: Optional[str] = None,
+    target_identifier: Optional[str] = None,
+):
+    """
+    Evaluate a Tier 2 candidate with artist-awareness.
+    If the candidate matches the requested artist (artist_score >= 0.90),
+    evaluates using the full matching engine for maximum confidence.
+    """
+    if artist_score >= 0.90:
+        result = matching_engine.calculate_match(
+            source_track,
+            candidate_track,
+            target_source=target_source,
+            target_identifier=target_identifier,
+        )
+        if result.confidence_score < 70.0:
+            t2_res = matching_engine.calculate_title_duration_match(
+                source_track,
+                candidate_track,
+                target_source=target_source,
+                target_identifier=target_identifier,
+            )
+            if t2_res.confidence_score > result.confidence_score:
+                result = t2_res
+        return result
+    return matching_engine.calculate_title_duration_match(
+        source_track,
+        candidate_track,
+        target_source=target_source,
+        target_identifier=target_identifier,
+    )
+
+
 _resolve_duplicate_matches = resolve_duplicate_matches

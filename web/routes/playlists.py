@@ -581,6 +581,7 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                 library_match = "Not Found"
                 best_score = 0
                 had_cover_rejection = False
+                evaluated_candidate_ids: set[int] = set()
 
                 try:
                     with db.engine.connect() as conn:
@@ -602,10 +603,11 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                                 f"Tier 1 found 0 candidates for '{track_title}' by '{track_artist}'. "
                                 f"Attempting Tier 2 with title='{search_title}', duration={track_duration}ms ±{sql_duration_tolerance_ms}ms"
                             )
-                            candidates = _fetch_tier2_candidates(
+                            tier2_raw_candidates = _fetch_tier2_candidates(
                                 conn, search_title, track_duration,
                                 sql_duration_tolerance_ms,
                             )
+                            candidates = [c for c in tier2_raw_candidates if c[0] not in evaluated_candidate_ids]
                             tier2_mode = True
 
                     external_ids_map = {}
@@ -665,6 +667,7 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                             _artist_alias_map = {}
 
                     for candidate_row in candidates:
+                        evaluated_candidate_ids.add(candidate_row[0])
                         candidate_target_id = external_ids_map.get(candidate_row[0]) if target_source_canonical else None
                         raw_title_candidate = candidate_row[1]
                         edition_candidate = candidate_row[3]
@@ -1044,14 +1047,15 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                             duration_max = track_duration + sql_duration_tolerance_ms
 
                             with db.engine.connect() as tier2_conn:
-                                candidates = _fetch_tier2_candidates(
+                                tier2_raw_candidates = _fetch_tier2_candidates(
                                     tier2_conn, t2_search_title, track_duration,
                                     sql_duration_tolerance_ms,
                                 )
+                                candidates = [c for c in tier2_raw_candidates if c[0] not in evaluated_candidate_ids]
 
                             if candidates:
                                 logger.debug(
-                                    f"Tier 2 escalation found {len(candidates)} title+duration matches for '{track_title}'. "
+                                    f"Tier 2 escalation found {len(candidates)} new title+duration matches for '{track_title}'. "
                                     f"Re-scoring with Tier 2 profile..."
                                 )
 
@@ -1099,6 +1103,7 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                                     _t2_artist_alias_map = {}
 
                                 for candidate_row in candidates:
+                                    evaluated_candidate_ids.add(candidate_row[0])
                                     candidate_target_id = external_ids_map.get(candidate_row[0]) if target_source else None
                                     raw_title_candidate = candidate_row[1]
                                     edition_candidate = candidate_row[3]
@@ -1163,6 +1168,7 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                                         candidate_track.title = _t2_best_title
 
                                     # ── Promote best artist alias (Tier 2) ────────────────────────
+                                    _t2_best_artist_score = 0.0
                                     if source_track.artist_name:
                                         _t2_best_artist = candidate_track.artist_name or ''
                                         _t2_best_artist_score = _cmp_artists(source_track.artist_name, _t2_best_artist)
@@ -1176,12 +1182,31 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                                         if _t2_best_artist and _t2_best_artist != candidate_track.artist_name:
                                             candidate_track.artist_name = _t2_best_artist
 
-                                    result = matching_engine.calculate_title_duration_match(
-                                        source_track,
-                                        candidate_track,
-                                        target_source=target_source_canonical,
-                                        target_identifier=candidate_target_id,
-                                    )
+                                    # If a new Tier 2 candidate matches the requested artist (artist_score >= 0.90),
+                                    # evaluate with full artist score confidence and allow standard acceptance.
+                                    if _t2_best_artist_score >= 0.90:
+                                        result = matching_engine.calculate_match(
+                                            source_track,
+                                            candidate_track,
+                                            target_source=target_source_canonical,
+                                            target_identifier=candidate_target_id,
+                                        )
+                                        if result.confidence_score < 70.0:
+                                            t2_res = matching_engine.calculate_title_duration_match(
+                                                source_track,
+                                                candidate_track,
+                                                target_source=target_source_canonical,
+                                                target_identifier=candidate_target_id,
+                                            )
+                                            if t2_res.confidence_score > result.confidence_score:
+                                                result = t2_res
+                                    else:
+                                        result = matching_engine.calculate_title_duration_match(
+                                            source_track,
+                                            candidate_track,
+                                            target_source=target_source_canonical,
+                                            target_identifier=candidate_target_id,
+                                        )
 
                                     logger.debug(f"Tier 2 re-score: '{track_title}' vs '{candidate_track.title}': {result.confidence_score}")
 

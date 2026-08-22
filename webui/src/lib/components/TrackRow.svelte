@@ -45,7 +45,7 @@
 
 <svelte:window on:click={handleClickOutside} />
 
-<div class="track-row group hover:bg-white/5 rounded-md px-3 py-2 grid grid-cols-[40px_2fr_1fr_1fr_auto_60px_auto] items-center gap-2 transition-colors">
+<div class="track-row group hover:bg-white/5 rounded-md px-3 py-2 grid grid-cols-[40px_2fr_1fr_1fr_auto_60px_auto] items-center gap-2 transition-colors relative">
     <span class="text-gray-500 text-xs font-mono">{track.track_number || '-'}</span>
     <span class="text-white text-sm font-medium truncate">{track.title}</span>
 
@@ -104,7 +104,7 @@
             <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
         </button>
 
-        <div class="relative menu-container">
+        <div class="relative menu-container z-50">
             <button
                 class="p-1.5 rounded-full hover:bg-gray-700 text-gray-400 hover:text-white transition-colors active:scale-95"
                 on:click|stopPropagation={toggleMenu}
@@ -114,7 +114,7 @@
             </button>
 
             {#if showMenu}
-                <div class="absolute right-0 top-full mt-1 w-48 bg-gray-800 border border-gray-700 rounded-lg shadow-xl z-50 overflow-hidden text-sm">
+                <div class="absolute right-0 top-full mt-1 w-48 bg-gray-800 border border-gray-700 rounded-lg shadow-2xl z-50 overflow-hidden text-sm">
                     <button class="w-full text-left px-4 py-2 hover:bg-gray-700 text-white flex items-center gap-2 active:scale-95 transition-all duration-200" on:click={() => handleAction('metadata')}>
                         <span>🔍</span> Fetch Metadata
                     </button>

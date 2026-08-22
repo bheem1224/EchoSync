@@ -31,9 +31,15 @@
     }
   }
 
+  // Session-level set of hydrated sync IDs to break infinite detail polling loops
+  const hydratedSyncIds = new Set();
+  let handledDeepLinkArtistId = null;
+
   // Reactive deep linking logic
   $effect(() => {
-    if (libraryIndex.length > 0 && $page.url.searchParams.has('artist_id')) {
+    const artistId = $page.url.searchParams.get('artist_id');
+    if (libraryIndex.length > 0 && artistId && (artistId !== handledDeepLinkArtistId || viewMode !== 'detail')) {
+      handledDeepLinkArtistId = artistId;
       handleDeepLinks();
     }
   });
@@ -52,7 +58,7 @@
                   visibleCount = artistIndex + PAGE_SIZE;
               }
 
-              selectArtist(artist);
+              await selectArtist(artist);
               await tick();
 
               let targetId = null;
@@ -86,9 +92,11 @@
 
       // Parent-driven JIT bulk hydration for all tracks under this artist
       const allTracks = artist.albums.flatMap(a => a.tracks);
-      const tracksNeedingHydration = allTracks.filter(t => (!t.media || t.media.length === 0) && t.sync_id);
+      const tracksNeedingHydration = allTracks.filter(t => !hydratedSyncIds.has(t.sync_id) && (!t.media || t.media.length === 0) && t.sync_id);
       
       if (tracksNeedingHydration.length > 0) {
+          // Immediately mark sync IDs to avoid duplicate in-flight or re-triggered requests
+          tracksNeedingHydration.forEach(t => hydratedSyncIds.add(t.sync_id));
           const syncIds = tracksNeedingHydration.map(t => t.sync_id).join(',');
           try {
               const res = await apiClient.get(`/core/tracks?detail=true&ids=${encodeURIComponent(syncIds)}`);
@@ -115,6 +123,7 @@
   function backToGrid() {
       selectedArtist = null;
       viewMode = 'grid';
+      handledDeepLinkArtistId = null;
       const url = new URL(window.location);
       url.search = '';
       window.history.pushState({}, '', url);
@@ -263,7 +272,7 @@
 
             <div class="space-y-8 mt-8">
                 {#each selectedArtist.albums as album (album.id)}
-                    <div class="card" id="album-{album.id}">
+                    <div class="card album-card-container" id="album-{album.id}">
                         <div class="album-header">
                             <div class="album-cover-container">
                                 {#if album.cover_image_url}
@@ -315,6 +324,10 @@
         border-radius: 12px;
         overflow: hidden;
         transition: transform 0.2s;
+    }
+
+    .album-card-container {
+        overflow: visible !important;
     }
 
     .artist-card {
