@@ -12,10 +12,11 @@ from sqlalchemy.orm import Session, joinedload
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy import or_, and_, Integer
 
-from database.music_database import Track, LocalMedia, Artist, Album, generate_nanoid
+from database.music_database import Track, LocalMedia, Artist, Album, TrackArtist, generate_nanoid
 from database import _canonicalize_path
 # Canonical model: EchosyncTrack + EchosyncMedia from core.db
 from core.db.echo_sync_track import EchosyncTrack, EchosyncMedia
+from core.matching_engine.text_utils import split_artists
 
 from core.database.utils import calculate_safe_batch_size
 
@@ -122,8 +123,8 @@ class TrackRepository:
 
         default_artist_id = cls.get_or_create_default_artist(session)
         
-        # ── Step 0a: Batch Resolve & Upsert Artists ───────────────────────────
-        artist_names = set()
+        # ── Step 0a: Batch Resolve & Upsert Atomic Artists ────────────────────
+        all_atomic_artist_names = set()
         for t in tracks:
             art = (
                 getattr(t, "artist_name", None)
@@ -131,19 +132,26 @@ class TrackRepository:
                 or getattr(t, "album_artist", None)
             )
             if art and art.strip() and art.strip().lower() != "unknown artist":
-                artist_names.add(art.strip())
+                tokens = split_artists(art.strip())
+                if not tokens:
+                    tokens = [art.strip()]
+                t._raw_artist_tokens = tokens
+                for tok in tokens:
+                    all_atomic_artist_names.add(tok)
+            else:
+                t._raw_artist_tokens = ["Unknown Artist"]
 
         artist_map = {}  # lower name -> artist_id
-        if artist_names:
+        if all_atomic_artist_names:
             existing_artists = session.query(Artist).filter(
-                Artist.name.in_(list(artist_names))
+                Artist.name.in_(list(all_atomic_artist_names))
             ).all()
             for a in existing_artists:
                 artist_map[a.name.lower()] = a.id
                 if a.normalized_name:
                     artist_map[a.normalized_name.lower()] = a.id
 
-            missing_artists = [name for name in artist_names if name.lower() not in artist_map]
+            missing_artists = [name for name in all_atomic_artist_names if name.lower() not in artist_map]
             if missing_artists:
                 for name in missing_artists:
                     new_artist = Artist(name=name)
@@ -157,20 +165,23 @@ class TrackRepository:
                     if a.normalized_name:
                         artist_map[a.normalized_name.lower()] = a.id
 
+        # Update track objects with resolved primary artist_id and associations
+        for t in tracks:
+            tokens = getattr(t, "_raw_artist_tokens", ["Unknown Artist"])
+            primary_name = tokens[0] if tokens else "Unknown Artist"
+            t.artist_id = artist_map.get(primary_name.lower(), default_artist_id)
+
+            associations = []
+            for i, tok in enumerate(tokens):
+                a_id = artist_map.get(tok.lower(), default_artist_id)
+                role = "primary" if i == 0 else "featured"
+                associations.append((a_id, role, i))
+            t._resolved_artist_associations = associations
+
         # ── Step 0b: Batch Resolve & Upsert Albums ────────────────────────────
         album_pairs = set()  # (album_title, artist_id)
         for t in tracks:
-            art = (
-                getattr(t, "artist_name", None)
-                or getattr(t, "artist", None)
-                or getattr(t, "album_artist", None)
-            )
-            artist_id = default_artist_id
-            if art and art.strip():
-                artist_id = artist_map.get(art.strip().lower(), default_artist_id)
-            
-            t.artist_id = artist_id
-
+            artist_id = getattr(t, "artist_id", None) or default_artist_id
             alb = getattr(t, "album_title", None) or getattr(t, "album", None)
             if alb and alb.strip():
                 alb_clean = alb.strip()
@@ -418,6 +429,38 @@ class TrackRepository:
                 select(Track.sync_id, Track.id).where(Track.sync_id.in_(sync_ids_in_batch))
             ).all()
             sync_id_to_track_id = {row.sync_id: row.id for row in rows}
+
+        # --- Phase 1b: Batch UPSERT TrackArtist associations ---
+        track_artist_values = []
+        for t in tracks:
+            sync_id = t.sync_id
+            track_id = sync_id_to_track_id.get(sync_id)
+            if not track_id:
+                continue
+
+            associations = getattr(t, "_resolved_artist_associations", None)
+            if not associations:
+                a_id = getattr(t, "artist_id", None) or default_artist_id
+                associations = [(a_id, "primary", 0)]
+
+            for a_id, role, pos in associations:
+                track_artist_values.append({
+                    "track_id": track_id,
+                    "artist_id": a_id,
+                    "role": role,
+                    "position": pos,
+                })
+
+        if track_artist_values:
+            ta_chunk_size = calculate_safe_batch_size(column_count=5)
+            for i in range(0, len(track_artist_values), ta_chunk_size):
+                ta_chunk = track_artist_values[i:i + ta_chunk_size]
+                ta_stmt = sqlite_insert(TrackArtist).values(ta_chunk)
+                ta_upsert = ta_stmt.on_conflict_do_update(
+                    index_elements=["track_id", "artist_id", "role"],
+                    set_={"position": ta_stmt.excluded.position},
+                )
+                session.execute(ta_upsert)
 
         media_values = []
         for t in tracks:

@@ -120,6 +120,9 @@ class Artist(Base):
     tracks: Mapped[List["Track"]] = relationship(
         back_populates="artist", cascade="all, delete-orphan"
     )
+    track_associations: Mapped[List["TrackArtist"]] = relationship(
+        back_populates="artist", cascade="all, delete-orphan"
+    )
     aliases: Mapped[List["ArtistAlias"]] = relationship(
         back_populates="artist", cascade="all, delete-orphan"
     )
@@ -193,6 +196,18 @@ class Track(Base):
 
     album: Mapped[Optional[Album]] = relationship(back_populates="tracks")
     artist: Mapped[Artist] = relationship(back_populates="tracks")
+    artist_associations: Mapped[List["TrackArtist"]] = relationship(
+        "TrackArtist",
+        back_populates="track",
+        cascade="all, delete-orphan",
+        order_by="TrackArtist.position",
+    )
+    all_artists: Mapped[List["Artist"]] = relationship(
+        "Artist",
+        secondary="track_artists",
+        order_by="TrackArtist.position",
+        viewonly=True,
+    )
     aliases: Mapped[List["TrackAlias"]] = relationship(
         back_populates="track", cascade="all, delete-orphan"
     )
@@ -206,6 +221,27 @@ class Track(Base):
         secondaryjoin="LocalMedia.media_id == ExternalIdentifier.media_id",
         viewonly=True,
     )
+
+
+class TrackArtist(Base):
+    """Junction table capturing all collaborating artists for a track with roles and position."""
+    __tablename__ = "track_artists"
+    __table_args__ = (
+        UniqueConstraint("track_id", "artist_id", "role", name="uq_track_artist_role"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    track_id: Mapped[int] = mapped_column(
+        ForeignKey("tracks.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    artist_id: Mapped[int] = mapped_column(
+        ForeignKey("artists.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    role: Mapped[str] = mapped_column(String, default="primary", nullable=False)
+    position: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    track: Mapped["Track"] = relationship(back_populates="artist_associations")
+    artist: Mapped["Artist"] = relationship(back_populates="track_associations")
 
     def get_best_media(self) -> Optional["LocalMedia"]:
         """Return the highest-quality LocalMedia file attached to this track."""
@@ -864,6 +900,7 @@ __all__ = [
     "Artist",
     "Album",
     "Track",
+    "TrackArtist",
     "ExternalIdentifier",
     "AudioFingerprint",
     "TrackAudioFeatures",

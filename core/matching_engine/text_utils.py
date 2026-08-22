@@ -674,7 +674,7 @@ def generate_deterministic_id(artist: Optional[str], title: Optional[str]) -> st
 
 
 _ARTIST_SPLIT_PATTERN = re.compile(
-    r'\s*(?:;|,|/|&|\bfeat\b\.?|\bft\b\.?|\bfeaturing\b|\bwith\b)\s*',
+    r'\s*(?:;|,|/|&|\bfeat\b\.?|\bft\b\.?|\bfeaturing\b|\bwith\b|\bvs\b\.?|\band\b|\bx\b)\s*',
     flags=re.IGNORECASE
 )
 _YEAR_RE = re.compile(r'\b(19\d\d|20\d\d)\b')

@@ -10,7 +10,7 @@ import re
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session, joinedload, selectinload
 
-from database.music_database import Track, Artist, Album, LocalMedia
+from database.music_database import Track, Artist, Album, LocalMedia, TrackArtist
 from core.matching_engine.text_utils import (
     normalize_text,
     normalize_title,
@@ -38,11 +38,10 @@ def normalize_title_for_search(title: str) -> str:
 
 
 def normalize_artist_for_search(artist: str) -> str:
-    """Normalize artist for SQL search, stripping featured collaborators."""
+    """Normalize artist for SQL search."""
     if not artist:
         return ""
-    _, clean = normalize_track_comparison_fields("", artist)
-    return normalize_text(clean) or clean.lower()
+    return normalize_text(artist) or artist.lower()
 
 
 def sanitize_title_for_comparison(title: str) -> str:
@@ -59,7 +58,8 @@ def get_library_candidates(session: Session, target_title: str, target_artist: s
     Supports:
     1. Multi-Token Artist Matching: Decomposes collaborative strings (e.g. 'W&W & AXMO',
        'Jonas Blue feat. William Singe') via split_artist_collaborators so any credited
-       artist token matches Track.artist, Artist.name, Artist.sort_name, or Album.artist.
+       artist token matches Track.artist, Artist.name, Artist.sort_name, Album.artist,
+       or collaborating artists in track_artists.
     2. Multi-Candidate Retention: Returns all matching local media records for the
        (artist, title) tuple so downstream matching engines can evaluate durations
        for both original cuts and remixes simultaneously.
@@ -119,13 +119,15 @@ def get_library_candidates(session: Session, target_title: str, target_artist: s
 
     query = (
         session.query(Track)
-        .join(Artist, Track.artist_id == Artist.id)
+        .outerjoin(TrackArtist, Track.id == TrackArtist.track_id)
+        .outerjoin(Artist, or_(Track.artist_id == Artist.id, TrackArtist.artist_id == Artist.id))
         .outerjoin(Album, Track.album_id == Album.id)
         .outerjoin(LocalMedia, Track.id == LocalMedia.track_id)
         .options(
             joinedload(Track.media_files),
             joinedload(Track.artist),
             joinedload(Track.album),
+            joinedload(Track.artist_associations).joinedload(TrackArtist.artist),
         )
         .filter(title_filter, or_(*artist_clauses) if artist_clauses else True)
         .distinct()
@@ -136,13 +138,15 @@ def get_library_candidates(session: Session, target_title: str, target_artist: s
         # Fallback: broad search by title only if artist was 'Various Artists' or missing
         fallback_query = (
             session.query(Track)
-            .join(Artist, Track.artist_id == Artist.id)
+            .outerjoin(TrackArtist, Track.id == TrackArtist.track_id)
+            .outerjoin(Artist, or_(Track.artist_id == Artist.id, TrackArtist.artist_id == Artist.id))
             .outerjoin(Album, Track.album_id == Album.id)
             .outerjoin(LocalMedia, Track.id == LocalMedia.track_id)
             .options(
                 joinedload(Track.media_files),
                 joinedload(Track.artist),
                 joinedload(Track.album),
+                joinedload(Track.artist_associations).joinedload(TrackArtist.artist),
             )
             .filter(title_filter)
             .distinct()

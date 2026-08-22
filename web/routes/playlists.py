@@ -355,13 +355,13 @@ def _fetch_tier1_candidates(conn, search_title, base_search_title, track_artist,
     all_artists = ([primary_art] + collabs) if primary_art else ([track_artist] if track_artist else [])
 
     artist_order_parts = [
-        "(LOWER(a.name) = LOWER(:artist_exact) OR (a.sort_name IS NOT NULL AND LOWER(a.sort_name) = LOWER(:artist_exact)) OR (alb_a.name IS NOT NULL AND LOWER(alb_a.name) = LOWER(:artist_exact)))"
+        "(LOWER(a.name) = LOWER(:artist_exact) OR (a.sort_name IS NOT NULL AND LOWER(a.sort_name) = LOWER(:artist_exact)) OR (ta_a.name IS NOT NULL AND LOWER(ta_a.name) = LOWER(:artist_exact)) OR (alb_a.name IS NOT NULL AND LOWER(alb_a.name) = LOWER(:artist_exact)))"
     ]
     for i, art in enumerate(all_artists):
         k = f"art_token_{i}"
         params[k] = art
         artist_order_parts.append(
-            f"(LOWER(a.name) = LOWER(:{k}) OR (a.sort_name IS NOT NULL AND LOWER(a.sort_name) = LOWER(:{k})) OR (alb_a.name IS NOT NULL AND LOWER(alb_a.name) = LOWER(:{k})))"
+            f"(LOWER(a.name) = LOWER(:{k}) OR (a.sort_name IS NOT NULL AND LOWER(a.sort_name) = LOWER(:{k})) OR (ta_a.name IS NOT NULL AND LOWER(ta_a.name) = LOWER(:{k})) OR (alb_a.name IS NOT NULL AND LOWER(alb_a.name) = LOWER(:{k})))"
         )
     artist_order_sql = " OR ".join(artist_order_parts)
 
@@ -371,6 +371,8 @@ def _fetch_tier1_candidates(conn, search_title, base_search_title, track_artist,
                t.sort_title, al.title AS album_title
         FROM tracks t
         JOIN artists a ON t.artist_id = a.id
+        LEFT JOIN track_artists ta ON t.id = ta.track_id
+        LEFT JOIN artists ta_a ON ta.artist_id = ta_a.id
         LEFT JOIN albums al ON t.album_id = al.id
         LEFT JOIN artists alb_a ON al.artist_id = alb_a.id
         JOIN local_media lm ON t.id = lm.track_id
