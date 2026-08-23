@@ -167,25 +167,36 @@ impl MetadataExtractor {
         let parse_opts = lofty::config::ParseOptions::new()
             .parsing_mode(lofty::config::ParsingMode::Relaxed);
 
-        let tagged_file = match Probe::open(p).and_then(|probe| probe.options(parse_opts).read()) {
-            Ok(tf) => tf,
+        let tagged_file_opt = match Probe::open(p).and_then(|probe| probe.options(parse_opts).read()) {
+            Ok(tf) => Some(tf),
             Err(_) => {
                 let tag_only_opts = lofty::config::ParseOptions::new()
                     .read_properties(false)
                     .parsing_mode(lofty::config::ParsingMode::Relaxed);
                 match Probe::open(p).and_then(|probe| probe.options(tag_only_opts).read()) {
-                    Ok(tf) => tf,
+                    Ok(tf) => Some(tf),
                     Err(_) => {
-                        return Ok(TrackMetadata {
-                            codec: "CORRUPT".to_string(),
-                            file_path: path_str,
-                            file_size_bytes,
-                            mtime,
-                            inode,
-                            ..Default::default()
-                        });
+                        // Try reading only stream properties if tags are corrupt
+                        let props_only_opts = lofty::config::ParseOptions::new()
+                            .read_tags(false)
+                            .parsing_mode(lofty::config::ParsingMode::Relaxed);
+                        Probe::open(p).and_then(|probe| probe.options(props_only_opts).read()).ok()
                     }
                 }
+            }
+        };
+
+        let tagged_file = match tagged_file_opt {
+            Some(tf) => tf,
+            None => {
+                return Ok(TrackMetadata {
+                    codec: "CORRUPT".to_string(),
+                    file_path: path_str,
+                    file_size_bytes,
+                    mtime,
+                    inode,
+                    ..Default::default()
+                });
             }
         };
 

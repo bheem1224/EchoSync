@@ -163,6 +163,81 @@ fn populate_tag_items(tag: &mut Tag, tags: &Bound<'_, PyDict>) {
     }
 }
 
+fn populate_riff_items(tag: &mut Tag, tags: &Bound<'_, PyDict>) {
+    if let Ok(Some(val)) = tags.get_item("title") {
+        if let Ok(s) = val.extract::<String>() {
+            let st = s.trim();
+            if !st.is_empty() {
+                tag.insert_text(ItemKey::TrackTitle, st.to_string());
+            }
+        }
+    }
+    let artist_val = tags
+        .get_item("artist")
+        .ok()
+        .flatten()
+        .or_else(|| tags.get_item("artist_name").ok().flatten());
+    if let Some(val) = artist_val {
+        if let Ok(s) = val.extract::<String>() {
+            let st = s.trim();
+            if !st.is_empty() {
+                tag.insert_text(ItemKey::TrackArtist, st.to_string());
+            }
+        }
+    }
+    let album_val = tags
+        .get_item("album")
+        .ok()
+        .flatten()
+        .or_else(|| tags.get_item("album_title").ok().flatten());
+    if let Some(val) = album_val {
+        if let Ok(s) = val.extract::<String>() {
+            let st = s.trim();
+            if !st.is_empty() {
+                tag.insert_text(ItemKey::AlbumTitle, st.to_string());
+            }
+        }
+    }
+    let track_val = tags
+        .get_item("track_number")
+        .ok()
+        .flatten()
+        .or_else(|| tags.get_item("track_no").ok().flatten())
+        .or_else(|| tags.get_item("track").ok().flatten());
+    if let Some(val) = track_val {
+        if let Ok(num) = val.extract::<u32>() {
+            tag.set_track(num);
+        } else if let Ok(s) = val.extract::<String>() {
+            if let Ok(num) = s.parse::<u32>() {
+                tag.set_track(num);
+            }
+        }
+    }
+    let year_val = tags
+        .get_item("year")
+        .ok()
+        .flatten()
+        .or_else(|| tags.get_item("release_year").ok().flatten())
+        .or_else(|| tags.get_item("date").ok().flatten());
+    if let Some(val) = year_val {
+        if let Ok(num) = val.extract::<u32>() {
+            tag.set_year(num);
+        } else if let Ok(s) = val.extract::<String>() {
+            if let Ok(num) = s.parse::<u32>() {
+                tag.set_year(num);
+            }
+        }
+    }
+    if let Ok(Some(val)) = tags.get_item("genre") {
+        if let Ok(s) = val.extract::<String>() {
+            let st = s.trim();
+            if !st.is_empty() {
+                tag.set_genre(st.to_string());
+            }
+        }
+    }
+}
+
 pub fn write_tags_to_file(path_str: &str, tags: &Bound<'_, PyDict>) -> Result<(), String> {
     let path = Path::new(path_str);
     if !path.exists() {
@@ -173,17 +248,28 @@ pub fn write_tags_to_file(path_str: &str, tags: &Bound<'_, PyDict>) -> Result<()
         .read_properties(false)
         .parsing_mode(ParsingMode::Relaxed);
 
-    let mut tagged_file = Probe::open(path)
-        .map_err(|e| format!("Failed to open {}: {}", path.display(), e))?
-        .options(parse_opts)
-        .read()
-        .map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
+    let mut tagged_file = match Probe::open(path).and_then(|probe| probe.options(parse_opts).read()) {
+        Ok(tf) => tf,
+        Err(_) => {
+            // Fallback: If existing tag chunks are corrupt (e.g. invalid RIFF INFO keys from external encoders),
+            // open with read_tags(false) so we can insert fresh tags and overwrite cleanly.
+            let no_tags_opts = ParseOptions::new()
+                .read_properties(false)
+                .read_tags(false)
+                .parsing_mode(ParsingMode::Relaxed);
+            Probe::open(path)
+                .map_err(|e| format!("Failed to open {}: {}", path.display(), e))?
+                .options(no_tags_opts)
+                .read()
+                .map_err(|e| format!("Failed to read {}: {}", path.display(), e))?
+        }
+    };
 
     if tagged_file.file_type() == FileType::Wav {
         let mut id3_tag = Tag::new(TagType::Id3v2);
         let mut riff_tag = Tag::new(TagType::RiffInfo);
         populate_tag_items(&mut id3_tag, tags);
-        populate_tag_items(&mut riff_tag, tags);
+        populate_riff_items(&mut riff_tag, tags);
         tagged_file.insert_tag(id3_tag);
         tagged_file.insert_tag(riff_tag);
     } else {
