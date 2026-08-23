@@ -1506,7 +1506,15 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
         if track.get("matched_track_id") and track.get("target_identifier"):
             matched_pairs.append({
                 "track_id": track["matched_track_id"],
+                "matched_track_id": track["matched_track_id"],
                 "target_identifier": track["target_identifier"],
+                "title": track.get("title"),
+                "artist": track.get("artist"),
+                "album": track.get("album"),
+                "duration_ms": track.get("duration_ms"),
+                "source_title": track.get("title"),
+                "source_artist": track.get("artist"),
+                "source_track": track.get("source_track"),
             })
         elif not track.get("matched_track_id"):
             missing_tracks.append({
@@ -1772,34 +1780,68 @@ def _sync_to_plex(payload, source, target, playlist_name, matches, download_miss
             failed_tracks = []
             recovered_keys = []
 
-            # Pre-fetch local media paths for matched tracks to assist disambiguation
-            matched_track_ids = [m.get("matched_track_id") for m in valid_match_items if m.get("matched_track_id")]
-            track_media_map = {}
+            # Pre-fetch local track, artist, and media data to guarantee telemetry for live recovery
+            matched_track_ids = []
+            for m in valid_match_items:
+                tid = m.get("matched_track_id") if m.get("matched_track_id") is not None else m.get("track_id")
+                if tid is not None and str(tid).isdigit():
+                    matched_track_ids.append(int(tid))
+
+            track_info_map = {}
             if matched_track_ids:
                 try:
-                    from database.music_database import get_database, LocalMedia
+                    from database.music_database import get_database, Track, Artist, LocalMedia
                     db = get_database()
                     with db.session_scope() as session:
-                        rows = session.query(LocalMedia.track_id, LocalMedia.file_path, LocalMedia.media_id).filter(LocalMedia.track_id.in_(matched_track_ids)).all()
-                        for t_id, f_path, m_id in rows:
-                            track_media_map[t_id] = (f_path, m_id)
+                        rows = (
+                            session.query(Track, Artist, LocalMedia)
+                            .outerjoin(Artist, Track.artist_id == Artist.id)
+                            .outerjoin(LocalMedia, Track.id == LocalMedia.track_id)
+                            .filter(Track.id.in_(matched_track_ids))
+                            .all()
+                        )
+                        for t, a, lm in rows:
+                            track_info_map[t.id] = {
+                                "title": t.title,
+                                "artist": a.name if a else "Unknown Artist",
+                                "album": t.album.title if getattr(t, "album", None) else "",
+                                "duration": t.duration or 0,
+                                "file_path": lm.file_path if lm else None,
+                                "media_id": lm.media_id if lm else None,
+                            }
                 except Exception as pre_err:
-                    logger.debug(f"Failed to prefetch LocalMedia for sync recovery: {pre_err}")
+                    logger.debug(f"Failed to prefetch Track/LocalMedia for sync recovery: {pre_err}")
 
             from core.db.echo_sync_track import EchosyncTrack, EchosyncMedia
 
             for idx, m in enumerate(valid_match_items):
                 rk = m.get("target_identifier")
-                track_title = m.get("source_title") or m.get("title") or (m.get("source_track") or {}).get("title") or (m.get("source_track") or {}).get("name") or "Unknown Track"
-                track_artist = m.get("source_artist") or m.get("artist") or (m.get("source_track") or {}).get("artist") or "Unknown Artist"
-                track_album = m.get("album") or (m.get("source_track") or {}).get("album") or ""
-                track_duration = m.get("duration_ms") or (m.get("source_track") or {}).get("duration_ms") or 0
-                matched_t_id = m.get("matched_track_id")
+                matched_t_id = m.get("matched_track_id") if m.get("matched_track_id") is not None else m.get("track_id")
+                if matched_t_id is not None and str(matched_t_id).isdigit():
+                    matched_t_id = int(matched_t_id)
 
-                local_file_path = None
-                local_media_id = None
-                if matched_t_id and matched_t_id in track_media_map:
-                    local_file_path, local_media_id = track_media_map[matched_t_id]
+                db_info = track_info_map.get(matched_t_id) if matched_t_id else {}
+
+                track_title = (
+                    m.get("source_title")
+                    or m.get("title")
+                    or (m.get("source_track") or {}).get("title")
+                    or (m.get("source_track") or {}).get("name")
+                    or db_info.get("title")
+                    or "Unknown Track"
+                )
+                track_artist = (
+                    m.get("source_artist")
+                    or m.get("artist")
+                    or (m.get("source_track") or {}).get("artist")
+                    or db_info.get("artist")
+                    or "Unknown Artist"
+                )
+                track_album = m.get("album") or (m.get("source_track") or {}).get("album") or db_info.get("album") or ""
+                track_duration = m.get("duration_ms") or (m.get("source_track") or {}).get("duration_ms") or db_info.get("duration") or 0
+
+                local_file_path = db_info.get("file_path")
+                local_media_id = db_info.get("media_id")
 
                 local_media_list = [EchosyncMedia(file_path=local_file_path, media_id=local_media_id)] if local_file_path else []
                 local_track_meta = EchosyncTrack(

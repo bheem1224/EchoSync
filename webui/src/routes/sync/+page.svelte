@@ -343,9 +343,15 @@
           .filter(t => t.matched_track_id)
           .map(t => ({
             track_id: t.matched_track_id,
+            matched_track_id: t.matched_track_id,
             target_identifier: t.target_identifier || t.matched_track_id,
             title: t.title,
-            artist: t.artist
+            artist: t.artist,
+            album: t.album,
+            duration_ms: t.duration_ms,
+            source_title: t.title,
+            source_artist: t.artist,
+            source_track: t.source_track,
           }));
 
     if (validMatches.length === 0) {
