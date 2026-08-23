@@ -536,6 +536,23 @@ class RetroactiveEnhancer:
         if not tags_to_write:
             raise MetadataWriteVerificationError(f"No writable tags provided for {path.name}")
 
+        # Attempt to ensure write permissions on file and parent directory before native write
+        try:
+            current_mode = path.stat().st_mode
+            if not (current_mode & 0o200):  # missing owner write permission
+                path.chmod(current_mode | 0o664)
+        except Exception:
+            pass
+
+        try:
+            parent_dir = path.parent
+            if parent_dir.exists():
+                p_mode = parent_dir.stat().st_mode
+                if not (p_mode & 0o200):
+                    parent_dir.chmod(p_mode | 0o775)
+        except Exception:
+            pass
+
         try:
             if hasattr(echosync_core, "write_metadata"):
                 echosync_core.write_metadata(str(path), tags_to_write)
