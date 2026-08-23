@@ -381,7 +381,10 @@ class DownloadManager:
         priority_tiers = self._get_priority_tiers(quality_profile)
         matcher = self._get_matching_engine(quality_profile)
         for _priority_num, priority_formats in priority_tiers:
-            tier_candidates = self._filter_by_formats(enriched_batch, priority_formats)
+            try:
+                tier_candidates = self._filter_by_formats(enriched_batch, priority_formats, quality_profile)
+            except TypeError:
+                tier_candidates = self._filter_by_formats(enriched_batch, priority_formats)
             if not tier_candidates:
                 continue
             candidate = matcher.select_best_download_candidate(target_track, tier_candidates)
@@ -968,7 +971,10 @@ class DownloadManager:
 
                 for priority_num, priority_formats in priority_tiers:
                     # Filter by priority formats
-                    tier_candidates = self._filter_by_formats(provider_candidates, priority_formats)
+                    try:
+                        tier_candidates = self._filter_by_formats(provider_candidates, priority_formats, quality_profile)
+                    except TypeError:
+                        tier_candidates = self._filter_by_formats(provider_candidates, priority_formats)
                     logger.debug(f"    Priority {priority_num}: {len(tier_candidates)} candidates match formats")
                     
                     if not tier_candidates:
@@ -1596,9 +1602,10 @@ class DownloadManager:
         sorted_tiers = sorted(priority_map.items(), key=lambda x: x[0])
         return sorted_tiers
     
-    def _filter_by_formats(self, candidates: List[EchosyncTrack], formats: List[str]) -> List[EchosyncTrack]:
+    def _filter_by_formats(self, candidates: List[EchosyncTrack], formats: List[str], quality_profile: Optional[Dict[str, Any]] = None) -> List[EchosyncTrack]:
         """Filter candidates by format and apply quality profile constraints."""
-        quality_profile = self._get_quality_profile()
+        if quality_profile is None:
+            quality_profile = self._get_quality_profile()
         if not quality_profile:
             # Fallback: just filter by format
             filtered = []
