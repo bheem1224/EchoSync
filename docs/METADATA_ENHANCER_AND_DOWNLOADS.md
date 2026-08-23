@@ -157,6 +157,10 @@ _execute_waterfall_search_and_download
 6. **Status Monitoring** — Poll provider for completion
 7. **Persistence** — Update database with status/path
 
+> [!TIP]
+> **Slskd Permissions (Unraid / Docker):**
+> Configure `permissions:` in `slskd.yml` (`file: mode: 0666`, `dir: mode: 0777`) and ensure `PUID=99`, `PGID=100`, `UMASK=000` are set on container templates to allow seamless tag writing and cross-disk file moving during auto-import.
+
 ### Search Expansion
 
 When searching a provider, the download manager invokes `pre_provider_search` hook:

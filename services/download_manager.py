@@ -627,8 +627,9 @@ class DownloadManager:
 
     async def _process_loop(self):
         """Main control loop: Process Queue -> Check Active"""
-        # 0. Recover stuck items and clean up queue on startup
+        # 0. Recover stuck items, deduplicate queue, and clean up queue on startup
         await self._recover_stuck_items()
+        self._deduplicate_queue()
         self._purge_existing_tracks_from_queue()
         logger.info("DownloadManager processing loop started.")
 
@@ -657,6 +658,7 @@ class DownloadManager:
             return
 
         async with self._processing_queue_lock:
+            self._deduplicate_queue()
             providers = self._get_active_download_providers()
             if not providers:
                 logger.debug("Skipping queue processing: No active download providers.")
@@ -1880,6 +1882,42 @@ class DownloadManager:
             logger.error(f"Error checking library for {artist_name} - {title}: {e}")
             return False
 
+    def _deduplicate_queue(self):
+        """
+        Deduplicate existing rows in DownloadQueue.
+        
+        Scans all records, keeps the most recent record per track signature,
+        and deletes redundant duplicate rows.
+        """
+        try:
+            with self.work_db.session_scope() as session:
+                items = session.query(DownloadQueue).order_by(DownloadQueue.id.desc()).all()
+                seen_signatures = {}
+                to_delete = []
+
+                for item in items:
+                    sig = self._normalize_track_signature(item.echo_sync_track or {})
+                    if not sig[0] or not sig[1]:
+                        continue
+                    
+                    matched_key = None
+                    for existing_sig, existing_item_id in seen_signatures.items():
+                        if self._is_signature_match(sig, existing_sig):
+                            matched_key = existing_sig
+                            break
+
+                    if matched_key:
+                        # Found duplicate item with same signature — delete older duplicate
+                        to_delete.append(item.id)
+                    else:
+                        seen_signatures[sig] = item.id
+
+                if to_delete:
+                    session.query(DownloadQueue).filter(DownloadQueue.id.in_(to_delete)).delete(synchronize_session=False)
+                    logger.info(f"Queue deduplication removed {len(to_delete)} duplicate records from download queue.")
+        except Exception as e:
+            logger.warning(f"Error during queue deduplication: {e}")
+
     def _purge_existing_tracks_from_queue(self):
         """
         Startup Check: Remove items from the download queue that are already in the library.
@@ -1968,6 +2006,7 @@ class DownloadManager:
             if requeued > 0:
                 logger.info(f"Manual run: re-queued {requeued} retryable failed items")
             await self._recover_stuck_items()
+            self._deduplicate_queue()
             self._purge_existing_tracks_from_queue()
             await self._process_queued_items()
             await self._check_active_downloads()

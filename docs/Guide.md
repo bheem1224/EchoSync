@@ -8,10 +8,36 @@ EchoSync relies on strict separation of state, configuration, and media. When se
 
 * `/config`: Stores your `config.json` and the encrypted `config.db` (which holds your API keys, OAuth tokens, and server credentials). **Keep this backed up and secure.**
 * `/data`: Stores `working.db` (job queues, review tasks) and `music.db` (your library metadata, sync history, Chromaprint hashes). 
-* `/data/downloads`: The staging ground. This should point to the exact same location your `slskd` container downloads files to. 
+* `/data/downloads`: The staging ground. This should point to the exact same location your `slskd` container downloads files to (e.g. `/mnt/disks/Scratch/slskd/complete/` or `/mnt/user/downloads/`). 
 * `/data/library`: Your final, organized library. Your media server (Plex/Jellyfin/Navidrome) should have read access to this exact directory.
-* `/data/logs`: path whare all logs are sotred can be set by ECHOSYNC_LOG_DIR or defaults to /data/logs if not set
-* `/data/plugins`: this is whare all downloaded plugins files live 
+* `/data/logs`: path where all logs are stored can be set by `ECHOSYNC_LOG_DIR` or defaults to `/data/logs` if not set.
+* `/data/plugins`: this is where all downloaded plugins files live.
+
+### ⚠️ File Permissions & Slskd Configuration (Unraid / Docker)
+
+When running EchoSync alongside `slskd` in Docker (especially on Unraid), file permissions must align so EchoSync can tag audio files and move completed downloads across disk boundaries without `Permission denied (os error 13)`.
+
+#### 1. Configuring `slskd.yml` (Recommended)
+`slskd` creates peer subdirectories for each downloaded track. By default, these directories may lack group/other write permissions. In your `slskd.yml` configuration (e.g. on host at `/mnt/ssd/Docker/slskd/slskd.yml` or via the web editor), configure the `permissions` block:
+
+```yaml
+permissions:
+  file:
+    mode: 0666  # Ensures audio files are readable/writable by EchoSync
+  dir:
+    mode: 0777  # Ensures peer subfolders can be cleaned up during auto-import
+```
+
+#### 2. Unraid Container Environment Variables
+In both your **EchoSync** and **slskd** container templates:
+* **`PUID`**: `99` (Unraid's `nobody` user)
+* **`PGID`**: `100` (Unraid's `users` group)
+* **`UMASK`**: `000` (or `002`)
+
+If `slskd`'s Docker template does not display PUID/PGID fields by default, scroll to the bottom of the Unraid Docker edit screen, click **"+ Add another Path, Port, Variable..."**, and add `PUID=99`, `PGID=100`, and `UMASK=000` as custom variables.
+
+#### 3. Cross-Disk Mounts (Scratch Disk vs. Array)
+If `/data/downloads` is mapped to an Unassigned Scratch Disk (e.g. `/mnt/disks/Scratch/...`) and `/data/library` is on your main array (`/mnt/user/Media/...`), EchoSync handles the cross-device link (`EXDEV`) by safely copying the audio file into your library and unlinking the source from the scratch disk. Proper folder permissions (`0777`) ensure the source deletion completes cleanly. 
 
 
 ## 2. The Auto-Importer & File Organization

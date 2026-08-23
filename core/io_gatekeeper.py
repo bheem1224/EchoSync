@@ -174,7 +174,43 @@ class Gatekeeper:
                     raise ValueError("Operation 'safe_move' requires 'destination_uri'")
                 resolved_dst = self.resolve_uri(str(dst_uri))
                 validated_dst = self.validate_path(resolved_dst).as_posix()
-                echosync_core.safe_move_file(posix_path, validated_dst)
+
+                # Ensure destination parent directory exists and is writable
+                try:
+                    dst_parent = Path(validated_dst).parent
+                    dst_parent.mkdir(parents=True, exist_ok=True)
+                    p_mode = dst_parent.stat().st_mode
+                    if not (p_mode & 0o200):
+                        dst_parent.chmod(p_mode | 0o775)
+                except Exception:
+                    pass
+
+                # Attempt to ensure source parent directory is writable (needed for file deletion)
+                try:
+                    src_parent = Path(posix_path).parent
+                    if src_parent.exists():
+                        sp_mode = src_parent.stat().st_mode
+                        if not (sp_mode & 0o200):
+                            src_parent.chmod(sp_mode | 0o775)
+                except Exception:
+                    pass
+
+                try:
+                    echosync_core.safe_move_file(posix_path, validated_dst)
+                except Exception as move_err:
+                    # Fallback in Python if cross-device / container volume permissions block atomic move
+                    import shutil
+                    try:
+                        shutil.copy2(posix_path, validated_dst)
+                        try:
+                            Path(posix_path).unlink()
+                        except Exception as del_err:
+                            logger.warning(
+                                f"File copied to library ({validated_dst}) but source could not be deleted ({posix_path}): {del_err}"
+                            )
+                    except Exception:
+                        raise move_err
+
                 execution_results.append({"src": posix_path, "dst": validated_dst, "status": "moved"})
 
             elif operation == "copy_file":
