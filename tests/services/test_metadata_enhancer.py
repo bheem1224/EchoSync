@@ -446,3 +446,69 @@ def test_enhance_library_metadata_recovers_artist_and_album_from_path(monkeypatc
         assert t.artist.name != "Unknown Artist"
         assert t.album.title != "Unknown Album"
 
+
+def test_enhance_library_metadata_bad_metadata_with_mbid_does_not_pass_trust_gate(tmp_path, monkeypatch):
+    from database.music_database import Artist, Album, Track, LocalMedia, MusicDatabase, Base
+    from core.db.echo_sync_track import EchosyncTrack
+    from core.nexus_framework.plugin_loader import PluginRegistry
+    from services.metadata_enhancer import RetroactiveEnhancer
+
+    db = MusicDatabase(tmp_path / 'test.db')
+    Base.metadata.create_all(db.engine)
+    flac_file = tmp_path / "song.flac"
+    flac_file.write_bytes(b"flac data")
+
+    with db.session_scope() as session:
+        unk_artist = Artist(name="Unknown Artist", normalized_name="unknown artist")
+        unk_album = Album(title="Unknown Album", normalized_title="unknown album", artist=unk_artist)
+        session.add_all([unk_artist, unk_album])
+        session.flush()
+
+        # Track has an existing MBID on file or DB, but bad artist/album
+        track = Track(
+            title="거미줄 (VENOM)",
+            normalized_title="거미줄 (venom)",
+            sync_id="test_sid_venom",
+            musicbrainz_id="mbid-venom-123",
+            artist=unk_artist,
+            album=unk_album,
+        )
+        session.add(track)
+        session.flush()
+
+        media = LocalMedia(track_id=track.id, file_path=str(flac_file), file_format="flac", media_id="venom_media_01")
+        session.add(media)
+
+    monkeypatch.setattr("database.music_database.get_database", lambda: db)
+    monkeypatch.setattr("database.get_database", lambda: db)
+
+    written_tags = []
+    monkeypatch.setattr("services.metadata_enhancer._tagging_write", lambda p, tags: written_tags.append((p, tags)))
+
+    import echosync_core
+    monkeypatch.setattr(echosync_core, "extract_metadata", lambda p: {"musicbrainz_id": "mbid-venom-123", "title": "거미줄 (VENOM)"})
+
+    mock_mb = MagicMock()
+    mock_mb.capabilities = type("Caps", (), {"supports_batching": False})()
+    mock_mb.get_metadata.return_value = {
+        "title": "VENOM",
+        "artist": "Stray Kids",
+        "album": "ODDINARY",
+        "year": 2022,
+        "isrc": "KRA382200001",
+    }
+    monkeypatch.setattr(PluginRegistry, "get_plugin", lambda name: mock_mb if name == "musicbrainz" else None)
+
+    enhancer = RetroactiveEnhancer()
+    enhancer.enhance_library_metadata(batch_size=1, limit=1, check_all_files=False)
+
+    # Verify that targeted fetch ran and updated artist, album, title, and ISRC in DB
+    with db.session_scope() as session:
+        t = session.query(Track).filter_by(sync_id="test_sid_venom").first()
+        assert t.title == "VENOM"
+        assert t.artist.name == "Stray Kids"
+        assert t.album.title == "ODDINARY"
+        assert t.isrc == "KRA382200001"
+        assert t.artist.name != "Unknown Artist"
+
+

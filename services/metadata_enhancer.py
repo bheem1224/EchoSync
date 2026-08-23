@@ -1149,13 +1149,23 @@ class RetroactiveEnhancer:
                     if found_isrc:
                         t_track.isrc = found_isrc
 
+                    # Determine whether track has bad metadata that requires enhancement
+                    is_bad_metadata = (
+                        not t_track.artist_name
+                        or t_track.artist_name.strip().lower().startswith("unknown")
+                        or not t_track.album_title
+                        or t_track.album_title.strip().lower().startswith("unknown")
+                        or not t_track.title
+                        or t_track.title.strip().lower().startswith("unknown")
+                    )
+
                     # Determine missing fields
                     missing_fields = [
                         key for key in required_keys if not item['metadata_status'].get(key)
                     ]
 
                     if t_track.musicbrainz_id and t_track.musicbrainz_id != "NOT_FOUND":
-                        if not missing_fields:
+                        if not missing_fields and not is_bad_metadata and not item.get('metadata_changed'):
                             bucket_trust.append((item, valid_media_paths, all_file_tags))
                         else:
                             bucket_target.append((item, valid_media_paths, all_file_tags))
@@ -1187,6 +1197,17 @@ class RetroactiveEnhancer:
                                     pass
 
                             if meta:
+                                if meta.get('title'):
+                                    t_track.title = meta['title']
+                                if meta.get('artist'):
+                                    t_track.artist_name = meta['artist']
+                                if meta.get('album'):
+                                    t_track.album_title = meta['album']
+                                if meta.get('year'):
+                                    try:
+                                        t_track.release_year = int(meta['year'])
+                                    except Exception:
+                                        pass
                                 if not t_track.isrc and meta.get('isrc'):
                                     t_track.isrc = meta.get('isrc')
 
@@ -1199,6 +1220,9 @@ class RetroactiveEnhancer:
                                     update_tags['album'] = t_track.album_title
                                 if t_track.isrc:
                                     update_tags['isrc'] = t_track.isrc
+                                if t_track.release_year:
+                                    update_tags['year'] = str(t_track.release_year)
+                                    update_tags['date'] = str(t_track.release_year)
 
                                 # Write tags to EVERY associated media file via tag_file_verified
                                 for media, local_path in valid_media_paths:
@@ -1215,13 +1239,13 @@ class RetroactiveEnhancer:
                                 for key in required_keys:
                                     item['metadata_status'][key] = True
                                 item['metadata_changed'] = True
+                                results_to_commit.append(item)
                             else:
-                                item['metadata_status']['enhancement_attempts'] = item['metadata_status'].get('enhancement_attempts', 0) + 1
-                            results_to_commit.append(item)
+                                # MBID targeted fetch returned nothing, route to heavyweight fingerprint + waterfall discovery
+                                bucket_heavy.append((item, valid_media_paths, all_file_tags))
                     else:
                         for item, valid_media_paths, all_file_tags in bucket_target:
-                            item['metadata_status']['enhancement_attempts'] = item['metadata_status'].get('enhancement_attempts', 0) + 1
-                            results_to_commit.append(item)
+                            bucket_heavy.append((item, valid_media_paths, all_file_tags))
 
                 # Step 4: Heavyweight Fingerprint Discovery & Text Waterfall Fallback
                 for item, valid_media_paths, all_file_tags in bucket_heavy:

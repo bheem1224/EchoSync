@@ -135,7 +135,7 @@ class TrackRepository:
         query = (
             session.query(Track)
             .join(LocalMedia, LocalMedia.track_id == Track.id)
-            .join(Artist, Track.artist_id == Artist.id)
+            .outerjoin(Artist, Track.artist_id == Artist.id)
             .outerjoin(Album, Track.album_id == Album.id)
         )
         query = query.options(
@@ -153,9 +153,33 @@ class TrackRepository:
         # 6. Failed MusicBrainz ID ('NOT_FOUND')
         # 7. Other unenhanced tracks
         priority_case = case(
-            (or_(Artist.name.ilike('unknown artist%'), Track.artist_id.is_(None), Artist.name.is_(None)), 1),
-            (or_(Album.title.ilike('unknown album%'), Track.album_id.is_(None), Album.title.is_(None)), 2),
-            (or_(Track.title.ilike('unknown title%'), Track.title.is_(None), Track.title == ''), 3),
+            (
+                or_(
+                    Artist.name.ilike('unknown%'),
+                    Artist.normalized_name.ilike('unknown%'),
+                    Track.artist_id.is_(None),
+                    Artist.name.is_(None),
+                ),
+                1,
+            ),
+            (
+                or_(
+                    Album.title.ilike('unknown%'),
+                    Album.normalized_title.ilike('unknown%'),
+                    Track.album_id.is_(None),
+                    Album.title.is_(None),
+                ),
+                2,
+            ),
+            (
+                or_(
+                    Track.title.ilike('unknown%'),
+                    Track.normalized_title.ilike('unknown%'),
+                    Track.title.is_(None),
+                    Track.title == '',
+                ),
+                3,
+            ),
             (
                 and_(
                     Artist.name.ilike('various artist%'),
@@ -188,13 +212,16 @@ class TrackRepository:
             )
             conditions = [
                 needs_identification,
-                Artist.name.ilike('unknown artist%'),
+                Artist.name.ilike('unknown%'),
+                Artist.normalized_name.ilike('unknown%'),
                 Track.artist_id.is_(None),
                 Artist.name.is_(None),
-                Album.title.ilike('unknown album%'),
+                Album.title.ilike('unknown%'),
+                Album.normalized_title.ilike('unknown%'),
                 Track.album_id.is_(None),
                 Album.title.is_(None),
-                Track.title.ilike('unknown title%'),
+                Track.title.ilike('unknown%'),
+                Track.normalized_title.ilike('unknown%'),
                 Track.title.is_(None),
                 Track.title == '',
             ]
