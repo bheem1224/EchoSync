@@ -433,3 +433,36 @@ def test_fetch_user_history_enriches_ratings_from_metadata(monkeypatch):
     assert len(interactions) == 1
     assert interactions[0].rating == 4.25
     target_server.fetchItem.assert_called_once_with(123)
+
+
+def test_trigger_sync_preserves_managed_user_fields():
+    from web.routes.playlists import trigger_sync, PlaylistSyncSchema
+    from unittest.mock import patch
+
+    schema = PlaylistSyncSchema(
+        source="spotify",
+        target_source="plex",
+        playlist_name="Simi Favorites",
+        source_account_name="Simi",
+        target_user_id="managed-simi-id",
+        matches=[{"target_identifier": "100"}]
+    )
+
+    with patch('core.nexus_framework.plugin_loader.get_plugin_capabilities') as mock_caps:
+        from core.nexus_framework.plugin_SDK import PlaylistSupport
+        cap_mock = MagicMock()
+        cap_mock.supports_playlists = PlaylistSupport.READ_WRITE
+        cap_mock.supports_streaming = True
+        cap_mock.supports_library_scan = True
+        mock_caps.return_value = cap_mock
+
+        with patch('web.routes.playlists._sync_to_plex') as mock_sync_plex:
+            mock_sync_plex.return_value = {"accepted": True, "job": "sync:plex:123"}
+            res = trigger_sync(schema)
+
+            assert res["accepted"] is True
+            mock_sync_plex.assert_called_once()
+            args = mock_sync_plex.call_args[0]
+            # Verify source_account_name and target_user_id are passed
+            assert args[7] == "Simi"
+            assert args[8] == "managed-simi-id"

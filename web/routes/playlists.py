@@ -18,28 +18,42 @@ from core.hook_manager import hook_manager
 import time
 import uuid
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from typing import List, Optional, Any, Dict, Union
 
 class PlaylistAnalyzeSchema(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
     source: Optional[Union[str, int]] = None
     target: Optional[Union[str, int]] = None
     target_source: Optional[Union[str, int]] = None
     playlists: Optional[List[Any]] = None
     quality_profile: Optional[Union[str, Dict[str, Any]]] = "Auto"
+    source_account_name: Optional[str] = None
+    target_user_id: Optional[Union[str, int]] = None
+    target_account_id: Optional[Union[str, int]] = None
 
 class PlaylistSyncSchema(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
     target: Optional[Union[str, int]] = None
     target_source: Optional[Union[str, int]] = None
     playlist_name: Optional[str] = None
     matches: Optional[List[Any]] = None
     download_missing: Optional[bool] = False
     source: Optional[Union[str, int]] = "unknown"
+    source_account_name: Optional[str] = None
+    target_user_id: Optional[Union[str, int]] = None
+    target_account_id: Optional[Union[str, int]] = None
 
 class PlaylistDownloadMissingSchema(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
     missing: Optional[List[Any]] = None
 
 class PlaylistSyncScheduleSchema(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
     source: Optional[Union[str, int]] = None
     target: Optional[Union[str, int]] = None
     target_source: Optional[Union[str, int]] = None
@@ -47,6 +61,9 @@ class PlaylistSyncScheduleSchema(BaseModel):
     interval: Optional[int] = 3600
     download_missing: Optional[bool] = False
     enabled: Optional[bool] = True
+    source_account_name: Optional[str] = None
+    target_user_id: Optional[Union[str, int]] = None
+    target_account_id: Optional[Union[str, int]] = None
 
 # In-memory store for ad-hoc analysis jobs started via API
 ANALYSIS_JOBS = {}
@@ -1729,7 +1746,10 @@ def _sync_to_plex(payload, source, target, playlist_name, matches, download_miss
     def _run_sync():
         marker = "⇄"
         total = len(rating_keys)
-        logger.info(f"[{job_name}] Starting Plex sync for playlist '{playlist_name}' with {total} tracks")
+        logger.info(
+            f"[{job_name}] Starting Plex sync for playlist '{playlist_name}' with {total} tracks "
+            f"(target_user_id='{target_user_id}', source_account_name='{source_account_name}')"
+        )
         event_bus.publish(job_name, "sync_started", {
             "playlist": playlist_name,
             "target": target,
