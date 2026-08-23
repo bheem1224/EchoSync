@@ -249,12 +249,16 @@ def register_external_identifier_sync_job(interval_seconds: int = 21600, enabled
     def run_external_identifier_sync(plugin_source: Optional[str] = None, **kwargs):
         try:
             logger.info("Starting external identifier sync job")
-            from core.nexus_framework.plugin_loader import PluginRegistry
-            from services.library_sync_service import LibrarySyncService
-            from core.nexus_framework.plugin_loader import generate_plugin_id
-            
+            from core.nexus_framework.plugin_loader import PluginRegistry, generate_plugin_id
+            from database import get_database, _canonicalize_path
+            from database.music_database import LocalMedia, ExternalIdentifier, Track, Artist
+            from sqlalchemy import func
+            from datetime import datetime, timezone
+            from pathlib import Path
+            from core.utils import PathMapper
+
             local_server_id = generate_plugin_id('echosync.local server')
-            
+
             active_servers = []
             try:
                 from database.config_database import get_config_database
@@ -278,27 +282,29 @@ def register_external_identifier_sync_job(interval_seconds: int = 21600, enabled
                         logger.debug(f"Skipping unconfigured media server provider '{p_name}' for external identifier sync")
             except Exception as e:
                 logger.error(f"Failed to get active media servers for external sync: {e}")
-                
+
+            db = get_database()
+
             for active_server in active_servers:
                 if active_server == local_server_id:
                     continue
-                    
+
                 provider = None
                 try:
                     provider = PluginRegistry.create_instance(active_server)
                 except Exception as e:
                     logger.error(f"Failed to create provider instance for {active_server}: {e}", exc_info=True)
                     continue
-                
+
                 if not provider:
                     continue
-                
+
                 # Ensure connection
                 try:
                     can_connect = True
                     if hasattr(provider, 'authenticate'):
                         can_connect = provider.authenticate()
-                        
+
                     if not can_connect:
                         error_msg = f"Could not connect to {active_server} during external identifier sync."
                         logger.error(error_msg)
@@ -313,10 +319,113 @@ def register_external_identifier_sync_job(interval_seconds: int = 21600, enabled
                     error_msg = f"Connection failed for {active_server}: {e}"
                     logger.error(error_msg)
                     continue
-                
-                logger.info(f"Running external identifier sync for {active_server}")
+
+                p_name = getattr(provider, 'name', '') or getattr(provider, 'plugin_id', '') or str(active_server)
+                p_lower = p_name.lower()
+                source_name = 'plex' if 'plex' in p_lower else ('jellyfin' if 'jellyfin' in p_lower else ('navidrome' if 'navidrome' in p_lower else p_lower))
+
+                logger.info(f"Running external identifier sync for {source_name} ({active_server})")
+
                 try:
-                    logger.warning(f"External identifier sync for {active_server} is currently suspended pending migration to LibrarySyncService.")
+                    mappings = []
+                    if hasattr(provider, 'get_identifier_mappings'):
+                        mappings = provider.get_identifier_mappings()
+                    elif hasattr(provider, 'get_all_tracks'):
+                        raw_tracks = provider.get_all_tracks() or []
+                        mappings = []
+                        for t in raw_tracks:
+                            if isinstance(t, dict):
+                                mappings.append(t)
+                            elif hasattr(t, 'to_dict'):
+                                mappings.append(t.to_dict())
+                            elif hasattr(t, 'id') or hasattr(t, 'ratingKey'):
+                                item_id = getattr(t, 'ratingKey', None) or getattr(t, 'id', None)
+                                mappings.append({
+                                    'file_path': getattr(t, 'file_path', None) or getattr(t, 'path', None),
+                                    'plugin_source': source_name,
+                                    'plugin_item_id': str(item_id) if item_id else None,
+                                    'title': getattr(t, 'title', None) or getattr(t, 'name', None),
+                                    'artist_name': getattr(t, 'artist', None) or getattr(t, 'artist_name', None),
+                                })
+
+                    with db.session_scope() as session:
+                        local_media_rows = session.query(LocalMedia.media_id, LocalMedia.file_path).all()
+                        path_to_media_id = {}
+                        name_to_media_ids = {}
+
+                        for mid, fp in local_media_rows:
+                            if fp:
+                                path_to_media_id[fp] = mid
+                                canon = _canonicalize_path(fp)
+                                path_to_media_id[canon] = mid
+                                path_to_media_id[canon.lower()] = mid
+                                fname = Path(fp).name.lower()
+                                name_to_media_ids.setdefault(fname, []).append(mid)
+
+                        existing_plugin_item_ids = set(
+                            r[0] for r in session.query(ExternalIdentifier.plugin_item_id)
+                            .filter(ExternalIdentifier.plugin_source == source_name).all()
+                        )
+                        existing_media_ids = set(
+                            r[0] for r in session.query(ExternalIdentifier.media_id)
+                            .filter(ExternalIdentifier.plugin_source == source_name).all()
+                        )
+
+                        synced_count = 0
+                        for item in mappings:
+                            if not isinstance(item, dict):
+                                continue
+                            item_id = str(item.get('plugin_item_id') or item.get('id') or '')
+                            if not item_id or item_id in existing_plugin_item_ids:
+                                continue
+
+                            file_path = item.get('file_path')
+                            media_id = None
+                            if file_path:
+                                local_fp = PathMapper.to_local(file_path)
+                                canon_local = _canonicalize_path(local_fp)
+                                media_id = (
+                                    path_to_media_id.get(file_path)
+                                    or path_to_media_id.get(_canonicalize_path(file_path))
+                                    or path_to_media_id.get(local_fp)
+                                    or path_to_media_id.get(canon_local)
+                                    or path_to_media_id.get(canon_local.lower())
+                                )
+                                if not media_id:
+                                    fname = Path(file_path).name.lower()
+                                    matching_mids = name_to_media_ids.get(fname, [])
+                                    if len(matching_mids) == 1:
+                                        media_id = matching_mids[0]
+
+                            if not media_id and item.get('title') and item.get('artist_name'):
+                                title_clean = str(item['title']).strip().lower()
+                                artist_clean = str(item['artist_name']).strip().lower()
+                                matched_track = (
+                                    session.query(Track)
+                                    .join(Artist, Track.artist_id == Artist.id)
+                                    .filter(
+                                        func.lower(Track.title) == title_clean,
+                                        func.lower(Artist.name) == artist_clean,
+                                    )
+                                    .first()
+                                )
+                                if matched_track and matched_track.media_files:
+                                    media_id = matched_track.media_files[0].media_id
+
+                            if media_id and media_id not in existing_media_ids:
+                                new_ext = ExternalIdentifier(
+                                    media_id=media_id,
+                                    plugin_source=source_name,
+                                    plugin_item_id=item_id,
+                                    raw_data={"synced_at": datetime.now(timezone.utc).isoformat()}
+                                )
+                                session.add(new_ext)
+                                existing_plugin_item_ids.add(item_id)
+                                existing_media_ids.add(media_id)
+                                synced_count += 1
+
+                        logger.info(f"External identifier sync for {source_name}: successfully synced {synced_count} identifiers.")
+
                 except Exception as e:
                     logger.error(f"External identifier sync worker failed for {active_server}: {e}", exc_info=True)
 

@@ -342,6 +342,11 @@ class EchosyncTrack:
     def year(self) -> Optional[int]:
         return self.release_year
 
+    @property
+    def file_path(self) -> Optional[str]:
+        """Return the physical file path of the primary associated media file, if present."""
+        return self.media[0].file_path if self.media else None
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for storage or API transport."""
         media_list = [m.to_dict() for m in self.media]
@@ -449,3 +454,60 @@ class EchosyncTrack:
             identifiers=identifiers,
         )
         return track
+
+    @classmethod
+    def from_orm(cls, track: Any) -> "EchosyncTrack":
+        """
+        Construct a full EchosyncTrack domain model from a SQLAlchemy Track ORM entity,
+        including nested EchosyncMedia objects for all associated LocalMedia rows.
+        """
+        media_list: List[EchosyncMedia] = []
+        if hasattr(track, 'media_files') and track.media_files:
+            for lm in track.media_files:
+                media_list.append(
+                    EchosyncMedia(
+                        media_id=getattr(lm, 'media_id', None),
+                        file_path=getattr(lm, 'file_path', None),
+                        file_format=getattr(lm, 'file_format', None),
+                        bitrate=getattr(lm, 'bitrate', None),
+                        sample_rate=getattr(lm, 'sample_rate', None),
+                        bit_depth=getattr(lm, 'bit_depth', None),
+                        channels=getattr(lm, 'channels', None),
+                        file_size_bytes=getattr(lm, 'file_size_bytes', None),
+                        inode=getattr(lm, 'inode', None),
+                        mtime=getattr(lm, 'mtime', None),
+                        added_at=getattr(lm, 'added_at', None),
+                    )
+                )
+
+        artist_name = track.artist.name if getattr(track, 'artist', None) else "Unknown Artist"
+        album_title = track.album.title if getattr(track, 'album', None) else "Unknown Album"
+
+        acoustid_id = None
+        chromaprint = None
+        if hasattr(track, 'media_files') and track.media_files:
+            for lm in track.media_files:
+                if hasattr(lm, 'audio_fingerprints') and lm.audio_fingerprints:
+                    fp = lm.audio_fingerprints[0]
+                    chromaprint = getattr(fp, 'chromaprint', None)
+                    acoustid_id = getattr(fp, 'acoustid_id', None)
+                    break
+
+        return cls(
+            sync_id=getattr(track, 'sync_id', None),
+            raw_title=getattr(track, 'title', '') or '',
+            artist_name=artist_name,
+            album_artist=getattr(track, 'album_artist', None),
+            album_title=album_title,
+            edition=getattr(track, 'edition', None),
+            sort_title=getattr(track, 'sort_title', None),
+            duration=getattr(track, 'duration', None),
+            track_number=getattr(track, 'track_number', None),
+            disc_number=getattr(track, 'disc_number', None),
+            added_at=getattr(track, 'added_at', None),
+            media=media_list,
+            musicbrainz_id=getattr(track, 'musicbrainz_id', None),
+            isrc=getattr(track, 'isrc', None),
+            acoustid_id=acoustid_id,
+            fingerprint=chromaprint,
+        )

@@ -77,3 +77,119 @@ def test_database_update_handles_unregistered_local_server(monkeypatch):
     # Executing db_update_func should not raise ValueError or crash
     db_update_func()
 
+
+def test_external_identifier_sync_executes(monkeypatch, tmp_path):
+    """Verify external_identifier_sync executes without crash and ingests mappings."""
+    from database.music_database import MusicDatabase, Track, Artist, LocalMedia, ExternalIdentifier, Base
+    from core.nexus_framework.plugin_loader import PluginRegistry
+
+    db_path = str(tmp_path / "test_music.db")
+    test_db = MusicDatabase(db_path)
+    Base.metadata.create_all(test_db.engine)
+
+    # Insert a test track and local media
+    with test_db.session_scope() as session:
+        artist = Artist(name="Test Artist")
+        session.add(artist)
+        session.flush()
+        track = Track(title="Test Title", artist_id=artist.id)
+        session.add(track)
+        session.flush()
+        media = LocalMedia(track_id=track.id, file_path="/data/music/Test Artist/Test Title.mp3", media_id="testmed1")
+        session.add(media)
+
+    monkeypatch.setattr("database.get_database", lambda: test_db)
+
+    from core.nexus_framework.plugin_SDK import MediaServerProvider
+
+    # Mock provider
+    class MockProvider(MediaServerProvider):
+        name = "plex"
+        plugin_id = "EchoSync.plex"
+        capabilities = type("Caps", (), {"supports_library_scan": True})()
+        def authenticate(self):
+            return True
+        def get_identifier_mappings(self):
+            return [
+                {
+                    "file_path": "/data/music/Test Artist/Test Title.mp3",
+                    "plugin_source": "plex",
+                    "plugin_item_id": "998877",
+                    "title": "Test Title",
+                    "artist_name": "Test Artist",
+                }
+            ]
+
+    provider_id = 3021005569
+    PluginRegistry._plugins[provider_id] = MockProvider
+    monkeypatch.setattr(PluginRegistry, "get_plugins_by_type", lambda *args, **kwargs: [provider_id])
+
+    calls = []
+    class FakeJobQueue:
+        def register_job(self, **kwargs):
+            calls.append(kwargs)
+
+    monkeypatch.setattr(system_jobs, "job_queue", FakeJobQueue())
+    system_jobs.register_all_system_jobs()
+
+    by_name = {call["name"]: call for call in calls}
+    sync_func = by_name["external_identifier_sync"]["func"]
+
+    # Mock config database
+    class MockConfigDb:
+        def get_or_create_service_id(self, name):
+            return 1
+        def get_accounts(self, service_id):
+            return [1]
+        def get_service_config(self, service_id, key):
+            return "http://localhost:32400"
+
+    monkeypatch.setattr("database.config_database.get_config_database", lambda: MockConfigDb())
+    monkeypatch.setattr(PluginRegistry, "create_instance", lambda p_id: MockProvider())
+
+    sync_func()
+
+    # Verify ExternalIdentifier record was created
+    with test_db.session_scope() as session:
+        ext = session.query(ExternalIdentifier).filter(ExternalIdentifier.plugin_source == "plex").first()
+        assert ext is not None
+        assert ext.plugin_item_id == "998877"
+        assert ext.media_id == "testmed1"
+
+
+def test_track_media_file_properties(tmp_path):
+    """Verify Track convenience properties (file_path, bitrate, etc.) work via LocalMedia relationship."""
+    from database.music_database import MusicDatabase, Track, Artist, LocalMedia, Base
+
+    db_path = str(tmp_path / "test_props.db")
+    db = MusicDatabase(db_path)
+    Base.metadata.create_all(db.engine)
+
+    with db.session_scope() as session:
+        artist = Artist(name="Artist A")
+        session.add(artist)
+        session.flush()
+        track = Track(title="Song A", artist_id=artist.id)
+        session.add(track)
+        session.flush()
+        media = LocalMedia(
+            track_id=track.id,
+            file_path="/music/a.mp3",
+            file_format="mp3",
+            bitrate=320000,
+            sample_rate=44100,
+            bit_depth=16,
+            channels=2,
+            file_size_bytes=5000000,
+            media_id="med12345"
+        )
+        session.add(media)
+        session.flush()
+
+        loaded_track = session.query(Track).filter(Track.id == track.id).first()
+        assert loaded_track.file_path == "/music/a.mp3"
+        assert loaded_track.file_format == "mp3"
+        assert loaded_track.bitrate == 320000
+        assert loaded_track.sample_rate == 44100
+        assert loaded_track.file_size_bytes == 5000000
+

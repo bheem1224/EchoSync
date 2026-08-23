@@ -557,6 +557,55 @@ class NavidromeClient(MediaServerProvider):
             logger.error(f"Error getting album {album_id}: {e}")
             return None
 
+    def get_identifier_mappings(self, limit: Optional[int] = None):
+        """
+        Lightweight identifiers-only fetch for Navidrome tracks using Subsonic search3 API.
+        """
+        if not self.ensure_connection():
+            return
+
+        chunk_size = 500
+        offset = 0
+        max_limit = limit if limit else 999999
+
+        while offset < max_limit:
+            current_limit = min(chunk_size, max_limit - offset)
+            response = self._make_request('search3', {
+                'query': '',
+                'songCount': current_limit,
+                'songOffset': offset,
+            })
+            if not response or 'searchResult3' not in response:
+                break
+
+            songs = response['searchResult3'].get('song', [])
+            if not songs:
+                break
+
+            for song in songs:
+                song_id = song.get('id')
+                if not song_id:
+                    continue
+                file_path = song.get('path')
+                if file_path:
+                    from core.utils import PathMapper
+                    file_path = PathMapper.to_local(file_path)
+
+                title = song.get('title')
+                artist = song.get('artist')
+
+                yield {
+                    'file_path': file_path,
+                    'plugin_source': 'navidrome',
+                    'plugin_item_id': str(song_id),
+                    'title': title,
+                    'artist_name': artist,
+                }
+
+            offset += len(songs)
+            if len(songs) < current_limit:
+                break
+
     def get_library_stats(self) -> Dict[str, int]:
         """Get library statistics"""
         if not self.ensure_connection():

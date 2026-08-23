@@ -222,6 +222,34 @@ class Track(Base):
         viewonly=True,
     )
 
+    @property
+    def file_path(self) -> Optional[str]:
+        return self.media_files[0].file_path if self.media_files else None
+
+    @property
+    def file_format(self) -> Optional[str]:
+        return self.media_files[0].file_format if self.media_files else None
+
+    @property
+    def bitrate(self) -> Optional[int]:
+        return self.media_files[0].bitrate if self.media_files else None
+
+    @property
+    def sample_rate(self) -> Optional[int]:
+        return self.media_files[0].sample_rate if self.media_files else None
+
+    @property
+    def bit_depth(self) -> Optional[int]:
+        return self.media_files[0].bit_depth if self.media_files else None
+
+    @property
+    def channels(self) -> Optional[int]:
+        return self.media_files[0].channels if self.media_files else None
+
+    @property
+    def file_size_bytes(self) -> Optional[int]:
+        return self.media_files[0].file_size_bytes if self.media_files else None
+
 
 class TrackArtist(Base):
     """Junction table capturing all collaborating artists for a track with roles and position."""

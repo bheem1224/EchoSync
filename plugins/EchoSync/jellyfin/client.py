@@ -1048,6 +1048,57 @@ class JellyfinClient(MediaServerProvider):
         except Exception as e:
             logger.error(f"Error getting recently updated tracks: {e}")
             return []
+
+    def get_identifier_mappings(self, limit: Optional[int] = None):
+        """
+        Lightweight identifiers-only fetch for Jellyfin tracks.
+        """
+        if not self.ensure_connection() or not self.music_library_id:
+            return
+        
+        chunk_size = 1000
+        start_index = 0
+        max_limit = limit if limit else 999999
+        
+        while start_index < max_limit:
+            current_limit = min(chunk_size, max_limit - start_index)
+            params = {
+                'ParentId': self.music_library_id,
+                'IncludeItemTypes': 'Audio',
+                'Recursive': True,
+                'Fields': 'Path,Album,Artists,ArtistItems',
+                'StartIndex': start_index,
+                'Limit': current_limit
+            }
+            response = self._make_request(f'/Users/{self.user_id}/Items', params)
+            if not response or not response.get('Items'):
+                break
+            
+            items = response.get('Items', [])
+            for item in items:
+                item_id = item.get('Id')
+                if not item_id:
+                    continue
+                file_path = item.get('Path')
+                if file_path:
+                    from core.utils import PathMapper
+                    file_path = PathMapper.to_local(file_path)
+                
+                title = item.get('Name')
+                artists = item.get('Artists') or []
+                artist_name = artists[0] if artists else None
+                
+                yield {
+                    'file_path': file_path,
+                    'plugin_source': 'jellyfin',
+                    'plugin_item_id': str(item_id),
+                    'title': title,
+                    'artist_name': artist_name,
+                }
+                
+            start_index += len(items)
+            if len(items) < current_limit:
+                break
     
     def get_library_stats(self) -> Dict[str, int]:
         """Get library statistics - matches Plex interface"""
