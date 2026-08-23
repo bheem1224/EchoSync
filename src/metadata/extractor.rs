@@ -1,4 +1,4 @@
-use lofty::file::{AudioFile, FileType, TaggedFileExt};
+use lofty::file::{AudioFile, TaggedFileExt};
 use lofty::probe::Probe;
 use lofty::tag::{Accessor, ItemKey, Tag, TagType};
 use std::path::Path;
@@ -43,27 +43,48 @@ fn extract_from_tag(
     mbid: &mut Option<String>,
 ) {
     if title.is_none() {
-        if let Some(val) = t.title() {
-            let s = val.trim();
-            if !s.is_empty() {
-                *title = Some(s.to_string());
-            }
+        let t_val = t
+            .title()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .or_else(|| {
+                t.get(&ItemKey::TrackTitle)
+                    .and_then(|item| item.value().text())
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+            });
+        if t_val.is_some() {
+            *title = t_val;
         }
     }
     if artist.is_none() {
-        if let Some(val) = t.artist() {
-            let s = val.trim();
-            if !s.is_empty() {
-                *artist = Some(s.to_string());
-            }
+        let a_val = t
+            .artist()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .or_else(|| {
+                t.get(&ItemKey::TrackArtist)
+                    .and_then(|item| item.value().text())
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+            });
+        if a_val.is_some() {
+            *artist = a_val;
         }
     }
     if album.is_none() {
-        if let Some(val) = t.album() {
-            let s = val.trim();
-            if !s.is_empty() {
-                *album = Some(s.to_string());
-            }
+        let alb_val = t
+            .album()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .or_else(|| {
+                t.get(&ItemKey::AlbumTitle)
+                    .and_then(|item| item.value().text())
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+            });
+        if alb_val.is_some() {
+            *album = alb_val;
         }
     }
     if track_no.is_none() {
@@ -76,11 +97,18 @@ fn extract_from_tag(
         *year = t.year();
     }
     if genre.is_none() {
-        if let Some(val) = t.genre() {
-            let s = val.trim();
-            if !s.is_empty() {
-                *genre = Some(s.to_string());
-            }
+        let g_val = t
+            .genre()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .or_else(|| {
+                t.get(&ItemKey::Genre)
+                    .and_then(|item| item.value().text())
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+            });
+        if g_val.is_some() {
+            *genre = g_val;
         }
     }
     if album_artist.is_none() {
@@ -181,54 +209,32 @@ impl MetadataExtractor {
         let mut genre = None;
         let mut mbid = None;
 
-        // Container-specific preferred tag inspection order
+        // Container-specific preferred and fallback tag search
         let mut candidate_tags: Vec<&Tag> = Vec::new();
-        match file_type {
-            FileType::Wav => {
-                if let Some(t) = tagged_file.tag(TagType::RiffInfo) {
-                    candidate_tags.push(t);
-                }
-                if let Some(t) = tagged_file.tag(TagType::Id3v2) {
-                    candidate_tags.push(t);
-                }
-            }
-            FileType::Mp4 | FileType::Aac => {
-                if let Some(t) = tagged_file.tag(TagType::Mp4Ilst) {
-                    candidate_tags.push(t);
-                }
-            }
-            FileType::Flac | FileType::Opus | FileType::Vorbis | FileType::Speex => {
-                if let Some(t) = tagged_file.tag(TagType::VorbisComments) {
-                    candidate_tags.push(t);
-                }
-            }
-            FileType::Mpeg | FileType::Aiff => {
-                if let Some(t) = tagged_file.tag(TagType::Id3v2) {
-                    candidate_tags.push(t);
-                }
-            }
-            FileType::Ape => {
-                if let Some(t) = tagged_file.tag(TagType::Ape) {
-                    candidate_tags.push(t);
-                }
-            }
-            _ => {}
-        }
 
         if let Some(t) = tagged_file.primary_tag() {
-            if !candidate_tags.iter().any(|existing| std::ptr::eq(*existing, t)) {
-                candidate_tags.push(t);
-            }
+            candidate_tags.push(t);
+        }
+        if let Some(t) = tagged_file.tag(TagType::Id3v2) {
+            candidate_tags.push(t);
+        }
+        if let Some(t) = tagged_file.tag(TagType::RiffInfo) {
+            candidate_tags.push(t);
+        }
+        if let Some(t) = tagged_file.tag(TagType::Mp4Ilst) {
+            candidate_tags.push(t);
+        }
+        if let Some(t) = tagged_file.tag(TagType::VorbisComments) {
+            candidate_tags.push(t);
+        }
+        if let Some(t) = tagged_file.tag(TagType::Ape) {
+            candidate_tags.push(t);
         }
         if let Some(t) = tagged_file.first_tag() {
-            if !candidate_tags.iter().any(|existing| std::ptr::eq(*existing, t)) {
-                candidate_tags.push(t);
-            }
+            candidate_tags.push(t);
         }
         for t in tagged_file.tags() {
-            if !candidate_tags.iter().any(|existing| std::ptr::eq(*existing, t)) {
-                candidate_tags.push(t);
-            }
+            candidate_tags.push(t);
         }
 
         for t in candidate_tags {

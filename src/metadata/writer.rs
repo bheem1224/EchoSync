@@ -1,7 +1,7 @@
 use lofty::config::{ParseOptions, ParsingMode, WriteOptions};
 use lofty::file::{AudioFile, FileType, TaggedFileExt};
 use lofty::probe::Probe;
-use lofty::tag::{Accessor, ItemKey, Tag, TagExt, TagType};
+use lofty::tag::{Accessor, ItemKey, Tag, TagType};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use std::path::Path;
@@ -12,8 +12,9 @@ fn populate_tag_items(tag: &mut Tag, tags: &Bound<'_, PyDict>) {
     // Extract and set title
     if let Ok(Some(val)) = tags.get_item("title") {
         if let Ok(s) = val.extract::<String>() {
-            if !s.is_empty() {
-                tag.insert_text(ItemKey::TrackTitle, s);
+            let st = s.trim();
+            if !st.is_empty() {
+                tag.insert_text(ItemKey::TrackTitle, st.to_string());
             }
         }
     }
@@ -26,8 +27,9 @@ fn populate_tag_items(tag: &mut Tag, tags: &Bound<'_, PyDict>) {
         .or_else(|| tags.get_item("artist_name").ok().flatten());
     if let Some(val) = artist_val {
         if let Ok(s) = val.extract::<String>() {
-            if !s.is_empty() {
-                tag.insert_text(ItemKey::TrackArtist, s);
+            let st = s.trim();
+            if !st.is_empty() {
+                tag.insert_text(ItemKey::TrackArtist, st.to_string());
             }
         }
     }
@@ -40,8 +42,9 @@ fn populate_tag_items(tag: &mut Tag, tags: &Bound<'_, PyDict>) {
         .or_else(|| tags.get_item("album_title").ok().flatten());
     if let Some(val) = album_val {
         if let Ok(s) = val.extract::<String>() {
-            if !s.is_empty() {
-                tag.insert_text(ItemKey::AlbumTitle, s);
+            let st = s.trim();
+            if !st.is_empty() {
+                tag.insert_text(ItemKey::AlbumTitle, st.to_string());
             }
         }
     }
@@ -49,8 +52,9 @@ fn populate_tag_items(tag: &mut Tag, tags: &Bound<'_, PyDict>) {
     // Extract and set album_artist
     if let Ok(Some(val)) = tags.get_item("album_artist") {
         if let Ok(s) = val.extract::<String>() {
-            if !s.is_empty() {
-                tag.insert_text(ItemKey::AlbumArtist, s);
+            let st = s.trim();
+            if !st.is_empty() {
+                tag.insert_text(ItemKey::AlbumArtist, st.to_string());
             }
         }
     }
@@ -115,8 +119,9 @@ fn populate_tag_items(tag: &mut Tag, tags: &Bound<'_, PyDict>) {
     // Extract and set genre
     if let Ok(Some(val)) = tags.get_item("genre") {
         if let Ok(s) = val.extract::<String>() {
-            if !s.is_empty() {
-                tag.set_genre(s);
+            let st = s.trim();
+            if !st.is_empty() {
+                tag.set_genre(st.to_string());
             }
         }
     }
@@ -124,8 +129,9 @@ fn populate_tag_items(tag: &mut Tag, tags: &Bound<'_, PyDict>) {
     // Extract and set ISRC
     if let Ok(Some(val)) = tags.get_item("isrc") {
         if let Ok(s) = val.extract::<String>() {
-            if !s.is_empty() {
-                tag.insert_text(ItemKey::Isrc, s);
+            let st = s.trim();
+            if !st.is_empty() {
+                tag.insert_text(ItemKey::Isrc, st.to_string());
             }
         }
     }
@@ -139,8 +145,9 @@ fn populate_tag_items(tag: &mut Tag, tags: &Bound<'_, PyDict>) {
         .or_else(|| tags.get_item("musicbrainz_trackid").ok().flatten());
     if let Some(val) = mbid_val {
         if let Ok(s) = val.extract::<String>() {
-            if !s.is_empty() {
-                tag.insert_text(ItemKey::MusicBrainzTrackId, s);
+            let st = s.trim();
+            if !st.is_empty() {
+                tag.insert_text(ItemKey::MusicBrainzTrackId, st.to_string());
             }
         }
     }
@@ -148,81 +155,60 @@ fn populate_tag_items(tag: &mut Tag, tags: &Bound<'_, PyDict>) {
     // Extract and set MusicBrainz release ID
     if let Ok(Some(val)) = tags.get_item("mb_release_id") {
         if let Ok(s) = val.extract::<String>() {
-            if !s.is_empty() {
-                tag.insert_text(ItemKey::MusicBrainzReleaseId, s);
+            let st = s.trim();
+            if !st.is_empty() {
+                tag.insert_text(ItemKey::MusicBrainzReleaseId, st.to_string());
             }
         }
     }
 }
 
+pub fn write_tags_to_file(path_str: &str, tags: &Bound<'_, PyDict>) -> Result<(), String> {
+    let path = Path::new(path_str);
+    if !path.exists() {
+        return Err(format!("File does not exist: {}", path.display()));
+    }
+
+    let parse_opts = ParseOptions::new()
+        .read_properties(false)
+        .parsing_mode(ParsingMode::Relaxed);
+
+    let mut tagged_file = Probe::open(path)
+        .map_err(|e| format!("Failed to open {}: {}", path.display(), e))?
+        .options(parse_opts)
+        .read()
+        .map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
+
+    if tagged_file.file_type() == FileType::Wav {
+        let mut id3_tag = Tag::new(TagType::Id3v2);
+        let mut riff_tag = Tag::new(TagType::RiffInfo);
+        populate_tag_items(&mut id3_tag, tags);
+        populate_tag_items(&mut riff_tag, tags);
+        tagged_file.insert_tag(id3_tag);
+        tagged_file.insert_tag(riff_tag);
+    } else {
+        let tag_type = match tagged_file.file_type() {
+            FileType::Mpeg | FileType::Aiff => TagType::Id3v2,
+            FileType::Mp4 | FileType::Aac => TagType::Mp4Ilst,
+            FileType::Flac | FileType::Opus | FileType::Vorbis | FileType::Speex => TagType::VorbisComments,
+            FileType::Ape => TagType::Ape,
+            _ => tagged_file.primary_tag_type(),
+        };
+        let mut tag = Tag::new(tag_type);
+        populate_tag_items(&mut tag, tags);
+        tagged_file.insert_tag(tag);
+    }
+
+    tagged_file
+        .save_to_path(path, WriteOptions::default())
+        .map_err(|e| format!("Failed to save tags to {}: {}", path.display(), e))?;
+
+    Ok(())
+}
+
 impl MetadataWriter {
     pub fn write<P: AsRef<Path>>(path: P, tags: &Bound<'_, PyDict>) -> Result<(), String> {
-        let p = path.as_ref();
-        if !p.exists() {
-            return Err(format!("File does not exist: {}", p.display()));
-        }
-
-        let ext = p
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("")
-            .to_lowercase();
-        let fallback_tag_type = match ext.as_str() {
-            "wav" => TagType::RiffInfo,
-            "mp3" | "aiff" | "aif" | "dsf" => TagType::Id3v2,
-            "flac" | "opus" | "ogg" | "oga" | "spx" => TagType::VorbisComments,
-            "m4a" | "mp4" | "aac" | "alac" => TagType::Mp4Ilst,
-            "ape" => TagType::Ape,
-            _ => TagType::Id3v2,
-        };
-
-        let parse_opts = ParseOptions::new()
-            .read_properties(false)
-            .parsing_mode(ParsingMode::Relaxed);
-
-        let tagged_file_opt = Probe::open(p)
-            .ok()
-            .and_then(|probe| probe.options(parse_opts).read().ok());
-
-        if let Some(mut tf) = tagged_file_opt {
-            let file_type = tf.file_type();
-            let tag_type = match file_type {
-                FileType::Wav => TagType::RiffInfo,
-                FileType::Mpeg | FileType::Aiff => TagType::Id3v2,
-                FileType::Mp4 | FileType::Aac => TagType::Mp4Ilst,
-                FileType::Flac | FileType::Opus | FileType::Vorbis | FileType::Speex => TagType::VorbisComments,
-                FileType::Ape => TagType::Ape,
-                _ => tf.primary_tag_type(),
-            };
-
-            if tf.tag(tag_type).is_none() {
-                tf.insert_tag(Tag::new(tag_type));
-            }
-            if let Some(t) = tf.tag_mut(tag_type) {
-                populate_tag_items(t, tags);
-            }
-
-            if file_type == FileType::Wav {
-                // Also attempt inserting an ID3v2 chunk into the WAV container if supported
-                if tf.tag(TagType::Id3v2).is_none() {
-                    tf.insert_tag(Tag::new(TagType::Id3v2));
-                }
-                if let Some(id3_tag) = tf.tag_mut(TagType::Id3v2) {
-                    populate_tag_items(id3_tag, tags);
-                }
-            }
-
-            // Save tagged_file using lofty
-            tf.save_to_path(p, WriteOptions::default())
-                .map_err(|e| format!("Failed to save tags to {}: {}", p.display(), e))?;
-        } else {
-            let mut direct_tag = Tag::new(fallback_tag_type);
-            populate_tag_items(&mut direct_tag, tags);
-            direct_tag
-                .save_to_path(p, WriteOptions::default())
-                .map_err(|e| format!("Failed to save direct tags to {}: {}", p.display(), e))?;
-        }
-
-        Ok(())
+        let path_str = path.as_ref().to_string_lossy().to_string();
+        write_tags_to_file(&path_str, tags)
     }
 }

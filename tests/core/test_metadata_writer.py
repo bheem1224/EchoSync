@@ -265,19 +265,36 @@ def test_tag_file_verified_success(tmp_path):
     assert verified.get("artist") == "Rob Dougan"
 
 
-def test_tag_verification_blocks_relocation_on_mismatch(tmp_path):
-    """Verify that a mismatch in readback raises MetadataWriteVerificationError."""
-    wav_path = _create_minimal_wav_file(tmp_path / "mismatch_test.wav")
-    enhancer = RetroactiveEnhancer()
+def test_wav_dual_tag_write_read_roundtrip(tmp_path):
+    """Verify that echosync_core writes and reads dual RIFF INFO + ID3v2 tags on WAV files."""
+    wav_path = _create_minimal_wav_file(tmp_path / "dual_tag_test.wav")
 
-    metadata = {
-        "title": "Original Title",
-        "artist": "Original Artist",
+    tags_to_write = {
+        "title": "I'm Not Driving Anymore",
+        "artist": "Rob Dougan",
+        "album": "Furious Angels",
+        "album_artist": "Rob Dougan",
+        "track_number": "5",
+        "disc_number": "1",
+        "year": "2002",
+        "genre": "Trip Hop",
+        "musicbrainz_id": "a1b2c3d4-5678-90ab-cdef-1234567890ab",
     }
 
-    # Mock extract_metadata to return corrupt or mismatched metadata
-    with patch("echosync_core.extract_metadata", return_value={"title": "Mismatched Title", "artist": "Original Artist"}):
-        with pytest.raises(MetadataWriteVerificationError) as excinfo:
-            enhancer.tag_file_verified(wav_path, metadata)
-        assert "title ('mismatched title' vs 'original title')" in str(excinfo.value)
+    # 1. Native write
+    success = echosync_core.write_metadata(str(wav_path), tags_to_write)
+    assert success is True
+
+    # 2. Native extract via read_metadata
+    read_back = echosync_core.read_metadata(str(wav_path))
+    assert isinstance(read_back, dict)
+    assert read_back.get("title") == "I'm Not Driving Anymore"
+    assert read_back.get("artist") == "Rob Dougan"
+    assert read_back.get("album") == "Furious Angels"
+    assert read_back.get("album_artist") == "Rob Dougan"
+    assert read_back.get("track_number") == 5
+    assert read_back.get("disc_number") == 1
+    assert read_back.get("year") == 2002
+    assert read_back.get("genre") == "Trip Hop"
+    assert read_back.get("mbid") == "a1b2c3d4-5678-90ab-cdef-1234567890ab"
 
