@@ -298,3 +298,57 @@ def test_wav_dual_tag_write_read_roundtrip(tmp_path):
     assert read_back.get("genre") == "Trip Hop"
     assert read_back.get("mbid") == "a1b2c3d4-5678-90ab-cdef-1234567890ab"
 
+
+def test_misnamed_container_magic_bytes_detection(tmp_path):
+    """Verify that an MP3 file with a .wav extension is detected by magic bytes and tagged successfully."""
+    fake_wav_path = _create_minimal_mp3_file(tmp_path / "misnamed.wav")
+    enhancer = RetroactiveEnhancer()
+
+    metadata = {
+        "title": "New Religion",
+        "artist": "OnCue",
+        "album": "Leftovers 2",
+        "year": "2013",
+    }
+
+    verified = enhancer.tag_file_verified(fake_wav_path, metadata)
+    assert verified.get("title") == "New Religion"
+    assert verified.get("artist") == "OnCue"
+    assert verified.get("codec") == "MPEG"
+
+
+def test_wav_corrupt_legacy_riff_info_recovery(tmp_path):
+    """Verify that a WAV file with corrupt legacy RIFF INFO item keys recovers and is tagged successfully."""
+    num_channels = 2
+    sample_rate = 44100
+    bits_per_sample = 16
+    byte_rate = sample_rate * num_channels * bits_per_sample // 8
+    block_align = num_channels * bits_per_sample // 8
+    fmt_chunk = struct.pack("<4sIHHIIHH", b"fmt ", 16, 1, num_channels, sample_rate, byte_rate, block_align, bits_per_sample)
+
+    # Invalid non-ASCII RIFF INFO chunk
+    invalid_subchunk = b"\x00\x01\x02\x03" + struct.pack("<I", 4) + b"test"
+    list_info_chunk = b"LIST" + struct.pack("<I", 4 + len(invalid_subchunk)) + b"INFO" + invalid_subchunk
+
+    data = b"\x00" * 1000
+    data_chunk = b"data" + struct.pack("<I", len(data)) + data
+
+    riff_payload = b"WAVE" + fmt_chunk + list_info_chunk + data_chunk
+    wav_bytes = b"RIFF" + struct.pack("<I", len(riff_payload)) + riff_payload
+
+    corrupt_wav_path = tmp_path / "corrupt_riff.wav"
+    corrupt_wav_path.write_bytes(wav_bytes)
+
+    enhancer = RetroactiveEnhancer()
+    metadata = {
+        "title": "Open Sore",
+        "artist": "Skinny Puppy",
+        "album": "Bites",
+        "year": "1985",
+    }
+
+    verified = enhancer.tag_file_verified(corrupt_wav_path, metadata)
+    assert verified.get("title") == "Open Sore"
+    assert verified.get("artist") == "Skinny Puppy"
+
+

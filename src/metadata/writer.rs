@@ -238,6 +238,27 @@ fn populate_riff_items(tag: &mut Tag, tags: &Bound<'_, PyDict>) {
     }
 }
 
+fn open_probe<P: AsRef<Path>>(path: P) -> Result<Probe<std::io::BufReader<std::fs::File>>, String> {
+    let p = path.as_ref();
+    let file = std::fs::File::open(p).map_err(|e| format!("Failed to open {}: {}", p.display(), e))?;
+    let reader = std::io::BufReader::new(file);
+    let probe = Probe::new(reader);
+    let mut probe = match probe.guess_file_type() {
+        Ok(pr) => pr,
+        Err(_) => Probe::new(std::io::BufReader::new(
+            std::fs::File::open(p).map_err(|e| format!("Failed to reopen {}: {}", p.display(), e))?,
+        )),
+    };
+    if probe.file_type().is_none() {
+        if let Ok(ext_probe) = Probe::open(p) {
+            if let Some(ft) = ext_probe.file_type() {
+                probe = probe.set_file_type(ft);
+            }
+        }
+    }
+    Ok(probe)
+}
+
 pub fn write_tags_to_file(path_str: &str, tags: &Bound<'_, PyDict>) -> Result<(), String> {
     let path = Path::new(path_str);
     if !path.exists() {
@@ -248,7 +269,12 @@ pub fn write_tags_to_file(path_str: &str, tags: &Bound<'_, PyDict>) -> Result<()
         .read_properties(false)
         .parsing_mode(ParsingMode::Relaxed);
 
-    let mut tagged_file = match Probe::open(path).and_then(|probe| probe.options(parse_opts).read()) {
+    let mut tagged_file = match open_probe(path).and_then(|probe| {
+        probe
+            .options(parse_opts)
+            .read()
+            .map_err(|e| format!("Failed to read {}: {}", path.display(), e))
+    }) {
         Ok(tf) => tf,
         Err(_) => {
             // Fallback: If existing tag chunks are corrupt (e.g. invalid RIFF INFO keys from external encoders),
@@ -257,8 +283,7 @@ pub fn write_tags_to_file(path_str: &str, tags: &Bound<'_, PyDict>) -> Result<()
                 .read_properties(false)
                 .read_tags(false)
                 .parsing_mode(ParsingMode::Relaxed);
-            Probe::open(path)
-                .map_err(|e| format!("Failed to open {}: {}", path.display(), e))?
+            open_probe(path)?
                 .options(no_tags_opts)
                 .read()
                 .map_err(|e| format!("Failed to read {}: {}", path.display(), e))?

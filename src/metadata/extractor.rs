@@ -133,6 +133,27 @@ fn extract_from_tag(
     }
 }
 
+fn open_probe<P: AsRef<Path>>(path: P) -> Result<Probe<std::io::BufReader<std::fs::File>>, String> {
+    let p = path.as_ref();
+    let file = std::fs::File::open(p).map_err(|e| format!("Failed to open {}: {}", p.display(), e))?;
+    let reader = std::io::BufReader::new(file);
+    let probe = Probe::new(reader);
+    let mut probe = match probe.guess_file_type() {
+        Ok(pr) => pr,
+        Err(_) => Probe::new(std::io::BufReader::new(
+            std::fs::File::open(p).map_err(|e| format!("Failed to reopen {}: {}", p.display(), e))?,
+        )),
+    };
+    if probe.file_type().is_none() {
+        if let Ok(ext_probe) = Probe::open(p) {
+            if let Some(ft) = ext_probe.file_type() {
+                probe = probe.set_file_type(ft);
+            }
+        }
+    }
+    Ok(probe)
+}
+
 pub struct MetadataExtractor;
 
 impl MetadataExtractor {
@@ -167,20 +188,20 @@ impl MetadataExtractor {
         let parse_opts = lofty::config::ParseOptions::new()
             .parsing_mode(lofty::config::ParsingMode::Relaxed);
 
-        let tagged_file_opt = match Probe::open(p).and_then(|probe| probe.options(parse_opts).read()) {
+        let tagged_file_opt = match open_probe(p).and_then(|probe| probe.options(parse_opts).read().map_err(|e| e.to_string())) {
             Ok(tf) => Some(tf),
             Err(_) => {
                 let tag_only_opts = lofty::config::ParseOptions::new()
                     .read_properties(false)
                     .parsing_mode(lofty::config::ParsingMode::Relaxed);
-                match Probe::open(p).and_then(|probe| probe.options(tag_only_opts).read()) {
+                match open_probe(p).and_then(|probe| probe.options(tag_only_opts).read().map_err(|e| e.to_string())) {
                     Ok(tf) => Some(tf),
                     Err(_) => {
                         // Try reading only stream properties if tags are corrupt
                         let props_only_opts = lofty::config::ParseOptions::new()
                             .read_tags(false)
                             .parsing_mode(lofty::config::ParsingMode::Relaxed);
-                        Probe::open(p).and_then(|probe| probe.options(props_only_opts).read()).ok()
+                        open_probe(p).and_then(|probe| probe.options(props_only_opts).read().map_err(|e| e.to_string())).ok()
                     }
                 }
             }
