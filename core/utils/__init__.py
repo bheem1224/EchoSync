@@ -1,5 +1,5 @@
 """
-Flat utilities module for path mapping, Docker resolution, and string extraction.
+Utilities package for EchoSync.
 """
 import os
 import re
@@ -7,6 +7,11 @@ from typing import List, Dict, Union, Optional
 import logging
 
 from core.path_security import resolve_safe_path, validate_zip_entry, PathTraversalError
+from core.utils.file_utils import (
+    prune_empty_parent_directories,
+    prune_empty_directories_tree,
+    _IGNORE_FILES,
+)
 
 logger = logging.getLogger("utils")
 
@@ -116,3 +121,16 @@ def extract_primary_artist(artist_string: str) -> str:
     if match:
         return artist_string[:match.start()].strip()
     return artist_string.strip()
+
+
+__all__ = [
+    "PathMapper",
+    "docker_resolve_path",
+    "extract_filename",
+    "extract_primary_artist",
+    "resolve_safe_path",
+    "validate_zip_entry",
+    "PathTraversalError",
+    "prune_empty_parent_directories",
+    "prune_empty_directories_tree",
+]

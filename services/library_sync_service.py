@@ -225,6 +225,11 @@ class LibrarySyncService:
                         with self.db.session_factory() as session:
                             TrackRepository.purge_ejected_media_cascade(session, file_path)
 
+                        # Prune empty parent directories in library after ejection
+                        from core.utils.file_utils import prune_empty_parent_directories
+                        lib_stop_roots = {Path(library_dir).resolve()} if library_dir else set()
+                        prune_empty_parent_directories(file_path, stop_at_roots=lib_stop_roots)
+
                         ejected_files_count += 1
                     except Exception as e:
                         logger.error(f"Failed to eject unidentifiable file {file_path}: {e}", exc_info=True)
@@ -262,6 +267,15 @@ class LibrarySyncService:
                 AutoImporter.enqueue_scan()
             except Exception as e:
                 logger.warning(f"Failed to trigger auto-importer: {e}")
+
+        # Post-sync bottom-up cleanup of empty library directories
+        try:
+            from core.utils.file_utils import prune_empty_directories_tree
+            pruned_dirs = prune_empty_directories_tree(library_dir)
+            if pruned_dirs > 0:
+                logger.info(f"Pruned {pruned_dirs} empty directory(ies) across library tree.")
+        except Exception as prune_err:
+            logger.warning(f"Failed to prune empty library directories: {prune_err}")
 
         # Release system memory / trigger glibc malloc_trim
         try:

@@ -632,6 +632,12 @@ def approve_review_queue_item(task_id: int, payload: ApproveReviewQueueRequest, 
                             Gatekeeper.authorize_and_execute({"operation": "safe_move", "src": str(file_path_obj), "dst": str(destination_path)})
                             logger.info(f"Relocated file: {file_path_obj} -> {destination_path}")
 
+                            # Prune empty source parent directories halting at download_dir
+                            from core.utils.file_utils import prune_empty_parent_directories
+                            dl_dir = config_manager.get('storage.download_dir') or config_manager.get('download_dir')
+                            stop_roots = {Path(dl_dir).resolve()} if dl_dir else set()
+                            prune_empty_parent_directories(file_path_obj, stop_at_roots=stop_roots)
+
                         # 5. Community Contribution (AcoustID)
                         auto_contrib_enabled = (
                             config_manager.get("metadata_enhancement.enable_acoustid_auto_submission", False)

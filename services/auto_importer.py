@@ -703,6 +703,7 @@ class AutoImportService:
 
             from core.io_gatekeeper import Gatekeeper
             from services.library_watcher import suppress_path
+            from core.utils.file_utils import prune_empty_parent_directories
 
             with suppress_path(str(dest_path)):
                 moved_to = Gatekeeper.authorize_and_execute({
@@ -711,6 +712,11 @@ class AutoImportService:
                     "dst": str(dest_path)
                 })
             logger.info(f"Moved {file_path.name} → {moved_to}")
+
+            # Prune empty source parent directories halting at download_dir
+            _dl = config_manager.get('storage.download_dir') or config_manager.get('download_dir')
+            stop_roots = {Path(_dl).resolve()} if _dl else set()
+            prune_empty_parent_directories(file_path, stop_at_roots=stop_roots)
 
         except Exception as e:
             logger.error(f"Failed to move file {file_path}: {e}")
@@ -722,17 +728,12 @@ class AutoImportService:
         return re.sub(r'[<>:"/\\|?*\x00-\x1f]', '', filename).strip()
 
     def _cleanup_empty_directories(self, directory: Path):
-        """Recursively remove empty directories."""
+        """Recursively remove empty directories halting at download_dir."""
         try:
-            if not directory.exists():
-                return
+            from core.utils.file_utils import prune_empty_parent_directories
             _dl = config_manager.get('storage.download_dir') or config_manager.get('download_dir')
-            download_dir = Path(_dl) if _dl else None
-            if directory == download_dir:
-                return
-            if not any(directory.iterdir()):
-                directory.rmdir()
-                self._cleanup_empty_directories(directory.parent)
+            stop_roots = {Path(_dl).resolve()} if _dl else set()
+            prune_empty_parent_directories(directory, stop_at_roots=stop_roots)
         except Exception:
             pass
 
