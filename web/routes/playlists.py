@@ -162,10 +162,24 @@ def _normalize_provider_short_name(provider_id: Any) -> str:
     except Exception:
         pass
 
-    p_str = str(provider_id).lower()
-    if p_str.startswith("echosync."):
-        return p_str.split(".")[-1]
-    return p_str
+    p_str = str(provider_id).strip()
+    if p_str.isdigit():
+        try:
+            from database.config_database import get_config_database
+            cfg_db = get_config_database()
+            with cfg_db._get_connection() as conn:
+                row = conn.execute(
+                    "SELECT s.name FROM accounts a JOIN services s ON a.service_id = s.id WHERE a.id = ?",
+                    (int(p_str),)
+                ).fetchone()
+                if row and row[0]:
+                    return str(row[0]).lower().split(".")[-1]
+        except Exception:
+            pass
+
+    if p_str.lower().startswith("echosync."):
+        return p_str.lower().split(".")[-1]
+    return p_str.lower()
 
 
 def _extract_track_field(track, key):
@@ -1631,7 +1645,7 @@ def get_analyze_job(job_id, request: Request):
 
 @router.post("/sync")
 def trigger_sync(payload_obj: PlaylistSyncSchema):
-    payload = payload_obj.model_dump(exclude_unset=True) if payload_obj else {}
+    payload = payload_obj.model_dump(exclude_unset=True) if hasattr(payload_obj, "model_dump") else (payload_obj or {})
     target = payload.get("target_source") or payload.get("target")
     playlist_name = payload.get("playlist_name")
     matches = payload.get("matches") or []
@@ -1677,7 +1691,7 @@ def trigger_sync(payload_obj: PlaylistSyncSchema):
     else:
         sync_mode = "unknown"
     
-    logger.info(f"Sync mode detected: {sync_mode} ({source} → {target})")
+    tier_to_tier_providers = {"spotify", "tidal", "apple_music", "deezer", "qobuz"}
 
     # For non-Plex targets, return not implemented
     canonical_target = _normalize_provider_short_name(target)
@@ -1685,7 +1699,7 @@ def trigger_sync(payload_obj: PlaylistSyncSchema):
         # Local-server sync: add tracks to managed playlist with overwrite
         source_account_name = payload.get("source_account_name")
         target_user_id = payload.get("target_user_id")
-        return _sync_to_plex(payload, source, canonical_target, playlist_name, matches, download_missing, sync_mode, source_account_name, target_user_id)
+        return _sync_to_plex(payload, source, target, playlist_name, matches, download_missing, sync_mode, source_account_name, target_user_id)
     elif target in tier_to_tier_providers or canonical_target in tier_to_tier_providers:
         # Tier-to-tier sync: add tracks to target provider's playlist
         return _sync_to_tier(payload, source, canonical_target, playlist_name, matches, download_missing, sync_mode)
@@ -1715,16 +1729,25 @@ def _sync_to_plex(payload, source, target, playlist_name, matches, download_miss
             "sync_mode": sync_mode,
         })
 
+        target_account_id = None
+        if str(target).isdigit():
+            target_account_id = int(target)
+        elif payload.get("target_account_id"):
+            try:
+                target_account_id = int(payload.get("target_account_id"))
+            except Exception:
+                pass
+
         client = None
         try:
             from plugins.EchoSync.plex.client import PlexClient
-            client = PlexClient()
+            client = PlexClient(account_id=target_account_id)
         except ImportError:
             try:
                 from core.nexus_framework.plugin_loader import PluginRegistry
                 PlexCls = PluginRegistry.get_plugin_class('EchoSync.plex') or PluginRegistry.get_plugin_class('plex')
                 if PlexCls:
-                    client = PlexCls()
+                    client = PlexCls(account_id=target_account_id)
                 else:
                     client = PluginRegistry.get_plugin_instance('EchoSync.plex') or PluginRegistry.get_plugin_instance('plex')
             except Exception as reg_err:

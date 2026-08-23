@@ -219,3 +219,70 @@ def test_client_credentials_fallback_when_no_user_accounts(monkeypatch):
         assert captured.get('client_secret') == 'app_sec'
         assert client.is_authenticated() is True
 
+
+def test_spotify_liked_songs_get_user_playlists(spotify_client):
+    """Ensure get_user_playlists yields Liked Songs pseudo-playlist first."""
+    mock_sp = MagicMock()
+    mock_sp.current_user.return_value = {'id': 'user_123'}
+    mock_sp.current_user_saved_tracks.return_value = {'total': 42}
+    mock_sp.current_user_playlists.return_value = {
+        'items': [{
+            'id': 'pl_1',
+            'name': 'My Playlist',
+            'description': 'A test playlist',
+            'tracks': {'total': 10},
+            'owner': {'display_name': 'Tester'},
+            'public': True,
+            'collaborative': False,
+            'snapshot_id': 'snap123',
+        }],
+        'next': None
+    }
+    spotify_client.sp = mock_sp
+    spotify_client.user_id = 'user_123'
+
+    playlists = list(spotify_client.get_user_playlists())
+    assert len(playlists) == 2
+    assert playlists[0]['id'] == 'liked-songs'
+    assert playlists[0]['name'] == 'Liked Songs'
+    assert playlists[0]['track_count'] == 42
+    assert playlists[1]['id'] == 'pl_1'
+    assert playlists[1]['name'] == 'My Playlist'
+
+
+def test_spotify_liked_songs_get_playlist_tracks(spotify_client):
+    """Ensure get_playlist_tracks fetches saved tracks when id is 'liked-songs'."""
+    mock_sp = MagicMock()
+    mock_sp.current_user_saved_tracks.return_value = {
+        'items': [{
+            'track': {
+                'id': 'track_abc',
+                'name': 'Liked Track 1',
+                'artists': [{'name': 'Cool Artist'}],
+                'album': {'name': 'Great Album', 'release_date': '2022-01-01'},
+                'duration_ms': 180000,
+            }
+        }],
+        'next': None
+    }
+    spotify_client.sp = mock_sp
+    spotify_client.cache_manager = None
+
+    tracks = spotify_client.get_playlist_tracks('liked-songs', force_refresh=True)
+    assert len(tracks) == 1
+    assert tracks[0].title == 'Liked Track 1'
+    assert tracks[0].artist_name == 'Cool Artist'
+    assert tracks[0].duration == 180000
+    mock_sp.current_user_saved_tracks.assert_called_once_with(limit=50)
+
+
+def test_spotify_liked_songs_add_tracks(spotify_client):
+    """Ensure add_tracks_to_playlist adds to saved tracks for 'liked-songs'."""
+    mock_sp = MagicMock()
+    spotify_client.sp = mock_sp
+
+    res = spotify_client.add_tracks_to_playlist('liked-songs', ['spotify:track:abc123', 'def456'])
+    assert res is True
+    mock_sp.current_user_saved_tracks_add.assert_called_once_with(tracks=['abc123', 'def456'])
+
+

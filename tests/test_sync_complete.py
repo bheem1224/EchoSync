@@ -301,9 +301,53 @@ def test_sync_button_enabled_state():
         analysis_result_no_matches is not None and
         analysis_result_no_matches.get("summary", {}).get("can_sync", False)
     )
-    
     assert can_enable_sync_button is False
+
+
+def test_trigger_sync_account_id_resolution_and_plex_dispatch(monkeypatch):
+    """Verify trigger_sync correctly resolves numeric account IDs and dispatches without NameError."""
+    from web.routes.playlists import trigger_sync
+    from core.nexus_framework.plugin_SDK import ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
+
+    # Mock capabilities for numeric account IDs
+    spotify_caps = ProviderCapabilities(
+        name="EchoSync.spotify",
+        supports_playlists=PlaylistSupport.READ_WRITE,
+        search=SearchCapabilities(),
+        metadata=MetadataRichness.HIGH,
+        supports_streaming=True
+    )
+    plex_caps = ProviderCapabilities(
+        name="EchoSync.plex",
+        supports_playlists=PlaylistSupport.READ_WRITE,
+        search=SearchCapabilities(),
+        metadata=MetadataRichness.HIGH,
+        supports_library_scan=True
+    )
+
+    monkeypatch.setattr("core.nexus_framework.plugin_loader.get_plugin_capabilities", lambda p: spotify_caps if str(p) == "2391116200" else plex_caps)
+    monkeypatch.setattr("web.routes.playlists._normalize_provider_short_name", lambda p: "spotify" if str(p) == "2391116200" else "plex")
+
+    # Mock _sync_to_plex to intercept execution
+    mock_sync_plex = MagicMock(return_value={"accepted": True, "job_name": "sync:plex:test"})
+    monkeypatch.setattr("web.routes.playlists._sync_to_plex", mock_sync_plex)
+
+    payload = {
+        "source": "2391116200",
+        "target": "977698763",
+        "playlist_name": "My Favs",
+        "matches": [{"target_identifier": "12345"}],
+        "download_missing": False,
+    }
+
+    result = trigger_sync(payload)
+    assert result["accepted"] is True
+    assert mock_sync_plex.called
+    args = mock_sync_plex.call_args[0]
+    assert args[1] == "2391116200"  # source
+    assert args[2] == "977698763"   # target
 
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+

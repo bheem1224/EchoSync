@@ -812,7 +812,7 @@ class SpotifyClient(SyncServiceProvider):
 
     def get_user_playlists(self, user_id: Optional[str] = None) -> Iterator[Dict[str, Any]]:
         """
-        Yield user playlists page by page to conserve memory.
+        Yield user playlists page by page to conserve memory, including Liked Songs.
         """
         if not self.is_authenticated():
             return
@@ -821,6 +821,23 @@ class SpotifyClient(SyncServiceProvider):
             return
             
         try:
+            # Yield "Liked Songs" collection as the first pseudo-playlist
+            try:
+                saved = self.sp.current_user_saved_tracks(limit=1)
+                total_liked = saved.get('total', 0) if saved else 0
+                yield {
+                    'id': 'liked-songs',
+                    'name': 'Liked Songs',
+                    'description': 'Your Spotify Liked Songs collection',
+                    'track_count': total_liked,
+                    'owner': self.user_id or 'Spotify',
+                    'public': False,
+                    'collaborative': False,
+                    'snapshot_id': None,
+                }
+            except Exception as le:
+                logger.debug(f"Could not fetch liked songs count: {le}")
+
             # Use generator to yield playlists
             results = self.sp.current_user_playlists(limit=50)
             while results:
@@ -857,6 +874,38 @@ class SpotifyClient(SyncServiceProvider):
         """
         if not self.is_authenticated():
             return []
+
+        # Handle Liked Songs (Saved Tracks)
+        if playlist_id in ('liked-songs', 'saved-tracks', 'collection:tracks'):
+            if not force_refresh and self.cache_manager:
+                cached = self.cache_manager.get_cached_tracks('liked-songs')
+                if cached is not None:
+                    logger.debug(f"Serving Liked Songs from cache ({len(cached)} tracks).")
+                    return cached
+
+            tracks = []
+            try:
+                results = self.sp.current_user_saved_tracks(limit=50)
+                while results:
+                    for item in results.get('items', []):
+                        if item.get('track') and item['track'].get('id'):
+                            track = self._convert_track(item['track'])
+                            if track:
+                                tracks.append(track)
+                    results = self.sp.next(results) if results.get('next') else None
+
+                if tracks and self.cache_manager:
+                    self.cache_manager.save_playlist({
+                        'id': 'liked-songs',
+                        'name': 'Liked Songs',
+                        'description': 'Your Spotify Liked Songs collection',
+                        'tracks': {'items': [{'track': t.to_dict()} for t in tracks], 'total': len(tracks)},
+                        'owner': {'display_name': self.user_id or 'Spotify'},
+                    })
+                return tracks
+            except Exception as e:
+                logger.error(f"Error getting Spotify Liked Songs tracks: {e}")
+                return []
 
         # Serve from cache unless the caller explicitly wants a fresh fetch.
         if not force_refresh and self.cache_manager:
@@ -937,9 +986,20 @@ class SpotifyClient(SyncServiceProvider):
             return None
 
     def add_tracks_to_playlist(self, playlist_id: str, track_uris: List[str]) -> bool:
-        """Add tracks to a Spotify playlist."""
+        """Add tracks to a Spotify playlist or Liked Songs."""
         if not self.is_authenticated():
             return False
+
+        if playlist_id in ('liked-songs', 'saved-tracks', 'collection:tracks'):
+            try:
+                ids = [u.split(":")[-1] for u in track_uris if u]
+                for i in range(0, len(ids), 50):
+                    batch = ids[i:i+50]
+                    self.sp.current_user_saved_tracks_add(tracks=batch)
+                return True
+            except Exception as e:
+                logger.error(f"Error adding tracks to Liked Songs: {e}")
+                return False
 
         try:
             # Spotify allows max 100 tracks per request
