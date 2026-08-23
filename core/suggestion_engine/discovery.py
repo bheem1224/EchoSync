@@ -384,9 +384,22 @@ def recommend_near_miss(
     working_db = get_working_database()
     try:
         with working_db.session_scope() as session:
+            acc_id = int(user_id) if str(user_id).isdigit() else 1
+            resolved_sync_id = None
+            if music_db_track_id:
+                try:
+                    from database.music_database import get_database, Track
+                    music_db = get_database()
+                    with music_db.session_scope() as m_sess:
+                        t = m_sess.get(Track, music_db_track_id)
+                        if t:
+                            resolved_sync_id = t.sync_id
+                except Exception:
+                    pass
+
             suggestion = SuggestionStagingQueue(
-                user_id=str(user_id),
-                music_db_track_id=music_db_track_id,
+                account_id=acc_id,
+                sync_id=resolved_sync_id or str(music_db_track_id),
                 reason="near_miss_alternate_edition",
                 ui_label="Alternate Edition / Near Miss",
                 context_data=context or {},

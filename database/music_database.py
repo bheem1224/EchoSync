@@ -130,8 +130,11 @@ class Artist(Base):
     @validates("name")
     def validate_name(self, key, value):
         if value:
-            from core.matching_engine.text_utils import normalize_text
-            self.normalized_name = normalize_text(value)
+            import re
+            from core.matching_engine.text_utils import normalize_artist
+            clean_name = re.sub(r'\s+', ' ', str(value)).strip()
+            self.normalized_name = normalize_artist(clean_name)
+            return clean_name
         return value
 
 
@@ -159,8 +162,11 @@ class Album(Base):
     @validates("title")
     def validate_title(self, key, value):
         if value:
-            from core.matching_engine.text_utils import normalize_text
-            self.normalized_title = normalize_text(value)
+            import re
+            from core.matching_engine.text_utils import normalize_title
+            clean_title = re.sub(r'\s+', ' ', str(value)).strip()
+            self.normalized_title = normalize_title(clean_title)
+            return clean_title
         return value
 
 
@@ -322,8 +328,11 @@ class TrackArtist(Base):
     @validates("title")
     def validate_title(self, key, value):
         if value:
+            import re
             from core.matching_engine.text_utils import normalize_title
-            self.normalized_title = normalize_title(value)
+            clean_title = re.sub(r'\s+', ' ', str(value)).strip()
+            self.normalized_title = normalize_title(clean_title)
+            return clean_title
         return value
 
 class LocalMedia(Base):
@@ -501,6 +510,39 @@ class MusicDatabase:
         if engine_url.startswith("sqlite"):
             event.listen(self.engine, "connect", _sqlite_pragmas)
         self.SessionLocal = sessionmaker(bind=self.engine, expire_on_commit=False, future=True)
+        self._sanitize_existing_metadata()
+
+    def _sanitize_existing_metadata(self) -> None:
+        """Startup repair: collapse double spaces in title/artist/album and backfill missing edition markers."""
+        try:
+            with self.session_scope() as session:
+                import re
+                from core.matching_engine.text_utils import normalize_title, normalize_artist
+                # Fix double spaces in tracks
+                double_space_tracks = session.query(Track).filter(
+                    (Track.title.like("%  %")) | (Track.normalized_title.like("%  %"))
+                ).all()
+                for t in double_space_tracks:
+                    if t.title:
+                        t.title = re.sub(r'\s+', ' ', t.title).strip()
+                        t.normalized_title = normalize_title(t.title)
+                        if t.sort_title:
+                            t.sort_title = re.sub(r'\s+', ' ', t.sort_title).strip()
+
+                # Backfill edition for tracks where edition is NULL but media filename indicates Remix/Edit/Live
+                null_ed_tracks = session.query(Track).join(LocalMedia).filter(
+                    Track.edition.is_(None),
+                    (LocalMedia.file_path.ilike("%remix%") | LocalMedia.file_path.ilike("%acoustic%") | LocalMedia.file_path.ilike("%live%"))
+                ).all()
+                for t in null_ed_tracks:
+                    for m in t.media_files:
+                        if m.file_path:
+                            m_ed = re.search(r'[\(\[]([^\]\)]*(?:remix|mix|edit|version|live|acoustic|instrumental|remaster)[^\]\)]*)[\)\]]', m.file_path, re.IGNORECASE)
+                            if m_ed:
+                                t.edition = m_ed.group(1).strip()
+                                break
+        except Exception:
+            pass
 
     def create_all(self) -> None:
         pass

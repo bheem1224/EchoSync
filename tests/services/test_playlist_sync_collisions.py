@@ -973,5 +973,114 @@ def test_review_approval_suppresses_watcher(tmp_path, monkeypatch):
     assert is_path_suppressed(dest_path_str) is False
 
 
+def test_wavin_flag_double_space_candidate_matching(tmp_path, monkeypatch):
+    """Verify that a track with multiple spaces in title is matched via normalized_title in candidate search."""
+    from database.music_database import MusicDatabase, Base, Artist, Album, Track, LocalMedia
+    from web.routes.playlists import _fetch_tier1_candidates
+
+    db = MusicDatabase(tmp_path / "test.db")
+    Base.metadata.create_all(db.engine)
+
+    with db.session_scope() as session:
+        artist = Artist(name="K'naan", normalized_name="k'naan")
+        album = Album(title="Troubadour", normalized_title="troubadour", artist=artist)
+        session.add_all([artist, album])
+        session.flush()
+
+        # Track in DB has 2 spaces in title
+        track = Track(
+            title="Wavin'  Flag",
+            normalized_title="wavin' flag",
+            duration=210373,
+            artist=artist,
+            album=album,
+        )
+        session.add(track)
+        session.flush()
+
+        media = LocalMedia(track_id=track.id, file_path="/data/library/K’naan/Troubadour/00 - Wavin' Flag.flac", file_format="flac", media_id="wf_01")
+        session.add(media)
+
+    with db.engine.connect() as conn:
+        # Search using single space
+        candidates = _fetch_tier1_candidates(
+            conn,
+            search_title="Wavin' Flag",
+            base_search_title="Wavin' Flag",
+            track_artist="K'NAAN",
+            track_duration=212520,
+        )
+        assert len(candidates) >= 1
+        assert candidates[0][0] == track.id
+        assert candidates[0][1] == "Wavin' Flag" or "Wavin'" in candidates[0][1]
+
+
+def test_seeb_remix_filepath_edition_detection(tmp_path, monkeypatch):
+    """Verify that candidate edition is detected from filepath when Track.edition is NULL."""
+    from database.music_database import MusicDatabase, Base, Artist, Album, Track, LocalMedia
+    from web.routes.playlists import _fetch_tier1_candidates
+    from core.matching_engine.matching_engine import WeightedMatchingEngine
+    from core.db.echo_sync_track import EchosyncTrack
+    import re
+
+    db = MusicDatabase(tmp_path / "test.db")
+    Base.metadata.create_all(db.engine)
+
+    with db.session_scope() as session:
+        artist = Artist(name="Mike Posner", normalized_name="mike posner")
+        album = Album(title="At Night, Alone.", normalized_title="at night alone", artist=artist)
+        session.add_all([artist, album])
+        session.flush()
+
+        track = Track(
+            title="I Took A Pill In Ibiza",
+            normalized_title="i took a pill in ibiza",
+            duration=197936,
+            edition=None,  # Null in DB
+            artist=artist,
+            album=album,
+        )
+        session.add(track)
+        session.flush()
+
+        media = LocalMedia(
+            track_id=track.id,
+            file_path="/data/library/Mike Posner/The Annual 2017/00 - I Took a Pill in Ibiza (SeeB remix).flac",
+            file_format="flac",
+            media_id="ibiza_01",
+        )
+        session.add(media)
+
+    with db.engine.connect() as conn:
+        candidates = _fetch_tier1_candidates(
+            conn,
+            search_title="I Took A Pill In Ibiza",
+            base_search_title="I Took A Pill In Ibiza",
+            track_artist="Mike Posner",
+            track_duration=197933,
+        )
+        assert len(candidates) >= 1
+        candidate_row = candidates[0]
+        # candidate_row[8] has file_path
+        media_file_path = candidate_row[8] if len(candidate_row) > 8 else None
+        assert media_file_path is not None
+        assert "SeeB remix" in media_file_path
+
+        m_ed = re.search(r'[\(\[]([^\]\)]*(?:remix|mix|edit|version|live|acoustic|instrumental|remaster)[^\]\)]*)[\)\]]', media_file_path, re.IGNORECASE)
+        edition_candidate = m_ed.group(1).strip() if m_ed else None
+        assert edition_candidate is not None
+        assert "remix" in edition_candidate.lower()
+
+        # Engine test: source requested Remix vs candidate with SeeB remix edition
+        source_track = EchosyncTrack(raw_title="I Took A Pill In Ibiza", artist_name="Mike Posner", album_title="", duration=197933, edition="Remix")
+        cand_track = EchosyncTrack(raw_title="I Took A Pill In Ibiza", artist_name="Mike Posner", album_title="", duration=197936, edition=edition_candidate)
+        from core.matching_engine.scoring_profile import PROFILE_EXACT_SYNC
+        engine = WeightedMatchingEngine(PROFILE_EXACT_SYNC)
+        res = engine.calculate_match(source_track, cand_track)
+        assert res.confidence_score >= 90.0
+        assert res.passed_version_check is True
+
+
+
 
 

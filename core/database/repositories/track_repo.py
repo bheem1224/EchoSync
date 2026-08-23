@@ -5,6 +5,7 @@ SQLAlchemy 2.0 High-Performance UPSERT Repository for Track & LocalMedia ingesti
 - EchosyncTrack: logical music metadata -> tracks table (keyed by sync_id)
 - EchosyncMedia: physical file telemetry -> local_media table (keyed by media_id)
 """
+import re
 from typing import List, Optional, Any
 from datetime import datetime, timezone
 from sqlalchemy import func, select
@@ -304,6 +305,16 @@ class TrackRepository:
                 if m:
                     remix_prefix = m.group(1).strip()
 
+            if not remix_prefix:
+                media_list = getattr(t, "media", []) or []
+                for m_item in media_list:
+                    mfp = getattr(m_item, "file_path", None)
+                    if mfp:
+                        m_match = _TITLE_REMIX_RE.search(mfp)
+                        if m_match:
+                            remix_prefix = m_match.group(1).strip()
+                            break
+
             if remix_prefix and remix_prefix.lower() not in _GENERIC_REMIX_PREFIXES:
                 remixer_tokens = split_artists(remix_prefix)
                 for r_tok in remixer_tokens:
@@ -443,8 +454,12 @@ class TrackRepository:
         batch_sync_ids = set()
         batch_file_paths = set()
 
+        from core.matching_engine.text_utils import normalize_title
+
         for t in tracks:
-            norm_title = (getattr(t, "normalized_title", None) or getattr(t, "title", None) or getattr(t, "raw_title", "") or "").strip().lower()
+            raw_title = getattr(t, "title", None) or getattr(t, "raw_title", "") or ""
+            clean_title = re.sub(r'\s+', ' ', raw_title).strip()
+            norm_title = normalize_title(clean_title)
             if norm_title:
                 batch_titles.add(norm_title)
             if getattr(t, "artist_id", None):
@@ -562,11 +577,12 @@ class TrackRepository:
 
             duration = getattr(t, "duration_ms", None) or getattr(t, "duration", None)
             mbid = getattr(t, "mbid", None) or getattr(t, "musicbrainz_id", None)
-            track_title = getattr(t, "title", None) or getattr(t, "raw_title", None) or "Unknown Title"
+            raw_track_title = getattr(t, "title", None) or getattr(t, "raw_title", None) or "Unknown Title"
+            track_title = re.sub(r'\s+', ' ', str(raw_track_title)).strip()
 
             artist_id = getattr(t, "artist_id", None) or default_artist_id
             album_id = getattr(t, "album_id", None)
-            norm_title = (getattr(t, "normalized_title", None) or track_title).strip().lower()
+            norm_title = normalize_title(track_title)
 
             track_values.append({
                 "sync_id": sync_id,

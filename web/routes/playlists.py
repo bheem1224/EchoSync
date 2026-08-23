@@ -337,22 +337,27 @@ def _fetch_tier1_candidates(conn, search_title, base_search_title, track_artist,
 
     title_norm = search_title.replace('\u2019', "'").replace('\u2018', "'")
 
+    from core.matching_engine.text_utils import normalize_title
+
+    norm_search = normalize_title(search_title)
     params = {
-        "artist_exact":       track_artist,
-        "artist_pattern":     f"%{track_artist}%",
-        "title_exact":        search_title,
-        "title_pattern":      f"%{search_title}%",
-        "base_title_pattern": f"%{base_search_title}%",
-        "title_norm_pattern": f"%{title_norm}%",
-        "duration":           track_duration or 0,
+        "artist_exact":        track_artist,
+        "artist_pattern":      f"%{track_artist}%",
+        "title_exact":         search_title,
+        "title_pattern":       f"%{search_title}%",
+        "base_title_pattern":  f"%{base_search_title}%",
+        "title_norm_pattern":  f"%{title_norm}%",
+        "norm_search_pattern": f"%{norm_search}%",
+        "duration":            track_duration or 0,
     }
 
     # Returns an alias-aware LIKE fragment for a named SQL parameter.
-    # Matches Track.title, Track.sort_title, or any track_aliases.name row.
+    # Matches Track.title, Track.sort_title, Track.normalized_title, or any track_aliases.name row.
     def _am(param):
         return (
             f"(LOWER(t.title) LIKE LOWER(:{param})"
             f" OR (t.sort_title IS NOT NULL AND LOWER(t.sort_title) LIKE LOWER(:{param}))"
+            f" OR (t.normalized_title IS NOT NULL AND LOWER(t.normalized_title) LIKE LOWER(:{param}))"
             f" OR EXISTS (SELECT 1 FROM track_aliases ta_x"
             f" WHERE ta_x.track_id = t.id AND LOWER(ta_x.name) LIKE LOWER(:{param})))"
         )
@@ -361,6 +366,7 @@ def _fetch_tier1_candidates(conn, search_title, base_search_title, track_artist,
     base_where = (
         f"{_am('title_pattern')}\n"
         f"        OR {_am('base_title_pattern')}\n"
+        f"        OR {_am('norm_search_pattern')}\n"
         f"        OR (LOWER(REPLACE(REPLACE(t.title, char(8217), char(39)), char(8216), char(39)))"
         f" LIKE LOWER(:title_norm_pattern))"
     )
@@ -391,7 +397,7 @@ def _fetch_tier1_candidates(conn, search_title, base_search_title, track_artist,
     sql = _sql(f"""
         SELECT DISTINCT t.id, t.title, t.duration, t.edition,
                a.name AS artist_name, a.id AS artist_id,
-               t.sort_title, al.title AS album_title
+               t.sort_title, al.title AS album_title, lm.file_path
         FROM tracks t
         JOIN artists a ON t.artist_id = a.id
         LEFT JOIN track_artists ta ON t.id = ta.track_id
@@ -440,18 +446,23 @@ def _fetch_tier2_candidates(conn, search_title, track_duration, duration_window_
     duration_min = track_duration - duration_window_ms
     duration_max = track_duration + duration_window_ms
 
+    from core.matching_engine.text_utils import normalize_title
+
+    norm_search = normalize_title(search_title)
     params = {
-        "title_exact":  search_title,
-        "title_pattern": f"%{search_title}%",
-        "duration":     track_duration,
+        "title_exact":         search_title,
+        "title_pattern":       f"%{search_title}%",
+        "norm_search_pattern": f"%{norm_search}%",
+        "duration":            track_duration,
     }
 
     # Base title-exact conditions (original Tier 2) replaced with broad funnel LIKE/alias checks.
     base_where = (
         "LOWER(t.title) LIKE LOWER(:title_pattern)\n"
         "        OR (t.sort_title IS NOT NULL AND LOWER(t.sort_title) LIKE LOWER(:title_pattern))\n"
+        "        OR (t.normalized_title IS NOT NULL AND LOWER(t.normalized_title) LIKE LOWER(:norm_search_pattern))\n"
         "        OR EXISTS (SELECT 1 FROM track_aliases ta_x\n"
-        "                   WHERE ta_x.track_id = t.id AND LOWER(ta_x.name) LIKE LOWER(:title_pattern))"
+        "                   WHERE ta_x.track_id = t.id AND (LOWER(ta_x.name) LIKE LOWER(:title_pattern) OR LOWER(ta_x.name) LIKE LOWER(:norm_search_pattern)))"
     )
 
     # Expanded terms use LIKE — transliterations need fuzzy title matching.
@@ -462,6 +473,7 @@ def _fetch_tier2_candidates(conn, search_title, track_duration, duration_window_
         exp_parts.append(
             f"(LOWER(t.title) LIKE LOWER(:{pkey})"
             f" OR (t.sort_title IS NOT NULL AND LOWER(t.sort_title) LIKE LOWER(:{pkey}))"
+            f" OR (t.normalized_title IS NOT NULL AND LOWER(t.normalized_title) LIKE LOWER(:{pkey}))"
             f" OR EXISTS (SELECT 1 FROM track_aliases ta_x"
             f" WHERE ta_x.track_id = t.id AND LOWER(ta_x.name) LIKE LOWER(:{pkey})))"
         )
@@ -470,7 +482,7 @@ def _fetch_tier2_candidates(conn, search_title, track_duration, duration_window_
     sql = _sql(f"""
         SELECT DISTINCT t.id, t.title, t.duration, t.edition,
                a.name AS artist_name, a.id AS artist_id,
-               t.sort_title, al.title AS album_title
+               t.sort_title, al.title AS album_title, lm.file_path
         FROM tracks t
         JOIN artists a ON t.artist_id = a.id
         LEFT JOIN albums al ON t.album_id = al.id
@@ -677,11 +689,23 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                         except Exception:
                             sort_title_candidate = None
 
-                        if edition_candidate is None and sort_title_candidate and sort_title_candidate != raw_title_candidate:
+                        media_file_path = None
+                        try:
+                            if len(candidate_row) > 8:
+                                media_file_path = candidate_row[8]
+                        except Exception:
+                            media_file_path = None
+
+                        if edition_candidate is None:
                             version_pattern = r'\b(Remix|Mix|Live|Demo|Remaster|Deluxe|Edit|Version|Acoustic|Instrumental|Bonus|Extended|Original)\b'
-                            version_match = re.search(version_pattern, sort_title_candidate, re.IGNORECASE)
-                            if version_match:
-                                edition_candidate = version_match.group(0)
+                            if sort_title_candidate and sort_title_candidate != raw_title_candidate:
+                                version_match = re.search(version_pattern, sort_title_candidate, re.IGNORECASE)
+                                if version_match:
+                                    edition_candidate = version_match.group(0)
+                            if edition_candidate is None and media_file_path:
+                                m_ed = re.search(r'[\(\[]([^\]\)]*(?:remix|mix|edit|version|live|acoustic|instrumental|remaster)[^\]\)]*)[\)\]]', media_file_path, re.IGNORECASE)
+                                if m_ed:
+                                    edition_candidate = m_ed.group(1).strip()
 
                         from core.matching_engine.text_utils import parse_duration_to_ms
                         candidate_track = EchosyncTrack(
