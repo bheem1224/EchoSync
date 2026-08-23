@@ -1767,39 +1767,103 @@ def _sync_to_plex(payload, source, target, playlist_name, matches, download_miss
             if not client.ensure_connection():
                 raise RuntimeError("Plex connection failed")
 
+            valid_match_items = [m for m in matches if m.get("target_identifier")]
             valid_keys = []
-            for idx, rk in enumerate(rating_keys):
-                logger.debug(f"[{job_name}] Processing track {idx + 1}/{total} (ratingKey: {rk}, type: {type(rk).__name__})")
+            failed_tracks = []
+            recovered_keys = []
+
+            # Pre-fetch local media paths for matched tracks to assist disambiguation
+            matched_track_ids = [m.get("matched_track_id") for m in valid_match_items if m.get("matched_track_id")]
+            track_media_map = {}
+            if matched_track_ids:
+                try:
+                    from database.music_database import get_database, LocalMedia
+                    db = get_database()
+                    with db.session_scope() as session:
+                        rows = session.query(LocalMedia.track_id, LocalMedia.file_path, LocalMedia.media_id).filter(LocalMedia.track_id.in_(matched_track_ids)).all()
+                        for t_id, f_path, m_id in rows:
+                            track_media_map[t_id] = (f_path, m_id)
+                except Exception as pre_err:
+                    logger.debug(f"Failed to prefetch LocalMedia for sync recovery: {pre_err}")
+
+            from core.db.echo_sync_track import EchosyncTrack, EchosyncMedia
+
+            for idx, m in enumerate(valid_match_items):
+                rk = m.get("target_identifier")
+                track_title = m.get("source_title") or m.get("title") or (m.get("source_track") or {}).get("title") or (m.get("source_track") or {}).get("name") or "Unknown Track"
+                track_artist = m.get("source_artist") or m.get("artist") or (m.get("source_track") or {}).get("artist") or "Unknown Artist"
+                track_album = m.get("album") or (m.get("source_track") or {}).get("album") or ""
+                track_duration = m.get("duration_ms") or (m.get("source_track") or {}).get("duration_ms") or 0
+                matched_t_id = m.get("matched_track_id")
+
+                local_file_path = None
+                local_media_id = None
+                if matched_t_id and matched_t_id in track_media_map:
+                    local_file_path, local_media_id = track_media_map[matched_t_id]
+
+                local_media_list = [EchosyncMedia(file_path=local_file_path, media_id=local_media_id)] if local_file_path else []
+                local_track_meta = EchosyncTrack(
+                    raw_title=track_title,
+                    artist_name=track_artist,
+                    album_title=track_album or "",
+                    duration=track_duration,
+                    media=local_media_list,
+                )
+
+                logger.debug(f"[{job_name}] Processing track {idx + 1}/{total} (ratingKey: {rk}, title: '{track_title}', artist: '{track_artist}')")
                 event_bus.publish(job_name, "track_started", {
                     "index": idx,
                     "rating_key": rk,
+                    "title": track_title,
+                    "artist": track_artist,
                     "total": total,
                 })
                 try:
-                    # Ensure ratingKey is an integer
-                    try:
-                        rk_int = int(rk) if rk else None
-                    except (ValueError, TypeError):
-                        raise RuntimeError(f"Invalid ratingKey format: {rk}")
-                    
-                    if not rk_int:
-                        raise RuntimeError("Empty or invalid ratingKey")
-                    
-                    item = client.server.fetchItem(rk_int) if client.server else None
+                    # Attempt fetch with live recovery fallback on 404/NotFound
+                    item = None
+                    is_recovered = False
+                    if hasattr(client, "fetch_or_recover_track"):
+                        item, is_recovered = client.fetch_or_recover_track(rk, local_track_meta)
+                    elif client.server:
+                        try:
+                            rk_int = int(rk) if rk else None
+                            item = client.server.fetchItem(rk_int) if rk_int else None
+                        except Exception:
+                            item = None
+
                     if not item:
-                        raise RuntimeError("Track not found on Plex")
-                    valid_keys.append(rk)
-                    logger.debug(f"[{job_name}] Track {idx + 1} synced successfully")
+                        raise RuntimeError(f"Track '{track_title}' with ratingKey {rk} not found on Plex (404/unrecoverable)")
+
+                    resolved_rk = str(getattr(item, "ratingKey", rk))
+                    valid_keys.append(resolved_rk)
+
+                    if is_recovered:
+                        recovered_keys.append((local_media_id or matched_t_id or local_file_path, resolved_rk))
+
+                    logger.debug(f"[{job_name}] Track {idx + 1} synced successfully (key: {resolved_rk}, recovered: {is_recovered})")
                     event_bus.publish(job_name, "track_synced", {
                         "index": idx,
-                        "rating_key": rk,
+                        "rating_key": resolved_rk,
+                        "title": track_title,
+                        "artist": track_artist,
+                        "recovered": is_recovered,
                     })
                 except Exception as fe:
-                    logger.warning(f"[{job_name}] Track {idx + 1} failed: {str(fe)}")
+                    err_msg = str(fe)
+                    logger.warning(f"[{job_name}] Track {idx + 1} failed: '{track_title}' by '{track_artist}' (ratingKey: {rk}) -> {err_msg}")
+                    failed_tracks.append({
+                        "index": idx + 1,
+                        "rating_key": rk,
+                        "title": track_title,
+                        "artist": track_artist,
+                        "error": err_msg,
+                    })
                     event_bus.publish(job_name, "track_failed", {
                         "index": idx,
                         "rating_key": rk,
-                        "error": str(fe),
+                        "title": track_title,
+                        "artist": track_artist,
+                        "error": err_msg,
                     })
 
             if not valid_keys:
@@ -1818,9 +1882,25 @@ def _sync_to_plex(payload, source, target, playlist_name, matches, download_miss
             event_bus.publish(job_name, "playlist_updated", {
                 "playlist": playlist_name,
                 "synced": len(valid_keys),
-                "failed": total - len(valid_keys),
+                "failed": len(failed_tracks),
                 "updated": bool(updated),
             })
+
+            # Batch persist recovered rating keys to database
+            if recovered_keys:
+                try:
+                    from database.music_database import get_database
+                    from core.database.repositories.track_repo import TrackRepository
+                    db = get_database()
+                    with db.session_scope() as session:
+                        persisted = TrackRepository.update_external_identifiers(
+                            session,
+                            recovered_keys,
+                            provider="plex",
+                        )
+                        logger.info(f"[{job_name}] Batch persisted {persisted} recovered Plex ratingKey external identifiers to database.")
+                except Exception as persist_err:
+                    logger.warning(f"[{job_name}] Failed to persist recovered ratingKeys to database: {persist_err}")
 
             try:
                 from core.hook_manager import hook_manager
@@ -1828,11 +1908,22 @@ def _sync_to_plex(payload, source, target, playlist_name, matches, download_miss
             except Exception as e:
                 logger.error(f"Error in ON_PLAYLIST_SAVED hook: {e}")
 
-            logger.info(f"[{job_name}] Sync complete: {len(valid_keys)} synced, {total - len(valid_keys)} failed")
+            if failed_tracks:
+                summary_lines = [
+                    f"[{job_name}] Sync completed with {len(failed_tracks)} failed tracks (out of {total} requested):"
+                ]
+                for f in failed_tracks:
+                    summary_lines.append(f"  • [Track #{f['index']}] '{f['title']}' by '{f['artist']}' (ratingKey: {f['rating_key']}) -> Error: {f['error']}")
+                logger.warning("\n".join(summary_lines))
+            else:
+                logger.info(f"[{job_name}] All {len(valid_keys)}/{total} tracks synced successfully to Plex!")
+
+            logger.info(f"[{job_name}] Sync complete: {len(valid_keys)} synced, {len(failed_tracks)} failed")
             event_bus.publish(job_name, "sync_complete", {
                 "playlist": playlist_name,
                 "synced": len(valid_keys),
-                "failed": total - len(valid_keys),
+                "failed": len(failed_tracks),
+                "failed_tracks": failed_tracks,
                 "target": target,
                 "sync_mode": sync_mode,
             })
@@ -1844,7 +1935,7 @@ def _sync_to_plex(payload, source, target, playlist_name, matches, download_miss
                 playlist=playlist_name,
                 total=total,
                 synced=len(valid_keys),
-                failed=total - len(valid_keys),
+                failed=len(failed_tracks),
                 download_missing=download_missing,
                 job_name=job_name,
             )
@@ -1882,8 +1973,8 @@ def _sync_to_plex(payload, source, target, playlist_name, matches, download_miss
 
 def _sync_to_tier(payload, source, target, playlist_name, matches, download_missing, sync_mode):
     """Sync matched tracks to a tier provider (Spotify, Tidal, etc.)."""
-    # Collect provider-specific IDs from matches (target_identifier for tier target)
-    track_ids = [m.get("target_identifier") for m in matches if m.get("target_identifier")]
+    valid_match_items = [m for m in matches if m.get("target_identifier")]
+    track_ids = [m.get("target_identifier") for m in valid_match_items]
     if not track_ids:
         return {"accepted": False, "error": f"No {target} track IDs provided in matches"}
 
@@ -1909,13 +2000,19 @@ def _sync_to_tier(payload, source, target, playlist_name, matches, download_miss
 
             # Add tracks to target provider's playlist
             synced = 0
-            failed = 0
+            failed_tracks = []
             
-            for idx, track_id in enumerate(track_ids):
-                logger.debug(f"[{job_name}] Processing track {idx + 1}/{len(track_ids)} (ID: {track_id})")
+            for idx, m in enumerate(valid_match_items):
+                track_id = m.get("target_identifier")
+                track_title = m.get("source_title") or m.get("title") or (m.get("source_track") or {}).get("title") or (m.get("source_track") or {}).get("name") or "Unknown Track"
+                track_artist = m.get("source_artist") or m.get("artist") or (m.get("source_track") or {}).get("artist") or "Unknown Artist"
+
+                logger.debug(f"[{job_name}] Processing track {idx + 1}/{len(track_ids)} (ID: {track_id}, title: '{track_title}', artist: '{track_artist}')")
                 event_bus.publish(job_name, "track_started", {
                     "index": idx,
                     "track_id": track_id,
+                    "title": track_title,
+                    "artist": track_artist,
                     "total": len(track_ids),
                 })
                 try:
@@ -1926,21 +2023,43 @@ def _sync_to_tier(payload, source, target, playlist_name, matches, download_miss
                     event_bus.publish(job_name, "track_synced", {
                         "index": idx,
                         "track_id": track_id,
+                        "title": track_title,
+                        "artist": track_artist,
                     })
                 except Exception as fe:
-                    failed += 1
-                    logger.warning(f"[{job_name}] Track {idx + 1} failed: {str(fe)}")
+                    err_msg = str(fe)
+                    logger.warning(f"[{job_name}] Track {idx + 1} failed: '{track_title}' by '{track_artist}' (ID: {track_id}) -> {err_msg}")
+                    failed_tracks.append({
+                        "index": idx + 1,
+                        "track_id": track_id,
+                        "title": track_title,
+                        "artist": track_artist,
+                        "error": err_msg,
+                    })
                     event_bus.publish(job_name, "track_failed", {
                         "index": idx,
                         "track_id": track_id,
-                        "error": str(fe),
+                        "title": track_title,
+                        "artist": track_artist,
+                        "error": err_msg,
                     })
 
-            logger.info(f"[{job_name}] Sync complete: {synced} synced, {failed} failed")
+            if failed_tracks:
+                summary_lines = [
+                    f"[{job_name}] Sync completed with {len(failed_tracks)} failed tracks (out of {len(track_ids)} requested):"
+                ]
+                for f in failed_tracks:
+                    summary_lines.append(f"  • [Track #{f['index']}] '{f['title']}' by '{f['artist']}' (ID: {f['track_id']}) -> Error: {f['error']}")
+                logger.warning("\n".join(summary_lines))
+            else:
+                logger.info(f"[{job_name}] All {synced}/{len(track_ids)} tracks synced successfully to {target}!")
+
+            logger.info(f"[{job_name}] Sync complete: {synced} synced, {len(failed_tracks)} failed")
             event_bus.publish(job_name, "sync_complete", {
                 "playlist": playlist_name,
                 "synced": synced,
-                "failed": failed,
+                "failed": len(failed_tracks),
+                "failed_tracks": failed_tracks,
                 "target": target,
                 "sync_mode": sync_mode,
             })
@@ -1952,7 +2071,7 @@ def _sync_to_tier(payload, source, target, playlist_name, matches, download_miss
                 playlist=playlist_name,
                 total=len(track_ids),
                 synced=synced,
-                failed=failed,
+                failed=len(failed_tracks),
                 download_missing=download_missing,
                 job_name=job_name,
             )

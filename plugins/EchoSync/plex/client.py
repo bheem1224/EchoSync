@@ -13,11 +13,12 @@ from plexapi.server import PlexServer
 from plexapi.library import MusicSection
 from plexapi.audio import Track as PlexTrack
 from plexapi.exceptions import NotFound
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Tuple
 from datetime import datetime, timezone
 import time
 import re
 from pathlib import Path
+from difflib import SequenceMatcher
 from core.tiered_logger import get_logger
 from core.user_history import UserTrackInteraction
 
@@ -34,6 +35,60 @@ def _safe_getattr(obj: Any, attr: str, default: Any = None) -> Any:
         except AttributeError:
             return default
     return default
+
+
+def verify_plex_candidate(plex_item: Any, local_meta: Optional[EchosyncTrack]) -> float:
+    """Evaluate a Plex search candidate against local track metadata using a disambiguation matrix.
+
+    Returns a composite score from 0.0 to 100.0.
+    """
+    if not plex_item or not local_meta:
+        return 0.0
+
+    # 1. Mandatory Duration Gate: Reject candidate if delta exceeds 3000ms
+    plex_dur = getattr(plex_item, 'duration', 0) or 0
+    local_dur = getattr(local_meta, 'duration_ms', None) or getattr(local_meta, 'duration', 0) or 0
+    if local_dur and plex_dur:
+        if abs(plex_dur - local_dur) > 3000:
+            return 0.0
+
+    score = 20.0  # Base score for passing duration gate (or neutral duration)
+
+    # 2. File Basename Check: Compare filename of local track with Plex media parts
+    local_path = getattr(local_meta, 'file_path', None) or ""
+    if local_path:
+        local_filename = Path(local_path).name.lower()
+        for media in getattr(plex_item, 'media', []):
+            for part in getattr(media, 'parts', []):
+                part_file = getattr(part, 'file', '') or ''
+                if part_file and Path(part_file).name.lower() == local_filename:
+                    score += 50.0
+                    break
+
+    # 3. Artist Similarity Check
+    plex_artist = (
+        getattr(plex_item, 'grandparentTitle', '')
+        or getattr(plex_item, 'originalTitle', '')
+        or ''
+    )
+    if not plex_artist and hasattr(plex_item, 'artist'):
+        try:
+            art_obj = plex_item.artist()
+            plex_artist = _safe_getattr(art_obj, 'title', '') or ''
+        except Exception:
+            pass
+
+    local_artist = getattr(local_meta, 'artist', '') or getattr(local_meta, 'artist_name', '') or ''
+    if plex_artist and local_artist:
+        artist_sim = SequenceMatcher(None, plex_artist.lower().strip(), local_artist.lower().strip()).ratio()
+        if artist_sim >= 0.85:
+            score += 30.0
+        elif artist_sim >= 0.70:
+            score += 15.0
+    elif not local_artist:
+        score += 15.0
+
+    return score
 
 
 class PlexClient(MediaServerProvider):
@@ -741,7 +796,71 @@ class PlexClient(MediaServerProvider):
         except Exception as e:
             logger.error(f"Error searching Plex: {e}")
             return []
-    
+
+    def fetch_or_recover_track(
+        self,
+        cached_rating_key: str,
+        track_meta: Optional[EchosyncTrack] = None,
+    ) -> Tuple[Optional[Any], bool]:
+        """Fetch track by ratingKey, falling back to a live search and disambiguation matrix on 404/NotFound.
+
+        Returns (plex_item, is_recovered).
+        """
+        if not self.ensure_connection() or not self.server:
+            return None, False
+
+        # Step 1: Standard fetchItem fast-path
+        if cached_rating_key:
+            try:
+                rk_int = int(cached_rating_key)
+                item = self.server.fetchItem(rk_int)
+                if item:
+                    return item, False
+            except Exception as e:
+                logger.debug(f"Plex fetchItem({cached_rating_key}) failed: {e}")
+
+        # Step 2: Live lookup fallback using search and verification matrix
+        if not track_meta or not self.music_library:
+            return None, False
+
+        title = getattr(track_meta, 'title', None) or getattr(track_meta, 'raw_title', None)
+        artist = getattr(track_meta, 'artist', None) or getattr(track_meta, 'artist_name', None)
+
+        candidates = []
+        if title:
+            try:
+                candidates = self.music_library.search(title, libtype='track', maxresults=50) or []
+            except Exception as se:
+                logger.debug(f"Plex search by title '{title}' failed: {se}")
+
+        if not candidates and artist:
+            try:
+                candidates = self.music_library.search(artist, libtype='track', maxresults=50) or []
+            except Exception as se:
+                logger.debug(f"Plex search by artist '{artist}' failed: {se}")
+
+        if not candidates:
+            return None, False
+
+        best_cand = None
+        best_score = 0.0
+
+        for cand in candidates:
+            cand_score = verify_plex_candidate(cand, track_meta)
+            if cand_score > best_score:
+                best_score = cand_score
+                best_cand = cand
+
+        if best_cand and best_score >= 70.0:
+            new_rk = str(getattr(best_cand, 'ratingKey', ''))
+            logger.info(
+                f"Plex live recovery matched '{title}' by '{artist}' (score: {best_score:.1f}): "
+                f"old ratingKey {cached_rating_key} -> new ratingKey {new_rk}"
+            )
+            return best_cand, True
+
+        return None, False
+
     def get_track(self, track_id: str) -> Optional[EchosyncTrack]:
         """Fetch single track by Plex ratingKey.
 

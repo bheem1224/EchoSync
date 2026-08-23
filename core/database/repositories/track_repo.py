@@ -6,14 +6,14 @@ SQLAlchemy 2.0 High-Performance UPSERT Repository for Track & LocalMedia ingesti
 - EchosyncMedia: physical file telemetry -> local_media table (keyed by media_id)
 """
 import re
-from typing import List, Optional, Any
+from typing import List, Optional, Any, Tuple
 from datetime import datetime, timezone
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy import or_, and_, Integer
 
-from database.music_database import Track, LocalMedia, Artist, Album, TrackArtist, generate_nanoid
+from database.music_database import Track, LocalMedia, Artist, Album, TrackArtist, generate_nanoid, ExternalIdentifier
 from database import _canonicalize_path
 # Canonical model: EchosyncTrack + EchosyncMedia from core.db
 from core.db.echo_sync_track import EchosyncTrack, EchosyncMedia
@@ -847,6 +847,82 @@ class TrackRepository:
             session.flush()
 
         return decoupled_count
+
+    @classmethod
+    def update_external_identifiers(
+        cls,
+        session: Session,
+        updates: List[Tuple[Any, str]],
+        provider: str = "plex",
+    ) -> int:
+        """Batch update or insert ExternalIdentifier records.
+
+        updates: list of (track_id_or_media_id, new_rating_key)
+        provider: external provider identifier (default: 'plex')
+
+        Returns count of successfully updated/created external identifiers.
+        """
+        if not updates:
+            return 0
+
+        updated_count = 0
+        now_iso = datetime.now(timezone.utc).isoformat()
+
+        for target_ref, new_item_id in updates:
+            if not target_ref or not new_item_id:
+                continue
+
+            media_id = None
+            if isinstance(target_ref, int) or (isinstance(target_ref, str) and target_ref.isdigit()):
+                track_id = int(target_ref)
+                media_row = session.query(LocalMedia).filter_by(track_id=track_id).first()
+                if media_row:
+                    media_id = media_row.media_id
+            elif isinstance(target_ref, str):
+                media_row = session.query(LocalMedia).filter_by(media_id=target_ref).first()
+                if media_row:
+                    media_id = media_row.media_id
+
+            if not media_id:
+                continue
+
+            existing_ext = (
+                session.query(ExternalIdentifier)
+                .filter_by(media_id=media_id, plugin_source=provider)
+                .first()
+            )
+
+            if existing_ext:
+                existing_ext.plugin_item_id = str(new_item_id)
+                raw = dict(existing_ext.raw_data or {})
+                raw["recovered_at"] = now_iso
+                existing_ext.raw_data = raw
+                updated_count += 1
+            else:
+                clashing_ext = (
+                    session.query(ExternalIdentifier)
+                    .filter_by(plugin_source=provider, plugin_item_id=str(new_item_id))
+                    .first()
+                )
+                if clashing_ext:
+                    clashing_ext.media_id = media_id
+                    raw = dict(clashing_ext.raw_data or {})
+                    raw["recovered_at"] = now_iso
+                    clashing_ext.raw_data = raw
+                else:
+                    new_ext = ExternalIdentifier(
+                        media_id=media_id,
+                        plugin_source=provider,
+                        plugin_item_id=str(new_item_id),
+                        raw_data={"synced_at": now_iso, "recovered_at": now_iso},
+                    )
+                    session.add(new_ext)
+                updated_count += 1
+
+        if updated_count > 0:
+            session.commit()
+
+        return updated_count
 
 
 def bulk_upsert_tracks(session: Session, tracks: List[EchosyncTrack]) -> int:
