@@ -67,7 +67,7 @@ _TEMP_EXTENSIONS: Tuple[str, ...] = ('.tmp', '.part', '.crdownload')
 def _is_path_component_ignored(file_path: str | Path, ignored_directories: Optional[Set[str]] = None) -> bool:
     """Check if a file or directory path contains an ignored path component."""
     if ignored_directories is None:
-        ignored_directories = {"poor_metadata", "incomplete"}
+        ignored_directories = {"poor_metadata", "incomplete", "quarantine"}
     try:
         p = Path(file_path)
         parts_lower = {part.lower().strip("/\\") for part in p.parts}
@@ -355,91 +355,98 @@ class AutoImportService:
     def scan_and_process(self, force_scan: bool = False, params: Optional[Dict[str, Any]] = None, **kwargs):
         """Scan download directory for audio files and process them."""
         import time
+        from core.system_lock import acquire_library_lock
+
         params = params or {}
         if force_scan:
             params["force_scan"] = True
         if not self._scan_lock.acquire(blocking=False):
             logger.info("Auto-import scan skipped: Another scan/process is already running.")
             return
-        meta_config = config_manager.get('metadata_enhancement') or {}
 
         try:
-            if not meta_config.get('enabled', True):
-                logger.info("Auto-import scan skipped: Feature disabled in settings.")
-                return
+            with acquire_library_lock(task_name="auto_import_scan", blocking=False) as acquired:
+                if not acquired:
+                    logger.info("Auto-import scan skipped: Library sync or another library operation is currently running.")
+                    return
 
-            _dl = config_manager.get('storage.download_dir') or config_manager.get('download_dir')
-            download_dir = Path(_dl) if _dl else None
-            logger.debug(f"Download directory from config: {download_dir}")
-            logger.debug(f"Download directory type: {type(download_dir)}")
-            logger.debug(f"Download directory exists: {download_dir.exists() if download_dir else 'None'}")
-            
-            if not download_dir:
-                logger.error("Download directory is None!")
-                return
-                
-            if not download_dir.exists():
-                logger.warning(f"Auto-import scan skipped: Download directory does not exist ({download_dir})")
-                logger.debug(f"Attempted to access: {download_dir.resolve()}")
-                return
+                meta_config = config_manager.get('metadata_enhancement') or {}
+                if not meta_config.get('enabled', True):
+                    logger.info("Auto-import scan skipped: Feature disabled in settings.")
+                    return
 
-            logger.debug(f"Starting scan of download directory: {download_dir}")
-            supported_exts = {'.mp3', '.flac', '.ogg', '.m4a', '.aac', '.alac', '.ape', '.wav', '.dsd', '.dsf', '.dff'}
-            files_to_process = []
-            stats = {"found": 0, "imported": 0, "pending_review": 0, "failed": 0}
+                _dl = config_manager.get('storage.download_dir') or config_manager.get('download_dir')
+                download_dir = Path(_dl) if _dl else None
+                logger.debug(f"Download directory from config: {download_dir}")
+                logger.debug(f"Download directory type: {type(download_dir)}")
+                logger.debug(f"Download directory exists: {download_dir.exists() if download_dir else 'None'}")
 
-            for root, dirs, files in os.walk(download_dir):
-                # Filter out poor_metadata, incomplete, and temporary directories
-                dirs[:] = [d for d in dirs if not _is_path_component_ignored(Path(root) / d)]
-                logger.debug(f"Scanning directory: {root}")
-                logger.debug(f"Found {len(files)} files in {root}")
-                for file in files:
-                    path = Path(root) / file
-                    if _is_path_component_ignored(path):
-                        continue
+                if not download_dir:
+                    logger.error("Download directory is None!")
+                    return
 
-                    logger.debug(f"Checking file: {path}")
-                    if path.suffix.lower() in supported_exts:
-                        logger.debug(f"File matches audio extension: {path.suffix}")
+                if not download_dir.exists():
+                    logger.warning(f"Auto-import scan skipped: Download directory does not exist ({download_dir})")
+                    logger.debug(f"Attempted to access: {download_dir.resolve()}")
+                    return
 
-                        # Strict I/O safety lock check: verify size > 64KB (65536 bytes) and age > 15s
-                        try:
-                            f_size = os.path.getsize(path)
-                            f_mtime = os.path.getmtime(path)
-                            if f_size <= 65536:
-                                logger.debug(f"I/O safety guard: skipping file <= 64KB ({f_size} bytes): {path}")
-                                continue
-                            if time.time() - f_mtime <= 15:
-                                logger.debug(f"I/O safety guard: skipping file within 15s cool-off: {path}")
-                                continue
-                        except Exception as e:
-                            logger.debug(f"I/O safety guard check failed for {path}: {e}")
+                logger.debug(f"Starting scan of download directory: {download_dir}")
+                supported_exts = {'.mp3', '.flac', '.ogg', '.m4a', '.aac', '.alac', '.ape', '.wav', '.dsd', '.dsf', '.dff'}
+                files_to_process = []
+                stats = {"found": 0, "imported": 0, "pending_review": 0, "failed": 0}
+
+                for root, dirs, files in os.walk(download_dir):
+                    # Filter out poor_metadata, incomplete, quarantine, and temporary directories
+                    dirs[:] = [d for d in dirs if not _is_path_component_ignored(Path(root) / d)]
+                    logger.debug(f"Scanning directory: {root}")
+                    logger.debug(f"Found {len(files)} files in {root}")
+                    for file in files:
+                        path = Path(root) / file
+                        if _is_path_component_ignored(path):
                             continue
 
-                        # Check if file is ignored via DB check (avoids loading all ignored files into memory)
-                        if self._is_path_ignored(str(path), params=params):
-                            logger.debug(f"File is ignored in review queue, skipping: {path}")
-                            continue
+                        logger.debug(f"Checking file: {path}")
+                        if path.suffix.lower() in supported_exts:
+                            logger.debug(f"File matches audio extension: {path.suffix}")
 
-                        with self._processing_lock:
-                            if str(path) in self._processing_files:
-                                logger.debug(f"File already being processed, skipping: {path}")
+                            # Strict I/O safety lock check: verify size > 64KB (65536 bytes) and age > 15s
+                            try:
+                                f_size = os.path.getsize(path)
+                                f_mtime = os.path.getmtime(path)
+                                if f_size <= 65536:
+                                    logger.debug(f"I/O safety guard: skipping file <= 64KB ({f_size} bytes): {path}")
+                                    continue
+                                if time.time() - f_mtime <= 15:
+                                    logger.debug(f"I/O safety guard: skipping file within 15s cool-off: {path}")
+                                    continue
+                            except Exception as e:
+                                logger.debug(f"I/O safety guard check failed for {path}: {e}")
                                 continue
-                        logger.debug(f"File not in ignored queue, adding: {path}")
-                        files_to_process.append(path)
-                        stats["found"] += 1
 
-            if files_to_process:
-                logger.info(f"Found {len(files_to_process)} new files to process")
-                batch_stats = self.process_batch(files_to_process)
-                if batch_stats:
-                    stats["imported"] += batch_stats.get("imported", 0)
-                    stats["pending_review"] += batch_stats.get("pending_review", 0)
-                    stats["failed"] += batch_stats.get("failed", 0)
-            else:
-                logger.info(f"Auto-import scan completed: No new files found in {download_dir}")
-                
-            logger.info(f"[system] - Auto-import complete. Found: {stats['found']} | Imported: {stats['imported']} | Pending Review: {stats['pending_review']} | Failed: {stats['failed']}")
+                            # Check if file is ignored via DB check (avoids loading all ignored files into memory)
+                            if self._is_path_ignored(str(path), params=params):
+                                logger.debug(f"File is ignored in review queue, skipping: {path}")
+                                continue
+
+                            with self._processing_lock:
+                                if str(path) in self._processing_files:
+                                    logger.debug(f"File already being processed, skipping: {path}")
+                                    continue
+                            logger.debug(f"File not in ignored queue, adding: {path}")
+                            files_to_process.append(path)
+                            stats["found"] += 1
+
+                if files_to_process:
+                    logger.info(f"Found {len(files_to_process)} new files to process")
+                    batch_stats = self.process_batch(files_to_process)
+                    if batch_stats:
+                        stats["imported"] += batch_stats.get("imported", 0)
+                        stats["pending_review"] += batch_stats.get("pending_review", 0)
+                        stats["failed"] += batch_stats.get("failed", 0)
+                else:
+                    logger.info(f"Auto-import scan completed: No new files found in {download_dir}")
+
+                logger.info(f"[system] - Auto-import complete. Found: {stats['found']} | Imported: {stats['imported']} | Pending Review: {stats['pending_review']} | Failed: {stats['failed']}")
         finally:
             self._scan_lock.release()
 
@@ -507,126 +514,132 @@ class AutoImportService:
         - Otherwise → Queue for manual review
         """
         import time
+        from core.system_lock import acquire_library_lock
 
-        meta_config = config_manager.get('metadata_enhancement') or {}
-        auto_import = meta_config.get('auto_import', False)
-        confidence_threshold = meta_config.get('confidence_threshold', 90) / 100.0
-        
-        batch_stats = {"imported": 0, "pending_review": 0, "failed": 0}
+        with acquire_library_lock(task_name="auto_import_batch", blocking=True, timeout=60.0) as acquired:
+            if not acquired:
+                logger.warning("Auto-import process_batch timed out waiting for library lock.")
+                return {"imported": 0, "pending_review": 0, "failed": len(files)}
 
-        # Purge stale completion markers in one pass.
-        now = time.time()
-        stale = [k for k, ts in self._recently_completed.items() if now - ts >= 10]
-        for k in stale:
-            del self._recently_completed[k]
+            meta_config = config_manager.get('metadata_enhancement') or {}
+            auto_import = meta_config.get('auto_import', False)
+            confidence_threshold = meta_config.get('confidence_threshold', 90) / 100.0
 
-        # ── Phase 1: filter and group eligible files by parent directory ──────
-        by_dir: Dict[str, List[Path]] = {}
-        for file_path in files:
-            file_key = str(file_path)
-            if file_key in self._recently_completed:
-                logger.debug("File recently processed, skipping: %s", file_path)
-                continue
+            batch_stats = {"imported": 0, "pending_review": 0, "failed": 0}
 
-            with self._processing_lock:
-                if file_key in self._processing_files:
-                    logger.debug("File already being processed, skipping: %s", file_path)
+            # Purge stale completion markers in one pass.
+            now = time.time()
+            stale = [k for k, ts in self._recently_completed.items() if now - ts >= 10]
+            for k in stale:
+                del self._recently_completed[k]
+
+            # ── Phase 1: filter and group eligible files by parent directory ──────
+            by_dir: Dict[str, List[Path]] = {}
+            for file_path in files:
+                file_key = str(file_path)
+                if file_key in self._recently_completed:
+                    logger.debug("File recently processed, skipping: %s", file_path)
                     continue
-                self._processing_files.add(file_key)
 
-            if not file_path.exists():
-                logger.warning("File disappeared before processing: %s", file_path)
                 with self._processing_lock:
-                    self._processing_files.discard(file_key)
-                continue
+                    if file_key in self._processing_files:
+                        logger.debug("File already being processed, skipping: %s", file_path)
+                        continue
+                    self._processing_files.add(file_key)
 
-            # Strict I/O safety lock
-            try:
-                f_size = os.path.getsize(file_path)
-                f_mtime = os.path.getmtime(file_path)
-                if f_size <= 65536:
-                    logger.debug("I/O safety guard: skipping file <= 64KB (%d bytes): %s", f_size, file_path)
+                if not file_path.exists():
+                    logger.warning("File disappeared before processing: %s", file_path)
                     with self._processing_lock:
                         self._processing_files.discard(file_key)
                     continue
-                if time.time() - f_mtime <= 15:
-                    logger.debug("I/O safety guard: skipping file within 15s cool-off: %s", file_path)
-                    with self._processing_lock:
-                        self._processing_files.discard(file_key)
-                    continue
-            except Exception as stat_err:
-                logger.warning("I/O safety guard: error checking %s: %s", file_path, stat_err)
-                with self._processing_lock:
-                    self._processing_files.discard(file_key)
-                continue
 
-            by_dir.setdefault(str(file_path.parent), []).append(file_path)
-
-        # ── Phase 2: identify each directory group together (album-aware) ─────
-        for dir_path, dir_files in by_dir.items():
-            logger.info(
-                "Processing directory group: %s (%d file(s))", dir_path, len(dir_files)
-            )
-            try:
-                dir_files_str = [str(f) for f in dir_files]
-                batch_results = self.enhancer.identify_batch(dir_files_str)
-            except Exception as exc:
-                logger.error(
-                    "identify_batch error for '%s': %s", dir_path, exc, exc_info=True
-                )
-                batch_results = {}
-
-            # ── Phase 3: per-file decision logic (Chunked Concurrency) ─────────
-            CHUNK_SIZE = 50
-            for chunk_start in range(0, len(dir_files), CHUNK_SIZE):
-                chunk_files = dir_files[chunk_start:chunk_start + CHUNK_SIZE]
-
-                # Step D: Process Results and Finalize
-                for file_path in chunk_files:
-                    res = batch_results.get(str(file_path))
-                    metadata, confidence = res if res else (None, 0.0)
-                    file_key = str(file_path)
-                    try:
-                        # Finally Decide
-                        if metadata and confidence >= confidence_threshold:
-                            if auto_import:
-                                self.finalize_import(file_path, metadata)
-                                batch_stats["imported"] += 1
-                            else:
-                                logger.info(f"Match found but auto_import is False for {file_path}")
-                                self.enhancer.create_or_update_review_task(
-                                    str(file_path), "Match found but auto_import is False", match_data=metadata
-                                )
-                                batch_stats["pending_review"] += 1
-                        else:
-                            self.enhancer.create_or_update_review_task(
-                                str(file_path), "No confident match found", match_data=metadata
-                            )
-                            batch_stats["pending_review"] += 1
-
-                    except Exception as e:
-                        logger.error(f"Error processing decision for {file_path}: {e}", exc_info=True)
-                        try:
-                            self.enhancer.create_or_update_review_task(
-                                str(file_path), f"Error processing decision: {e}", match_data=None
-                            )
-                            batch_stats["pending_review"] += 1
-                        except Exception as e2:
-                            logger.error(f"Failed to create review task for {file_path}: {e2}")
-                            batch_stats["failed"] += 1
-                    finally:
-                        self._recently_completed[file_key] = time.time()
+                # Strict I/O safety lock
+                try:
+                    f_size = os.path.getsize(file_path)
+                    f_mtime = os.path.getmtime(file_path)
+                    if f_size <= 65536:
+                        logger.debug("I/O safety guard: skipping file <= 64KB (%d bytes): %s", f_size, file_path)
                         with self._processing_lock:
                             self._processing_files.discard(file_key)
+                        continue
+                    if time.time() - f_mtime <= 15:
+                        logger.debug("I/O safety guard: skipping file within 15s cool-off: %s", file_path)
+                        with self._processing_lock:
+                            self._processing_files.discard(file_key)
+                        continue
+                except Exception as stat_err:
+                    logger.warning("I/O safety guard: error checking %s: %s", file_path, stat_err)
+                    with self._processing_lock:
+                        self._processing_files.discard(file_key)
+                    continue
 
-                # Yield to let tasks clear out
-                time.sleep(0.01)
+                by_dir.setdefault(str(file_path.parent), []).append(file_path)
 
-                # Cleanup empty directories.
-        for f in files:
-            self._cleanup_empty_directories(f.parent)
-            
-        return batch_stats
+            # ── Phase 2: identify each directory group together (album-aware) ─────
+            for dir_path, dir_files in by_dir.items():
+                logger.info(
+                    "Processing directory group: %s (%d file(s))", dir_path, len(dir_files)
+                )
+                try:
+                    dir_files_str = [str(f) for f in dir_files]
+                    batch_results = self.enhancer.identify_batch(dir_files_str)
+                except Exception as exc:
+                    logger.error(
+                        "identify_batch error for '%s': %s", dir_path, exc, exc_info=True
+                    )
+                    batch_results = {}
+
+                # ── Phase 3: per-file decision logic (Chunked Concurrency) ─────────
+                CHUNK_SIZE = 50
+                for chunk_start in range(0, len(dir_files), CHUNK_SIZE):
+                    chunk_files = dir_files[chunk_start:chunk_start + CHUNK_SIZE]
+
+                    # Step D: Process Results and Finalize
+                    for file_path in chunk_files:
+                        res = batch_results.get(str(file_path))
+                        metadata, confidence = res if res else (None, 0.0)
+                        file_key = str(file_path)
+                        try:
+                            # Finally Decide
+                            if metadata and confidence >= confidence_threshold:
+                                if auto_import:
+                                    self.finalize_import(file_path, metadata)
+                                    batch_stats["imported"] += 1
+                                else:
+                                    logger.info(f"Match found but auto_import is False for {file_path}")
+                                    self.enhancer.create_or_update_review_task(
+                                        str(file_path), "Match found but auto_import is False", match_data=metadata
+                                    )
+                                    batch_stats["pending_review"] += 1
+                            else:
+                                self.enhancer.create_or_update_review_task(
+                                    str(file_path), "No confident match found", match_data=metadata
+                                )
+                                batch_stats["pending_review"] += 1
+
+                        except Exception as e:
+                            logger.error(f"Error processing decision for {file_path}: {e}", exc_info=True)
+                            try:
+                                self.enhancer.create_or_update_review_task(
+                                    str(file_path), f"Error processing decision: {e}", match_data=None
+                                )
+                                batch_stats["pending_review"] += 1
+                            except Exception as e2:
+                                logger.error(f"Failed to create review task for {file_path}: {e2}")
+                                batch_stats["failed"] += 1
+                        finally:
+                            self._recently_completed[file_key] = time.time()
+                            with self._processing_lock:
+                                self._processing_files.discard(file_key)
+
+                    # Yield to let tasks clear out
+                    time.sleep(0.01)
+
+            # Cleanup empty directories.
+            for f in files:
+                self._cleanup_empty_directories(f.parent)
+
+            return batch_stats
 
     def finalize_import(self, file_path: Path, metadata: Dict[str, Any]):
         """

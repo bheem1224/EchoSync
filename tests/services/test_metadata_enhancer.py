@@ -174,3 +174,89 @@ def test_enhance_library_metadata_enhances_all_associated_files(monkeypatch, tmp
         fp_media_ids = {fp.media_id for fp in fps}
         assert "med_f1" in fp_media_ids
         assert "med_f2" in fp_media_ids
+
+
+def test_retroactive_enhancer_falls_back_to_text_on_acoustid_miss(monkeypatch, tmp_path):
+    """Verify RetroactiveEnhancer falls back to text search waterfall when AcoustID returns 0 matches."""
+    from database.music_database import MusicDatabase, Track, Artist, LocalMedia, Base
+    from core.nexus_framework.plugin_loader import PluginRegistry
+
+    db_path = str(tmp_path / "test_waterfall_fallback.db")
+    db = MusicDatabase(db_path)
+    Base.metadata.create_all(db.engine)
+
+    f_classical = tmp_path / "bach_brandenburg.flac"
+    f_classical.write_bytes(b"dummy classical flac content")
+
+    with db.session_scope() as session:
+        artist = Artist(name="Johann Sebastian Bach")
+        session.add(artist)
+        session.flush()
+
+        track = Track(title="Brandenburg Concerto No. 3 in G Major, BWV 1048: I. Allegro", artist_id=artist.id, duration=340000)
+        session.add(track)
+        session.flush()
+
+        media = LocalMedia(track_id=track.id, file_path=str(f_classical), file_format="flac", media_id="bach_media_01")
+        session.add(media)
+
+    monkeypatch.setattr("database.music_database.get_database", lambda: db)
+    monkeypatch.setattr("database.get_database", lambda: db)
+
+    # Track tagging writes
+    written_tags_list = []
+    def fake_tagging_write(file_path, tags):
+        written_tags_list.append((str(file_path), tags))
+
+    monkeypatch.setattr("services.metadata_enhancer._tagging_write", fake_tagging_write)
+
+    # Mock extract_metadata returning initial basic tags
+    import echosync_core
+    monkeypatch.setattr(echosync_core, "extract_metadata", lambda p: {
+        "title": "Brandenburg Concerto No. 3 in G Major, BWV 1048: I. Allegro",
+        "artist": "Johann Sebastian Bach",
+    })
+
+    # Mock AcoustID resolving ZERO matches
+    mock_fp_provider = MagicMock()
+    mock_fp_provider.resolve_fingerprint_details.return_value = {
+        "mbids": [],
+        "acoustid_id": None,
+    }
+
+    enhancer = RetroactiveEnhancer()
+    monkeypatch.setattr(enhancer, "_get_plugin", lambda cap, **kwargs: mock_fp_provider)
+
+    # Mock FingerprintGenerator
+    from core.matching_engine.fingerprinting import FingerprintGenerator
+    monkeypatch.setattr(FingerprintGenerator, "generate", lambda p: "chromaprint_classical_hash")
+
+    # Mock MusicBrainz text search returning a valid matched track
+    mock_mb = MagicMock()
+    mock_mb.capabilities = type("Caps", (), {"supports_batching": False})()
+    
+    classical_mb_track = EchosyncTrack(
+        raw_title="Brandenburg Concerto No. 3 in G Major, BWV 1048: I. Allegro",
+        artist_name="Johann Sebastian Bach",
+        album_title="Brandenburg Concertos",
+        musicbrainz_id="mbid-bach-brandenburg-3",
+        isrc="DE1234567890",
+        duration=340000,
+    )
+    mock_mb.search_metadata.return_value = [classical_mb_track]
+    mock_mb.get_metadata.return_value = classical_mb_track
+    monkeypatch.setattr(PluginRegistry, "get_plugin", lambda name: mock_mb if name == "musicbrainz" else None)
+
+    # Run enhancement pass
+    enhancer.enhance_library_metadata(batch_size=10, check_all_files=True)
+
+    # Verify text search was executed and track was enhanced
+    assert len(written_tags_list) > 0
+    assert written_tags_list[0][0] == str(f_classical)
+    assert written_tags_list[0][1].get("musicbrainz_id") == "mbid-bach-brandenburg-3"
+
+    with db.session_scope() as session:
+        t = session.query(Track).filter_by(title="Brandenburg Concerto No. 3 in G Major, BWV 1048: I. Allegro").first()
+        assert t.musicbrainz_id == "mbid-bach-brandenburg-3"
+        assert t.isrc == "DE1234567890"
+        assert t.metadata_status.get("enhanced") is True

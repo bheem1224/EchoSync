@@ -717,20 +717,19 @@ def test_unidentifiable_file_ejection_and_cascade_purge(tmp_path, monkeypatch):
     bad_file = lib_dir / "corrupted_untagged.wav"
     bad_file.write_bytes(b"RIFF\x00\x00\x00\x00WAVEfmt \x10\x00\x00\x00\x01\x00\x01\x00\x44\xac\x00\x00\x88\x58\x01\x00\x02\x00\x10\x00data\x00\x00\x00\x00")
 
-    # 2. Mock echosync_core.extract_metadata to return empty title/artist
-    monkeypatch.setattr(
-        echosync_core,
-        "extract_metadata",
-        lambda path: {
-            "title": "",
-            "raw_title": "",
-            "artist_name": "Unknown Artist",
-            "artist": "Unknown Artist",
-            "album_title": "",
-            "duration": 5000,
-            "file_path": str(path),
-        }
-    )
+    # 2. Mock echosync_core.extract_metadata and read_metadata to return empty title/artist
+    empty_meta = {
+        "title": "",
+        "raw_title": "",
+        "artist_name": "Unknown Artist",
+        "artist": "Unknown Artist",
+        "album_title": "",
+        "duration": 5000,
+        "file_path": str(bad_file),
+    }
+    monkeypatch.setattr(echosync_core, "extract_metadata", lambda path: empty_meta)
+    if hasattr(echosync_core, "read_metadata"):
+        monkeypatch.setattr(echosync_core, "read_metadata", lambda path: empty_meta)
 
     orig_get = config_manager.get
     monkeypatch.setattr(
@@ -766,14 +765,128 @@ def test_unidentifiable_file_ejection_and_cascade_purge(tmp_path, monkeypatch):
 
     # File should no longer be in library directory
     assert not bad_file.exists()
-    # File should have moved to downloads directory
-    ejected_file = dl_dir / "corrupted_untagged.wav"
+    # File should have moved to quarantine subdirectory
+    ejected_file = dl_dir / "quarantine" / "corrupted_untagged.wav"
     assert ejected_file.exists()
 
     # DB state should be cleanly cascade-purged
     with db.session_factory() as session:
         assert session.query(LocalMedia).count() == 0
         assert session.query(Track).count() == 0
+
+
+def test_tightened_ejection_preserves_valid_tagged_and_inferred_tracks(tmp_path, monkeypatch):
+    """Verify tracks with valid tags or filename structure (e.g. Bobby McFerrin) are NOT ejected to quarantine."""
+    import echosync_core
+    from services.library_sync_service import LibrarySyncService
+    from database.music_database import MusicDatabase, Base, Track, LocalMedia
+    from core.settings import config_manager
+
+    lib_dir = tmp_path / "music"
+    lib_dir.mkdir(parents=True)
+    dl_dir = tmp_path / "downloads"
+    dl_dir.mkdir(parents=True)
+    db_file = tmp_path / "test_no_eject.db"
+
+    db = MusicDatabase(str(db_file))
+    Base.metadata.create_all(db.engine)
+
+    # 1. Track with valid embedded tags
+    tagged_file = lib_dir / "bobby_mcferrin.flac"
+    tagged_file.write_bytes(b"dummy flac content")
+
+    # 2. Track with inferred filename structure
+    inferred_file = lib_dir / "Bobby McFerrin - Don't Worry Be Happy.mp3"
+    inferred_file.write_bytes(b"dummy mp3 content")
+
+    monkeypatch.setattr(
+        echosync_core,
+        "read_metadata",
+        lambda path: {
+            "title": "Don't Worry Be Happy",
+            "artist": "Bobby McFerrin",
+            "album": "Simple Pleasures",
+            "duration": 290000,
+        } if "bobby_mcferrin.flac" in str(path) else {}
+    )
+    monkeypatch.setattr(
+        echosync_core,
+        "extract_metadata",
+        lambda path: {
+            "title": "Don't Worry Be Happy",
+            "artist": "Bobby McFerrin",
+            "album": "Simple Pleasures",
+            "duration": 290000,
+        } if "bobby_mcferrin.flac" in str(path) else {}
+    )
+
+    orig_get = config_manager.get
+    monkeypatch.setattr(
+        config_manager,
+        "get",
+        lambda k: str(lib_dir) if "library_dir" in k else (str(dl_dir) if "download_dir" in k else orig_get(k))
+    )
+
+    service = LibrarySyncService(database_path=str(db_file))
+    service.sync_library(scan_mode="force_rescan")
+
+    # Neither file should be ejected to quarantine
+    assert tagged_file.exists()
+    assert inferred_file.exists()
+    quarantine_dir = dl_dir / "quarantine"
+    if quarantine_dir.exists():
+        assert len(list(quarantine_dir.iterdir())) == 0
+
+
+def test_library_sync_and_auto_importer_mutual_exclusion_lock(tmp_path, monkeypatch):
+    """Verify mutual exclusion synchronization lock prevents collision between LibrarySyncService and AutoImporter."""
+    import threading
+    from services.library_sync_service import LibrarySyncService
+    from services.auto_importer import AutoImporter
+    from core.system_lock import acquire_library_lock
+    from core.settings import config_manager
+    from database.music_database import MusicDatabase, Base
+
+    lib_dir = tmp_path / "music"
+    lib_dir.mkdir(parents=True)
+    dl_dir = tmp_path / "downloads"
+    dl_dir.mkdir(parents=True)
+    db_file = tmp_path / "test_mutex.db"
+
+    db = MusicDatabase(str(db_file))
+    Base.metadata.create_all(db.engine)
+
+    orig_get = config_manager.get
+    monkeypatch.setattr(
+        config_manager,
+        "get",
+        lambda k: str(lib_dir) if "library_dir" in k else (str(dl_dir) if "download_dir" in k else orig_get(k))
+    )
+
+    lock_acquired = threading.Event()
+    release_lock = threading.Event()
+
+    def hold_lock_thread():
+        with acquire_library_lock(task_name="holder", blocking=True):
+            lock_acquired.set()
+            release_lock.wait(timeout=5.0)
+
+    # Start background thread holding lock
+    t = threading.Thread(target=hold_lock_thread)
+    t.start()
+    lock_acquired.wait(timeout=2.0)
+
+    try:
+        # Library sync in main thread should skip because lock is held by background thread
+        sync_svc = LibrarySyncService(database_path=str(db_file))
+        sync_svc.sync_library()
+
+        # Auto importer in main thread should skip because lock is held by background thread
+        auto_imp = AutoImporter.get_instance()
+        auto_imp.scan_and_process()
+    finally:
+        release_lock.set()
+        t.join(timeout=2.0)
 
 
 def test_acoustid_duration_integer_rounding():

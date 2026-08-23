@@ -812,6 +812,118 @@ class RetroactiveEnhancer:
 
 
 
+    def search_metadata_waterfall(self, track: EchosyncTrack) -> Optional[Any]:
+        """
+        Execute a cascading text-based metadata search waterfall across MusicBrainz and Spotify
+        for tracks where acoustic fingerprinting returned zero matches.
+        """
+        if not track:
+            return None
+
+        # Resolve track title and artist name (handling both attribute conventions)
+        title = track.title or getattr(track, 'raw_title', None)
+        artist = track.artist or getattr(track, 'artist_name', None)
+
+        if not title or not artist:
+            return None
+
+        clean_t, clean_a = normalize_track_comparison_fields(title, artist)
+        search_query_track = EchosyncTrack(
+            raw_title=clean_t,
+            artist_name=clean_a,
+            album_title=track.album_title if hasattr(track, 'album_title') else None,
+            duration=track.duration if hasattr(track, 'duration') else None
+        )
+
+        from core.matching_engine.scoring_profile import PROFILE_EXACT_SYNC
+        from core.matching_engine.matching_engine import WeightedMatchingEngine
+        from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
+        engine_cls = ServiceRegistry.resolve('matching_engine') or WeightedMatchingEngine
+        matcher = engine_cls(PROFILE_EXACT_SYNC)
+
+        # Stage 1: MusicBrainz Text Search
+        mb_client = PluginRegistry.get_plugin("musicbrainz") or self._get_plugin(Capability.FETCH_METADATA)
+        if mb_client and hasattr(mb_client, "search_metadata"):
+            try:
+                results = mb_client.search_metadata(search_query_track, limit=10)
+                if results:
+                    results_list = results if isinstance(results, (list, tuple)) else [results]
+                    candidate_tracks = []
+                    for result in results_list:
+                        if isinstance(result, EchosyncTrack):
+                            mbid = result.musicbrainz_id
+                            if not mbid and isinstance(result.identifiers, dict):
+                                mbid = result.identifiers.get('musicbrainz_recording_id') or result.identifiers.get('mbid')
+                            candidate_tracks.append((result, mbid))
+                        elif isinstance(result, dict):
+                            cand = self._search_result_to_track(result)
+                            mbid = result.get('mbid') or result.get('recording_id')
+                            if cand:
+                                candidate_tracks.append((cand, mbid))
+
+                    best_score = 0.0
+                    best_mbid = None
+                    best_candidate = None
+
+                    for candidate, mbid in candidate_tracks:
+                        match_result = matcher.calculate_match(search_query_track, candidate)
+                        score = match_result.confidence_score if match_result else 0.0
+                        if score > best_score:
+                            best_score = score
+                            best_mbid = mbid
+                            best_candidate = candidate
+
+                    if best_score >= 85.0:
+                        logger.info("Waterfall Stage 1 (MusicBrainz) match for '%s' (score: %.1f%%)", title, best_score)
+                        if best_mbid:
+                            try:
+                                meta = mb_client.get_metadata(best_mbid)
+                                if meta:
+                                    return meta
+                            except Exception:
+                                pass
+                        if best_candidate:
+                            return best_candidate
+            except Exception as mb_err:
+                logger.warning("Waterfall Stage 1 (MusicBrainz) error for '%s': %s", title, mb_err)
+
+        # Stage 2: Spotify Text Search Fallback
+        spotify_client = PluginRegistry.get_plugin("spotify")
+        if spotify_client and hasattr(spotify_client, "search"):
+            try:
+                query = f"track:{clean_t} artist:{clean_a}"
+                spotify_results = spotify_client.search(query=query, type="track", limit=10)
+                if not spotify_results:
+                    query = f"{clean_a} {clean_t}"
+                    spotify_results = spotify_client.search(query=query, type="track", limit=10)
+
+                if spotify_results:
+                    best_score = 0.0
+                    best_spotify_cand = None
+
+                    for cand in spotify_results:
+                        match_result = matcher.calculate_match(search_query_track, cand)
+                        score = match_result.confidence_score if match_result else 0.0
+                        if score > best_score:
+                            best_score = score
+                            best_spotify_cand = cand
+
+                    if best_score >= 85.0 and best_spotify_cand:
+                        logger.info("Waterfall Stage 2 (Spotify) match for '%s' (score: %.1f%%)", title, best_score)
+                        if best_spotify_cand.isrc:
+                            try:
+                                from services.isrc_lookup_service import dispatch_isrc_lookup
+                                isrc_track = dispatch_isrc_lookup(best_spotify_cand.isrc)
+                                if isrc_track:
+                                    return isrc_track
+                            except Exception as isrc_err:
+                                logger.debug("ISRC resolution error for Spotify match: %s", isrc_err)
+                        return best_spotify_cand
+            except Exception as spot_err:
+                logger.warning("Waterfall Stage 2 (Spotify) error for '%s': %s", title, spot_err)
+
+        return None
+
     def _search_result_to_track(self, result: Dict[str, Any]) -> Optional[EchosyncTrack]:
         """Convert MusicBrainz search result to EchosyncTrack using provider_base helper."""
         from core.nexus_framework.plugin_SDK import PluginBase
@@ -1032,15 +1144,25 @@ class RetroactiveEnhancer:
                                     t_track.isrc = meta.get('isrc')
 
                                 update_tags = {'musicbrainz_id': mbid, 'recording_id': mbid}
+                                if t_track.title:
+                                    update_tags['title'] = t_track.title
+                                if t_track.artist_name:
+                                    update_tags['artist'] = t_track.artist_name
+                                if t_track.album_title:
+                                    update_tags['album'] = t_track.album_title
                                 if t_track.isrc:
                                     update_tags['isrc'] = t_track.isrc
 
-                                # Write tags to EVERY associated media file
+                                # Write tags to EVERY associated media file via tag_file_verified
                                 for media, local_path in valid_media_paths:
                                     try:
-                                        _tagging_write(local_path, update_tags)
+                                        self.tag_file_verified(local_path, update_tags)
                                     except Exception as write_err:
-                                        logger.warning(f"Failed to write tags to {local_path.name}: {write_err}")
+                                        logger.warning(f"tag_file_verified failed for {local_path.name}: {write_err}; falling back to direct write")
+                                        try:
+                                            _tagging_write(local_path, update_tags)
+                                        except Exception:
+                                            pass
 
                                 item['metadata_status']['enhanced'] = True
                                 for key in required_keys:
@@ -1054,7 +1176,7 @@ class RetroactiveEnhancer:
                             item['metadata_status']['enhancement_attempts'] = item['metadata_status'].get('enhancement_attempts', 0) + 1
                             results_to_commit.append(item)
 
-                # Step 4: Heavyweight Fingerprint Discovery
+                # Step 4: Heavyweight Fingerprint Discovery & Text Waterfall Fallback
                 for item, valid_media_paths, all_file_tags in bucket_heavy:
                     t_track = item['track']
                     new_musicbrainz_id = None
@@ -1077,6 +1199,7 @@ class RetroactiveEnhancer:
                             if not t_track.fingerprint:
                                 t_track.fingerprint = existing_fp
 
+                    # 1. Acoustic Fingerprint Resolution
                     if fingerprint_provider and t_track.fingerprint and duration:
                         try:
                             duration_secs = int(duration / 1000) if duration > 10000 else duration
@@ -1090,10 +1213,40 @@ class RetroactiveEnhancer:
                         except Exception as res_err:
                             logger.debug(f"Fingerprint resolution error for {t_track.title}: {res_err}")
 
+                    # 2. Text-Based Search Waterfall Fallback if AcoustID yields no matches
+                    resolved_meta = None
+                    if not new_musicbrainz_id and (t_track.title or getattr(t_track, 'raw_title', None)) and (t_track.artist or getattr(t_track, 'artist_name', None)):
+                        try:
+                            logger.info("AcoustID returned no matches for '%s' by '%s'; executing text waterfall search.", t_track.title, t_track.artist_name)
+                            resolved_meta = self.search_metadata_waterfall(t_track)
+                            if resolved_meta:
+                                if isinstance(resolved_meta, EchosyncTrack):
+                                    new_musicbrainz_id = resolved_meta.musicbrainz_id
+                                    if not t_track.isrc and resolved_meta.isrc:
+                                        t_track.isrc = resolved_meta.isrc
+                                    if resolved_meta.title:
+                                        t_track.title = resolved_meta.title
+                                    if resolved_meta.artist:
+                                        t_track.artist_name = resolved_meta.artist
+                                    if resolved_meta.album:
+                                        t_track.album_title = resolved_meta.album
+                                elif isinstance(resolved_meta, dict):
+                                    new_musicbrainz_id = resolved_meta.get('musicbrainz_id') or resolved_meta.get('mbid') or resolved_meta.get('recording_id')
+                                    if not t_track.isrc and resolved_meta.get('isrc'):
+                                        t_track.isrc = resolved_meta.get('isrc')
+                                    if resolved_meta.get('title'):
+                                        t_track.title = resolved_meta.get('title')
+                                    if resolved_meta.get('artist'):
+                                        t_track.artist_name = resolved_meta.get('artist')
+                                    if resolved_meta.get('album'):
+                                        t_track.album_title = resolved_meta.get('album')
+                        except Exception as waterfall_err:
+                            logger.warning(f"Text waterfall fallback failed for {t_track.title}: {waterfall_err}")
+
                     if new_musicbrainz_id:
                         t_track.musicbrainz_id = new_musicbrainz_id
-                        logger.info("Heavyweight Fingerprint Success: %s -> %s", t_track.title, new_musicbrainz_id)
-                        if mb_client:
+                        logger.info("Metadata Discovery Success: %s -> %s", t_track.title, new_musicbrainz_id)
+                        if mb_client and not resolved_meta:
                             try:
                                 meta = mb_client.get_metadata(new_musicbrainz_id)
                                 if meta and not t_track.isrc and meta.get('isrc'):
@@ -1102,22 +1255,32 @@ class RetroactiveEnhancer:
                                 pass
 
                         update_tags = {'musicbrainz_id': new_musicbrainz_id, 'recording_id': new_musicbrainz_id}
+                        if t_track.title:
+                            update_tags['title'] = t_track.title
+                        if t_track.artist_name:
+                            update_tags['artist'] = t_track.artist_name
+                        if t_track.album_title:
+                            update_tags['album'] = t_track.album_title
                         if t_track.isrc:
                             update_tags['isrc'] = t_track.isrc
 
-                        # Write tags to EVERY associated media file
+                        # Write tags to EVERY associated media file via tag_file_verified
                         for media, local_path in valid_media_paths:
                             try:
-                                _tagging_write(local_path, update_tags)
+                                self.tag_file_verified(local_path, update_tags)
                             except Exception as write_err:
-                                logger.warning(f"Failed to write tags to {local_path.name}: {write_err}")
+                                logger.warning(f"tag_file_verified failed for {local_path.name}: {write_err}; falling back to direct write")
+                                try:
+                                    _tagging_write(local_path, update_tags)
+                                except Exception:
+                                    pass
 
                         item['metadata_status']['enhanced'] = True
                         for key in required_keys:
                             item['metadata_status'][key] = True
                         item['metadata_changed'] = True
                     else:
-                        logger.info("Heavyweight Fingerprint returned no matches for: %s", t_track.title)
+                        logger.info("Metadata discovery returned no matches for: %s", t_track.title)
                         t_track.musicbrainz_id = "NOT_FOUND"
                         item['metadata_status']['enhancement_attempts'] = item['metadata_status'].get('enhancement_attempts', 0) + 1
 

@@ -136,11 +136,23 @@ class JobQueue:
                 for job in self._jobs.values()
             )
 
+    def is_job_running(self, name_pattern: str) -> bool:
+        """Check if any job matching name_pattern is currently running."""
+        with self._lock:
+            for job_name, is_run in self._is_running.items():
+                if is_run and name_pattern in job_name:
+                    return True
+            for job in self._jobs.values():
+                if (job.running or job.state == TaskState.RUNNING) and name_pattern in job.name:
+                    return True
+            return False
+
     def can_execute(self, job: ScheduledJob) -> bool:
         """
         Evaluate job against currently running jobs for collision avoidance and capability gating.
         Rule: If job.plugin is set, evaluate plugin_state_manager.can_accept_work(job.plugin).
         Rule: If a DATABASE_WRITE_HEAVY task is running, new DATABASE_WRITE_HEAVY tasks are blocked.
+        Rule: Mutual exclusion between library_sync and auto_import tasks.
         """
         with self._lock:
             if job.plugin:
@@ -160,6 +172,19 @@ class JobQueue:
                 if self.is_db_write_heavy_running():
                     job.state = TaskState.PENDING_BLOCKED
                     return False
+
+            # Mutual exclusion between library_sync/database_update and auto_import
+            if "library_sync" in job.name or "database_update" in job.name:
+                if self.is_job_running("auto_import"):
+                    job.state = TaskState.PENDING_BLOCKED
+                    job.next_run = time.time() + 5.0
+                    return False
+            elif "auto_import" in job.name:
+                if self.is_job_running("library_sync") or self.is_job_running("database_update"):
+                    job.state = TaskState.PENDING_BLOCKED
+                    job.next_run = time.time() + 5.0
+                    return False
+
             return True
 
     def cancel_job(self, name: str) -> bool:
