@@ -776,4 +776,89 @@ def test_unidentifiable_file_ejection_and_cascade_purge(tmp_path, monkeypatch):
         assert session.query(Track).count() == 0
 
 
+def test_acoustid_duration_integer_rounding():
+    """Verify that floating point durations (e.g. 384.44, 179.4) are normalized to rounded integers."""
+    from plugins.EchoSync.acoustid.client import AcoustIDProvider
+    from web.routes.metadata_review import _normalize_duration_seconds, _coerce_int
+    from pathlib import Path
+
+    # 1. Test _coerce_int with float strings and floats
+    assert _coerce_int("384.44") == 384
+    assert _coerce_int(179.4) == 179
+    assert _coerce_int("179.6") == 180
+    assert _coerce_int(240000) == 240000
+
+    # 2. Test _normalize_duration_seconds with ms and float durations
+    meta_sec = {"duration": "179.4"}
+    assert _normalize_duration_seconds(meta_sec, Path("dummy.mp3")) == 179
+
+    meta_ms = {"duration_ms": 179600}
+    assert _normalize_duration_seconds(meta_ms, Path("dummy.mp3")) == 180
+
+    meta_high_sec = {"duration": 180000}
+    assert _normalize_duration_seconds(meta_high_sec, Path("dummy.mp3")) == 180
+
+    # 3. Test AcoustIDProvider payload generation
+    provider = AcoustIDProvider()
+    class DummyHTTP:
+        def post(self, url, data):
+            self.last_data = data
+            class DummyResp:
+                status_code = 200
+                def json(self):
+                    return {"status": "ok", "results": []}
+            return DummyResp()
+
+    dummy_http = DummyHTTP()
+    provider.http = dummy_http
+    provider.config = {"api_key": "test_key"}
+
+    # Pass float duration 384.44
+    provider.resolve_fingerprint_details("dummy_fingerprint", 384.44)
+    assert dummy_http.last_data["duration"] == 384
+    assert isinstance(dummy_http.last_data["duration"], int)
+
+
+def test_filename_hyphen_parsing():
+    """Verify that '04 - A Drawing-Down of Blinds.wav' parses title without corrupting internal hyphens."""
+    from core.matching_engine.track_parser import TrackParser
+    from services.auto_importer import parse_fallback_filename
+    from pathlib import Path
+
+    raw_filename = "04 - A Drawing-Down of Blinds.wav"
+
+    # Test auto_importer fallback helper
+    artist_hint, title_hint = parse_fallback_filename(Path(raw_filename))
+    assert artist_hint is None
+    assert title_hint == "A Drawing-Down of Blinds"
+
+    # Test TrackParser on raw filename
+    parser = TrackParser()
+    track = parser.parse_filename(raw_filename)
+    assert track is not None
+    assert track.title == "A Drawing-Down of Blinds"
+
+    # Test Artist - Title with internal hyphens
+    track_with_artist = parser.parse_filename("01 - The Artist - A Drawing-Down of Blinds.flac")
+    assert track_with_artist is not None
+    assert track_with_artist.artist_name.lower() == "the artist"
+    assert track_with_artist.title == "A Drawing-Down of Blinds"
+
+
+def test_review_approval_suppresses_watcher(tmp_path, monkeypatch):
+    """Verify that review approval suppresses watcher events during destination move."""
+    from services.library_watcher import suppress_path, is_path_suppressed
+
+    dest_file = tmp_path / "library" / "Artist" / "Album" / "Track.mp3"
+    dest_path_str = str(dest_file)
+
+    assert is_path_suppressed(dest_path_str) is False
+
+    with suppress_path(dest_path_str):
+        assert is_path_suppressed(dest_path_str) is True
+
+    assert is_path_suppressed(dest_path_str) is False
+
+
+
 

@@ -63,13 +63,13 @@ class TrackParser:
         'whitespace_clean': re.compile(r'\s+'),
         # Artist - Title format (most common)
         'artist_title': re.compile(
-            r'^(?P<artist>[^-]+?)\s*[-–]\s*(?P<title>.+?)(?:\s*\((?P<version>[^)]+)\))?$',
+            r'^(?P<artist>.+?)\s+[-–—]\s+(?P<title>.+?)(?:\s*\((?P<version>[^)]+)\))?$',
             re.IGNORECASE
         ),
 
         # Artist - Album - Title (Beatport/formal release)
         'artist_album_title': re.compile(
-            r'^(?P<artist>[^-]+?)\s*[-–]\s*(?P<album>[^-]+?)\s*[-–]\s*(?P<title>.+?)(?:\s*\((?P<version>[^)]+)\))?$',
+            r'^(?P<artist>.+?)\s+[-–—]\s+(?P<album>.+?)\s+[-–—]\s+(?P<title>.+?)(?:\s*\((?P<version>[^)]+)\))?$',
             re.IGNORECASE
         ),
 
@@ -218,19 +218,19 @@ class TrackParser:
             # Remove version parentheticals but keep version string
             working_string = self._remove_parenthetical_versions(working_string)
 
-        # Remove leading track number prefixes (e.g. "01 - ", "01. ", "1-05 ", "01 ")
-        clean_filename_part = re.sub(r'^(?:(?:\d+[.-])?\d{1,2}[\s.-]+)', '', working_string).strip()
+        # Remove leading track number prefixes (e.g. "04 - ", "01. ", "00 - ", "1-05 ", "01 ")
+        clean_filename_part = re.sub(r'^(?:(?:\d+[.-])?\d{1,2}[\s\-_.]+)', '', working_string).strip()
 
         # Try different parsing patterns on clean_filename_part first
         parsed_data = self._try_parse_patterns(clean_filename_part)
 
         # If clean_filename_part didn't have artist-title pattern (e.g. title-only like "01 - Title.flac"),
-        # and dir_artist is available, use dir_artist and clean_title
-        if not parsed_data and dir_artist:
+        # use clean_title and dir_artist or fallback "Unknown Artist"
+        if not parsed_data:
             clean_title = self.PATTERNS['extension_strip'].sub('', clean_filename_part or working_string).strip()
             if clean_title:
                 parsed_data = {
-                    'artist': dir_artist,
+                    'artist': dir_artist or "Unknown Artist",
                     'album': dir_album or '',
                     'title': clean_title
                 }
@@ -424,6 +424,11 @@ class TrackParser:
 
     def _remove_junk(self, text: str) -> str:
         """Remove junk characters and markers"""
+        # If underscores are used as space substitutes, treat hyphen as artist-title separator
+        if '_' in text:
+            text = re.sub(r'[-–—]', ' - ', text)
+            text = self.PATTERNS['underscores_clean'].sub(' ', text)
+
         # Remove common junk patterns
         text = self.PATTERNS['brackets_clean'].sub('', text)  # [brackets]
         text = self.PATTERNS['braces_clean'].sub('', text)    # {braces}

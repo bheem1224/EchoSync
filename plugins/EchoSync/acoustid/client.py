@@ -105,19 +105,25 @@ class AcoustIDProvider(PluginBase):
             logger.warning("Empty fingerprint provided")
             return {"acoustid_id": None, "mbids": [], "score": None}
 
-        duration = int(duration)
-        if duration > 10000:
-            logger.debug(f"AcoustID duration abnormally high ({duration}), assuming milliseconds and converting to seconds.")
-            duration = int(duration / 1000)
+        try:
+            duration_val = float(duration)
+        except (ValueError, TypeError):
+            duration_val = 0.0
 
-        if duration <= 0:
+        if duration_val > 10000:
+            logger.debug(f"AcoustID duration abnormally high ({duration_val}), assuming milliseconds and converting to seconds.")
+            duration_val = duration_val / 1000.0
+
+        duration_int = int(round(duration_val))
+
+        if duration_int <= 0:
             logger.warning("[system] - Aborting AcoustID lookup: Invalid track duration (0s) detected.")
             return {"acoustid_id": None, "mbids": [], "score": None}
         payload = {
             'client': api_key,
             'meta': 'recordingids',
             'fingerprint': fingerprint.strip(),
-            'duration': duration
+            'duration': duration_int
         }
 
         try:
@@ -215,9 +221,12 @@ class AcoustIDProvider(PluginBase):
             return False
 
         try:
-            duration_int = int(duration)
-            if duration_int > 10000:
-                duration_int = int(duration_int / 1000)
+            duration_val = float(duration)
+            if duration_val > 10000:
+                duration_val = duration_val / 1000.0
+            duration_int = int(round(duration_val))
+            if duration_int <= 0:
+                return False
         except Exception:
             logger.debug("Skipping AcoustID submit: invalid duration")
             return False

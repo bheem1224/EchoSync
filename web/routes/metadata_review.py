@@ -61,7 +61,7 @@ def _coerce_int(value: Any) -> Optional[int]:
     try:
         if value is None or value == "":
             return None
-        return int(value)
+        return int(round(float(value)))
     except Exception:
         return None
 
@@ -356,11 +356,13 @@ def _import_single_file(file_path: Path, metadata: Dict[str, Any]) -> int:
 def _normalize_duration_seconds(metadata: Dict[str, Any], file_path: Path) -> Optional[int]:
     duration = _coerce_int(metadata.get("duration"))
     if duration and duration > 0:
+        if duration > 10000:
+            return max(1, int(round(duration / 1000.0)))
         return duration
 
     duration_ms = _coerce_int(metadata.get("duration_ms"))
     if duration_ms and duration_ms > 0:
-        return max(1, int(duration_ms / 1000))
+        return max(1, int(round(duration_ms / 1000.0)))
 
     enhancer = get_metadata_enhancer()
     if hasattr(enhancer, "_get_audio_duration"):
@@ -368,6 +370,8 @@ def _normalize_duration_seconds(metadata: Dict[str, Any], file_path: Path) -> Op
             detected = enhancer._get_audio_duration(file_path)
             duration_detected = _coerce_int(detected)
             if duration_detected and duration_detected > 0:
+                if duration_detected > 10000:
+                    return max(1, int(round(duration_detected / 1000.0)))
                 return duration_detected
         except Exception:
             pass
@@ -618,49 +622,52 @@ def approve_review_queue_item(task_id: int, payload: ApproveReviewQueueRequest, 
 
                     canonical_target_path = _canonicalize_path(str(destination_path))
 
-                    # 4. Relocate file physically if path changes
-                    if destination_path != file_path_obj:
-                        destination_path.parent.mkdir(parents=True, exist_ok=True)
-                        from core.io_gatekeeper import Gatekeeper
-                        Gatekeeper.authorize_and_execute({"operation": "safe_move", "src": str(file_path_obj), "dst": str(destination_path)})
-                        logger.info(f"Relocated file: {file_path_obj} -> {destination_path}")
+                    from services.library_watcher import suppress_path
 
-                    # 5. Community Contribution (AcoustID)
-                    auto_contrib_enabled = (
-                        config_manager.get("metadata_enhancement.enable_acoustid_auto_submission", False)
-                        or config_manager.get("metadata_enhancement.contribute_metadata", False)
-                    )
+                    with suppress_path(str(destination_path)):
+                        # 4. Relocate file physically if path changes
+                        if destination_path != file_path_obj:
+                            destination_path.parent.mkdir(parents=True, exist_ok=True)
+                            from core.io_gatekeeper import Gatekeeper
+                            Gatekeeper.authorize_and_execute({"operation": "safe_move", "src": str(file_path_obj), "dst": str(destination_path)})
+                            logger.info(f"Relocated file: {file_path_obj} -> {destination_path}")
 
-                    fingerprint_provider = get_plugin_by_capability(Capability.RESOLVE_FINGERPRINT)
-                    plugin_auto_contrib = False
-                    if fingerprint_provider and hasattr(fingerprint_provider, "config"):
-                        p_cfg = fingerprint_provider.config.get("auto_contribute")
-                        plugin_auto_contrib = (p_cfg == "true" or p_cfg is True)
+                        # 5. Community Contribution (AcoustID)
+                        auto_contrib_enabled = (
+                            config_manager.get("metadata_enhancement.enable_acoustid_auto_submission", False)
+                            or config_manager.get("metadata_enhancement.contribute_metadata", False)
+                        )
 
-                    should_contribute = auto_contrib_enabled or plugin_auto_contrib
-                    acoustid_fingerprint = str(staged_track.fingerprint or "").strip()
-                    musicbrainz_id = str(staged_track.musicbrainz_id or "").strip()
+                        fingerprint_provider = get_plugin_by_capability(Capability.RESOLVE_FINGERPRINT)
+                        plugin_auto_contrib = False
+                        if fingerprint_provider and hasattr(fingerprint_provider, "config"):
+                            p_cfg = fingerprint_provider.config.get("auto_contribute")
+                            plugin_auto_contrib = (p_cfg == "true" or p_cfg is True)
 
-                    import uuid
-                    is_valid_mbid = False
-                    if musicbrainz_id:
-                        try:
-                            uuid.UUID(musicbrainz_id)
-                            is_valid_mbid = True
-                        except ValueError:
-                            is_valid_mbid = False
+                        should_contribute = auto_contrib_enabled or plugin_auto_contrib
+                        acoustid_fingerprint = str(staged_track.fingerprint or "").strip()
+                        musicbrainz_id = str(staged_track.musicbrainz_id or "").strip()
 
-                    if should_contribute and acoustid_fingerprint and is_valid_mbid:
-                        duration_seconds = _normalize_duration_seconds(metadata_to_tag, destination_path)
-                        if duration_seconds and duration_seconds > 0:
-                            _submit_acoustid_contribution_async(
-                                fingerprint=acoustid_fingerprint,
-                                duration=duration_seconds,
-                                mbid=musicbrainz_id
-                            )
+                        import uuid
+                        is_valid_mbid = False
+                        if musicbrainz_id:
+                            try:
+                                uuid.UUID(musicbrainz_id)
+                                is_valid_mbid = True
+                            except ValueError:
+                                is_valid_mbid = False
 
-                    # 6. Create the final LocalMedia and Track rows in music_library.db (atomic import)
-                    _import_single_file(destination_path, metadata_to_tag)
+                        if should_contribute and acoustid_fingerprint and is_valid_mbid:
+                            duration_seconds = _normalize_duration_seconds(metadata_to_tag, destination_path)
+                            if duration_seconds and duration_seconds > 0:
+                                _submit_acoustid_contribution_async(
+                                    fingerprint=acoustid_fingerprint,
+                                    duration=duration_seconds,
+                                    mbid=musicbrainz_id
+                                )
+
+                        # 6. Create the final LocalMedia and Track rows in music_library.db (atomic import)
+                        _import_single_file(destination_path, metadata_to_tag)
 
                     # 7. Deletion of the ReviewTask from working.db
                     with working_db.session_scope() as w_session:

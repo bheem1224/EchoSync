@@ -81,6 +81,22 @@ def _is_path_component_ignored(file_path: str | Path, ignored_directories: Optio
     return False
 
 
+def parse_fallback_filename(path: str | Path) -> Tuple[Optional[str], str]:
+    r"""
+    Robust filename parsing for fallback metadata:
+    - Strips track number prefixes ("04 - ", "01. ", "00 - ")
+    - Splits Artist - Title ONLY on hyphens flanked by whitespace (\s+[-–—]\s+)
+    - Preserves internal hyphenated words (e.g. "Drawing-Down")
+    """
+    import re
+    p = Path(path)
+    clean_stem = re.sub(r"^\d+[\s\-_.]+", "", p.stem).strip()
+    parts = re.split(r"\s+[-–—]\s+", clean_stem, maxsplit=1)
+    if len(parts) == 2:
+        return parts[0].strip() or None, parts[1].strip()
+    return None, clean_stem.strip()
+
+
 class AutoImportService:
     _instance = None
     _instance_lock = threading.Lock()

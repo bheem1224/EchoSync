@@ -328,22 +328,23 @@ class RetroactiveEnhancer:
                 logger.debug(f"Fingerprint generation failed for {file_path.name}: {fp_err}")
 
             if fingerprint and duration_sec and fingerprint_provider:
+                duration_sec_int = int(round(float(duration_sec)))
                 logger.debug(
                     f"→ AcoustID Lookup: {file_path.name}\n"
-                    f"  Duration: {duration_sec:.1f}s | Fingerprint: {len(fingerprint)} chars"
+                    f"  Duration: {duration_sec_int}s | Fingerprint: {len(fingerprint)} chars"
                 )
                 try:
                     acoustid_id = None
                     mbids = []
                     score = None
                     if hasattr(fingerprint_provider, "resolve_fingerprint_details"):
-                        details = fingerprint_provider.resolve_fingerprint_details(fingerprint, int(duration_sec))
+                        details = fingerprint_provider.resolve_fingerprint_details(fingerprint, duration_sec_int)
                         if isinstance(details, dict):
                             acoustid_id = details.get("acoustid_id")
                             mbids = details.get("mbids") or []
                             score = details.get("score")
                     elif hasattr(fingerprint_provider, "resolve_fingerprint"):
-                        mbids = fingerprint_provider.resolve_fingerprint(fingerprint, int(duration_sec)) or []
+                        mbids = fingerprint_provider.resolve_fingerprint(fingerprint, duration_sec_int) or []
 
                     if mbids and metadata_provider:
                         top_mbid = mbids[0]
