@@ -1182,6 +1182,18 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                                         if _t2_best_artist and _t2_best_artist != candidate_track.artist_name:
                                             candidate_track.artist_name = _t2_best_artist
 
+                                    # Unknown Artist Title-Recovery in Tier 2
+                                    from services.playlists_api import check_title_recovery
+                                    if check_title_recovery(
+                                        source_track.artist_name or '',
+                                        source_track.raw_title or source_track.title or '',
+                                        candidate_track.artist_name or '',
+                                        raw_title_candidate or candidate_track.title or '',
+                                    ):
+                                        _t2_best_artist_score = 1.0
+                                        if not candidate_track.artist_name or candidate_track.artist_name.strip().lower() in {'unknown artist', 'unknown', 'various artists', 'various', ''}:
+                                            candidate_track.artist_name = source_track.artist_name
+
                                     # If a new Tier 2 candidate matches the requested artist (artist_score >= 0.90),
                                     # evaluate with full artist score confidence and allow standard acceptance.
                                     if _t2_best_artist_score >= 0.90:

@@ -148,7 +148,8 @@ def test_remix_subtype_equivalence_and_families():
     assert evaluate_version_compatibility("Remix", "Seeb Remix")[0] is True
     assert evaluate_version_compatibility("Remix", "dotEXE remix")[0] is True
     assert evaluate_version_compatibility("Remix", "Mellen Gi & Tommee Profitt Remix")[0] is True
-    assert evaluate_version_compatibility("Mellen Gi Remix", "Tommee Profitt Remix")[0] is True
+    assert evaluate_version_compatibility("Mellen Gi Remix", "Mellen Gi & Tommee Profitt Remix")[0] is True
+    assert evaluate_version_compatibility("Mellen Gi Remix", "Tommee Profitt Remix")[0] is False
 
     # Piano Version vs Piano
     assert evaluate_version_compatibility("Piano Version", "Piano")[0] is True

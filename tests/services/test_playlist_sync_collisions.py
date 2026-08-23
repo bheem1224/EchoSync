@@ -399,3 +399,115 @@ def test_tier2_scores_artist_bonus_on_new_candidate():
     assert result.passed_version_check is True
     assert result.confidence_score >= 90.0
 
+
+def test_extended_mix_duration_amnesty():
+    """Verify that extended/club tags with <=2000ms duration delta receive duration amnesty, while >2000ms or non-extended fail."""
+    from core.matching_engine.matching_engine import evaluate_version_compatibility
+
+    # Case 1: Candidate is erroneously tagged Extended Mix, but duration delta is 1000ms <= 2000ms -> Passes
+    is_compat, penalty, reason = evaluate_version_compatibility(
+        source_version=None,
+        candidate_version="Extended Mix",
+        duration_delta_ms=1000,
+    )
+    assert is_compat is True
+    assert penalty == 0.0
+    assert "Duration amnesty" in reason
+
+    # Case 2: Candidate is tagged Extended Mix with duration delta 6000ms > 2000ms -> Fails
+    is_compat, penalty, reason = evaluate_version_compatibility(
+        source_version=None,
+        candidate_version="Extended Mix",
+        duration_delta_ms=6000,
+    )
+    assert is_compat is False
+    assert "Version mismatch" in reason
+
+    # Case 3: Candidate is tagged Live with duration delta 1000ms <= 2000ms -> Fails (non-extended not amnestied)
+    is_compat, penalty, reason = evaluate_version_compatibility(
+        source_version=None,
+        candidate_version="Live",
+        duration_delta_ms=1000,
+    )
+    assert is_compat is False
+    assert "Version mismatch" in reason
+
+
+def test_remixer_safe_semantic_equivalence():
+    """Verify generic remix matches specific remixes, while conflicting specific remixers fail."""
+    from core.matching_engine.matching_engine import evaluate_version_compatibility
+
+    # Generic vs Specific: "Remix" vs "Mellen Gi Remix" -> Passes
+    is_compat, penalty, reason = evaluate_version_compatibility(
+        source_version="Remix",
+        candidate_version="Mellen Gi Remix",
+    )
+    assert is_compat is True
+    assert penalty == 0.0
+    assert "Generic semantic remix match" in reason
+
+    # Specific vs Generic: "Steve Aoki Remix" vs "Remix" -> Passes
+    is_compat, penalty, reason = evaluate_version_compatibility(
+        source_version="Steve Aoki Remix",
+        candidate_version="Remix",
+    )
+    assert is_compat is True
+    assert penalty == 0.0
+    assert "Generic semantic remix match" in reason
+
+    # Compatible Specific: "Steve Aoki Remix" vs "Steve Aoki Extended Remix" -> Passes
+    is_compat, penalty, reason = evaluate_version_compatibility(
+        source_version="Steve Aoki Remix",
+        candidate_version="Steve Aoki Extended Remix",
+    )
+    assert is_compat is True
+    assert "Compatible specific remixers" in reason
+
+    # Contradicting Specific: "Seeb Remix" vs "Mellen Gi Remix" -> Fails
+    is_compat, penalty, reason = evaluate_version_compatibility(
+        source_version="Seeb Remix",
+        candidate_version="Mellen Gi Remix",
+    )
+    assert is_compat is False
+    assert penalty == 70.0
+    assert "Contradicting specific remixers" in reason
+
+
+def test_tier2_unknown_artist_title_recovery():
+    """Verify Unknown Artist files with encapsulated 'Artist - Title' in title receive full artist confidence in Tier 2."""
+    from services.playlists_api import evaluate_tier2_candidate, check_title_recovery
+
+    # Verify helper directly
+    assert check_title_recovery(
+        source_artist="BTS",
+        source_title="Dynamite",
+        candidate_artist="Unknown Artist",
+        candidate_title="BTS - Dynamite",
+    ) is True
+
+    assert check_title_recovery(
+        source_artist="BTS",
+        source_title="Dynamite",
+        candidate_artist="Different Artist",
+        candidate_title="BTS - Dynamite",
+    ) is False
+
+    # Verify end-to-end evaluation
+    engine = WeightedMatchingEngine(ExactSyncProfile())
+    source = EchosyncTrack(
+        raw_title="Dynamite",
+        artist_name="BTS",
+        album_title="Dynamite (DayTime Version)",
+        duration=199000,
+    )
+    candidate = EchosyncTrack(
+        raw_title="BTS - Dynamite",
+        artist_name="Unknown Artist",
+        album_title="",
+        duration=199500,
+    )
+
+    result = evaluate_tier2_candidate(engine, source, candidate, artist_score=0.0)
+    assert result.passed_version_check is True
+    assert result.confidence_score >= 90.0
+

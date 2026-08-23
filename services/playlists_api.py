@@ -261,6 +261,24 @@ def filter_unevaluated_candidates(candidates: List, evaluated_candidate_ids: set
     return filtered
 
 
+def check_title_recovery(source_artist: str, source_title: str, candidate_artist: str, candidate_title: str) -> bool:
+    """
+    Check if an Unknown Artist candidate encapsulates both artist and title in candidate_title.
+    e.g. candidate_artist="Unknown Artist", candidate_title="BTS - Dynamite"
+    """
+    cand_art_clean = (candidate_artist or "").strip().lower()
+    if cand_art_clean in {"unknown artist", "unknown", "various artists", "various", ""}:
+        src_art_norm = normalize_text(source_artist or "").lower()
+        src_ttl_norm = normalize_text(source_title or "").lower()
+        cand_ttl_norm = normalize_text(candidate_title or "").lower()
+
+        if src_art_norm and src_ttl_norm and cand_ttl_norm:
+            if src_art_norm in cand_ttl_norm and src_ttl_norm in cand_ttl_norm:
+                logger.info("Title-Recovery: Artist encapsulated in candidate title")
+                return True
+    return False
+
+
 def evaluate_tier2_candidate(
     matching_engine,
     source_track,
@@ -271,10 +289,21 @@ def evaluate_tier2_candidate(
 ):
     """
     Evaluate a Tier 2 candidate with artist-awareness.
-    If the candidate matches the requested artist (artist_score >= 0.90),
-    evaluates using the full matching engine for maximum confidence.
+    If the candidate matches the requested artist (artist_score >= 0.90) or
+    passes Unknown Artist Title-Recovery, evaluates using the full matching engine for maximum confidence.
     """
-    if artist_score >= 0.90:
+    effective_artist_score = artist_score
+    if check_title_recovery(
+        source_track.artist_name or "",
+        source_track.raw_title or source_track.title or "",
+        candidate_track.artist_name or "",
+        candidate_track.raw_title or candidate_track.title or "",
+    ):
+        effective_artist_score = 1.0
+        if not candidate_track.artist_name or candidate_track.artist_name.strip().lower() in {"unknown artist", "unknown", "various artists", "various", ""}:
+            candidate_track.artist_name = source_track.artist_name
+
+    if effective_artist_score >= 0.90:
         result = matching_engine.calculate_match(
             source_track,
             candidate_track,

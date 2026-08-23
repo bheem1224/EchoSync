@@ -173,6 +173,27 @@ def evaluate_version_compatibility(
 
     # If both belong to the same version family (e.g. both remix, both piano, both radio_single, etc.)
     if src_fam and cand_fam and src_fam == cand_fam:
+        if src_fam == "remix":
+            src_clean = src_v.strip().lower()
+            cand_clean = cand_v.strip().lower()
+            generic_tags = {"remix", "remixes", "club mix", "mix"}
+            if src_clean in generic_tags or cand_clean in generic_tags:
+                return True, 0.0, "Generic semantic remix match"
+
+            import re
+            src_remixer = re.sub(r'\b(remixes|remix|rmx|club mix|mix)\b', '', src_clean).strip()
+            cand_remixer = re.sub(r'\b(remixes|remix|rmx|club mix|mix)\b', '', cand_clean).strip()
+
+            from difflib import SequenceMatcher
+            if src_remixer and cand_remixer:
+                similarity = SequenceMatcher(None, src_remixer, cand_remixer).ratio()
+            else:
+                similarity = SequenceMatcher(None, src_clean, cand_clean).ratio()
+
+            if similarity < 0.50:
+                return False, 70.0, f"Contradicting specific remixers: '{src_v}' vs '{cand_v}'"
+            return True, 0.0, "Compatible specific remixers"
+
         return True, 0.0, f"Version family match ({src_fam}): '{src_v}' ≡ '{cand_v}'"
 
     # Subtitle / Genre Descriptor Equivalence (e.g. "Sea Shanty")
@@ -198,6 +219,14 @@ def evaluate_version_compatibility(
                     return False, 0.0, f"Deluxe Edition duration mismatch ({duration_delta_ms}ms > 10000ms)"
                 return True, 1.0, "Deluxe fallback permitted in Tier 3"
             return False, 0.0, "Deluxe candidate rejected in primary tiers"
+
+        # Extended Mix Duration Amnesty:
+        # If candidate is tagged extended/club, but its duration matches within 2000ms,
+        # the tag is metadata pollution and it is actually the original cut.
+        if cand_fam in ("extended", "extended_club"):
+            if duration_delta_ms is not None and duration_delta_ms <= 2000:
+                return True, 0.0, "Duration amnesty: candidate runtime proves original cut despite extended tag"
+            return False, 0.0, f"Version mismatch: source requested original, candidate is '{cand_v}'"
 
         if cand_fam in non_studio_fams:
             return False, 0.0, f"Version mismatch: source requested original, candidate is '{cand_v}'"
