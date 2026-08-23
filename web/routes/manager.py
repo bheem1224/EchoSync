@@ -644,24 +644,91 @@ def force_upgrade_track(track_id: int, _=Depends(require_auth)):
 
 @router.post("/track/{track_id}/fetch_metadata")
 def fetch_metadata(track_id: int, _=Depends(require_auth)):
-    """Manually triggers the MetadataEnhancer for a specific track ID."""
+    """Manually triggers metadata identification for a library track and creates/updates
+    a ReviewTask in working.db so the user can edit and approve tags in the full Metadata Editor."""
+    import os
+    from pathlib import Path
+    from sqlalchemy.orm.attributes import flag_modified
+    from database.working_database import ReviewTask, get_working_database
+    from database.music_database import Track, get_database
+
     db = get_database()
+    working_db = get_working_database()
     try:
-        path = db.get_track_path(track_id)
-        if not path:
-            return {"error": "Track not found or file missing"}
+        with db.session_scope() as session:
+            track = session.query(Track).filter(Track.id == track_id).first()
+            if not track:
+                return {"error": "Track not found"}
+
+            file_path = track.file_path
+            if not file_path or not os.path.exists(file_path):
+                return {"error": f"Track file not found on disk: {file_path}"}
+
+            artist_name = track.artist.name if track.artist else "Unknown Artist"
+            album_title = track.album.title if track.album else "Unknown Album"
+            release_year = track.album.release_date.year if (track.album and track.album.release_date) else None
+
+            track_dict = {
+                "title": track.title,
+                "raw_title": track.title,
+                "display_title": track.title,
+                "artist": artist_name,
+                "artist_name": artist_name,
+                "album": album_title,
+                "album_title": album_title,
+                "year": release_year,
+                "release_year": release_year,
+                "track_number": track.track_number,
+                "disc_number": track.disc_number,
+                "duration": track.duration,
+                "musicbrainz_id": track.musicbrainz_id,
+                "isrc": track.isrc,
+                "file_path": file_path,
+            }
 
         enhancer = get_metadata_enhancer()
-        metadata, confidence = enhancer.identify_file(Path(path))
+        identified_metadata, confidence = enhancer.identify_file(Path(file_path))
+
+        detected = dict(identified_metadata) if identified_metadata else dict(track_dict)
+        if not detected.get("artist"):
+            detected["artist"] = artist_name
+        if not detected.get("title"):
+            detected["title"] = track_dict["title"]
+        if not detected.get("album"):
+            detected["album"] = album_title
+
+        with working_db.session_scope() as w_session:
+            task = w_session.query(ReviewTask).filter(ReviewTask.file_path == file_path).first()
+            if not task:
+                task = ReviewTask(
+                    file_path=file_path,
+                    status="pending",
+                    confidence_score=confidence if confidence is not None else 0.5,
+                    track_data=track_dict,
+                )
+                task.detected_metadata = detected
+                w_session.add(task)
+                w_session.flush()
+            else:
+                task.status = "pending"
+                task.track_data = track_dict
+                task.detected_metadata = detected
+                task.confidence_score = confidence if confidence is not None else task.confidence_score
+                flag_modified(task, "track_data")
+                w_session.flush()
+
+            from web.routes.metadata_review import _serialize_task
+            serialized_task = _serialize_task(task, detected_metadata=detected)
 
         return {
             "success": True,
-            "metadata": metadata,
-            "confidence": confidence
+            "task": serialized_task,
+            "metadata": detected,
+            "confidence": confidence or 0.5,
         }
     except Exception as e:
         logger.error(f"Error fetching metadata for track {track_id}: {e}", exc_info=True)
-        return {"error": "Failed to fetch track metadata"}
+        return {"error": f"Failed to fetch track metadata: {e}"}
 
 @router.post("/track/{track_id}/override")
 def override_track(track_id: int, payload: TrackOverrideRequest, _=Depends(require_auth)):

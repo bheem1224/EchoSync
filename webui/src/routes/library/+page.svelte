@@ -5,6 +5,7 @@
   import { player } from '../../stores/player';
   import TrackRow from '$lib/components/TrackRow.svelte';
   import Omnibar from '$lib/components/Omnibar.svelte';
+  import MetadataReviewModal from '$lib/components/MetadataReviewModal.svelte';
 
   // Collection Data
   let libraryIndex = $state([]);
@@ -14,6 +15,10 @@
   // UI State
   let viewMode = $state('grid'); // 'grid' | 'detail'
   let selectedArtist = $state(null);
+
+  // Metadata Review Modal State
+  let reviewTask = $state(null);
+  let showReviewModal = $state(false);
 
   // Pagination / Virtualization for Artists Grid
   let visibleCount = $state(50);
@@ -179,16 +184,28 @@
   }
 
   async function fetchMetadata(trackId) {
-       try {
+      try {
           const res = await apiClient.post(`/system/manager/track/${trackId}/fetch_metadata`);
-          if (res.data.success) {
-              alert(`Metadata Fetched:\nTitle: ${res.data.metadata.title}\nArtist: ${res.data.metadata.artist}\nConfidence: ${res.data.confidence}`);
+          if (res.data && res.data.task) {
+              reviewTask = res.data.task;
+              showReviewModal = true;
           } else {
-              alert('Metadata fetch returned no match.');
+              alert(res.data?.error || 'Failed to initialize metadata editor for this track.');
           }
       } catch (err) {
           alert(`Failed to fetch metadata: ${err.message}`);
       }
+  }
+
+  function handleReviewClose() {
+      showReviewModal = false;
+      reviewTask = null;
+  }
+
+  async function handleReviewApproved() {
+      showReviewModal = false;
+      reviewTask = null;
+      await loadLibrary();
   }
 
   onMount(loadLibrary);
@@ -308,7 +325,15 @@
             </div>
         </div>
     {/if}
+{/if}
 
+{#if showReviewModal && reviewTask}
+    <MetadataReviewModal
+        task={reviewTask}
+        on:close={handleReviewClose}
+        on:approved={handleReviewApproved}
+        on:saved={() => loadLibrary()}
+    />
 {/if}
 
 <style>
