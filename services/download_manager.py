@@ -910,6 +910,13 @@ class DownloadManager:
                         viable_matches = 0
                         has_snipe_match = False
                         for cand in enriched_results:
+                            # Only count candidates whose audio format is allowed by the quality profile
+                            cand_format = None
+                            if getattr(cand, 'media', None) and len(cand.media) > 0 and getattr(cand.media[0], 'file_format', None):
+                                cand_format = cand.media[0].file_format.lower()
+                            if allowed_formats and (not cand_format or cand_format not in allowed_formats):
+                                continue
+
                             match_res = matcher.calculate_match(target_track, cand, context="download")
                             raw_score = match_res.confidence_score
                             if raw_score >= perfect_match_threshold:
