@@ -620,3 +620,160 @@ def test_scan_modes_execution(tmp_path, monkeypatch):
     service.sync_library(scan_mode="force_rescan")
     service.sync_library(scan_mode="full_rebuild")
 
+
+def test_unicode_cross_artist_splitting():
+    """Verify split_artists handles Unicode cross/multiplication variants and Ha characters."""
+    from core.matching_engine.text_utils import split_artists
+
+    # Mathematical multiplication cross (U+00D7: ×)
+    res1 = split_artists("Marshmello × Anne-Marie")
+    assert res1 == ["Marshmello", "Anne-Marie"]
+
+    # Fullwidth / heavy cross variants (U+2715: ✕, U+2716: ✖)
+    res2 = split_artists("Galantis ✕ Ship Wrek")
+    assert res2 == ["Galantis", "Ship Wrek"]
+
+    res3 = split_artists("KSHMR ✖ Stefy De Cicco")
+    assert res3 == ["KSHMR", "Stefy De Cicco"]
+
+    # Cyrillic small letter ha (U+0445: х)
+    res4 = split_artists("Alan Walker \u0445 Ava Max")
+    assert res4 == ["Alan Walker", "Ava Max"]
+
+
+def test_ingestion_remixer_extraction_to_junction(tmp_path):
+    """Verify ingestion pipeline extracts remixer entities and attaches role='remixer' to track_artists."""
+    from database.music_database import MusicDatabase, Base, Track, Artist, TrackArtist
+    from core.database.repositories.track_repo import TrackRepository
+    from core.db.echo_sync_track import EchosyncTrack, EchosyncMedia
+
+    db_file = tmp_path / "test_remixer_junction.db"
+    db = MusicDatabase(str(db_file))
+    Base.metadata.create_all(db.engine)
+
+    with db.session_factory() as session:
+        track = EchosyncTrack(
+            raw_title="In the End (Mellen Gi & Tommee Profitt Remix)",
+            artist_name="Linkin Park",
+            album_title="Hybrid Theory",
+            edition="Mellen Gi & Tommee Profitt Remix",
+            duration=218000,
+            media=[
+                EchosyncMedia(
+                    file_path=str(tmp_path / "in_the_end_remix.flac"),
+                    file_format="FLAC",
+                )
+            ],
+        )
+        TrackRepository.resolve_artists_and_albums(session, [track])
+        TrackRepository.bulk_upsert_tracks(session, [track])
+        session.commit()
+
+        # Verify track record
+        db_track = session.query(Track).first()
+        assert db_track is not None
+        assert db_track.edition == "Remix"
+
+        # Verify primary artist
+        primary_artist = session.query(Artist).filter_by(name="Linkin Park").first()
+        assert primary_artist is not None
+        assert db_track.artist_id == primary_artist.id
+
+        # Verify remixer artists in junction table
+        mellen = session.query(Artist).filter_by(name="Mellen Gi").first()
+        tommee = session.query(Artist).filter_by(name="Tommee Profitt").first()
+        assert mellen is not None
+        assert tommee is not None
+
+        remixer_links = (
+            session.query(TrackArtist)
+            .filter_by(track_id=db_track.id, role="remixer")
+            .all()
+        )
+        remixer_artist_ids = {link.artist_id for link in remixer_links}
+        assert mellen.id in remixer_artist_ids
+        assert tommee.id in remixer_artist_ids
+
+
+def test_unidentifiable_file_ejection_and_cascade_purge(tmp_path, monkeypatch):
+    """Verify unidentifiable media files are ejected to download directory and cascade purged from DB."""
+    import echosync_core
+    from services.library_sync_service import LibrarySyncService
+    from database.music_database import MusicDatabase, Base, Track, Artist, Album, LocalMedia
+    from core.database.repositories.track_repo import TrackRepository
+    from core.db.echo_sync_track import EchosyncTrack, EchosyncMedia
+    from core.settings import config_manager
+
+    lib_dir = tmp_path / "music"
+    lib_dir.mkdir(parents=True)
+    dl_dir = tmp_path / "downloads"
+    dl_dir.mkdir(parents=True)
+    db_file = tmp_path / "test_ejection.db"
+
+    db = MusicDatabase(str(db_file))
+    Base.metadata.create_all(db.engine)
+
+    # 1. Create a dummy untagged wav file in library
+    bad_file = lib_dir / "corrupted_untagged.wav"
+    bad_file.write_bytes(b"RIFF\x00\x00\x00\x00WAVEfmt \x10\x00\x00\x00\x01\x00\x01\x00\x44\xac\x00\x00\x88\x58\x01\x00\x02\x00\x10\x00data\x00\x00\x00\x00")
+
+    # 2. Mock echosync_core.extract_metadata to return empty title/artist
+    monkeypatch.setattr(
+        echosync_core,
+        "extract_metadata",
+        lambda path: {
+            "title": "",
+            "raw_title": "",
+            "artist_name": "Unknown Artist",
+            "artist": "Unknown Artist",
+            "album_title": "",
+            "duration": 5000,
+            "file_path": str(path),
+        }
+    )
+
+    orig_get = config_manager.get
+    monkeypatch.setattr(
+        config_manager,
+        "get",
+        lambda k: str(lib_dir) if "library_dir" in k else (str(dl_dir) if "download_dir" in k else orig_get(k))
+    )
+
+    # Seed the DB with a record pointing to bad_file to test cascade purge
+    with db.session_factory() as session:
+        track = EchosyncTrack(
+            raw_title="Unknown Title",
+            artist_name="Unknown Artist",
+            album_title="",
+            duration=5000,
+            media=[
+                EchosyncMedia(
+                    file_path=str(bad_file),
+                    file_format="WAV",
+                )
+            ],
+        )
+        TrackRepository.resolve_artists_and_albums(session, [track])
+        TrackRepository.bulk_upsert_tracks(session, [track])
+        session.commit()
+
+        assert session.query(LocalMedia).count() == 1
+        assert session.query(Track).count() == 1
+
+    # Run library sync
+    service = LibrarySyncService(database_path=str(db_file))
+    service.sync_library(scan_mode="force_rescan")
+
+    # File should no longer be in library directory
+    assert not bad_file.exists()
+    # File should have moved to downloads directory
+    ejected_file = dl_dir / "corrupted_untagged.wav"
+    assert ejected_file.exists()
+
+    # DB state should be cleanly cascade-purged
+    with db.session_factory() as session:
+        assert session.query(LocalMedia).count() == 0
+        assert session.query(Track).count() == 0
+
+
+

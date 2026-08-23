@@ -59,6 +59,71 @@ class TrackRepository:
         """Fetch all LocalMedia records associated with a Track by its internal PK."""
         return session.query(LocalMedia).filter_by(track_id=track_id).all()
 
+    @classmethod
+    def purge_ejected_media_cascade(cls, session: Session, file_path: str) -> None:
+        """
+        Cascade purge an ejected or deleted media file from SQLite.
+        Removes LocalMedia -> Track (if no remaining media) -> TrackArtist -> Album (if empty) -> Artist (if empty).
+        """
+        canon_path = _canonicalize_path(file_path)
+        norm_fwd = canon_path.replace("\\", "/")
+        norm_back = canon_path.replace("/", "\\")
+        media = session.query(LocalMedia).filter(
+            or_(
+                LocalMedia.file_path == file_path,
+                LocalMedia.file_path == canon_path,
+                LocalMedia.file_path == norm_fwd,
+                LocalMedia.file_path == norm_back,
+            )
+        ).first()
+        if not media:
+            return
+
+        track_id = media.track_id
+        session.delete(media)
+        session.flush()
+
+        if track_id:
+            remaining_media = session.query(LocalMedia).filter_by(track_id=track_id).count()
+            if remaining_media == 0:
+                track = session.query(Track).filter_by(id=track_id).first()
+                if track:
+                    album_id = track.album_id
+                    primary_artist_id = track.artist_id
+
+                    # Collect all affected artist IDs from junction & primary
+                    ta_artist_ids = [
+                        row.artist_id
+                        for row in session.query(TrackArtist.artist_id).filter_by(track_id=track_id).all()
+                    ]
+                    if primary_artist_id:
+                        ta_artist_ids.append(primary_artist_id)
+                    affected_artist_ids = set(ta_artist_ids)
+
+                    # Delete junction rows
+                    session.query(TrackArtist).filter_by(track_id=track_id).delete()
+                    session.delete(track)
+                    session.flush()
+
+                    # Clean orphaned album
+                    if album_id and session.query(Track).filter_by(album_id=album_id).count() == 0:
+                        session.query(Album).filter_by(id=album_id).delete()
+
+                    # Clean orphaned artists
+                    for a_id in affected_artist_ids:
+                        has_tracks = session.query(Track).filter_by(artist_id=a_id).count() > 0
+                        has_junctions = session.query(TrackArtist).filter_by(artist_id=a_id).count() > 0
+                        if not has_tracks and not has_junctions:
+                            session.query(Artist).filter_by(id=a_id).delete()
+
+        session.commit()
+
+    def purge_media_cascade(self, file_path: str) -> None:
+        """Instance helper for purge_ejected_media_cascade."""
+        if self.session is None:
+            raise ValueError("TrackRepository instance was initialized without a Session")
+        self.purge_ejected_media_cascade(self.session, file_path)
+
     # --- Enhancement Query ---
 
     @classmethod
@@ -99,10 +164,12 @@ class TrackRepository:
             )
             conditions.append(
                 and_(
+                    Track.musicbrainz_id.isnot(None),
                     Track.artist_id.in_(_va_artist_ids_subq),
-                    func.json_extract(
-                        Track.metadata_status, '$.artist_fixed_from_tags'
-                    ).is_(None),
+                    func.coalesce(
+                        func.json_extract(Track.metadata_status, '$.compilation_performer_resolved'),
+                        0,
+                    ).cast(Integer) == 0,
                 )
             )
 
@@ -123,7 +190,12 @@ class TrackRepository:
 
         default_artist_id = cls.get_or_create_default_artist(session)
         
-        # ── Step 0a: Batch Resolve & Upsert Atomic Artists ────────────────────
+        # ── Step 0a: Batch Resolve & Upsert Atomic Artists & Remixer Extraction ───
+        import re
+        _REMIX_MATCH_RE = re.compile(r"^(.*?)\s+(?:remix|mix|edit|bootleg|flip)$", re.IGNORECASE)
+        _TITLE_REMIX_RE = re.compile(r"[\(\[](.*?)\s+(?:remix|mix|edit|bootleg|flip)[\)\]]", re.IGNORECASE)
+        _GENERIC_REMIX_PREFIXES = {"club", "extended", "radio", "original", "vip", "dub", "instrumental", "acoustic", "live", "single", "album", "daytime", "nighttime", "bonus", "deluxe", ""}
+
         all_atomic_artist_names = set()
         for t in tracks:
             art = (
@@ -145,6 +217,30 @@ class TrackRepository:
             alb_art = getattr(t, "album_artist", None)
             if alb_art and alb_art.strip() and alb_art.strip().lower() != "unknown artist":
                 all_atomic_artist_names.add(alb_art.strip())
+
+            # Ingestion-Time Remixer Graph Extraction
+            remixer_tokens = []
+            ed_str = getattr(t, "edition", None) or ""
+            raw_title_str = getattr(t, "raw_title", None) or getattr(t, "title", None) or ""
+
+            remix_prefix = None
+            if ed_str:
+                m = _REMIX_MATCH_RE.match(ed_str.strip())
+                if m:
+                    remix_prefix = m.group(1).strip()
+            if not remix_prefix and raw_title_str:
+                m = _TITLE_REMIX_RE.search(raw_title_str)
+                if m:
+                    remix_prefix = m.group(1).strip()
+
+            if remix_prefix and remix_prefix.lower() not in _GENERIC_REMIX_PREFIXES:
+                remixer_tokens = split_artists(remix_prefix)
+                for r_tok in remixer_tokens:
+                    all_atomic_artist_names.add(r_tok)
+                # Sanitize edition to "Remix"
+                t.edition = "Remix"
+
+            t._raw_remixer_tokens = remixer_tokens
 
         artist_map = {}  # lower name -> artist_id
         if all_atomic_artist_names:
@@ -181,6 +277,12 @@ class TrackRepository:
                 a_id = artist_map.get(tok.lower(), default_artist_id)
                 role = "primary" if i == 0 else "featured"
                 associations.append((a_id, role, i))
+
+            remixer_tokens = getattr(t, "_raw_remixer_tokens", [])
+            for r_idx, r_tok in enumerate(remixer_tokens):
+                a_id = artist_map.get(r_tok.lower(), default_artist_id)
+                associations.append((a_id, "remixer", len(tokens) + r_idx))
+
             t._resolved_artist_associations = associations
 
         # ── Step 0b: Batch Resolve & Upsert Albums ────────────────────────────

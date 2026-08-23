@@ -176,13 +176,13 @@ def evaluate_version_compatibility(
         if src_fam == "remix":
             src_clean = src_v.strip().lower()
             cand_clean = cand_v.strip().lower()
-            generic_tags = {"remix", "remixes", "club mix", "mix"}
+            generic_tags = {"remix", "remixes", "club mix", "mix", "edit", "bootleg", "flip"}
             if src_clean in generic_tags or cand_clean in generic_tags:
                 return True, 0.0, "Generic semantic remix match"
 
             import re
-            src_remixer = re.sub(r'\b(remixes|remix|rmx|club mix|mix)\b', '', src_clean).strip()
-            cand_remixer = re.sub(r'\b(remixes|remix|rmx|club mix|mix)\b', '', cand_clean).strip()
+            src_remixer = re.sub(r'\b(remixes|remix|rmx|club mix|mix|edit|bootleg|flip)\b', '', src_clean).strip()
+            cand_remixer = re.sub(r'\b(remixes|remix|rmx|club mix|mix|edit|bootleg|flip)\b', '', cand_clean).strip()
 
             from difflib import SequenceMatcher
             if src_remixer and cand_remixer:
@@ -223,9 +223,9 @@ def evaluate_version_compatibility(
         # Extended Mix Duration Amnesty:
         # If candidate is tagged extended/club, but its duration matches within 2000ms,
         # the tag is metadata pollution and it is actually the original cut.
-        if cand_fam in ("extended", "extended_club"):
+        if cand_fam in ("extended", "extended_club", "extended_mix"):
             if duration_delta_ms is not None and duration_delta_ms <= 2000:
-                return True, 0.0, "Duration amnesty: candidate runtime proves original cut despite extended tag"
+                return True, 0.0, "Duration amnesty: studio cut runtime proves original despite extended tag"
             return False, 0.0, f"Version mismatch: source requested original, candidate is '{cand_v}'"
 
         if cand_fam in non_studio_fams:

@@ -8,7 +8,7 @@ from core.io_gatekeeper import Gatekeeper
 from core.settings import config_manager
 from database import get_database, _canonicalize_path
 from services.library_watcher import is_path_suppressed
-from database.music_database import LocalMedia, TrackArtist, Track, Album, Artist
+from database.music_database import LocalMedia, TrackArtist, Track, Album, Artist, MusicDatabase
 from core.orchestrator.ingestion import _parse_telemetry_dict
 from core.database.repositories.track_repo import TrackRepository
 import echosync_core
@@ -24,7 +24,7 @@ class LibrarySyncService:
     """
     
     def __init__(self, database_path: str = None):
-        self.db = get_database(database_path)
+        self.db = MusicDatabase(database_path) if database_path else get_database()
         self.gatekeeper = Gatekeeper()
 
     def sync_library(self, scan_mode: str = "incremental"):
@@ -148,17 +148,27 @@ class LibrarySyncService:
         CHUNK_SIZE = 250
         logger.info(f"Extracting metadata and streaming upsert for {len(dirty_or_new)} files (chunk size {CHUNK_SIZE})...")
         
+        _dl = config_manager.get("storage.download_dir") or config_manager.get("download_dir")
+        if not _dl:
+            if "/data/library" in library_dir or "\\data\\library" in library_dir:
+                _dl = "/data/downloads"
+            else:
+                _dl = os.path.join(os.path.dirname(library_dir.rstrip("/\\")), "downloads")
+        download_dir = _dl
+        os.makedirs(download_dir, exist_ok=True)
+
         def parse_file(path: str):
             if supervisor.is_current_task_cancelled():
-                return None
+                return None, path
             try:
-                return echosync_core.extract_metadata(path)
+                return echosync_core.extract_metadata(path), path
             except Exception as e:
                 logger.debug(f"Failed to extract metadata from {path}: {e}")
-                return None
+                return None, path
         
         total_affected_rows = 0
         total_extracted_tracks = 0
+        ejected_files_count = 0
         chunk = []
         chunk_idx = 0
 
@@ -177,11 +187,48 @@ class LibrarySyncService:
             logger.info(f"Upserted chunk {idx} ({len(tracks_chunk)} tracks)...")
             time.sleep(0.01)
 
+        import shutil
         with ThreadPoolExecutor(max_workers=min(2, os.cpu_count() or 1)) as executor:
-            for raw_dict in executor.map(parse_file, dirty_or_new):
+            for raw_dict, file_path in executor.map(parse_file, dirty_or_new):
                 if supervisor.is_current_task_cancelled():
                     logger.info("Library sync cancelled during streaming extraction.")
                     return
+
+                # Check unidentifiable files (e.g. untagged WAV / missing title/artist)
+                title = None
+                artist = None
+                if raw_dict:
+                    title = raw_dict.get("title") or raw_dict.get("raw_title")
+                    artist = raw_dict.get("artist_name") or raw_dict.get("artist")
+
+                title_str = str(title).strip() if title else ""
+                artist_str = str(artist).strip() if artist else ""
+
+                is_unidentifiable = (
+                    not title_str
+                    or not artist_str
+                    or title_str.lower() in {"unknown title", "untitled", "unknown"}
+                    or artist_str.lower() in {"unknown artist", "unknown"}
+                )
+
+                if is_unidentifiable and os.path.exists(file_path):
+                    logger.warning(f"Unidentifiable media file detected: '{file_path}'. Ejecting to staging: '{download_dir}'.")
+                    try:
+                        dest_file_name = os.path.basename(file_path)
+                        dest_path = os.path.join(download_dir, dest_file_name)
+                        if os.path.exists(dest_path) and os.path.abspath(dest_path) != os.path.abspath(file_path):
+                            base, ext = os.path.splitext(dest_file_name)
+                            dest_path = os.path.join(download_dir, f"{base}_{int(time.time())}{ext}")
+                        shutil.move(file_path, dest_path)
+                        logger.info(f"Moved unidentifiable file: '{file_path}' -> '{dest_path}'")
+
+                        with self.db.session_factory() as session:
+                            TrackRepository.purge_ejected_media_cascade(session, file_path)
+
+                        ejected_files_count += 1
+                    except Exception as e:
+                        logger.error(f"Failed to eject unidentifiable file {file_path}: {e}", exc_info=True)
+                    continue
 
                 if raw_dict is None:
                     continue
@@ -207,6 +254,14 @@ class LibrarySyncService:
         dirty_or_new.clear()
 
         logger.info(f"Upserted {total_extracted_tracks} tracks across {chunk_idx} chunk(s) affecting {total_affected_rows} rows.")
+
+        if ejected_files_count > 0:
+            logger.info(f"Ejected {ejected_files_count} unidentifiable file(s) to downloads directory. Enqueueing auto-importer.")
+            try:
+                from services.auto_importer import AutoImporter
+                AutoImporter.enqueue_scan()
+            except Exception as e:
+                logger.warning(f"Failed to trigger auto-importer: {e}")
 
         # Release system memory / trigger glibc malloc_trim
         try:

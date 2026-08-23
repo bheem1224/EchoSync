@@ -173,6 +173,17 @@ class AutoImportService:
                     cls._instance = AutoImportService()
         return cls._instance
 
+    @classmethod
+    def enqueue_scan(cls, force_scan: bool = True) -> None:
+        """Trigger an asynchronous auto-import scan in a background thread."""
+        t = threading.Thread(
+            target=cls.get_instance().scan_and_process,
+            kwargs={"force_scan": force_scan},
+            daemon=True,
+            name="auto_importer_ejected_scan",
+        )
+        t.start()
+
     # ── Watchdog lifecycle ────────────────────────────────────────────────────
 
     def _start_watcher(self) -> None:
@@ -814,4 +825,8 @@ class _DownloadDirEventHandler(FileSystemEventHandler):
             for timer in self._pending.values():
                 timer.cancel()
             self._pending.clear()
+
+
+# Canonical alias
+AutoImporter = AutoImportService
 
