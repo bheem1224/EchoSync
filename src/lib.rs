@@ -5,9 +5,6 @@ pub mod metadata;
 
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList, PyTuple};
-use lofty::file::{AudioFile, TaggedFileExt};
-use lofty::probe::Probe;
-use lofty::tag::{Accessor, ItemKey};
 use rusqlite::{Connection, Result as SqlResult};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -19,7 +16,7 @@ use rayon::prelude::*;
 pub use errors::EchoSyncError;
 pub use file_handling::fs_ops::FsOperations;
 pub use file_handling::scanner::ProgressMsg;
-pub use metadata::{MetadataExtractor, TrackMetadata};
+pub use metadata::{MetadataExtractor, MetadataWriter, TrackMetadata};
 
 /// Thread-safe cancellation token shared across Python/Rust FFI boundary.
 #[pyclass]
@@ -94,6 +91,14 @@ pub fn extract_metadata<'py>(py: Python<'py>, path: String) -> PyResult<PyObject
         }
         Err(err) => Err(pyo3::exceptions::PyValueError::new_err(err)),
     }
+}
+
+/// Write audio metadata tags directly to audio files using lofty.
+#[pyfunction]
+pub fn write_metadata(path: String, tags: &Bound<'_, PyDict>) -> PyResult<bool> {
+    MetadataWriter::write(&path, tags)
+        .map(|_| true)
+        .map_err(|e| pyo3::exceptions::PyIOError::new_err(e))
 }
 
 /// Atomic file move with EXDEV cross-device link fallback.
@@ -387,6 +392,7 @@ fn echosync_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(test_batch_process, m)?)?;
     m.add_function(wrap_pyfunction!(batch_process_directory, m)?)?;
     m.add_function(wrap_pyfunction!(extract_metadata, m)?)?;
+    m.add_function(wrap_pyfunction!(write_metadata, m)?)?;
     m.add_function(wrap_pyfunction!(safe_move_file, m)?)?;
     m.add_function(wrap_pyfunction!(copy_file, m)?)?;
     m.add_function(wrap_pyfunction!(delete_file, m)?)?;

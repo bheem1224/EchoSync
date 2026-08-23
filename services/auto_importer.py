@@ -645,8 +645,8 @@ class AutoImportService:
         if missing:
             raise ValueError(f"Cannot finalize import: missing required metadata fields {missing} for {file_path.name}")
 
-        # 1. Tag
-        self.enhancer.tag_file(file_path, metadata)
+        # 1. Tag and verify
+        self.enhancer.tag_file_verified(file_path, metadata)
 
         # 2. Move
         self._move_file(file_path, metadata)

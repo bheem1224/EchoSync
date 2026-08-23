@@ -25,10 +25,16 @@ from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
 from core.matching_engine.scoring_profile import PROFILE_EXACT_SYNC
 from core.matching_engine.text_utils import normalize_track_comparison_fields, extract_version_info
 from core.db.echo_sync_track import EchosyncTrack
+from core.settings import config_manager
 from database.working_database import get_working_database, ReviewTask
 import echosync_core
 
 logger = get_logger("services.metadata_enhancer")
+
+
+class MetadataWriteVerificationError(Exception):
+    """Raised when audio tag write-and-verify roundtrip fails."""
+    pass
 
 # ── DIAGNOSTIC FLAG ────────────────────────────────────────────────────────────
 # Set True to bypass ALL network calls (Steps 2.5 / 3 / 4 / 5).
@@ -502,14 +508,75 @@ class RetroactiveEnhancer:
         """Read tags from a file using the internal tagging helper."""
         return echosync_core.extract_metadata(str(file_path))
 
-    def tag_file(self, file_path: Path, metadata: Dict[str, Any]) -> None:
+    def tag_file_verified(self, file_path: Path, metadata: Dict[str, Any]) -> Dict[str, Any]:
+        """Write metadata to physical audio file and verify roundtrip via readback.
+
+        Raises MetadataWriteVerificationError if the written tags do not match
+        the expected title/artist metadata.
+        """
+        path = Path(file_path)
+        if not path.exists() or not path.is_file():
+            raise MetadataWriteVerificationError(f"Cannot tag non-existent file: {path}")
+
+        payload = build_native_tag_payload(metadata)
+        tags_to_write = {k: v for k, v in payload.items() if v not in (None, '')}
+
+        if not tags_to_write:
+            raise MetadataWriteVerificationError(f"No writable tags provided for {path.name}")
+
+        try:
+            if hasattr(echosync_core, "write_metadata"):
+                echosync_core.write_metadata(str(path), tags_to_write)
+            elif hasattr(echosync_core, "write_tags"):
+                echosync_core.write_tags(str(path), tags_to_write)
+            else:
+                raise MetadataWriteVerificationError("No write_metadata implementation available in echosync_core")
+        except Exception as exc:
+            raise MetadataWriteVerificationError(f"Native tag write failed for {path.name}: {exc}") from exc
+
+        # Immediate readback verification
+        try:
+            verified_tags = echosync_core.extract_metadata(str(path))
+        except Exception as exc:
+            raise MetadataWriteVerificationError(f"Post-write tag extraction failed for {path.name}: {exc}") from exc
+
+        if not isinstance(verified_tags, dict):
+            raise MetadataWriteVerificationError(f"Extracted metadata is not a dictionary for {path.name}")
+
+        expected_title = str(tags_to_write.get("title") or metadata.get("title") or "").strip()
+        expected_artist = str(tags_to_write.get("artist") or metadata.get("artist") or "").strip()
+
+        read_title = str(verified_tags.get("title") or "").strip()
+        read_artist = str(verified_tags.get("artist") or verified_tags.get("artist_name") or "").strip()
+
+        if expected_title and read_title.lower() != expected_title.lower():
+            raise MetadataWriteVerificationError(
+                f"Tag verification failed for {path.name}: title mismatch (expected '{expected_title}', got '{read_title}')"
+            )
+
+        if expected_artist and read_artist.lower() != expected_artist.lower():
+            raise MetadataWriteVerificationError(
+                f"Tag verification failed for {path.name}: artist mismatch (expected '{expected_artist}', got '{read_artist}')"
+            )
+
+        logger.info("tag_file_verified: successfully verified tags for %s (title='%s', artist='%s')", path.name, read_title, read_artist)
+        return verified_tags
+
+    def tag_file(self, file_path: Path, metadata: Dict[str, Any], verify: bool = True) -> None:
         """Write *metadata* to the physical audio file at *file_path*.
 
         Translates the flat metadata dict produced by ``identify_file`` /
         ``auto_importer`` into the tag keys understood by ``_tagging_write``,
-        then writes them via echosync_core.  Called by ``auto_importer.finalize_import``
-        before the file is moved into the library.
+        then writes them via echosync_core. When verify=True, validates the write
+        with an immediate readback check.
         """
+        if verify:
+            try:
+                self.tag_file_verified(file_path, metadata)
+                return
+            except Exception as exc:
+                logger.warning("tag_file: verified write failed for %s: %s; falling back to direct write", file_path.name, exc)
+
         payload = build_native_tag_payload(metadata)
         tags_to_write = {k: v for k, v in payload.items() if v not in (None, '')}
 

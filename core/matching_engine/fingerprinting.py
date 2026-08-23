@@ -63,6 +63,22 @@ class FingerprintGenerator:
             )
             return None
 
+        # Check file existence and try PathMapper fallback if needed
+        path_obj = Path(file_path)
+        if not path_obj.exists() or not path_obj.is_file():
+            try:
+                from core.utils import PathMapper
+                mapped = PathMapper.to_local(file_path)
+                if mapped and Path(mapped).exists() and Path(mapped).is_file():
+                    file_path = mapped
+                    path_obj = Path(file_path)
+                else:
+                    logger.debug(f"Cannot fingerprint {file_path}: file does not exist on disk")
+                    return None
+            except Exception:
+                logger.debug(f"Cannot fingerprint {file_path}: file does not exist on disk")
+                return None
+
         if not FingerprintGenerator.can_fingerprint(file_path):
             logger.warning(f"Cannot fingerprint {file_path}: unsupported format")
             return None
@@ -77,9 +93,6 @@ class FingerprintGenerator:
             return None
 
         try:
-            # Check if fpcalc is available
-            fpcalc_path = os.environ.get('FPCALC', 'fpcalc')
-            
             # Generate fingerprint using Chromaprint
             # acoustid.fingerprint_file() returns (duration, fingerprint)
             duration, fingerprint = acoustid.fingerprint_file(file_path)
@@ -95,10 +108,15 @@ class FingerprintGenerator:
             return fingerprint
             
         except FileNotFoundError as e:
-            logger.error(
-                f"fpcalc command not found. Install Chromaprint and add fpcalc to PATH, "
-                f"or set FPCALC environment variable. Error: {e}"
-            )
+            # Check whether it was the audio file or fpcalc executable that was missing
+            target = getattr(e, "filename", None) or str(e)
+            if target and "fpcalc" not in str(target).lower():
+                logger.debug(f"Audio file not found during fingerprinting ({file_path}): {e}")
+            else:
+                logger.error(
+                    f"fpcalc command not found. Install Chromaprint and add fpcalc to PATH, "
+                    f"or set FPCALC environment variable. Error: {e}"
+                )
             return None
         except Exception as e:
             logger.warning(f"Failed to fingerprint {file_path}: {e}")
@@ -125,6 +143,22 @@ class FingerprintGenerator:
             )
             return None, None
 
+        # Check file existence and try PathMapper fallback if needed
+        path_obj = Path(file_path)
+        if not path_obj.exists() or not path_obj.is_file():
+            try:
+                from core.utils import PathMapper
+                mapped = PathMapper.to_local(file_path)
+                if mapped and Path(mapped).exists() and Path(mapped).is_file():
+                    file_path = mapped
+                    path_obj = Path(file_path)
+                else:
+                    logger.debug(f"Cannot fingerprint {file_path}: file does not exist on disk")
+                    return None, None
+            except Exception:
+                logger.debug(f"Cannot fingerprint {file_path}: file does not exist on disk")
+                return None, None
+
         if not FingerprintGenerator.can_fingerprint(file_path):
             logger.warning(f"Cannot fingerprint {file_path}: unsupported format")
             return None, None
@@ -147,17 +181,21 @@ class FingerprintGenerator:
             if not fingerprint:
                 logger.warning(f"Empty fingerprint generated for {file_path}")
                 return None, None
-            duration_sec = int(raw_duration) if raw_duration else None
+            duration_sec = int(round(float(raw_duration))) if raw_duration is not None else None
             logger.debug(
                 f"Generated fingerprint for {file_path}: "
                 f"length={len(fingerprint)}, duration={duration_sec}s"
             )
             return fingerprint, duration_sec
         except FileNotFoundError as e:
-            logger.error(
-                f"fpcalc command not found. Install Chromaprint and add fpcalc to PATH, "
-                f"or set FPCALC environment variable. Error: {e}"
-            )
+            target = getattr(e, "filename", None) or str(e)
+            if target and "fpcalc" not in str(target).lower():
+                logger.debug(f"Audio file not found during fingerprinting ({file_path}): {e}")
+            else:
+                logger.error(
+                    f"fpcalc command not found. Install Chromaprint and add fpcalc to PATH, "
+                    f"or set FPCALC environment variable. Error: {e}"
+                )
             return None, None
         except Exception as e:
             logger.warning(f"Failed to fingerprint {file_path}: {e}")

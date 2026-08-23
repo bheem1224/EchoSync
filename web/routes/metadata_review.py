@@ -88,25 +88,61 @@ def _normalize_detected_metadata(value: object) -> Optional[Dict[str, Any]]:
 
 def _resolve_task_file(task: ReviewTask) -> Optional[Path]:
     from core.settings import config_manager
-    try:
-        media_path = task.file_path
-        if not media_path:
-            return None
-        resolved = Path(media_path).expanduser().resolve(strict=True)
-    except Exception:
+    from core.utils import PathMapper
+    media_path = task.file_path
+    if not media_path:
         return None
 
-    if not resolved.exists() or not resolved.is_file():
+    resolved = None
+    # 1. Try direct path
+    try:
+        candidate = Path(media_path).expanduser().resolve()
+        if candidate.exists() and candidate.is_file():
+            resolved = candidate
+    except Exception:
+        pass
+
+    # 2. Try PathMapper mapped path
+    if not resolved:
+        try:
+            mapped = PathMapper.to_local(media_path)
+            if mapped:
+                candidate = Path(mapped).expanduser().resolve()
+                if candidate.exists() and candidate.is_file():
+                    resolved = candidate
+        except Exception:
+            pass
+
+    # 3. Try download_dir and library_dir filename fallback (in case file was ejected or staged)
+    if not resolved:
+        dl_dir = config_manager.get('storage.download_dir') or config_manager.get('download_dir')
+        lib_dir = config_manager.get('storage.library_dir') or config_manager.get('library_dir')
+        filename = Path(media_path).name
+        for base_dir in (dl_dir, lib_dir):
+            if base_dir:
+                candidate = Path(base_dir).resolve() / filename
+                if candidate.exists() and candidate.is_file():
+                    resolved = candidate
+                    try:
+                        task.file_path = str(candidate)
+                    except Exception:
+                        pass
+                    break
+
+    if not resolved or not resolved.exists() or not resolved.is_file():
         return None
 
     # Jail / LFI protection
     allowed_dirs = []
     _lib = config_manager.get('storage.library_dir') or config_manager.get('library_dir')
     _dl = config_manager.get('storage.download_dir') or config_manager.get('download_dir')
+    _poor = config_manager.get('storage.poor_metadata_dir')
     if _lib:
         allowed_dirs.append(Path(_lib).resolve())
     if _dl:
         allowed_dirs.append(Path(_dl).resolve())
+    if _poor:
+        allowed_dirs.append(Path(_poor).resolve())
 
     is_safe = False
     for allowed in allowed_dirs:
@@ -121,6 +157,28 @@ def _resolve_task_file(task: ReviewTask) -> Optional[Path]:
         return None
 
     return resolved
+
+
+def _get_fingerprint_provider():
+    """Resolve fingerprint provider bound by plugin ID or capability."""
+    from core.nexus_framework.plugin_loader import PluginRegistry, generate_plugin_id
+    acoustid_id = generate_plugin_id("echosync.acoustid")
+    if not PluginRegistry.is_plugin_disabled(acoustid_id):
+        provider = PluginRegistry.get_plugin(acoustid_id)
+        if provider:
+            return provider
+    return get_plugin_by_capability(Capability.RESOLVE_FINGERPRINT)
+
+
+def _get_metadata_provider():
+    """Resolve metadata provider bound by plugin ID or capability."""
+    from core.nexus_framework.plugin_loader import PluginRegistry, generate_plugin_id
+    mb_id = generate_plugin_id("echosync.musicbrainz")
+    if not PluginRegistry.is_plugin_disabled(mb_id):
+        provider = PluginRegistry.get_plugin(mb_id)
+        if provider:
+            return provider
+    return get_plugin_by_capability(Capability.FETCH_METADATA)
 
 
 def _read_current_metadata(task: ReviewTask) -> Dict[str, Any]:
@@ -597,9 +655,17 @@ def approve_review_queue_item(task_id: int, payload: ApproveReviewQueueRequest, 
                         "fingerprint": staged_track.fingerprint,
                     }
 
-                    # 2. Tag the physical file
+                    # 2. Tag and verify the physical file
                     enhancer = get_metadata_enhancer()
-                    enhancer.tag_file(file_path_obj, metadata_to_tag)
+                    from services.metadata_enhancer import MetadataWriteVerificationError
+                    try:
+                        enhancer.tag_file_verified(file_path_obj, metadata_to_tag)
+                    except MetadataWriteVerificationError as e:
+                        logger.error(f"Tag verification failed for {file_path_obj}; aborting library import: {e}")
+                        raise HTTPException(status_code=500, detail="Failed to verify written tags on disk")
+                    except Exception as e:
+                        logger.error(f"Unexpected error during tag verification for {file_path_obj}: {e}")
+                        raise HTTPException(status_code=500, detail="Failed to verify written tags on disk")
 
                     # 3. Calculate target relocation path using naming pattern
                     library_dir = config_manager.get('storage.library_dir') or config_manager.get('library_dir') or "./library"
@@ -863,8 +929,8 @@ def lookup_review_queue_item_acoustid(task_id: int, _=Depends(require_auth)):
             if not file_path:
                 raise HTTPException(status_code=404, detail="File does not exist")
 
-            fingerprint_provider = get_plugin_by_capability(Capability.RESOLVE_FINGERPRINT)
-            metadata_provider = get_plugin_by_capability(Capability.FETCH_METADATA)
+            fingerprint_provider = _get_fingerprint_provider()
+            metadata_provider = _get_metadata_provider()
             if not fingerprint_provider:
                 raise HTTPException(status_code=503, detail="No fingerprint provider configured")
 
@@ -1022,7 +1088,7 @@ def lookup_review_queue_item_musicbrainz(task_id: int, payload: MusicBrainzLooku
             try:
                 fingerprint, duration = FingerprintGenerator.generate_with_duration(str(task_file_path))
                 if fingerprint and duration:
-                    fingerprint_provider = get_plugin_by_capability(Capability.RESOLVE_FINGERPRINT)
+                    fingerprint_provider = _get_fingerprint_provider()
                     if fingerprint_provider:
                         mbids = fingerprint_provider.resolve_fingerprint(fingerprint, int(duration)) or []
                         if mbids:
@@ -1040,7 +1106,7 @@ def lookup_review_queue_item_musicbrainz(task_id: int, payload: MusicBrainzLooku
             # Step C: If tags/AcoustID are found, construct/search
             if mbid:
                 logger.info(f"[MusicBrainz Route] AcoustID pre-lookup succeeded. MBID: {mbid}")
-                metadata_provider = plugin_loader.get_plugin("EchoSync.musicbrainz")
+                metadata_provider = _get_metadata_provider()
                 if metadata_provider:
                     found_track = metadata_provider.get_track(mbid)
                     if found_track:

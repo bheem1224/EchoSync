@@ -614,7 +614,7 @@ wheels = [
 ]
 
 [[package]]
-name = "echosync"
+name = "echosync-core"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

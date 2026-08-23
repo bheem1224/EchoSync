@@ -12,7 +12,7 @@ filterwarnings = [
 ]
 
 [project]
-name = "echosync"
+name = "echosync_core"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
