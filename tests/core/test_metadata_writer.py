@@ -1,15 +1,14 @@
 import struct
 import pytest
 from pathlib import Path
-from unittest.mock import patch, MagicMock
-from fastapi import HTTPException
+from unittest.mock import patch
 
 import echosync_core
 from services.metadata_enhancer import RetroactiveEnhancer, MetadataWriteVerificationError
 
 
 def _create_minimal_wav_file(path: Path) -> Path:
-    """Create a minimal, valid 44-byte PCM RIFF/WAV audio file."""
+    """Create a minimal, valid PCM RIFF/WAV audio file."""
     num_channels = 2
     sample_rate = 44100
     bits_per_sample = 16
@@ -37,8 +36,106 @@ def _create_minimal_wav_file(path: Path) -> Path:
     return path
 
 
+def _create_minimal_flac_file(path: Path) -> Path:
+    """Create a minimal, valid FLAC audio file with STREAMINFO and VorbisComment block."""
+    frame = b"\xff\xf8\x19\x18\x00\x93\x00\x00\x00\x00\x00\x00\x96\xb3"
+    vc_payload = b"\x08\x00\x00\x00lofty-rs\x00\x00\x00\x00"
+    flac_bytes = (
+        b"fLaC"
+        + b"\x00\x00\x00\x22"  # STREAMINFO block header (is_last = 0, len = 34)
+        + b"\x00\xc0\x00\xc0"  # min/max block size = 192
+        + b"\x00\x00\x0e\x00\x00\x0e"  # min/max frame size = 14
+        + b"\x0a\xc4\x42\xf0\x00\x00\x00\xc0"  # 44100Hz, 2ch, 16bit, 192 samples
+        + b"\x00" * 16  # MD5 signature
+        + b"\x84\x00\x00"  # VORBIS_COMMENT header (is_last = 1)
+        + bytes([len(vc_payload)])
+        + vc_payload
+        + frame * 5  # Audio frames
+    )
+    path.write_bytes(flac_bytes)
+    return path
+
+
+def _create_minimal_mp3_file(path: Path) -> Path:
+    """Create a minimal, valid MP3 audio file with ID3v2 header and MPEG Layer 3 frames."""
+    id3_header = b"ID3\x04\x00\x00\x00\x00\x00\x00"
+    mp3_frame = b"\xff\xfb\x90\x00" + b"\x00" * 413
+    path.write_bytes(id3_header + mp3_frame * 4)
+    return path
+
+
+def _create_minimal_m4a_file(path: Path) -> Path:
+    """Create a minimal, valid ISO BMFF MP4/M4A audio file."""
+    def box(box_type: bytes, payload: bytes) -> bytes:
+        return struct.pack(">I4s", len(payload) + 8, box_type) + payload
+
+    ftyp = box(b"ftyp", b"M4A \x00\x00\x00\x00M4A mp42isom")
+    mvhd = box(
+        b"mvhd",
+        b"\x00" * 4
+        + b"\x00" * 4
+        + b"\x00" * 4
+        + struct.pack(">II", 1000, 1000)
+        + struct.pack(">IH", 0x00010000, 0x0100)
+        + b"\x00" * 10
+        + b"\x00\x01\x00\x00"
+        + b"\x00" * 12
+        + b"\x00\x01\x00\x00"
+        + b"\x00" * 12
+        + b"\x40\x00\x00\x00"
+        + b"\x00" * 24
+        + struct.pack(">I", 2),
+    )
+    tkhd = box(
+        b"tkhd",
+        b"\x00\x00\x00\x01"
+        + b"\x00" * 8
+        + struct.pack(">I", 1)
+        + b"\x00" * 4
+        + struct.pack(">I", 1000)
+        + b"\x00" * 8
+        + b"\x00\x00\x00\x00\x01\x00\x00\x00"
+        + b"\x00\x01\x00\x00"
+        + b"\x00" * 12
+        + b"\x00\x01\x00\x00"
+        + b"\x00" * 12
+        + b"\x40\x00\x00\x00"
+        + b"\x00" * 8,
+    )
+    mdhd = box(b"mdhd", b"\x00" * 12 + struct.pack(">II", 44100, 44100) + struct.pack(">HH", 0x55C4, 0))
+    hdlr = box(b"hdlr", b"\x00" * 4 + b"\x00" * 4 + b"soun" + b"\x00" * 12 + b"SoundHandler\x00")
+    smhd = box(b"smhd", b"\x00" * 8)
+    url_box = box(b"url ", b"\x00\x00\x00\x01")
+    dref = box(b"dref", b"\x00" * 4 + struct.pack(">I", 1) + url_box)
+    dinf = box(b"dinf", dref)
+    mp4a = box(
+        b"mp4a",
+        b"\x00" * 6
+        + struct.pack(">H", 1)
+        + b"\x00" * 8
+        + struct.pack(">HH", 2, 16)
+        + b"\x00" * 4
+        + struct.pack(">I", 44100 << 16),
+    )
+    stsd = box(b"stsd", b"\x00" * 4 + struct.pack(">I", 1) + mp4a)
+    stts = box(b"stts", b"\x00" * 4 + struct.pack(">I", 1) + struct.pack(">II", 1, 44100))
+    stsc = box(b"stsc", b"\x00" * 4 + struct.pack(">I", 1) + struct.pack(">III", 1, 1, 1))
+    stsz = box(b"stsz", b"\x00" * 4 + struct.pack(">I", 16) + struct.pack(">I", 1))
+    stco = box(b"stco", b"\x00" * 4 + struct.pack(">I", 1) + struct.pack(">I", 0))
+
+    stbl = box(b"stbl", stsd + stts + stsc + stsz + stco)
+    minf = box(b"minf", smhd + dinf + stbl)
+    mdia = box(b"mdia", mdhd + hdlr + minf)
+    trak = box(b"trak", tkhd + mdia)
+    moov = box(b"moov", mvhd + trak)
+    mdat = box(b"mdat", b"\x00" * 16)
+
+    path.write_bytes(ftyp + moov + mdat)
+    return path
+
+
 def test_rust_tag_writer_roundtrip_wav(tmp_path):
-    """Verify that echosync_core writes and reads ID3v2 tags on RIFF/WAV files."""
+    """Verify that echosync_core writes and reads tags on RIFF/WAV files."""
     wav_path = _create_minimal_wav_file(tmp_path / "test_roundtrip.wav")
 
     tags_to_write = {
@@ -69,6 +166,85 @@ def test_rust_tag_writer_roundtrip_wav(tmp_path):
     assert read_back.get("year") == 2026
     assert read_back.get("genre") == "Soundtrack"
     assert read_back.get("mbid") == "1970bda6-446f-40fd-8872-24b31a302ca3"
+
+
+def test_wav_riff_info_tag_write_read_roundtrip(tmp_path):
+    """Verify RIFF INFO / ID3v2 tag writing and readback on WAV files."""
+    wav_path = _create_minimal_wav_file(tmp_path / "riff_test.wav")
+    enhancer = RetroactiveEnhancer()
+
+    metadata = {
+        "title": "Clubbed to Death",
+        "artist": "Rob Dougan",
+        "album": "Furious Angels",
+        "album_artist": "Rob Dougan",
+        "year": "2002",
+        "track_number": "1",
+    }
+
+    verified = enhancer.tag_file_verified(wav_path, metadata)
+    assert verified.get("title") == "Clubbed to Death"
+    assert verified.get("artist") == "Rob Dougan"
+    assert verified.get("album") == "Furious Angels"
+
+
+def test_flac_vorbis_comments_roundtrip(tmp_path):
+    """Verify Vorbis Comments tag writing and readback on FLAC files."""
+    flac_path = _create_minimal_flac_file(tmp_path / "vorbis_test.flac")
+    enhancer = RetroactiveEnhancer()
+
+    metadata = {
+        "title": "Furious Angels (Instrumental)",
+        "artist": "Rob Dougan",
+        "album": "Furious Angels",
+        "year": "2002",
+        "track_number": "2",
+        "musicbrainz_id": "98765432-1111-2222-3333-abcdefabcdef",
+    }
+
+    verified = enhancer.tag_file_verified(flac_path, metadata)
+    assert verified.get("title") == "Furious Angels (Instrumental)"
+    assert verified.get("artist") == "Rob Dougan"
+    assert verified.get("album") == "Furious Angels"
+    assert verified.get("mbid") == "98765432-1111-2222-3333-abcdefabcdef"
+
+
+def test_mp3_id3v2_roundtrip(tmp_path):
+    """Verify ID3v2 tag writing and readback on MP3 files."""
+    mp3_path = _create_minimal_mp3_file(tmp_path / "id3_test.mp3")
+    enhancer = RetroactiveEnhancer()
+
+    metadata = {
+        "title": "Chateau",
+        "artist": "Rob Dougan",
+        "album": "Furious Angels",
+        "year": "2002",
+        "track_number": "3",
+    }
+
+    verified = enhancer.tag_file_verified(mp3_path, metadata)
+    assert verified.get("title") == "Chateau"
+    assert verified.get("artist") == "Rob Dougan"
+    assert verified.get("album") == "Furious Angels"
+
+
+def test_alac_mp4_ilst_roundtrip(tmp_path):
+    """Verify MP4 ilst atom tag writing and readback on M4A/ALAC files."""
+    m4a_path = _create_minimal_m4a_file(tmp_path / "alac_test.m4a")
+    enhancer = RetroactiveEnhancer()
+
+    metadata = {
+        "title": "There's Only Me",
+        "artist": "Rob Dougan",
+        "album": "Furious Angels",
+        "year": "2002",
+        "track_number": "4",
+    }
+
+    verified = enhancer.tag_file_verified(m4a_path, metadata)
+    assert verified.get("title") == "There's Only Me"
+    assert verified.get("artist") == "Rob Dougan"
+    assert verified.get("album") == "Furious Angels"
 
 
 def test_tag_file_verified_success(tmp_path):
@@ -103,4 +279,5 @@ def test_tag_verification_blocks_relocation_on_mismatch(tmp_path):
     with patch("echosync_core.extract_metadata", return_value={"title": "Mismatched Title", "artist": "Original Artist"}):
         with pytest.raises(MetadataWriteVerificationError) as excinfo:
             enhancer.tag_file_verified(wav_path, metadata)
-        assert "title mismatch" in str(excinfo.value)
+        assert "title ('mismatched title' vs 'original title')" in str(excinfo.value)
+

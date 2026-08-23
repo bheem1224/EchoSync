@@ -508,7 +508,7 @@ class RetroactiveEnhancer:
         """Read tags from a file using the internal tagging helper."""
         return echosync_core.extract_metadata(str(file_path))
 
-    def tag_file_verified(self, file_path: Path, metadata: Dict[str, Any]) -> Dict[str, Any]:
+    def tag_file_verified(self, file_path: Path, metadata: Any) -> Dict[str, Any]:
         """Write metadata to physical audio file and verify roundtrip via readback.
 
         Raises MetadataWriteVerificationError if the written tags do not match
@@ -518,7 +518,8 @@ class RetroactiveEnhancer:
         if not path.exists() or not path.is_file():
             raise MetadataWriteVerificationError(f"Cannot tag non-existent file: {path}")
 
-        payload = build_native_tag_payload(metadata)
+        meta_dict = metadata if isinstance(metadata, dict) else (metadata.to_dict() if hasattr(metadata, "to_dict") else vars(metadata))
+        payload = build_native_tag_payload(meta_dict)
         tags_to_write = {k: v for k, v in payload.items() if v not in (None, '')}
 
         if not tags_to_write:
@@ -536,27 +537,29 @@ class RetroactiveEnhancer:
 
         # Immediate readback verification
         try:
-            verified_tags = echosync_core.extract_metadata(str(path))
+            if hasattr(echosync_core, "read_metadata"):
+                verified_tags = echosync_core.read_metadata(str(path))
+            else:
+                verified_tags = echosync_core.extract_metadata(str(path))
         except Exception as exc:
             raise MetadataWriteVerificationError(f"Post-write tag extraction failed for {path.name}: {exc}") from exc
 
         if not isinstance(verified_tags, dict):
             raise MetadataWriteVerificationError(f"Extracted metadata is not a dictionary for {path.name}")
 
-        expected_title = str(tags_to_write.get("title") or metadata.get("title") or "").strip()
-        expected_artist = str(tags_to_write.get("artist") or metadata.get("artist") or "").strip()
+        exp_t = tags_to_write.get("title") or meta_dict.get("title") or getattr(metadata, "title", None) or ""
+        exp_a = tags_to_write.get("artist") or meta_dict.get("artist") or getattr(metadata, "artist", None) or ""
 
-        read_title = str(verified_tags.get("title") or "").strip()
-        read_artist = str(verified_tags.get("artist") or verified_tags.get("artist_name") or "").strip()
+        read_title = (verified_tags.get("title") or "").strip().lower()
+        expected_title = str(exp_t).strip().lower()
+        read_artist = (verified_tags.get("artist") or verified_tags.get("artist_name") or "").strip().lower()
+        expected_artist = str(exp_a).strip().lower()
 
-        if expected_title and read_title.lower() != expected_title.lower():
+        if (expected_title and read_title != expected_title) or (expected_artist and read_artist != expected_artist):
             raise MetadataWriteVerificationError(
-                f"Tag verification failed for {path.name}: title mismatch (expected '{expected_title}', got '{read_title}')"
-            )
-
-        if expected_artist and read_artist.lower() != expected_artist.lower():
-            raise MetadataWriteVerificationError(
-                f"Tag verification failed for {path.name}: artist mismatch (expected '{expected_artist}', got '{read_artist}')"
+                f"Tag verification failed for {path.name}: "
+                f"title ('{read_title}' vs '{expected_title}'), "
+                f"artist ('{read_artist}' vs '{expected_artist}')"
             )
 
         logger.info("tag_file_verified: successfully verified tags for %s (title='%s', artist='%s')", path.name, read_title, read_artist)

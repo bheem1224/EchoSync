@@ -93,6 +93,12 @@ pub fn extract_metadata<'py>(py: Python<'py>, path: String) -> PyResult<PyObject
     }
 }
 
+/// Read audio metadata tags directly (alias to extract_metadata).
+#[pyfunction]
+pub fn read_metadata<'py>(py: Python<'py>, path: String) -> PyResult<PyObject> {
+    extract_metadata(py, path)
+}
+
 /// Write audio metadata tags directly to audio files using lofty.
 #[pyfunction]
 pub fn write_metadata(path: String, tags: &Bound<'_, PyDict>) -> PyResult<bool> {
@@ -392,6 +398,7 @@ fn echosync_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(test_batch_process, m)?)?;
     m.add_function(wrap_pyfunction!(batch_process_directory, m)?)?;
     m.add_function(wrap_pyfunction!(extract_metadata, m)?)?;
+    m.add_function(wrap_pyfunction!(read_metadata, m)?)?;
     m.add_function(wrap_pyfunction!(write_metadata, m)?)?;
     m.add_function(wrap_pyfunction!(safe_move_file, m)?)?;
     m.add_function(wrap_pyfunction!(copy_file, m)?)?;

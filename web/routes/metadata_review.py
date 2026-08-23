@@ -550,9 +550,13 @@ def _process_approval_background(task_id: int, final_metadata: Dict[str, Any]):
         logger.error(f"Background approval task {task_id} failed: {e}", exc_info=True)
 
 @router.post("/{task_id}/approve")
-def approve_review_queue_item(task_id: int, payload: ApproveReviewQueueRequest, _=Depends(require_auth)):
+def approve_review_queue_item(task_id: int, payload: Optional[ApproveReviewQueueRequest] = None, _=Depends(require_auth)):
     """Approve a review task: write tags, relocate file, import file, mark approved."""
-    final_metadata = payload.metadata or payload.detected_metadata or payload.model_dump(exclude_unset=True)
+    final_metadata = (
+        (payload.metadata or payload.detected_metadata or payload.model_dump(exclude_unset=True))
+        if payload is not None
+        else {}
+    )
 
     if not isinstance(final_metadata, dict):
         raise HTTPException(status_code=400, detail="Invalid metadata payload")
