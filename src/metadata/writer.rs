@@ -1,4 +1,4 @@
-use lofty::config::WriteOptions;
+use lofty::config::{ParseOptions, ParsingMode, WriteOptions};
 use lofty::file::{FileType, TaggedFileExt};
 use lofty::probe::Probe;
 use lofty::tag::{Accessor, ItemKey, Tag, TagExt, TagType};
@@ -15,25 +15,48 @@ impl MetadataWriter {
             return Err(format!("File does not exist: {}", p.display()));
         }
 
-        let mut tagged_file = Probe::open(p)
-            .map_err(|e| format!("Failed to open audio probe for {}: {}", p.display(), e))?
-            .read()
-            .map_err(|e| format!("Failed to read audio metadata for {}: {}", p.display(), e))?;
-
-        let tag_type = match tagged_file.file_type() {
-            FileType::Wav | FileType::Mpeg | FileType::Aiff => TagType::Id3v2,
-            FileType::Flac | FileType::Opus | FileType::Vorbis | FileType::Speex => TagType::VorbisComments,
-            FileType::Mp4 => TagType::Mp4Ilst,
-            _ => tagged_file.primary_tag_type(),
+        let ext = p
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+        let fallback_tag_type = match ext.as_str() {
+            "wav" | "mp3" | "aiff" | "aif" => TagType::Id3v2,
+            "flac" | "opus" | "ogg" | "oga" | "spx" => TagType::VorbisComments,
+            "m4a" | "mp4" | "aac" => TagType::Mp4Ilst,
+            _ => TagType::Id3v2,
         };
 
-        let tag = match tagged_file.tag_mut(tag_type) {
-            Some(t) => t,
+        let parse_opts = ParseOptions::new()
+            .read_properties(false)
+            .parsing_mode(ParsingMode::Relaxed);
+
+        let mut tagged_file_opt = Probe::open(p)
+            .ok()
+            .and_then(|probe| probe.options(parse_opts).read().ok());
+
+        let mut direct_tag: Option<Tag> = None;
+
+        let tag: &mut Tag = match tagged_file_opt {
+            Some(ref mut tf) => {
+                let tag_type = match tf.file_type() {
+                    FileType::Wav | FileType::Mpeg | FileType::Aiff => TagType::Id3v2,
+                    FileType::Flac | FileType::Opus | FileType::Vorbis | FileType::Speex => TagType::VorbisComments,
+                    FileType::Mp4 => TagType::Mp4Ilst,
+                    _ => tf.primary_tag_type(),
+                };
+                match tf.tag_mut(tag_type) {
+                    Some(t) => t,
+                    None => {
+                        tf.insert_tag(Tag::new(tag_type));
+                        tf.tag_mut(tag_type)
+                            .ok_or_else(|| format!("Failed to initialize tag for {}", p.display()))?
+                    }
+                }
+            }
             None => {
-                tagged_file.insert_tag(Tag::new(tag_type));
-                tagged_file
-                    .tag_mut(tag_type)
-                    .ok_or_else(|| format!("Failed to initialize tag of type {:?} for {}", tag_type, p.display()))?
+                direct_tag = Some(Tag::new(fallback_tag_type));
+                direct_tag.as_mut().unwrap()
             }
         };
 

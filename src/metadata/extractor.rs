@@ -62,17 +62,28 @@ impl MetadataExtractor {
             }
         }
 
-        let tagged_file = match Probe::open(p).and_then(|probe| probe.read()) {
+        let parse_opts = lofty::config::ParseOptions::new()
+            .parsing_mode(lofty::config::ParsingMode::Relaxed);
+
+        let tagged_file = match Probe::open(p).and_then(|probe| probe.options(parse_opts).read()) {
             Ok(tf) => tf,
             Err(_) => {
-                return Ok(TrackMetadata {
-                    codec: "CORRUPT".to_string(),
-                    file_path: path_str,
-                    file_size_bytes,
-                    mtime,
-                    inode,
-                    ..Default::default()
-                });
+                let tag_only_opts = lofty::config::ParseOptions::new()
+                    .read_properties(false)
+                    .parsing_mode(lofty::config::ParsingMode::Relaxed);
+                match Probe::open(p).and_then(|probe| probe.options(tag_only_opts).read()) {
+                    Ok(tf) => tf,
+                    Err(_) => {
+                        return Ok(TrackMetadata {
+                            codec: "CORRUPT".to_string(),
+                            file_path: path_str,
+                            file_size_bytes,
+                            mtime,
+                            inode,
+                            ..Default::default()
+                        });
+                    }
+                }
             }
         };
 
