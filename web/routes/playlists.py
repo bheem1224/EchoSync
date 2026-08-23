@@ -1503,11 +1503,11 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
     matched_pairs = []
     missing_tracks = []
     for track in all_tracks:
-        if track.get("matched_track_id") and track.get("target_identifier"):
+        if track.get("matched_track_id"):
             matched_pairs.append({
                 "track_id": track["matched_track_id"],
                 "matched_track_id": track["matched_track_id"],
-                "target_identifier": track["target_identifier"],
+                "target_identifier": track.get("target_identifier"),
                 "title": track.get("title"),
                 "artist": track.get("artist"),
                 "album": track.get("album"),
@@ -1516,7 +1516,7 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                 "source_artist": track.get("artist"),
                 "source_track": track.get("source_track"),
             })
-        elif not track.get("matched_track_id"):
+        else:
             missing_tracks.append({
                 "title": track["title"],
                 "artist": track["artist"],
@@ -1775,7 +1775,10 @@ def _sync_to_plex(payload, source, target, playlist_name, matches, download_miss
             if not client.ensure_connection():
                 raise RuntimeError("Plex connection failed")
 
-            valid_match_items = [m for m in matches if m.get("target_identifier")]
+            valid_match_items = [
+                m for m in matches
+                if m.get("target_identifier") or m.get("matched_track_id") or m.get("track_id")
+            ]
             valid_keys = []
             failed_tracks = []
             recovered_keys = []
