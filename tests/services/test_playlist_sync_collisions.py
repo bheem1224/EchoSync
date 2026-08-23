@@ -511,3 +511,112 @@ def test_tier2_unknown_artist_title_recovery():
     assert result.passed_version_check is True
     assert result.confidence_score >= 90.0
 
+
+def test_unicode_multi_artist_splitting():
+    """Verify that Unicode multiplication/cross (× / \\u00d7) and ' x ' split into separate artist records."""
+    from core.matching_engine.text_utils import split_artists
+
+    tokens1 = split_artists("Selena Gomez × Marshmello")
+    assert tokens1 == ["Selena Gomez", "Marshmello"]
+
+    tokens2 = split_artists("Marshmello \u00d7 Selena Gomez")
+    assert tokens2 == ["Marshmello", "Selena Gomez"]
+
+    tokens3 = split_artists("Selena Gomez x Marshmello")
+    assert tokens3 == ["Selena Gomez", "Marshmello"]
+
+
+def test_extended_mix_duration_amnesty_with_delta():
+    """Verify that a studio length file tagged as extended receives duration amnesty when delta <= 2000ms."""
+    engine = WeightedMatchingEngine(ExactSyncProfile())
+    source = EchosyncTrack(
+        raw_title="Happier",
+        artist_name="Marshmello",
+        album_title="Happier",
+        duration=214285,  # 3:34
+    )
+    candidate = EchosyncTrack(
+        raw_title="Happier",
+        artist_name="Marshmello",
+        album_title="Happier",
+        duration=215000,  # 3:35 (delta = 715ms <= 2000ms)
+        edition="Extended Mix",
+    )
+
+    result = engine.calculate_match(source, candidate)
+    assert result.passed_version_check is True
+    assert result.confidence_score >= 90.0
+    assert "Duration amnesty" in result.reasoning
+
+
+def test_remixer_token_collaborator_credit():
+    """Verify that a remixer token named inside edition is credited as a collaborator for remix queries."""
+    engine = WeightedMatchingEngine(ExactSyncProfile())
+    source = EchosyncTrack(
+        raw_title="In the End",
+        artist_name="Tommee Profitt",
+        album_title="In the End (Mellen Gi & Tommee Profitt Remix)",
+        duration=218000,
+        edition="Remix",
+    )
+    candidate = EchosyncTrack(
+        raw_title="In the End",
+        artist_name="Linkin Park",
+        album_title="In the End",
+        duration=218500,
+        edition="Mellen Gi & Tommee Profitt Remix",
+    )
+
+    result = engine.calculate_match(source, candidate)
+    assert result.passed_version_check is True
+    assert result.confidence_score >= 85.0
+
+
+def test_encapsulated_artist_title_recovery():
+    """Verify 'Taio Cruz - Dynamite' with Unknown Artist resolves to 'Dynamite' by 'Taio Cruz'."""
+    from services.playlists_api import evaluate_tier2_candidate
+
+    engine = WeightedMatchingEngine(ExactSyncProfile())
+    source = EchosyncTrack(
+        raw_title="Dynamite",
+        artist_name="Taio Cruz",
+        album_title="Rokstarr",
+        duration=203000,
+    )
+    candidate = EchosyncTrack(
+        raw_title="Taio Cruz - Dynamite",
+        artist_name="Unknown Artist",
+        album_title="",
+        duration=203500,
+    )
+
+    result = evaluate_tier2_candidate(engine, source, candidate, artist_score=0.0)
+    assert result.passed_version_check is True
+    assert result.confidence_score >= 90.0
+    assert candidate.artist_name == "Taio Cruz"
+    assert candidate.title == "Dynamite"
+
+
+def test_scan_modes_execution(tmp_path, monkeypatch):
+    """Verify scan_mode parameter execution across incremental, force_rescan, and full_rebuild modes."""
+    from services.library_sync_service import LibrarySyncService
+    from core.settings import config_manager
+    from database.music_database import MusicDatabase
+
+    # Setup dummy directory and test database
+    lib_dir = tmp_path / "music"
+    lib_dir.mkdir(parents=True)
+    db_file = tmp_path / "test_scan_modes.db"
+    from database.music_database import Base
+    db = MusicDatabase(str(db_file))
+    Base.metadata.create_all(db.engine)
+
+    orig_get = config_manager.get
+    monkeypatch.setattr(config_manager, "get", lambda k: str(lib_dir) if "library_dir" in k else orig_get(k))
+
+    service = LibrarySyncService(database_path=str(db_file))
+    # Test all 3 modes can execute without exception
+    service.sync_library(scan_mode="incremental")
+    service.sync_library(scan_mode="force_rescan")
+    service.sync_library(scan_mode="full_rebuild")
+

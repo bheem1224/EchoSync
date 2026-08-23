@@ -1214,9 +1214,9 @@ class WeightedMatchingEngine:
 
             scores.append(('title', title_score, self.weights.title_weight))
 
-        # Artist match with subset rescue
+        # Artist match with subset rescue & remixer collaborator credit
         if source.artist_name and candidate.artist_name:
-            from core.matching_engine.text_utils import is_franchise_entity
+            from core.matching_engine.text_utils import is_franchise_entity, _cmp_artists, split_artists
             # Prevent "Various Artists" from partially matching real names
             if source.artist_name.lower() != "various artists" and candidate.artist_name.lower() == "various artists":
                  artist_score = 0.0
@@ -1224,6 +1224,16 @@ class WeightedMatchingEngine:
                  artist_score = 0.90
             else:
                  artist_score = self._fuzzy_match(source.artist_name, candidate.artist_name)
+
+            # Remixer Collaborator Matching:
+            # If source_artist matches a remixer named inside candidate.edition or candidate title subtitle frames
+            # (e.g. "Tommee Profitt" inside "Mellen Gi & Tommee Profitt Remix"), award artist_score = 0.95.
+            cand_remix_credit = (candidate.edition or "") + " " + (candidate.title or "")
+            if _cmp_artists(source.artist_name, cand_remix_credit) >= 0.85 or any(
+                _cmp_artists(source.artist_name, tok) >= 0.85
+                for tok in split_artists(candidate.edition or "")
+            ):
+                artist_score = max(artist_score, 0.95)
             
             # If fuzzy match is low, check for artist subset match
             # Rescue mechanism: if one artist list is subset of other AND duration is tight (within 2s)

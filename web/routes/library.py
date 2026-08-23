@@ -224,7 +224,8 @@ def update_database(request: Request):
         try:
             with _db_update_lock:
                 import threading
-                _db_update_worker = threading.Thread(target=LibrarySyncService().sync_library)
+                scan_mode_val = "full_rebuild" if mode == "full" else ("force_rescan" if mode == "force" else "incremental")
+                _db_update_worker = threading.Thread(target=LibrarySyncService().sync_library, kwargs={"scan_mode": scan_mode_val})
                 # Start worker thread
                 _db_update_worker.start()
             

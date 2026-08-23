@@ -102,7 +102,11 @@ async def run_job(request: Request, payload: JobRunRequest = None):
     if not payload:
         payload = JobRunRequest()
     job_name = payload.job_name or payload.name or request.query_params.get("job_id") or request.query_params.get("name") or request.query_params.get("job_name")
-    params = payload.params or {}
+    params = dict(payload.params or {})
+    if payload.scan_mode:
+        params["scan_mode"] = payload.scan_mode
+    elif request.query_params.get("scan_mode"):
+        params["scan_mode"] = request.query_params.get("scan_mode")
     
     if not job_name:
         raise HTTPException(status_code=400, detail={"error": "job name required"})

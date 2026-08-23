@@ -8,7 +8,7 @@ from core.io_gatekeeper import Gatekeeper
 from core.settings import config_manager
 from database import get_database, _canonicalize_path
 from services.library_watcher import is_path_suppressed
-from database.music_database import LocalMedia, Track
+from database.music_database import LocalMedia, TrackArtist, Track, Album, Artist
 from core.orchestrator.ingestion import _parse_telemetry_dict
 from core.database.repositories.track_repo import TrackRepository
 import echosync_core
@@ -27,8 +27,8 @@ class LibrarySyncService:
         self.db = get_database(database_path)
         self.gatekeeper = Gatekeeper()
 
-    def sync_library(self):
-        logger.info("Starting O(1) library sync...")
+    def sync_library(self, scan_mode: str = "incremental"):
+        logger.info(f"Starting library sync in '{scan_mode}' mode...")
         
         # Step 1: Gatekeeper Boundary Check
         library_dir = config_manager.get("storage.library_dir") or config_manager.get("library_dir")
@@ -41,14 +41,27 @@ class LibrarySyncService:
             logger.error(f"Library sync aborted: {library_dir} is out of Gatekeeper bounds.")
             return
 
+        # Full rebuild: truncate library tables prior to cold scan
+        if scan_mode == "full_rebuild":
+            logger.info("Executing full_rebuild: clearing music library tables...")
+            with self.db.session_factory() as session:
+                session.execute(delete(LocalMedia))
+                session.execute(delete(TrackArtist))
+                session.execute(delete(Track))
+                session.execute(delete(Album))
+                session.execute(delete(Artist))
+                session.commit()
+                logger.info("Tables cleared for full_rebuild.")
+
         # Step 2: Rapid Directory Walk & mtime Comparison
         logger.info(f"Scanning library directory: {library_dir}")
         db_state: Dict[str, float] = {}
         
-        with self.db.session_factory() as session:
-            rows = session.execute(select(LocalMedia.file_path, LocalMedia.mtime)).all()
-            for r in rows:
-                db_state[r.file_path] = r.mtime or 0.0
+        if scan_mode != "full_rebuild":
+            with self.db.session_factory() as session:
+                rows = session.execute(select(LocalMedia.file_path, LocalMedia.mtime)).all()
+                for r in rows:
+                    db_state[r.file_path] = r.mtime or 0.0
 
         current_disk_paths: Set[str] = set()
         dirty_or_new: List[str] = []
@@ -79,16 +92,19 @@ class LibrarySyncService:
                 canon_path = _canonicalize_path(file_path)
                 current_disk_paths.add(canon_path)
 
-                try:
-                    stat = os.stat(file_path)
-                    st_mtime = stat.st_mtime
-                except Exception as e:
-                    logger.debug(f"Failed to stat {file_path}: {e}")
-                    continue
-
-                db_mtime = db_state.get(canon_path)
-                if db_mtime is None or st_mtime > db_mtime:
+                if scan_mode in ("force_rescan", "full_rebuild"):
                     dirty_or_new.append(file_path)
+                else:
+                    try:
+                        stat = os.stat(file_path)
+                        st_mtime = stat.st_mtime
+                    except Exception as e:
+                        logger.debug(f"Failed to stat {file_path}: {e}")
+                        continue
+
+                    db_mtime = db_state.get(canon_path)
+                    if db_mtime is None or st_mtime > db_mtime:
+                        dirty_or_new.append(file_path)
 
         walk_time = time.time() - start_walk
         logger.info(f"Walk completed in {walk_time:.2f}s. Found {len(dirty_or_new)} dirty/new files.")
@@ -101,7 +117,7 @@ class LibrarySyncService:
         orphans = list(db_paths - current_disk_paths)
 
         # Step 3: Orphan Reconciliation
-        if orphans:
+        if orphans and scan_mode != "full_rebuild":
             logger.info(f"Reconciling {len(orphans)} orphaned paths.")
             with self.db.session_factory() as session:
                 # Delete LocalMedia

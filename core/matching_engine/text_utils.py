@@ -489,7 +489,7 @@ def normalize_artist(artist: Optional[str]) -> str:
 
 
 _COLLAB_SPLIT_PATTERN = re.compile(
-    r'(?:\s+&\s+|\s*[/,+]\s*|\s+\bx\b\s+|\s+\bfeat\.?\s*|\s+\bft\.?\s*|\s+\bfeaturing\s*|\s+\bwith\s*|\s+\band\s+)',
+    r'(?:\s+&\s+|\s*[/,+]\s*|\s*[\u00d7×]\s*|\s+\bx\b\s+|\s+\bfeat\.?\s*|\s+\bft\.?\s*|\s+\bfeaturing\s*|\s+\bwith\s*|\s+\band\s+)',
     flags=re.IGNORECASE
 )
 _WIRE_SANITIZE_PATTERN = re.compile(r'[\&\\\/\!\'\"\+\#\@\[\]\(\)\{\}\*\^\$\:\;\,\.\?\~]')
@@ -834,7 +834,7 @@ def generate_deterministic_id(artist: Optional[str], title: Optional[str]) -> st
 
 
 _ARTIST_SPLIT_PATTERN = re.compile(
-    r'\s*(?:;|,|/|&|\bfeat\b\.?|\bft\b\.?|\bfeaturing\b|\bwith\b|\bvs\b\.?|\band\b|\bx\b)\s*',
+    r'\s*(?:;|,|/|&|\bfeat\b\.?|\bft\b\.?|\bfeaturing\b|\bwith\b|\bvs\b\.?|\band\b|\u00d7|×|\sx\s|\bx\b)\s*',
     flags=re.IGNORECASE
 )
 _YEAR_RE = re.compile(r'\b(19\d\d|20\d\d)\b')

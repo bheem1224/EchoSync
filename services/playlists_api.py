@@ -264,10 +264,18 @@ def filter_unevaluated_candidates(candidates: List, evaluated_candidate_ids: set
 def check_title_recovery(source_artist: str, source_title: str, candidate_artist: str, candidate_title: str) -> bool:
     """
     Check if an Unknown Artist candidate encapsulates both artist and title in candidate_title.
-    e.g. candidate_artist="Unknown Artist", candidate_title="BTS - Dynamite"
+    e.g. candidate_artist="Unknown Artist", candidate_title="Taio Cruz - Dynamite"
     """
+    from core.matching_engine.text_utils import _cmp_artists, _cmp_titles
     cand_art_clean = (candidate_artist or "").strip().lower()
     if cand_art_clean in {"unknown artist", "unknown", "various artists", "various", ""}:
+        match = re.match(r"^(.*?)\s*[-–—]\s*(.*)$", candidate_title or "")
+        if match:
+            extracted_artist, extracted_title = match.group(1).strip(), match.group(2).strip()
+            if _cmp_artists(source_artist, extracted_artist) >= 0.85 and _cmp_titles(source_title, extracted_title) >= 0.85:
+                logger.info("Title-Recovery: Artist encapsulated in candidate title")
+                return True
+
         src_art_norm = normalize_text(source_artist or "").lower()
         src_ttl_norm = normalize_text(source_title or "").lower()
         cand_ttl_norm = normalize_text(candidate_title or "").lower()
@@ -293,14 +301,22 @@ def evaluate_tier2_candidate(
     passes Unknown Artist Title-Recovery, evaluates using the full matching engine for maximum confidence.
     """
     effective_artist_score = artist_score
+    cand_art_clean = (candidate_track.artist_name or "").strip().lower()
+    cand_raw_title = candidate_track.raw_title or candidate_track.title or ""
+
     if check_title_recovery(
         source_track.artist_name or "",
         source_track.raw_title or source_track.title or "",
         candidate_track.artist_name or "",
-        candidate_track.raw_title or candidate_track.title or "",
+        cand_raw_title,
     ):
         effective_artist_score = 1.0
-        if not candidate_track.artist_name or candidate_track.artist_name.strip().lower() in {"unknown artist", "unknown", "various artists", "various", ""}:
+        match = re.match(r"^(.*?)\s*[-–—]\s*(.*)$", cand_raw_title)
+        if match:
+            extracted_artist, extracted_title = match.group(1).strip(), match.group(2).strip()
+            candidate_track.artist_name = extracted_artist
+            candidate_track.title = extracted_title
+        elif not candidate_track.artist_name or cand_art_clean in {"unknown artist", "unknown", "various artists", "various", ""}:
             candidate_track.artist_name = source_track.artist_name
 
     if effective_artist_score >= 0.90:

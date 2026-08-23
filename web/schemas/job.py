@@ -15,6 +15,7 @@ class JobSchema(BaseModel):
 class JobRunRequest(BaseModel):
     job_name: Optional[str] = None
     name: Optional[str] = None
+    scan_mode: Optional[str] = None
     params: Optional[Dict[str, Any]] = Field(default_factory=dict)
 
 class JobIntervalRequest(BaseModel):

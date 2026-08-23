@@ -131,9 +131,10 @@ def register_database_update_job(interval_seconds: int = 21600, enabled: bool = 
                             can_connect = local_provider.authenticate()
                             
                         if can_connect:
-                            logger.info(f"Step 1: Running primary database update for local_server via LibrarySyncService")
+                            scan_mode = kwargs.get("scan_mode") or ("full_rebuild" if full_refresh else "incremental")
+                            logger.info(f"Step 1: Running primary database update for local_server via LibrarySyncService (mode={scan_mode})")
                             worker = LibrarySyncService()
-                            worker.sync_library()
+                            worker.sync_library(scan_mode=scan_mode)
                             total_successful_operations += 1
                             local_success = True
                 except Exception as e:
