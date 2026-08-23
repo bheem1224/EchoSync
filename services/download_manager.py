@@ -537,14 +537,28 @@ class DownloadManager:
                 identifiers = track_json.setdefault("identifiers", {})
                 identifiers["quality_profile_id"] = str(quality_profile_id)
 
-            # Prevent duplicate queue entries for the same track while it is in-flight
-            existing = self._find_existing_download(track_json)
+            # Prevent duplicate queue entries for the same track
+            existing = self._find_existing_download(track_json, include_failed=True)
             if existing:
                 existing_id, existing_status = existing
-                logger.info(
-                    f"Duplicate download detected (ID {existing_id}, status {existing_status}); skipping enqueue"
-                )
-                return existing_id
+                if existing_status in {"queued", "searching", "downloading", "in_progress", "paused"}:
+                    logger.info(
+                        f"Duplicate download detected (ID {existing_id}, status {existing_status}); skipping enqueue"
+                    )
+                    return existing_id
+                else:
+                    # Existing item was in failed/error state — reset and reuse instead of inserting a duplicate row
+                    existing_item = session.query(DownloadQueue).filter(DownloadQueue.id == existing_id).first()
+                    if existing_item:
+                        existing_item.status = "queued"
+                        existing_item.echo_sync_track = track_json
+                        existing_item.provider_id = None
+                        existing_item.updated_at = utc_now()
+                        session.commit()
+                        logger.info(
+                            f"Re-queueing existing failed download record ID {existing_id} for '{track.title}'"
+                        )
+                        return existing_id
 
             download = DownloadQueue(
                 sync_id=track.sync_id,
@@ -913,11 +927,12 @@ class DownloadManager:
                         viable_matches = 0
                         has_snipe_match = False
                         for cand in enriched_results:
-                            # Only count candidates whose audio format is allowed by the quality profile
-                            cand_format = None
-                            if getattr(cand, 'media', None) and len(cand.media) > 0 and getattr(cand.media[0], 'file_format', None):
-                                cand_format = cand.media[0].file_format.lower()
-                            if allowed_formats and (not cand_format or cand_format not in allowed_formats):
+                            # Verify candidate passes quality profile formats and constraints
+                            try:
+                                viable_cand = self._filter_by_formats([cand], allowed_formats, quality_profile)
+                            except TypeError:
+                                viable_cand = self._filter_by_formats([cand], allowed_formats)
+                            if not viable_cand:
                                 continue
 
                             match_res = matcher.calculate_match(target_track, cand, context="download")
@@ -972,9 +987,12 @@ class DownloadManager:
                 for priority_num, priority_formats in priority_tiers:
                     # Filter by priority formats
                     try:
-                        tier_candidates = self._filter_by_formats(provider_candidates, priority_formats, quality_profile)
+                        tier_candidates = self._filter_by_formats(provider_candidates, priority_formats, quality_profile, priority=priority_num)
                     except TypeError:
-                        tier_candidates = self._filter_by_formats(provider_candidates, priority_formats)
+                        try:
+                            tier_candidates = self._filter_by_formats(provider_candidates, priority_formats, quality_profile)
+                        except TypeError:
+                            tier_candidates = self._filter_by_formats(provider_candidates, priority_formats)
                     logger.debug(f"    Priority {priority_num}: {len(tier_candidates)} candidates match formats")
                     
                     if not tier_candidates:
@@ -1602,7 +1620,13 @@ class DownloadManager:
         sorted_tiers = sorted(priority_map.items(), key=lambda x: x[0])
         return sorted_tiers
     
-    def _filter_by_formats(self, candidates: List[EchosyncTrack], formats: List[str], quality_profile: Optional[Dict[str, Any]] = None) -> List[EchosyncTrack]:
+    def _filter_by_formats(
+        self,
+        candidates: List[EchosyncTrack],
+        formats: List[str],
+        quality_profile: Optional[Dict[str, Any]] = None,
+        priority: Optional[int] = None,
+    ) -> List[EchosyncTrack]:
         """Filter candidates by format and apply quality profile constraints."""
         if quality_profile is None:
             quality_profile = self._get_quality_profile()
@@ -1617,13 +1641,19 @@ class DownloadManager:
                     filtered.append(track)
             return filtered
         
-        # Get format configs for the requested formats
-        format_configs = {}
-        for fmt in quality_profile.get('formats', []):
-            format_type = fmt.get('type', '').lower()
-            if format_type in formats:
-                format_configs[format_type] = fmt
-        
+        # Get format configs for the requested formats (optionally filtered by priority)
+        profile_formats = quality_profile.get('formats', [])
+        if priority is not None:
+            matching_configs = [
+                fmt for fmt in profile_formats
+                if fmt.get('priority') == priority and fmt.get('type', '').lower() in formats
+            ]
+        else:
+            matching_configs = [
+                fmt for fmt in profile_formats
+                if fmt.get('type', '').lower() in formats
+            ]
+
         filtered = []
         for track in candidates:
             if not getattr(track, 'media', None):
@@ -1635,67 +1665,73 @@ class DownloadManager:
             format_type = media.file_format.lower()
             if format_type not in formats:
                 continue
-            
-            # Get format config
-            fmt_config = format_configs.get(format_type)
-            if not fmt_config:
+
+            if not matching_configs:
                 filtered.append(track)
                 continue
-            
-            # Apply size constraints
-            min_size_mb = fmt_config.get('min_size_mb', 0)
-            max_size_mb = fmt_config.get('max_size_mb', 0)
-            
-            if media.file_size_bytes:
-                size_mb = media.file_size_bytes / (1024 * 1024)
-                if min_size_mb > 0 and size_mb < min_size_mb:
+
+            # Candidate must satisfy at least one matching tier config
+            passed_tier = False
+            for fmt_config in matching_configs:
+                if fmt_config.get('type', '').lower() != format_type:
                     continue
-                if max_size_mb > 0 and size_mb > max_size_mb:
-                    continue
-            
-            # For lossless formats (FLAC, WAV, DSD), check bit depth and sample rate
-            if format_type in ['flac', 'wav', 'dsd']:
-                bit_depths = fmt_config.get('bit_depths', [])
-                sample_rates = fmt_config.get('sample_rates', [])
+
+                # Apply size constraints
+                min_size_mb = fmt_config.get('min_size_mb', 0)
+                max_size_mb = fmt_config.get('max_size_mb', 0)
                 
-                # Only enforce bit depth if profile has it configured and media has it
-                if bit_depths and media.bit_depth is not None:
-                    allowed_bd = [str(b).strip() for b in bit_depths]
-                    if str(media.bit_depth) not in allowed_bd:
+                if media.file_size_bytes:
+                    size_mb = media.file_size_bytes / (1024 * 1024)
+                    if min_size_mb > 0 and size_mb < min_size_mb:
+                        continue
+                    if max_size_mb > 0 and size_mb > max_size_mb:
                         continue
                 
-                # Only enforce sample rate if profile has it configured and media has it
-                if sample_rates and media.sample_rate is not None:
-                    sr_val = media.sample_rate
-                    sr_khz = f"{sr_val / 1000:.1f}".rstrip('0').rstrip('.')
-                    sr_hz = str(int(sr_val))
-                    allowed_sr = [str(s).strip().lower() for s in sample_rates]
-                    if sr_khz not in allowed_sr and sr_hz not in allowed_sr and str(sr_val) not in allowed_sr:
+                # For lossless formats (FLAC, WAV, DSD), check bit depth and sample rate
+                if format_type in ['flac', 'wav', 'dsd']:
+                    bit_depths = fmt_config.get('bit_depths', [])
+                    sample_rates = fmt_config.get('sample_rates', [])
+                    
+                    # Only enforce bit depth if profile has it configured and media has it
+                    if bit_depths and media.bit_depth is not None:
+                        allowed_bd = [str(b).strip() for b in bit_depths]
+                        if str(media.bit_depth) not in allowed_bd:
+                            continue
+                    
+                    # Only enforce sample rate if profile has it configured and media has it
+                    if sample_rates and media.sample_rate is not None:
+                        sr_val = media.sample_rate
+                        sr_khz = f"{sr_val / 1000:.1f}".rstrip('0').rstrip('.')
+                        sr_hz = str(int(sr_val))
+                        allowed_sr = [str(s).strip().lower() for s in sample_rates]
+                        if sr_khz not in allowed_sr and sr_hz not in allowed_sr and str(sr_val) not in allowed_sr:
+                            continue
+
+                # For lossy formats (MP3, AAC, OGG, etc.), check bitrate
+                elif format_type in ['mp3', 'aac', 'ogg', 'm4a', 'opus', 'vorbis']:
+                    min_bitrate_kbps = fmt_config.get('min_bitrate', 0)
+                    max_bitrate_kbps = fmt_config.get('max_bitrate', 999999)
+                    
+                    # Extract bitrate from media or identifiers
+                    bitrate_kbps = media.bitrate or 0
+                    if not bitrate_kbps and track.identifiers and 'bitrate' in track.identifiers:
+                        bitrate_kbps = track.identifiers.get('bitrate', 0) or 0
+                    
+                    # Convert to kbps if in bps
+                    if bitrate_kbps > 10000:
+                        bitrate_kbps = bitrate_kbps // 1000
+                    
+                    if min_bitrate_kbps > 0 and bitrate_kbps > 0 and bitrate_kbps < min_bitrate_kbps:
                         continue
-            
-            # For lossy formats (MP3, AAC, OGG, etc.), check bitrate
-            elif format_type in ['mp3', 'aac', 'ogg', 'm4a', 'opus', 'vorbis']:
-                min_bitrate_kbps = fmt_config.get('min_bitrate', 0)
-                max_bitrate_kbps = fmt_config.get('max_bitrate', 999999)
-                
-                # Extract bitrate from media or identifiers
-                bitrate_kbps = media.bitrate or 0
-                if not bitrate_kbps and track.identifiers and 'bitrate' in track.identifiers:
-                    bitrate_kbps = track.identifiers.get('bitrate', 0) or 0
-                
-                # Convert to kbps if in bps
-                if bitrate_kbps > 10000:
-                    bitrate_kbps = bitrate_kbps // 1000
-                
-                if min_bitrate_kbps > 0 and bitrate_kbps > 0 and bitrate_kbps < min_bitrate_kbps:
-                    logger.debug(f"Rejecting {format_type} ({bitrate_kbps}kbps) - below minimum {min_bitrate_kbps}kbps")
-                    continue
-                
-                if max_bitrate_kbps > 0 and bitrate_kbps > 0 and bitrate_kbps > max_bitrate_kbps:
-                    logger.debug(f"Rejecting {format_type} ({bitrate_kbps}kbps) - above maximum {max_bitrate_kbps}kbps")
-                    continue
-            
-            filtered.append(track)
+                    
+                    if max_bitrate_kbps > 0 and bitrate_kbps > 0 and bitrate_kbps > max_bitrate_kbps:
+                        continue
+
+                passed_tier = True
+                break
+
+            if passed_tier:
+                filtered.append(track)
         
         # Sort by size (prefer larger files for better quality)
         filtered.sort(
@@ -1733,32 +1769,41 @@ class DownloadManager:
                 if provider_id:
                     download.provider_id = provider_id
 
-    def _find_existing_download(self, track_json: Dict[str, Any]) -> Optional[Tuple[int, str]]:
-        """Return an existing active download (id, status) matching the normalized track signature."""
+    def _is_signature_match(self, sig1: Tuple[str, str, str, Optional[int]], sig2: Tuple[str, str, str, Optional[int]]) -> bool:
+        """Check if two track signatures match with duration tolerance."""
+        artist1, title1, album1, dur1 = sig1
+        artist2, title2, album2, dur2 = sig2
+
+        if not artist1 or not artist2 or not title1 or not title2:
+            return False
+
+        if artist1.lower() != artist2.lower() or title1.lower() != title2.lower():
+            return False
+
+        if dur1 is not None and dur2 is not None:
+            if abs(dur1 - dur2) > 5000:
+                return False
+
+        return True
+
+    def _find_existing_download(self, track_json: Dict[str, Any], include_failed: bool = False) -> Optional[Tuple[int, str]]:
+        """Return an existing active or failed download (id, status) matching the normalized track signature."""
         signature = self._normalize_track_signature(track_json)
-        if not any(signature):
+        if not signature[0] or not signature[1]:
             return None
 
-        active_states = {"queued", "searching", "downloading"}
+        active_states = {"queued", "searching", "downloading", "in_progress", "paused"}
         with self.work_db.session_scope() as session:
-            offset = 0
-            batch_size = 25
-            while True:
-                items = (
-                    session.query(DownloadQueue)
-                    .filter(DownloadQueue.status.in_(active_states))
-                    .order_by(DownloadQueue.id.asc())
-                    .offset(offset)
-                    .limit(batch_size)
-                    .all()
-                )
-                if not items:
-                    break
-                for item in items:
-                    other_sig = self._normalize_track_signature(item.echo_sync_track or {})
-                    if signature == other_sig:
-                        return item.id, item.status
-                offset += batch_size
+            query = session.query(DownloadQueue)
+            if not include_failed:
+                query = query.filter(DownloadQueue.status.in_(active_states))
+
+            # Query newest first so we match the most recent record
+            items = query.order_by(DownloadQueue.id.desc()).all()
+            for item in items:
+                other_sig = self._normalize_track_signature(item.echo_sync_track or {})
+                if self._is_signature_match(signature, other_sig):
+                    return item.id, item.status
         return None
 
     def _normalize_track_signature(self, track_json: Dict[str, Any]) -> Tuple[str, str, str, Optional[int]]:

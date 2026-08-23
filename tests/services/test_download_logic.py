@@ -55,6 +55,40 @@ class TestDownloadManagerLogic:
                 # 3. Assert: Result should be 0 (skipped) and queue size 0
                 assert result_id == 0
 
+    def test_queue_download_deduplicates_failed_tracks(self, mock_db, mock_work_db):
+        """Verify that queuing a track with an existing failed entry re-queues and reuses the record."""
+        manager = DownloadManager.get_instance()
+        manager.db = mock_db
+        manager.work_db = mock_work_db
+
+        track_to_download = EchosyncTrack(
+            sync_id=gen_id(),
+            raw_title="Failed Track",
+            artist_name="The Artist",
+            album_title="Some Album"
+        )
+
+        with mock_work_db.session_scope() as session:
+            failed_entry = DownloadQueue(
+                sync_id=track_to_download.sync_id,
+                echo_sync_track=track_to_download.to_dict(),
+                status="failed_terminal",
+            )
+            session.add(failed_entry)
+            session.commit()
+            original_id = failed_entry.id
+
+        with patch('services.download_manager.get_database', return_value=mock_db):
+            with patch('services.download_manager.get_working_database', return_value=mock_work_db):
+                result_id = manager.queue_download(track_to_download)
+                assert result_id == original_id
+
+        with mock_work_db.session_scope() as session:
+            items = session.query(DownloadQueue).all()
+            assert len(items) == 1
+            assert items[0].id == original_id
+            assert items[0].status == "queued"
+
     def test_startup_purge_removes_existing(self, mock_db, mock_work_db):
         """Verify that startup purge removes queued items that exist in library."""
         manager = DownloadManager.get_instance()
