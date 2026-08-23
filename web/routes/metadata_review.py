@@ -404,12 +404,100 @@ def _build_track_from_metadata(file_path: Path, metadata: Dict[str, Any]):
     return track
 
 
-def _import_single_file(file_path: Path, metadata: Dict[str, Any]) -> int:
+def _import_single_file(file_path: Path, metadata: Dict[str, Any], old_file_path: Optional[Path] = None) -> int:
     db = get_database()
-    track = _build_track_from_metadata(file_path, metadata)
-    from core.database.repositories.track_repo import bulk_upsert_tracks
+    from database import _canonicalize_path
+    from database.music_database import LocalMedia, Track, AudioFingerprint
+    from core.database.repositories.track_repo import TrackRepository
+    from core.matching_engine.text_utils import normalize_title
+
+    canonical_new_path = _canonicalize_path(str(file_path))
+    paths_to_check = [canonical_new_path]
+    if old_file_path:
+        paths_to_check.append(_canonicalize_path(str(old_file_path)))
+
+    track_dto = _build_track_from_metadata(file_path, metadata)
+
     with db.session_scope() as session:
-        return bulk_upsert_tracks(session, [track])
+        # Check if this physical file was already indexed in music_library.db under either path
+        existing_lm = (
+            session.query(LocalMedia)
+            .filter(LocalMedia.file_path.in_(paths_to_check))
+            .first()
+        )
+
+        if existing_lm:
+            # 1. Update file_path on existing LocalMedia record
+            existing_lm.file_path = canonical_new_path
+
+            # 2. Update existing Track record in place if linked
+            if existing_lm.track_id:
+                existing_track = session.get(Track, existing_lm.track_id)
+                if existing_track:
+                    # Resolve new Artist and Album entities in DB
+                    TrackRepository.resolve_artists_and_albums(session, [track_dto])
+
+                    if track_dto.title:
+                        existing_track.title = track_dto.title
+                        existing_track.normalized_title = normalize_title(track_dto.title)
+                    if track_dto.sort_title:
+                        existing_track.sort_title = track_dto.sort_title
+                    if track_dto.edition is not None:
+                        existing_track.edition = track_dto.edition
+                    if track_dto.artist_id:
+                        existing_track.artist_id = track_dto.artist_id
+                    if track_dto.album_id is not None:
+                        existing_track.album_id = track_dto.album_id
+                    if track_dto.duration:
+                        existing_track.duration = track_dto.duration
+                    if track_dto.track_number is not None:
+                        existing_track.track_number = track_dto.track_number
+                    if track_dto.disc_number is not None:
+                        existing_track.disc_number = track_dto.disc_number
+                    if track_dto.musicbrainz_id:
+                        existing_track.musicbrainz_id = track_dto.musicbrainz_id
+                    if track_dto.isrc:
+                        existing_track.isrc = track_dto.isrc
+
+                    # Sync multi-artist associations
+                    associations = getattr(track_dto, "_resolved_artist_associations", None)
+                    if not associations and track_dto.artist_id:
+                        associations = [(track_dto.artist_id, "primary", 0)]
+                    if associations:
+                        from database.music_database import TrackArtist
+                        from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+                        for a_id, role, pos in associations:
+                            ta_stmt = sqlite_insert(TrackArtist).values({
+                                "track_id": existing_track.id,
+                                "artist_id": a_id,
+                                "role": role,
+                                "position": pos,
+                            })
+                            ta_upsert = ta_stmt.on_conflict_do_update(
+                                index_elements=["track_id", "artist_id", "role"],
+                                set_={"position": ta_stmt.excluded.position},
+                            )
+                            session.execute(ta_upsert)
+
+                    # If fingerprint exists, attach or update AudioFingerprint
+                    if track_dto.fingerprint:
+                        existing_fp = session.query(AudioFingerprint).filter_by(media_id=existing_lm.media_id).first()
+                        if existing_fp:
+                            existing_fp.chromaprint = track_dto.fingerprint
+                            if track_dto.acoustid_id:
+                                existing_fp.acoustid_id = track_dto.acoustid_id
+                        else:
+                            session.add(AudioFingerprint(
+                                media_id=existing_lm.media_id,
+                                chromaprint=track_dto.fingerprint,
+                                acoustid_id=track_dto.acoustid_id,
+                            ))
+
+                    session.flush()
+                    return 1
+
+        # Fallback: file is brand new to the library -> bulk upsert
+        return TrackRepository.bulk_upsert_tracks(session, [track_dto])
       
 def _normalize_duration_seconds(metadata: Dict[str, Any], file_path: Path) -> Optional[int]:
     duration = _coerce_int(metadata.get("duration"))
@@ -742,8 +830,8 @@ def approve_review_queue_item(task_id: int, payload: Optional[ApproveReviewQueue
                                     mbid=musicbrainz_id
                                 )
 
-                        # 6. Create the final LocalMedia and Track rows in music_library.db (atomic import)
-                        _import_single_file(destination_path, metadata_to_tag)
+                        # 6. Create or update the final LocalMedia and Track rows in music_library.db (atomic import)
+                        _import_single_file(destination_path, metadata_to_tag, old_file_path=file_path_obj)
 
                     # 7. Deletion of the ReviewTask from working.db
                     with working_db.session_scope() as w_session:

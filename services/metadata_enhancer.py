@@ -948,10 +948,10 @@ class RetroactiveEnhancer:
         import re
         return re.sub(r'[<>:"/\\|?*\x00-\x1f]', '', filename).strip()
 
-    def enhance_library_metadata(self, batch_size=50, check_all_files: bool = False) -> None:
+    def enhance_library_metadata(self, batch_size=50, check_all_files: bool = False, limit: Optional[int] = None) -> None:
         """Retroactive metadata enhancer following a Local-First, highly efficient 5-Step Pipeline.
 
-        Loops through batches until no more tracks require enhancement. Each batch is
+        Loops through batches until no more tracks require enhancement or limit is reached. Each batch is
         committed in its own session so memory stays flat even on large libraries.
         Adheres strictly to the canonical EchosyncTrack model with nested EchosyncMedia objects.
         """
@@ -978,13 +978,25 @@ class RetroactiveEnhancer:
 
         required_keys = hook_manager.apply_filters('register_metadata_requirements', [])
         for _iteration in range(MAX_ITERATIONS):
+            if limit is not None and total_processed >= limit:
+                logger.info("Reached target enhancement limit of %d tracks. Halting.", limit)
+                break
+
+            current_batch_size = (
+                min(batch_size, limit - total_processed)
+                if limit is not None
+                else batch_size
+            )
+            if current_batch_size <= 0:
+                break
+
             # Step 1: Select tracks that still need work in a short session
             track_items = []
 
             with db.session_scope() as session:
                 try:
                     from core.database.repositories.track_repo import TrackRepository
-                    tracks_to_process = TrackRepository.get_tracks_for_enhancement(session, batch_size, check_all_files)
+                    tracks_to_process = TrackRepository.get_tracks_for_enhancement(session, current_batch_size, check_all_files)
                 except OperationalError as _oe:
                     if "database is locked" in str(_oe).lower():
                         logger.critical(
@@ -1001,8 +1013,8 @@ class RetroactiveEnhancer:
                     return
 
                 logger.info(
-                    "Enhancement pass %d: processing %d tracks (total so far: %d).",
-                    _iteration + 1, len(tracks_to_process), total_processed,
+                    "Enhancement pass %d: processing %d tracks (total so far: %d, limit: %s).",
+                    _iteration + 1, len(tracks_to_process), total_processed, str(limit) if limit is not None else "None",
                 )
 
                 # Extract into canonical EchosyncTrack domain objects
@@ -1089,13 +1101,48 @@ class RetroactiveEnhancer:
                         if tag_isrc and not found_isrc:
                             found_isrc = tag_isrc
 
-                        # Check if artist is VA and can be fixed from tag
-                        if not item['metadata_status'].get('artist_fixed_from_tags'):
-                            tag_artist = file_tags.get("artist")
-                            if tag_artist and t_track.artist_name and t_track.artist_name.lower().startswith("various artist"):
-                                t_track.artist_name = tag_artist
+                        # Extract artist if missing, unknown, or Various Artists
+                        tag_artist = file_tags.get("artist")
+                        if tag_artist and tag_artist.strip() and not tag_artist.strip().lower().startswith("unknown"):
+                            if not t_track.artist_name or t_track.artist_name.strip().lower().startswith(("unknown", "various artist")):
+                                t_track.artist_name = tag_artist.strip()
                                 item['metadata_status']['artist_fixed_from_tags'] = True
                                 item['metadata_changed'] = True
+
+                        # Extract album if missing or unknown
+                        tag_album = file_tags.get("album")
+                        if tag_album and tag_album.strip() and not tag_album.strip().lower().startswith("unknown"):
+                            if not t_track.album_title or t_track.album_title.strip().lower().startswith("unknown"):
+                                t_track.album_title = tag_album.strip()
+                                item['metadata_status']['album_fixed_from_tags'] = True
+                                item['metadata_changed'] = True
+
+                        # Extract title if missing or unknown
+                        tag_title = file_tags.get("title")
+                        if tag_title and tag_title.strip() and not tag_title.strip().lower().startswith("unknown"):
+                            if not t_track.title or t_track.title.strip().lower().startswith("unknown"):
+                                t_track.title = tag_title.strip()
+                                item['metadata_status']['title_fixed_from_tags'] = True
+                                item['metadata_changed'] = True
+
+                        # Fallback to Directory Path Structure if artist or album is still unknown
+                        # e.g. /data/library/{Artist}/{Album}/{Track}.flac
+                        if (not t_track.artist_name or t_track.artist_name.strip().lower().startswith("unknown")) or (not t_track.album_title or t_track.album_title.strip().lower().startswith("unknown")):
+                            parts = local_path.parts
+                            if len(parts) >= 3:
+                                parent_album = local_path.parent.name
+                                parent_artist = local_path.parent.parent.name
+                                non_artist_names = {"library", "music", "downloads", "unknown artist", "unknown", "media", "data", "music_library"}
+                                if parent_artist and parent_artist.lower() not in non_artist_names:
+                                    if not t_track.artist_name or t_track.artist_name.strip().lower().startswith("unknown"):
+                                        t_track.artist_name = parent_artist
+                                        item['metadata_status']['artist_fixed_from_path'] = True
+                                        item['metadata_changed'] = True
+                                if parent_album and parent_album.lower() not in non_artist_names:
+                                    if not t_track.album_title or t_track.album_title.strip().lower().startswith("unknown"):
+                                        t_track.album_title = parent_album
+                                        item['metadata_status']['album_fixed_from_path'] = True
+                                        item['metadata_changed'] = True
 
                     if found_mbid:
                         t_track.musicbrainz_id = found_mbid
@@ -1288,6 +1335,13 @@ class RetroactiveEnhancer:
 
             # Step 6: Commit the batch updates in a new short session
             with db.session_scope() as session:
+                from core.database.repositories.track_repo import TrackRepository
+                from core.matching_engine.text_utils import normalize_title
+
+                changed_tracks = [res['track'] for res in results_to_commit if res.get('metadata_changed')]
+                if changed_tracks:
+                    TrackRepository.resolve_artists_and_albums(session, changed_tracks)
+
                 for res in results_to_commit:
                     track = session.get(Track, res['id'])
                     if not track:
@@ -1302,11 +1356,17 @@ class RetroactiveEnhancer:
                     if t_track.isrc:
                         track.isrc = t_track.isrc
 
+                    if res.get('metadata_changed'):
+                        if t_track.title:
+                            track.title = t_track.title
+                            track.normalized_title = normalize_title(t_track.title)
+                        if getattr(t_track, 'artist_id', None):
+                            track.artist_id = t_track.artist_id
+                        if getattr(t_track, 'album_id', None):
+                            track.album_id = t_track.album_id
+
                     track.metadata_status = res['metadata_status']
                     flag_modified(track, "metadata_status")
-
-                    if res['metadata_status'].get('artist_fixed_from_tags') and track.artist:
-                        track.artist.name = t_track.artist_name
 
                     # Save new fingerprints or update existing acoustid_ids for all associated media rows
                     if track.media_files:

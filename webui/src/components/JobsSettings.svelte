@@ -12,6 +12,10 @@
   let forceScan = false;
   let showDbUpdateSettings = false;
   let dbScanMode = 'incremental';
+  let showEnhanceSettings = false;
+  let enhanceBatchSize = 50;
+  let enhanceLimit = '';
+  let enhanceCheckAll = false;
 
   // Category definitions
   const categories = {
@@ -123,8 +127,17 @@
         payload.scan_mode = dbScanMode;
         payload.params = { scan_mode: dbScanMode };
       }
+      if (jobName === 'retroactive_metadata_enhancement' || jobName === 'metadata_enhancement') {
+        payload.params = {
+          batch_size: enhanceBatchSize ? parseInt(enhanceBatchSize) : 50,
+          limit: enhanceLimit ? parseInt(enhanceLimit) : null,
+          check_all_files: enhanceCheckAll
+        };
+      }
       await apiClient.post('/system/jobs/run', payload);
-      const modeSuffix = jobName === 'database_update' && dbScanMode !== 'incremental' ? ` (${dbScanMode})` : '';
+      const modeSuffix = jobName === 'database_update' && dbScanMode !== 'incremental' 
+        ? ` (${dbScanMode})` 
+        : (jobName === 'retroactive_metadata_enhancement' && enhanceLimit ? ` (limit: ${enhanceLimit})` : '');
       feedback.addToast(`Job "${jobName}" started${modeSuffix}`, 'success');
       await loadJobs(); // Refresh to show updated status
     } catch (error) {
@@ -393,6 +406,66 @@
                                   <span style="font-weight: 500; color: #f87171;">Full Rebuild</span>
                                   <span style="font-size: 11px; color: var(--muted); line-height: 1.2;">Clears music library tables and runs cold scan</span>
                                 </div>
+                              </label>
+                            </div>
+                          {/if}
+                        </div>
+                      {:else if job.name === 'retroactive_metadata_enhancement' || job.name === 'metadata_enhancement'}
+                        <div style="position: relative; display: flex; align-items: center; gap: 4px;">
+                          <button
+                            class="btn-action active:scale-95 transition-all duration-200"
+                            on:click={() => runJob(job.name)}
+                            disabled={job.running}
+                            title={job.running ? 'Job is already running' : 'Run now'}
+                          >
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                              <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                            </svg>
+                            {job.running ? 'Running...' : 'Run'}
+                          </button>
+                          
+                          <button
+                            class="btn-action btn-cog active:scale-95 transition-all duration-200"
+                            on:click={() => showEnhanceSettings = !showEnhanceSettings}
+                            title="Enhancement parameters"
+                            style="padding: 6px;"
+                          >
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                              <circle cx="12" cy="12" r="3"></circle>
+                              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                            </svg>
+                          </button>
+                          
+                          {#if showEnhanceSettings}
+                            <div class="job-settings-dropdown" style="min-width: 270px; display: flex; flex-direction: column; gap: 10px;">
+                              <div style="font-size: 11px; font-weight: 600; text-transform: uppercase; color: var(--muted); padding-bottom: 4px; border-bottom: 1px solid rgba(255,255,255,0.08);">
+                                Enhancement Options
+                              </div>
+                              <div style="display: flex; flex-direction: column; gap: 4px;">
+                                <label style="font-size: 11px; color: var(--text); font-weight: 500;">Batch Size</label>
+                                <input
+                                  type="number"
+                                  bind:value={enhanceBatchSize}
+                                  min="1"
+                                  max="500"
+                                  class="interval-input"
+                                  style="width: 100%; border-radius: 6px; padding: 4px 8px;"
+                                />
+                              </div>
+                              <div style="display: flex; flex-direction: column; gap: 4px;">
+                                <label style="font-size: 11px; color: var(--text); font-weight: 500;">Item Limit (Test Cap)</label>
+                                <input
+                                  type="number"
+                                  bind:value={enhanceLimit}
+                                  min="1"
+                                  placeholder="e.g. 1 or 5 (blank for all)"
+                                  class="interval-input"
+                                  style="width: 100%; border-radius: 6px; padding: 4px 8px;"
+                                />
+                              </div>
+                              <label class="dropdown-item" style="margin-top: 2px;">
+                                <input type="checkbox" bind:checked={enhanceCheckAll} style="cursor: pointer;" />
+                                <span style="font-size: 12px;">Check All Tracks (Force Pass)</span>
                               </label>
                             </div>
                           {/if}

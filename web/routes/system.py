@@ -829,9 +829,9 @@ async def preview_rename(request: Request):
 async def trigger_metadata_enhancement(request: Request):
     """Manually kick off a retroactive metadata enhancement batch.
 
-    Optional JSON body: { "batch_size": <int> }  (default 100)
+    Optional JSON body: { "batch_size": <int>, "limit": <int>, "check_all_files": <bool> }
 
-    Returns JSON: { "status": "ok", "batch_size": <int> }
+    Returns JSON: { "status": "ok", "batch_size": <int>, "limit": <int> }
     """
     try:
         try:
@@ -839,8 +839,11 @@ async def trigger_metadata_enhancement(request: Request):
         except Exception:
             body = {}
         size = int(body.get("batch_size", 100))
-        get_metadata_enhancer().enhance_library_metadata(batch_size=size)
-        return {"status": "ok", "batch_size": size}
+        limit_val = body.get("limit")
+        limit = int(limit_val) if limit_val is not None else None
+        check_all = bool(body.get("check_all_files", False))
+        get_metadata_enhancer().enhance_library_metadata(batch_size=size, check_all_files=check_all, limit=limit)
+        return {"status": "ok", "batch_size": size, "limit": limit}
     except Exception as exc:
         logger.error("Manual enhance trigger failed: %s", exc, exc_info=True)
         return {"error": "Manual metadata enhancement failed"}

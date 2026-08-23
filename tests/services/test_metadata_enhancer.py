@@ -260,3 +260,189 @@ def test_retroactive_enhancer_falls_back_to_text_on_acoustid_miss(monkeypatch, t
         assert t.musicbrainz_id == "mbid-bach-brandenburg-3"
         assert t.isrc == "DE1234567890"
         assert t.metadata_status.get("enhanced") is True
+
+
+def test_get_tracks_for_enhancement_prioritizes_bad_metadata(tmp_path):
+    """Verify TrackRepository.get_tracks_for_enhancement prioritizes Unknown Artist / Unknown Album over normal tracks."""
+    from database.music_database import MusicDatabase, Track, Artist, Album, LocalMedia, Base
+    from core.database.repositories.track_repo import TrackRepository
+
+    db_path = str(tmp_path / "test_priority.db")
+    db = MusicDatabase(db_path)
+    Base.metadata.create_all(db.engine)
+
+    with db.session_scope() as session:
+        a_known = Artist(name="Daft Punk")
+        a_unknown = Artist(name="Unknown Artist")
+        session.add_all([a_known, a_unknown])
+        session.flush()
+
+        alb_known = Album(title="Discovery", artist_id=a_known.id)
+        alb_unknown = Album(title="Unknown Album", artist_id=a_known.id)
+        session.add_all([alb_known, alb_unknown])
+        session.flush()
+
+        # Track 1: Normal track missing MBID
+        t1 = Track(title="One More Time", artist_id=a_known.id, album_id=alb_known.id, musicbrainz_id=None)
+        # Track 2: Unknown Artist
+        t2 = Track(title="2 Days Into College", artist_id=a_unknown.id, album_id=alb_known.id, musicbrainz_id=None)
+        # Track 3: Unknown Album
+        t3 = Track(title="Aerodynamic", artist_id=a_known.id, album_id=alb_unknown.id, musicbrainz_id=None)
+        # Track 4: Already enhanced track
+        t4 = Track(title="Harder Better Faster Stronger", artist_id=a_known.id, album_id=alb_known.id, musicbrainz_id="mbid-hbfs")
+
+        session.add_all([t1, t2, t3, t4])
+        session.flush()
+
+        m1 = LocalMedia(track_id=t1.id, file_path="/music/t1.flac", file_format="flac", media_id="m1")
+        m2 = LocalMedia(track_id=t2.id, file_path="/music/Aimee Carty/2 Days Into College/01.flac", file_format="flac", media_id="m2")
+        m3 = LocalMedia(track_id=t3.id, file_path="/music/t3.flac", file_format="flac", media_id="m3")
+        m4 = LocalMedia(track_id=t4.id, file_path="/music/t4.flac", file_format="flac", media_id="m4")
+        session.add_all([m1, m2, m3, m4])
+
+    with db.session_scope() as session:
+        results = TrackRepository.get_tracks_for_enhancement(session, batch_size=10, check_all_files=False)
+        # Priority 1: t2 (Unknown Artist) must be first
+        # Priority 2: t3 (Unknown Album) must be second
+        # Priority 5: t1 (Missing MBID) must be third
+        assert len(results) == 3
+        assert results[0].id == t2.id
+        assert results[1].id == t3.id
+        assert results[2].id == t1.id
+
+
+def test_enhance_library_metadata_respects_limit(monkeypatch, tmp_path):
+    """Verify RetroactiveEnhancer.enhance_library_metadata processes only up to limit tracks."""
+    from database.music_database import MusicDatabase, Track, Artist, LocalMedia, Base
+    from core.nexus_framework.plugin_loader import PluginRegistry
+
+    db_path = str(tmp_path / "test_limit.db")
+    db = MusicDatabase(db_path)
+    Base.metadata.create_all(db.engine)
+
+    f1 = tmp_path / "track1.flac"
+    f2 = tmp_path / "track2.flac"
+    f3 = tmp_path / "track3.flac"
+    f1.write_bytes(b"dummy")
+    f2.write_bytes(b"dummy")
+    f3.write_bytes(b"dummy")
+
+    with db.session_scope() as session:
+        artist = Artist(name="Artist Test")
+        session.add(artist)
+        session.flush()
+
+        t1 = Track(title="Song 1", artist_id=artist.id, duration=200000)
+        t2 = Track(title="Song 2", artist_id=artist.id, duration=200000)
+        t3 = Track(title="Song 3", artist_id=artist.id, duration=200000)
+        session.add_all([t1, t2, t3])
+        session.flush()
+
+        m1 = LocalMedia(track_id=t1.id, file_path=str(f1), file_format="flac", media_id="med_1")
+        m2 = LocalMedia(track_id=t2.id, file_path=str(f2), file_format="flac", media_id="med_2")
+        m3 = LocalMedia(track_id=t3.id, file_path=str(f3), file_format="flac", media_id="med_3")
+        session.add_all([m1, m2, m3])
+
+    monkeypatch.setattr("database.music_database.get_database", lambda: db)
+    monkeypatch.setattr("database.get_database", lambda: db)
+    monkeypatch.setattr("services.metadata_enhancer._tagging_write", lambda p, t: None)
+
+    import echosync_core
+    monkeypatch.setattr(echosync_core, "extract_metadata", lambda p: {"title": "Song", "artist": "Artist Test"})
+
+    mock_mb = MagicMock()
+    mock_mb.capabilities = type("Caps", (), {"supports_batching": False})()
+    mock_mb.get_metadata.return_value = {"isrc": "US123", "mbid": "mbid-mock"}
+    monkeypatch.setattr(PluginRegistry, "get_plugin", lambda name: mock_mb if name == "musicbrainz" else None)
+
+    mock_fp = MagicMock()
+    mock_fp.resolve_fingerprint_details.return_value = {"mbids": ["mbid-mock"], "acoustid_id": "aid-mock"}
+    enhancer = RetroactiveEnhancer()
+    monkeypatch.setattr(enhancer, "_get_plugin", lambda cap, **kwargs: mock_fp)
+
+    from core.matching_engine.fingerprinting import FingerprintGenerator
+    monkeypatch.setattr(FingerprintGenerator, "generate", lambda p: "chromaprint_dummy")
+
+    # Run with limit = 1
+    enhancer.enhance_library_metadata(batch_size=5, limit=1, check_all_files=True)
+
+    with db.session_scope() as session:
+        enhanced_count = session.query(Track).filter(Track.musicbrainz_id == "mbid-mock").count()
+        assert enhanced_count == 1
+
+
+def test_enhance_library_metadata_recovers_artist_and_album_from_path(monkeypatch, tmp_path):
+    """Verify RetroactiveEnhancer recovers Unknown Artist and Unknown Album from folder path structure."""
+    from database.music_database import MusicDatabase, Track, Artist, Album, LocalMedia, Base
+    from core.nexus_framework.plugin_loader import PluginRegistry
+
+    db_path = str(tmp_path / "test_path_recovery.db")
+    db = MusicDatabase(db_path)
+    Base.metadata.create_all(db.engine)
+
+    # Path structure: tmp_path / "Jennifer Lopez" / "Ain't Your Mama" / "01 - Ain't Your Mama.flac"
+    song_dir = tmp_path / "Jennifer Lopez" / "Ain't Your Mama"
+    song_dir.mkdir(parents=True, exist_ok=True)
+    flac_file = song_dir / "01 - Ain't Your Mama.flac"
+    flac_file.write_bytes(b"dummy audio data")
+
+    with db.session_scope() as session:
+        a_unk = Artist(name="Unknown Artist")
+        session.add(a_unk)
+        session.flush()
+
+        alb_unk = Album(title="Unknown Album", artist_id=a_unk.id)
+        session.add(alb_unk)
+        session.flush()
+
+        track = Track(title="Ain't Your Mama", artist_id=a_unk.id, album_id=alb_unk.id)
+        session.add(track)
+        session.flush()
+
+        media = LocalMedia(track_id=track.id, file_path=str(flac_file), file_format="flac", media_id="jlo_media_01")
+        session.add(media)
+
+    monkeypatch.setattr("database.music_database.get_database", lambda: db)
+    monkeypatch.setattr("database.get_database", lambda: db)
+
+    written_tags = []
+    monkeypatch.setattr("services.metadata_enhancer._tagging_write", lambda p, tags: written_tags.append((p, tags)))
+
+    import echosync_core
+    # Mock extract_metadata returning no artist/album tags (simulating bad initial metadata)
+    monkeypatch.setattr(echosync_core, "extract_metadata", lambda p: {"title": "Ain't Your Mama"})
+
+    mock_mb = MagicMock()
+    mock_mb.capabilities = type("Caps", (), {"supports_batching": False})()
+    
+    jlo_track = EchosyncTrack(
+        raw_title="Ain't Your Mama",
+        artist_name="Jennifer Lopez",
+        album_title="Ain't Your Mama",
+        musicbrainz_id="mbid-jlo-aint-your-mama",
+        isrc="USJLO1234567",
+        duration=218000,
+    )
+    mock_mb.search_metadata.return_value = [jlo_track]
+    mock_mb.get_metadata.return_value = jlo_track
+    monkeypatch.setattr(PluginRegistry, "get_plugin", lambda name: mock_mb if name == "musicbrainz" else None)
+
+    mock_fp = MagicMock()
+    mock_fp.resolve_fingerprint_details.return_value = {"mbids": [], "acoustid_id": None}
+    enhancer = RetroactiveEnhancer()
+    monkeypatch.setattr(enhancer, "_get_plugin", lambda cap, **kwargs: mock_fp)
+
+    from core.matching_engine.fingerprinting import FingerprintGenerator
+    monkeypatch.setattr(FingerprintGenerator, "generate", lambda p: "cp_jlo_hash")
+
+    # Run enhancer with limit=1
+    enhancer.enhance_library_metadata(batch_size=1, limit=1, check_all_files=False)
+
+    with db.session_scope() as session:
+        t = session.query(Track).filter_by(title="Ain't Your Mama").first()
+        assert t.musicbrainz_id == "mbid-jlo-aint-your-mama"
+        assert t.artist.name == "Jennifer Lopez"
+        assert t.album.title == "Ain't Your Mama"
+        assert t.artist.name != "Unknown Artist"
+        assert t.album.title != "Unknown Album"
+

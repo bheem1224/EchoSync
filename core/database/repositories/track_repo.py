@@ -130,8 +130,46 @@ class TrackRepository:
     def get_tracks_for_enhancement(
         cls, session: Session, batch_size: int = 100, check_all_files: bool = False
     ) -> List[Track]:
-        query = session.query(Track).join(LocalMedia, LocalMedia.track_id == Track.id)
-        query = query.options(joinedload(Track.media_files))
+        from sqlalchemy import case
+
+        query = (
+            session.query(Track)
+            .join(LocalMedia, LocalMedia.track_id == Track.id)
+            .join(Artist, Track.artist_id == Artist.id)
+            .outerjoin(Album, Track.album_id == Album.id)
+        )
+        query = query.options(
+            joinedload(Track.media_files),
+            joinedload(Track.artist),
+            joinedload(Track.album),
+        )
+
+        # Multi-tiered priority order:
+        # 1. Unknown Artist / Missing Artist
+        # 2. Unknown Album / Missing Album
+        # 3. Unknown Title / Missing Title
+        # 4. Various Artists without resolved compilation performer
+        # 5. Missing MusicBrainz ID (None)
+        # 6. Failed MusicBrainz ID ('NOT_FOUND')
+        # 7. Other unenhanced tracks
+        priority_case = case(
+            (or_(Artist.name.ilike('unknown artist%'), Track.artist_id.is_(None), Artist.name.is_(None)), 1),
+            (or_(Album.title.ilike('unknown album%'), Track.album_id.is_(None), Album.title.is_(None)), 2),
+            (or_(Track.title.ilike('unknown title%'), Track.title.is_(None), Track.title == ''), 3),
+            (
+                and_(
+                    Artist.name.ilike('various artist%'),
+                    func.coalesce(
+                        func.json_extract(Track.metadata_status, '$.compilation_performer_resolved'),
+                        0,
+                    ).cast(Integer) == 0,
+                ),
+                4,
+            ),
+            (Track.musicbrainz_id.is_(None), 5),
+            (Track.musicbrainz_id == "NOT_FOUND", 6),
+            else_=7,
+        )
 
         if not check_all_files:
             from core.hook_manager import hook_manager
@@ -148,7 +186,18 @@ class TrackRepository:
                     ).cast(Integer) < MAX_REATTEMPTS,
                 ),
             )
-            conditions = [needs_identification]
+            conditions = [
+                needs_identification,
+                Artist.name.ilike('unknown artist%'),
+                Track.artist_id.is_(None),
+                Artist.name.is_(None),
+                Album.title.ilike('unknown album%'),
+                Track.album_id.is_(None),
+                Album.title.is_(None),
+                Track.title.ilike('unknown title%'),
+                Track.title.is_(None),
+                Track.title == '',
+            ]
             for key in required_keys:
                 conditions.append(
                     and_(
@@ -158,14 +207,9 @@ class TrackRepository:
                     )
                 )
 
-            _va_artist_ids_subq = (
-                session.query(Artist.id)
-                .filter(Artist.name.ilike('various artist%'))
-            )
             conditions.append(
                 and_(
-                    Track.musicbrainz_id.isnot(None),
-                    Track.artist_id.in_(_va_artist_ids_subq),
+                    Artist.name.ilike('various artist%'),
                     func.coalesce(
                         func.json_extract(Track.metadata_status, '$.compilation_performer_resolved'),
                         0,
@@ -175,7 +219,7 @@ class TrackRepository:
 
             query = query.filter(or_(*conditions))
 
-        return query.limit(batch_size).all()
+        return query.order_by(priority_case.asc(), Track.id.asc()).limit(batch_size).all()
 
     # --- Core Upsert ---
 

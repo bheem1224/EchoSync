@@ -207,6 +207,13 @@ def evaluate_version_compatibility(
 
     # Source has version, candidate has no version info
     if src_fam and not cand_fam:
+        if src_fam == "remaster":
+            if context == "tier3_fallback":
+                if duration_delta_ms is not None and duration_delta_ms > 5000:
+                    return False, 0.0, f"Remaster duration mismatch ({duration_delta_ms}ms > 5000ms)"
+                return True, 1.0, "Original fallback permitted for Remaster in Tier 3"
+            return False, 0.0, f"Version mismatch: source requested '{src_v}' (remaster) but candidate has no version info"
+
         if (src_fam in studio_compatible_fams or src_fam not in non_studio_fams) and (duration_delta_ms is None or duration_delta_ms <= 5000):
             return True, 0.0, f"Studio release equivalence: '{src_v}' ≡ Original"
         return False, 0.0, f"Version mismatch: source requested '{src_v}' ({src_fam}) but candidate has no version info"
@@ -219,6 +226,13 @@ def evaluate_version_compatibility(
                     return False, 0.0, f"Deluxe Edition duration mismatch ({duration_delta_ms}ms > 10000ms)"
                 return True, 1.0, "Deluxe fallback permitted in Tier 3"
             return False, 0.0, "Deluxe candidate rejected in primary tiers"
+
+        if cand_fam == "remaster":
+            if context == "tier3_fallback":
+                if duration_delta_ms is not None and duration_delta_ms > 5000:
+                    return False, 0.0, f"Remaster duration mismatch ({duration_delta_ms}ms > 5000ms)"
+                return True, 1.0, "Remaster fallback permitted in Tier 3"
+            return False, 0.0, f"Version mismatch: source requested original, candidate is '{cand_v}'"
 
         # Extended Mix Duration Amnesty:
         # If candidate is tagged extended/club, but its duration matches within 2000ms,

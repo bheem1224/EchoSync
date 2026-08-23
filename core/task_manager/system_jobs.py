@@ -756,17 +756,17 @@ def register_user_history_sync_job(interval_seconds: int = 43200, enabled: bool 
     )
 
 
-def register_retroactive_metadata_enhancement_job(interval_seconds: int = 86400, enabled: bool = True, batch_size: int = 100, check_all_files: bool = False):
+def register_retroactive_metadata_enhancement_job(interval_seconds: int = 86400, enabled: bool = True, batch_size: int = 100, check_all_files: bool = False, limit: Optional[int] = None):
     """Register a daily job to fill in missing MusicBrainz IDs for library tracks."""
 
-    def run_metadata_enhancement(batch_size: int = 100, check_all_files: bool = False, **kwargs):
-        def _worker(batch_size, check_all_files):
+    def run_metadata_enhancement(batch_size: int = 100, check_all_files: bool = False, limit: Optional[int] = None, **kwargs):
+        def _worker(batch_size, check_all_files, limit):
             try:
                 from core.tiered_logger import get_logger
                 from services.metadata_enhancer import RetroactiveEnhancer
                 logger = get_logger("retroactive_metadata_worker")
                 logger.info("Starting scheduled retroactive metadata enhancement job (child process)")
-                RetroactiveEnhancer().enhance_library_metadata(batch_size=batch_size, check_all_files=check_all_files)
+                RetroactiveEnhancer().enhance_library_metadata(batch_size=batch_size, check_all_files=check_all_files, limit=limit)
                 logger.info("Retroactive metadata enhancement job complete")
             except Exception as e:
                 from core.tiered_logger import get_logger
@@ -777,7 +777,7 @@ def register_retroactive_metadata_enhancement_job(interval_seconds: int = 86400,
             from core.task_manager.supervisor import supervisor
             from core.task_manager.models import ProcessOwner, OwnerType
             
-            p = multiprocessing.Process(target=_worker, args=(batch_size, check_all_files), daemon=True)
+            p = multiprocessing.Process(target=_worker, args=(batch_size, check_all_files, limit), daemon=True)
             p.start()
             
             reg_id = None
