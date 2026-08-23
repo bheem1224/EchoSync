@@ -392,10 +392,9 @@
           } 
         };
         // Keep analysis modal open to show progress
-        // Fix the events_path - remove /api prefix if present since client already adds it
-        const eventsPath = response.data.events_path?.startsWith('/api') 
-          ? response.data.events_path.substring(4)
-          : response.data.events_path;
+        // Fix the events_path - remove /api/v1 or /api prefix if present since apiClient already has baseURL='/api/v1'
+        const rawEventsPath = response.data.events_path || '';
+        const eventsPath = rawEventsPath.replace(/^\/api\/v1/, '').replace(/^\/api/, '');
         startSyncEventPolling(response.data.job, eventsPath);
       } else {
         analysisError = response.data.error || 'Sync failed to start';

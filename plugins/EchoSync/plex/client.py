@@ -89,7 +89,15 @@ class PlexClient(MediaServerProvider):
         self._last_connection_attempt = 0
         self._connection_check_interval = 30
 
-        # Auto-detect active account if not provided
+        # Auto-detect active account if not provided or if provided account has no token
+        if account_id is not None:
+            try:
+                token_data = self.accounts.get_token(account_id)
+                if not token_data or not token_data.get('access_token'):
+                    account_id = None
+            except Exception:
+                account_id = None
+
         if account_id is None:
             try:
                 accounts = self.accounts.get_all()
@@ -102,9 +110,9 @@ class PlexClient(MediaServerProvider):
                         None,
                     )
                     account_id = (token_backed_account or accounts[0]).get('id')
-                    logger.info(f"No Plex account explicitly requested, defaulting to account: {account_id}")
+                    logger.info(f"Plex account resolved to: {account_id}")
             except Exception as e:
-                logger.warning(f"Failed to auto-detect Plex account: {account_id if account_id else 'None'}: {e}")
+                logger.warning(f"Failed to auto-detect Plex account: {e}")
 
         self.account_id = account_id
         self._register_health_check()
@@ -1347,32 +1355,67 @@ class PlexClient(MediaServerProvider):
     
     def _setup_connection(self):
         """Establish connection to Plex server."""
-        if not self.account_id:
-            logger.warning("No Plex account_id provided to setup connection")
-            return
-
         from core.nexus_framework.plugin_SDK import sdk
         from core.security import decrypt_string
-        
-
-
 
         # Load tokens from account_tokens securely using the SDK accounts manager
-        token_data = self.accounts.get_token(self.account_id)
+        token_data = None
+        if self.account_id:
+            try:
+                token_data = self.accounts.get_token(self.account_id)
+            except Exception:
+                token_data = None
+
         if not token_data or not token_data.get('access_token'):
+            try:
+                accounts = self.accounts.get_all()
+                for acc in accounts:
+                    t = self.accounts.get_token(acc.get('id'))
+                    if t and t.get('access_token'):
+                        token_data = t
+                        self.account_id = acc.get('id')
+                        logger.info(f"Fallback to token-backed Plex account {self.account_id}")
+                        break
+            except Exception as e:
+                logger.warning(f"Failed searching Plex accounts for token: {e}")
+
+        token = None
+        if token_data and token_data.get('access_token'):
+            try:
+                token = decrypt_string(token_data.get('access_token'))
+            except Exception as de:
+                logger.warning(f"Failed to decrypt Plex access token: {de}")
+                token = token_data.get('access_token')
+
+        if not token:
+            # Fallback to service config / secrets / legacy storage
+            token = self.config.get('token') or (hasattr(self, 'secrets') and self.secrets.get('token'))
+            if not token:
+                from core.file_handling.storage import get_storage_service
+                try:
+                    storage = get_storage_service()
+                    token = storage.get_service_config('plex', 'token')
+                except Exception:
+                    pass
+
+        if not token:
             logger.error(f"Plex token not configured for account {self.account_id}")
             return
-        token = decrypt_string(token_data.get('access_token'))
-
-
 
         # Fetch Settings from JSON (Hybrid Config approach)
         plex_config = self.config or {}
 
         base_url = plex_config.get('base_url') or plex_config.get('server_url')
         if not base_url:
-            # Fallback to explicit dot-notation just in case
             base_url = _safe_getattr(self, 'kvs', None) and (self.kvs.get('base_url') or self.kvs.get('server_url'))
+
+        if not base_url:
+            from core.file_handling.storage import get_storage_service
+            try:
+                storage = get_storage_service()
+                base_url = storage.get_service_config('plex', 'base_url') or storage.get_service_config('plex', 'server_url')
+            except Exception:
+                pass
 
         if not base_url:
             logger.warning("Plex server URL not configured")

@@ -48,7 +48,7 @@ from web.routes.media_server import router as media_server_bp
 from web.routes.webhooks import router as webhooks_bp
 from web.routes.ui_registry import router as ui_registry_bp
 from web.routes.sync import router as sync_bp
-from web.routes.playlists import router as playlists_bp, api_v1_router as playlists_v1_bp, legacy_router as playlists_legacy_bp
+from web.routes.playlists import router as playlists_bp, api_v1_router as playlists_v1_bp, legacy_router as playlists_legacy_bp, double_v1_router as playlists_double_v1_bp
 
 # Batch 2 routers
 # (These will be included once they are migrated, so we import them here but if they fail we can catch it or we'll just migrate them now)
@@ -227,6 +227,7 @@ def create_app(testing: bool = False) -> FastAPI:
     app.include_router(playlists_bp)
     app.include_router(playlists_v1_bp)
     app.include_router(playlists_legacy_bp)
+    app.include_router(playlists_double_v1_bp)
 
     # SPA Support
     custom_ui_path = config_manager.get('custom_ui_path')

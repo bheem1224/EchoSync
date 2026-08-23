@@ -55,6 +55,7 @@ logger = get_logger("playlists_api")
 router = APIRouter(prefix="/api/v1/core/playlists", tags=["Playlists"])
 api_v1_router = APIRouter(prefix="/api/v1/playlists", tags=["Playlists"])
 legacy_router = APIRouter(prefix="/api/playlists", tags=["Playlists"])
+double_v1_router = APIRouter(prefix="/api/v1/v1/core/playlists", tags=["Playlists"])
 
 # ── Semantic Substring Failsafe — safe OST filler dictionary ──────────────────
 # Words that commonly appear in longer CJK/English OST title variants but do NOT
@@ -1730,13 +1731,13 @@ def _sync_to_plex(payload, source, target, playlist_name, matches, download_miss
         })
 
         target_account_id = None
-        if str(target).isdigit():
-            target_account_id = int(target)
-        elif payload.get("target_account_id"):
+        if payload.get("target_account_id"):
             try:
                 target_account_id = int(payload.get("target_account_id"))
             except Exception:
                 pass
+        elif str(target).isdigit() and int(target) < 2000000000:
+            target_account_id = int(target)
 
         client = None
         try:
@@ -2008,7 +2009,7 @@ def sync_events(request: Request, job: Optional[str] = None, since: Optional[Uni
     }
 
 
-for extra_r in (api_v1_router, legacy_router):
+for extra_r in (api_v1_router, legacy_router, double_v1_router):
     extra_r.add_api_route("/sync/events", sync_events, methods=["GET"])
 
 
