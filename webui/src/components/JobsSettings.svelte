@@ -10,6 +10,8 @@
   let newInterval = '';
   let showAutoImportSettings = false;
   let forceScan = false;
+  let showDbUpdateSettings = false;
+  let dbScanMode = 'incremental';
 
   // Category definitions
   const categories = {
@@ -117,8 +119,13 @@
       if (jobName === 'auto_import_scan' && forceScan) {
         payload.params = { force_scan: true };
       }
+      if (jobName === 'database_update') {
+        payload.scan_mode = dbScanMode;
+        payload.params = { scan_mode: dbScanMode };
+      }
       await apiClient.post('/system/jobs/run', payload);
-      feedback.addToast(`Job "${jobName}" started`, 'success');
+      const modeSuffix = jobName === 'database_update' && dbScanMode !== 'incremental' ? ` (${dbScanMode})` : '';
+      feedback.addToast(`Job "${jobName}" started${modeSuffix}`, 'success');
       await loadJobs(); // Refresh to show updated status
     } catch (error) {
       console.error(`Failed to run job ${jobName}:`, error);
@@ -331,6 +338,61 @@
                               <label class="dropdown-item">
                                 <input type="checkbox" bind:checked={forceScan} style="cursor: pointer;" />
                                 <span>Bypass Cooldown Queue (Force Scan)</span>
+                              </label>
+                            </div>
+                          {/if}
+                        </div>
+                      {:else if job.name === 'database_update'}
+                        <div style="position: relative; display: flex; align-items: center; gap: 4px;">
+                          <button
+                            class="btn-action active:scale-95 transition-all duration-200"
+                            on:click={() => runJob(job.name)}
+                            disabled={job.running}
+                            title={job.running ? 'Job is already running' : 'Run now'}
+                          >
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                              <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                            </svg>
+                            {job.running ? 'Running...' : 'Run'}
+                          </button>
+                          
+                          <button
+                            class="btn-action btn-cog active:scale-95 transition-all duration-200"
+                            on:click={() => showDbUpdateSettings = !showDbUpdateSettings}
+                            title="Scan mode options"
+                            style="padding: 6px;"
+                          >
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                              <circle cx="12" cy="12" r="3"></circle>
+                              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                            </svg>
+                          </button>
+                          
+                          {#if showDbUpdateSettings}
+                            <div class="job-settings-dropdown" style="min-width: 270px; display: flex; flex-direction: column; gap: 8px;">
+                              <div style="font-size: 11px; font-weight: 600; text-transform: uppercase; color: var(--muted); padding-bottom: 4px; border-bottom: 1px solid rgba(255,255,255,0.08);">
+                                Library Scan Mode
+                              </div>
+                              <label class="dropdown-item" style="align-items: flex-start;">
+                                <input type="radio" name="dbScanMode" value="incremental" bind:group={dbScanMode} style="margin-top: 3px; cursor: pointer;" />
+                                <div style="display: flex; flex-direction: column; gap: 2px;">
+                                  <span style="font-weight: 500; color: var(--text);">Incremental (Default)</span>
+                                  <span style="font-size: 11px; color: var(--muted); line-height: 1.2;">Fast mtime check; scans new & modified files</span>
+                                </div>
+                              </label>
+                              <label class="dropdown-item" style="align-items: flex-start;">
+                                <input type="radio" name="dbScanMode" value="force_rescan" bind:group={dbScanMode} style="margin-top: 3px; cursor: pointer;" />
+                                <div style="display: flex; flex-direction: column; gap: 2px;">
+                                  <span style="font-weight: 500; color: var(--text);">Force Rescan</span>
+                                  <span style="font-size: 11px; color: var(--muted); line-height: 1.2;">Re-evaluates all tags without clearing tables</span>
+                                </div>
+                              </label>
+                              <label class="dropdown-item" style="align-items: flex-start;">
+                                <input type="radio" name="dbScanMode" value="full_rebuild" bind:group={dbScanMode} style="margin-top: 3px; cursor: pointer;" />
+                                <div style="display: flex; flex-direction: column; gap: 2px;">
+                                  <span style="font-weight: 500; color: #f87171;">Full Rebuild</span>
+                                  <span style="font-size: 11px; color: var(--muted); line-height: 1.2;">Clears music library tables and runs cold scan</span>
+                                </div>
                               </label>
                             </div>
                           {/if}
@@ -721,7 +783,8 @@
     user-select: none;
   }
 
-  .dropdown-item input[type="checkbox"] {
+  .dropdown-item input[type="checkbox"],
+  .dropdown-item input[type="radio"] {
     accent-color: #06b6d4;
   }
 </style>
