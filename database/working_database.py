@@ -51,8 +51,12 @@ INTENT_TYPES = (
 )
 
 
-class WorkingBase(DeclarativeBase):
-    """Base metadata class for WorkingDatabase SQLAlchemy models."""
+from core.database.models.working import (
+    WorkingBase,
+    DownloadQueue,
+    DownloadStatus,
+    DownloadIntent,
+)
 
 
 # Phase 2: The Unified Identity Merge
@@ -179,23 +183,6 @@ class ReviewTask(WorkingBase):
         self.file_path = val
 
 
-class DownloadQueue(WorkingBase):
-    """Model for tracking download state (Central Control)."""
-    __tablename__ = "download_queue"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    sync_id: Mapped[str] = mapped_column(String, nullable=False, index=True)  # 8-character Base62 NanoID
-    # Serialized EchosyncTrack containing the new slimmed-down conceptual serialization 
-    # (media array instead of top-level file data).
-    echo_sync_track: Mapped[dict] = mapped_column(JSON, nullable=False)
-    status: Mapped[str] = mapped_column(String, nullable=False, default="queued")
-    provider_id: Mapped[Optional[str]] = mapped_column(String, index=True)
-    retry_count: Mapped[int] = mapped_column(Integer, default=0)
-
-    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
-    updated_at: Mapped[datetime] = mapped_column(
-        UTCDateTime(), default=utc_now, onupdate=utc_now
-    )
 
 
 class UserTrackState(WorkingBase):
@@ -519,6 +506,8 @@ __all__ = [
     "WatchlistArtist",
     "ReviewTask",
     "DownloadQueue",
+    "DownloadStatus",
+    "DownloadIntent",
     "UserTrackState",
     "UserArtistRating",
     "UserAlbumRating",

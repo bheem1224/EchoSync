@@ -22,7 +22,7 @@ from core.hook_manager import hook_manager
 import logging
 import re
 import threading
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from core.db.echo_sync_track import EchosyncTrack
 from core.matching_engine.matching_engine import WeightedMatchingEngine
@@ -42,6 +42,8 @@ from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
 from core.nexus_framework.plugin_SDK import PluginBase
 from database.music_database import get_database, Track, Artist, Album
 from database.working_database import get_working_database, DownloadQueue
+from core.database.models.working import DownloadStatus, DownloadIntent
+from core.database.repositories.download_repo import DownloadRepository
 
 logger = logging.getLogger("download_manager")
 
@@ -125,9 +127,20 @@ class DownloadManager:
     _instance = None
     _instance_lock = threading.Lock()
 
+    @property
+    def repo(self) -> DownloadRepository:
+        if not hasattr(self, '_repo_instance') or self._repo_instance is None or getattr(self._repo_instance, 'work_db', None) != self.work_db:
+            self._repo_instance = DownloadRepository(work_db=self.work_db)
+        return self._repo_instance
+
+    @repo.setter
+    def repo(self, value: Any) -> None:
+        self._repo_instance = value
+
     def __init__(self):
         self.db = get_database()
         self.work_db = get_working_database()
+        self._repo_instance = None
         self.matcher = WeightedMatchingEngine(PROFILE_DOWNLOAD_SEARCH)
         self._shutdown = False
         self._stop_requested = False
@@ -516,12 +529,19 @@ class DownloadManager:
             logger.error(f"Error getting active download providers: {e}", exc_info=True)
             return []
 
-    def queue_download(self, track: EchosyncTrack, quality_profile_id: Optional[str] = None) -> int:
-        """
-        Add a track to the download queue.
+    def queue_download(
+        self,
+        track: EchosyncTrack,
+        quality_profile_id: Optional[str] = None,
+        intent: Union[str, DownloadIntent] = DownloadIntent.MANUAL_OMNI,
+    ) -> int:
+        """Add a track to the download queue.
+
         Returns the database ID of the new download record.
         """
         logger.info(f"Queueing download: {track.artist_name} - {track.title}")
+
+        intent_val = intent.value if isinstance(intent, DownloadIntent) else str(intent)
 
         # Check if track already exists in library (use album + duration when available)
         album_name = getattr(track, 'album_title', None) or getattr(track, 'album', None)
@@ -541,7 +561,14 @@ class DownloadManager:
             existing = self._find_existing_download(track_json, include_failed=True)
             if existing:
                 existing_id, existing_status = existing
-                if existing_status in {"queued", "searching", "downloading", "in_progress", "paused"}:
+                if existing_status in {
+                    DownloadStatus.QUEUED.value,
+                    DownloadStatus.SEARCHING.value,
+                    DownloadStatus.DOWNLOADING.value,
+                    DownloadStatus.VERIFYING.value,
+                    DownloadStatus.RETRYING.value,
+                    "queued", "searching", "downloading", "in_progress", "paused", "verifying", "retrying"
+                }:
                     logger.info(
                         f"Duplicate download detected (ID {existing_id}, status {existing_status}); skipping enqueue"
                     )
@@ -550,9 +577,15 @@ class DownloadManager:
                     # Existing item was in failed/error state — reset and reuse instead of inserting a duplicate row
                     existing_item = session.query(DownloadQueue).filter(DownloadQueue.id == existing_id).first()
                     if existing_item:
-                        existing_item.status = "queued"
+                        existing_item.status = DownloadStatus.QUEUED.value
+                        existing_item.intent = intent_val
                         existing_item.echo_sync_track = track_json
-                        existing_item.provider_id = None
+                        existing_item.plugin_id = None
+                        existing_item.active_candidate_id = None
+                        existing_item.candidate_stack = []
+                        existing_item.blacklisted_candidates = []
+                        existing_item.retry_count = 0
+                        existing_item.error_reason = None
                         existing_item.updated_at = utc_now()
                         session.commit()
                         logger.info(
@@ -562,13 +595,19 @@ class DownloadManager:
 
             download = DownloadQueue(
                 sync_id=track.sync_id,
+                intent=intent_val,
                 echo_sync_track=track_json,
-                status="queued",
+                status=DownloadStatus.QUEUED.value,
+                active_candidate_id=None,
+                candidate_stack=[],
+                blacklisted_candidates=[],
+                retry_count=0,
+                error_reason=None,
                 created_at=utc_now(),
                 updated_at=utc_now()
             )
             session.add(download)
-            session.flush() # Populate ID
+            session.flush()  # Populate ID
 
             logger.info(f"DownloadQueue queued with ID: {download.id}")
             return download.id
@@ -752,11 +791,21 @@ class DownloadManager:
             target_track = EchosyncTrack.from_dict(download.echo_sync_track)
             raw_track_dict = download.echo_sync_track if isinstance(download.echo_sync_track, dict) else {}
             blacklisted_candidates = set(raw_track_dict.get('blacklisted_candidates') or [])
+            for b in (getattr(download, 'blacklisted_candidates', None) or []):
+                if isinstance(b, dict) and b.get("candidate_id"):
+                    blacklisted_candidates.add(b["candidate_id"])
+                elif isinstance(b, str):
+                    blacklisted_candidates.add(b)
 
         if not target_track:
             logger.error(f"Failed to deserialize track for download {download_id}")
-            self._update_status(download_id, "failed")
+            self._update_status(download_id, DownloadStatus.FAILED)
             return
+
+        try:
+            self.transition_to_searching(download_id)
+        except Exception:
+            pass
 
         # Re-check library existence immediately before searching. A track can enter the
         # library between enqueue-time and the moment this job fires (e.g. auto-import,
@@ -1057,8 +1106,35 @@ class DownloadManager:
 
             if not unique_candidates:
                 logger.warning(f"No suitable candidate matched across all {len(providers)} providers (min score: 70%)")
-                self._update_status(download_id, "failed")
+                self._update_status(download_id, DownloadStatus.FAILED)
                 return
+
+            candidate_descriptors = []
+            for cand, score, prov in unique_candidates:
+                uname = cand.identifiers.get('username') or "unknown"
+                fname = cand.identifiers.get('plugin_item_id') or cand.identifiers.get('provider_item_id') or ""
+                cid = f"{uname}|{fname}" if uname and fname else (fname or cand.sync_id or "")
+                candidate_descriptors.append({
+                    "id": cid,
+                    "username": uname,
+                    "filename": fname,
+                    "size": cand.identifiers.get('size') or 0,
+                    "score": float(score),
+                    "plugin_id": getattr(prov, "plugin_id", None) or getattr(prov, "name", None),
+                    "provider_name": prov.name,
+                })
+
+            active_candidate = candidate_descriptors[0]
+            remaining_stack = candidate_descriptors[1:]
+
+            with self.work_db.session_scope() as session:
+                item = session.query(DownloadQueue).get(download_id)
+                if item:
+                    setattr(item, "active_candidate_id", active_candidate["id"])
+                    setattr(item, "candidate_stack", remaining_stack)
+                    setattr(item, "plugin_id", str(active_candidate.get("plugin_id") or ""))
+                    if hasattr(session, "commit"):
+                        session.commit()
 
             logger.info(
                 f"**PROCEEDING WITH DOWNLOAD EVALUATION** "
@@ -1123,7 +1199,7 @@ class DownloadManager:
 
                 if provider_id:
                     logger.info(f"DownloadQueue started: {provider_id}")
-                    self._update_status(download_id, "downloading", provider_id)
+                    self._update_status(download_id, DownloadStatus.DOWNLOADING, provider_id)
                     download_started = True
                     break
                 else:
@@ -1134,11 +1210,11 @@ class DownloadManager:
 
             if not download_started:
                 logger.error(f"All candidate download attempts failed for download {download_id}")
-                self._update_status(download_id, "failed")
+                self._update_status(download_id, DownloadStatus.FAILED)
 
         except Exception as e:
             logger.error(f"Error executing waterfall search and download {download_id}: {e}", exc_info=True)
-            self._update_status(download_id, "failed")
+            self._update_status(download_id, DownloadStatus.FAILED)
 
     async def _check_active_downloads(self):
         """Poll providers for status of active downloads using waterfall strategy"""
@@ -1204,28 +1280,22 @@ class DownloadManager:
                     except Exception as e:
                         logger.error(f"Error in ON_DOWNLOAD_PROGRESS hook: {e}")
 
-                    new_status = "downloading"
+                    new_status = DownloadStatus.DOWNLOADING.value
                     if remote_state == "complete":
-                        new_status = "completed"
+                        new_status = DownloadStatus.VERIFYING.value
                     elif remote_state == "failed":
-                        new_status = "failed"
+                        new_status = DownloadStatus.FAILED.value
                     elif remote_state == "queued":
-                        new_status = "downloading"
+                        new_status = DownloadStatus.DOWNLOADING.value
 
                     # Extract speed and progress (0-100)
-                    speed = status.get('speed', 0.0) # bytes/s
-                    progress = status.get('progress', 0.0) # 0.0 to 100.0
+                    speed = status.get('speed', 0.0)  # bytes/s
+                    progress = status.get('progress', 0.0)  # 0.0 to 100.0
 
-                    if new_status == "completed":
-                        try:
-                            from core.hook_manager import hook_manager
-                            hook_manager.apply_filters('ON_DOWNLOAD_COMPLETED', None, download_id=db_id, provider_id=provider_id)
-                        except Exception as e:
-                            logger.error(f"Error in ON_DOWNLOAD_COMPLETED hook: {e}")
-
-                        logger.info(f"Download {db_id} completed via {found_provider}. Auto-pruning record from database.")
-                        self._remove_from_queue(db_id)
-                    elif new_status == "failed":
+                    if new_status == DownloadStatus.VERIFYING.value:
+                        file_path = status.get('file_path') or status.get('path')
+                        self.transition_to_verifying(db_id, file_path=file_path)
+                    elif new_status == DownloadStatus.FAILED.value:
                         logger.warning(
                             f"Download {db_id} transfer errored/rejected on {found_provider or 'provider'} "
                             f"(ID: {provider_id}). Cancelling remote transfer and falling back to next candidate."
@@ -1754,22 +1824,144 @@ class DownloadManager:
         except Exception as e:
             logger.warning(f"Failed to remove download {download_id} from queue: {e}")
     
-    def _update_status(self, download_id: int, status: str, provider_id: Optional[str] = None, speed: float = 0.0, progress: float = 0.0):
+    def _update_status(self, download_id: int, status: Any, provider_id: Optional[str] = None, speed: float = 0.0, progress: float = 0.0):
         """Helper to update DB status, speed, and progress"""
+        status_val = status.value if isinstance(status, DownloadStatus) else (str(status).upper() if status else DownloadStatus.QUEUED.value)
         with self.work_db.session_scope() as session:
             download = session.query(DownloadQueue).get(download_id)
             if download:
-                download.status = (status or "").lower()
-                
+                download.status = status_val
+
                 # Store progress/speed in the JSON blob instead of invented columns
                 track_json = dict(download.echo_sync_track or {})
                 track_json["current_speed"] = speed
                 track_json["progress_percent"] = progress
                 download.echo_sync_track = track_json
-                
+
                 download.updated_at = utc_now()
                 if provider_id:
-                    download.provider_id = provider_id
+                    download.plugin_id = provider_id
+                    if not download.active_candidate_id:
+                        download.active_candidate_id = provider_id
+
+    def transition_to_searching(self, download_id: int) -> bool:
+        """Transition item to SEARCHING state."""
+        return self.repo.transition_to_searching(download_id)
+
+    def transition_to_downloading(
+        self,
+        download_id: int,
+        active_candidate_id: str,
+        candidate_stack: Optional[List[Dict[str, Any]]] = None,
+        plugin_id: Optional[str] = None,
+    ) -> bool:
+        """Transition item to DOWNLOADING state."""
+        return self.repo.transition_to_downloading(
+            download_id,
+            active_candidate_id=active_candidate_id,
+            candidate_stack=candidate_stack,
+            plugin_id=plugin_id,
+        )
+
+    def transition_to_verifying(self, download_id: int, file_path: Optional[str] = None) -> bool:
+        """Transition item from DOWNLOADING to VERIFYING state, locking file from cleanup sweepers."""
+        with self.work_db.session_scope() as session:
+            item = session.get(DownloadQueue, download_id)
+            if not item:
+                return False
+            item.status = DownloadStatus.VERIFYING.value
+            if file_path and item.echo_sync_track is not None:
+                track_dict = dict(item.echo_sync_track)
+                track_dict["downloaded_file_path"] = file_path
+                item.echo_sync_track = track_dict
+            item.updated_at = utc_now()
+            session.commit()
+            logger.info(f"DownloadQueue {download_id} transitioned to VERIFYING (file: {file_path})")
+            return True
+
+    def handle_verification_success(self, download_id: int, file_path: Optional[str] = None) -> bool:
+        """Transition item from VERIFYING to COMPLETED and emit DOWNLOAD_COMPLETED."""
+        with self.work_db.session_scope() as session:
+            item = session.get(DownloadQueue, download_id)
+            if not item:
+                return False
+            item.status = DownloadStatus.COMPLETED.value
+            item.updated_at = utc_now()
+            session.commit()
+
+        # Emit DOWNLOAD_COMPLETED event
+        from core.event_bus import event_bus
+        event_bus.publish({
+            "event": "DOWNLOAD_COMPLETED",
+            "channel": "downloads",
+            "download_id": download_id,
+            "file_path": file_path,
+            "data": {
+                "download_id": download_id,
+                "file_path": file_path,
+            },
+        })
+        try:
+            from core.hook_manager import hook_manager
+            hook_manager.apply_filters('ON_DOWNLOAD_COMPLETED', None, download_id=download_id, file_path=file_path)
+        except Exception as e:
+            logger.error(f"Error in ON_DOWNLOAD_COMPLETED hook: {e}")
+
+        logger.info(f"DownloadQueue {download_id} verification succeeded -> COMPLETED")
+        return True
+
+    def handle_verification_failure(
+        self, download_id: int, reason: str = "MISMATCH_EDITION", file_path: Optional[str] = None
+    ) -> bool:
+        """On verification failure, route file to quarantine, blacklist candidate, and rotate to next candidate."""
+        if file_path:
+            self._quarantine_file(file_path, reason)
+
+        rotated = False
+        with self.work_db.session_scope() as session:
+            item = session.get(DownloadQueue, download_id)
+            if item:
+                rotated = item.rotate_candidate(reason)
+                item.updated_at = utc_now()
+                session.commit()
+
+        if rotated:
+            logger.info(f"DownloadQueue {download_id} rotated candidate ({reason}) -> RETRYING. Dispatching next candidate.")
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(self._dispatch_candidate(download_id))
+            except RuntimeError:
+                pass
+            return True
+        else:
+            logger.warning(f"DownloadQueue {download_id} exhausted candidates -> FAILED ({reason})")
+            return False
+
+    def _quarantine_file(self, file_path: str, reason: str = "MISMATCH_EDITION") -> Optional[str]:
+        """Move rejected file to data/quarantine to isolate from ingestion sweepers."""
+        import shutil
+        from pathlib import Path
+        try:
+            src = Path(file_path)
+            if not src.exists():
+                return None
+            quarantine_dir = Path("data/quarantine")
+            quarantine_dir.mkdir(parents=True, exist_ok=True)
+            dest = quarantine_dir / f"{src.stem}_{reason}{src.suffix}"
+            shutil.move(str(src), str(dest))
+            logger.info(f"Moved invalid file {src} to quarantine: {dest}")
+            return str(dest)
+        except Exception as e:
+            logger.error(f"Failed to quarantine file {file_path}: {e}")
+            return None
+
+    async def _dispatch_candidate(self, download_id: int, providers: Optional[List[Any]] = None):
+        """Immediately dispatch the current active candidate on a RETRYING download."""
+        if not providers:
+            providers = self._get_active_download_providers()
+        if not providers:
+            return
+        await self._execute_waterfall_search_and_download(download_id, providers)
 
     def _is_signature_match(self, sig1: Tuple[str, str, str, Optional[int]], sig2: Tuple[str, str, str, Optional[int]]) -> bool:
         """Check if two track signatures match with duration tolerance."""
@@ -1931,7 +2123,13 @@ class DownloadManager:
                 while True:
                     queued_items = (
                         session.query(DownloadQueue)
-                        .filter(DownloadQueue.status.in_(['queued', 'searching', 'failed_no_match', 'failed']))
+                        .filter(DownloadQueue.status.in_([
+                            DownloadStatus.QUEUED.value,
+                            DownloadStatus.SEARCHING.value,
+                            DownloadStatus.RETRYING.value,
+                            DownloadStatus.FAILED.value,
+                            'queued', 'searching', 'retrying', 'failed', 'failed_no_match'
+                        ]))
                         .order_by(DownloadQueue.id.asc())
                         .offset(offset)
                         .limit(batch_size)
@@ -2084,6 +2282,7 @@ class DownloadManager:
         Enforces exponential backoff: delay >= (2 ** retry_count) * 60s.
         """
         retryable_statuses = {
+            DownloadStatus.FAILED.value,
             "failed_no_results",
             "failed_no_match",
             "failed_start_download",
