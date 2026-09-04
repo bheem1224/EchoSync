@@ -1,240 +1,279 @@
 use lofty::config::{ParseOptions, ParsingMode, WriteOptions};
 use lofty::file::{AudioFile, FileType, TaggedFileExt};
 use lofty::probe::Probe;
-use lofty::tag::{Accessor, ItemKey, Tag, TagType};
+use lofty::tag::{Accessor, ItemKey, ItemValue, Tag, TagItem, TagType};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
+use std::collections::HashMap;
 use std::path::Path;
 
 pub struct MetadataWriter;
 
-fn populate_tag_items(tag: &mut Tag, tags: &Bound<'_, PyDict>) {
-    // Extract and set title
-    if let Ok(Some(val)) = tags.get_item("title") {
-        if let Ok(s) = val.extract::<String>() {
-            let st = s.trim();
-            if !st.is_empty() {
-                tag.insert_text(ItemKey::TrackTitle, st.to_string());
-            }
+fn populate_tag_items(tag: &mut Tag, tags: &HashMap<String, String>) {
+    let version_str = tags
+        .get("version")
+        .or_else(|| tags.get("subtitle"))
+        .or_else(|| tags.get("edition"))
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty());
+
+    // Extract and set title with version injection
+    if let Some(title_val) = tags.get("title") {
+        let st = title_val.trim();
+        if !st.is_empty() {
+            let final_title = if let Some(ver) = version_str {
+                if !st.to_lowercase().contains(&ver.to_lowercase()) {
+                    format!("{} ({})", st, ver)
+                } else {
+                    st.to_string()
+                }
+            } else {
+                st.to_string()
+            };
+            tag.insert_text(ItemKey::TrackTitle, final_title);
         }
+    }
+
+    // Set version in container-specific tags (TIT3 for ID3v2, SUBTITLE / VERSION for Vorbis, freeform for MP4)
+    if let Some(ver) = version_str {
+        tag.insert_text(ItemKey::TrackSubtitle, ver.to_string());
+        let version_key = if tag.tag_type() == TagType::Mp4Ilst {
+            "----:com.apple.iTunes:VERSION".to_string()
+        } else {
+            "VERSION".to_string()
+        };
+        tag.insert_unchecked(TagItem::new(
+            ItemKey::Unknown(version_key),
+            ItemValue::Text(ver.to_string()),
+        ));
     }
 
     // Extract and set artist / artist_name
     let artist_val = tags
-        .get_item("artist")
-        .ok()
-        .flatten()
-        .or_else(|| tags.get_item("artist_name").ok().flatten());
-    if let Some(val) = artist_val {
-        if let Ok(s) = val.extract::<String>() {
-            let st = s.trim();
-            if !st.is_empty() {
-                tag.insert_text(ItemKey::TrackArtist, st.to_string());
-            }
-        }
+        .get("artist")
+        .or_else(|| tags.get("artist_name"))
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty());
+    if let Some(st) = artist_val {
+        tag.insert_text(ItemKey::TrackArtist, st.to_string());
     }
 
     // Extract and set album / album_title
     let album_val = tags
-        .get_item("album")
-        .ok()
-        .flatten()
-        .or_else(|| tags.get_item("album_title").ok().flatten());
-    if let Some(val) = album_val {
-        if let Ok(s) = val.extract::<String>() {
-            let st = s.trim();
-            if !st.is_empty() {
-                tag.insert_text(ItemKey::AlbumTitle, st.to_string());
-            }
-        }
+        .get("album")
+        .or_else(|| tags.get("album_title"))
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty());
+    if let Some(st) = album_val {
+        tag.insert_text(ItemKey::AlbumTitle, st.to_string());
     }
 
     // Extract and set album_artist
-    if let Ok(Some(val)) = tags.get_item("album_artist") {
-        if let Ok(s) = val.extract::<String>() {
-            let st = s.trim();
-            if !st.is_empty() {
-                tag.insert_text(ItemKey::AlbumArtist, st.to_string());
-            }
-        }
+    let album_artist_val = tags
+        .get("album_artist")
+        .or_else(|| tags.get("albumartist"))
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty());
+    if let Some(st) = album_artist_val {
+        tag.insert_text(ItemKey::AlbumArtist, st.to_string());
     }
 
     // Extract and set track number
     let track_val = tags
-        .get_item("track_number")
-        .ok()
-        .flatten()
-        .or_else(|| tags.get_item("track_no").ok().flatten())
-        .or_else(|| tags.get_item("track").ok().flatten());
-    if let Some(val) = track_val {
-        if let Ok(num) = val.extract::<u32>() {
+        .get("track_number")
+        .or_else(|| tags.get("track_no"))
+        .or_else(|| tags.get("track"))
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty());
+    if let Some(s) = track_val {
+        let clean_s = s.split('/').next().unwrap_or(s).trim();
+        if let Ok(num) = clean_s.parse::<u32>() {
             tag.set_track(num);
-        } else if let Ok(s) = val.extract::<String>() {
-            if let Ok(num) = s.parse::<u32>() {
-                tag.set_track(num);
-            } else if !s.is_empty() {
-                tag.insert_text(ItemKey::TrackNumber, s);
-            }
+        } else {
+            tag.insert_text(ItemKey::TrackNumber, clean_s.to_string());
         }
     }
 
     // Extract and set disc number
     let disc_val = tags
-        .get_item("disc_number")
-        .ok()
-        .flatten()
-        .or_else(|| tags.get_item("disc_no").ok().flatten())
-        .or_else(|| tags.get_item("disc").ok().flatten());
-    if let Some(val) = disc_val {
-        if let Ok(num) = val.extract::<u32>() {
+        .get("disc_number")
+        .or_else(|| tags.get("disc_no"))
+        .or_else(|| tags.get("disc"))
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty());
+    if let Some(s) = disc_val {
+        let clean_s = s.split('/').next().unwrap_or(s).trim();
+        if let Ok(num) = clean_s.parse::<u32>() {
             tag.set_disk(num);
-        } else if let Ok(s) = val.extract::<String>() {
-            if let Ok(num) = s.parse::<u32>() {
-                tag.set_disk(num);
-            } else if !s.is_empty() {
-                tag.insert_text(ItemKey::DiscNumber, s);
-            }
+        } else {
+            tag.insert_text(ItemKey::DiscNumber, clean_s.to_string());
         }
     }
 
-    // Extract and set year / date / recording date
+    // Extract and set year / date / release_year
     let year_val = tags
-        .get_item("year")
-        .ok()
-        .flatten()
-        .or_else(|| tags.get_item("release_year").ok().flatten())
-        .or_else(|| tags.get_item("date").ok().flatten());
-    if let Some(val) = year_val {
-        if let Ok(num) = val.extract::<u32>() {
+        .get("year")
+        .or_else(|| tags.get("release_year"))
+        .or_else(|| tags.get("date"))
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty());
+    if let Some(s) = year_val {
+        let year_4 = if s.len() >= 4 && s[..4].chars().all(|c| c.is_ascii_digit()) {
+            &s[..4]
+        } else {
+            s
+        };
+        if let Ok(num) = year_4.parse::<u32>() {
             tag.set_year(num);
-        } else if let Ok(s) = val.extract::<String>() {
-            if let Ok(num) = s.parse::<u32>() {
-                tag.set_year(num);
-            } else if !s.is_empty() {
-                tag.insert_text(ItemKey::RecordingDate, s);
-            }
+        } else {
+            tag.insert_text(ItemKey::RecordingDate, s.to_string());
         }
     }
 
     // Extract and set genre
-    if let Ok(Some(val)) = tags.get_item("genre") {
-        if let Ok(s) = val.extract::<String>() {
-            let st = s.trim();
-            if !st.is_empty() {
-                tag.set_genre(st.to_string());
-            }
-        }
+    if let Some(g_val) = tags.get("genre").map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        tag.set_genre(g_val.to_string());
     }
 
     // Extract and set ISRC
-    if let Ok(Some(val)) = tags.get_item("isrc") {
-        if let Ok(s) = val.extract::<String>() {
-            let st = s.trim();
-            if !st.is_empty() {
-                tag.insert_text(ItemKey::Isrc, st.to_string());
-            }
-        }
+    if let Some(isrc_val) = tags.get("isrc").map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        tag.insert_text(ItemKey::Isrc, isrc_val.to_string());
     }
 
     // Extract and set MusicBrainz recording / track ID
     let mbid_val = tags
-        .get_item("musicbrainz_id")
-        .ok()
-        .flatten()
-        .or_else(|| tags.get_item("mbid").ok().flatten())
-        .or_else(|| tags.get_item("musicbrainz_trackid").ok().flatten());
-    if let Some(val) = mbid_val {
-        if let Ok(s) = val.extract::<String>() {
-            let st = s.trim();
-            if !st.is_empty() {
-                tag.insert_text(ItemKey::MusicBrainzTrackId, st.to_string());
-            }
-        }
+        .get("musicbrainz_track_id")
+        .or_else(|| tags.get("musicbrainz_id"))
+        .or_else(|| tags.get("mbid"))
+        .or_else(|| tags.get("musicbrainz_trackid"))
+        .or_else(|| tags.get("recording_id"))
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty());
+    if let Some(s) = mbid_val {
+        tag.insert_text(ItemKey::MusicBrainzTrackId, s.to_string());
     }
 
     // Extract and set MusicBrainz release ID
-    if let Ok(Some(val)) = tags.get_item("mb_release_id") {
-        if let Ok(s) = val.extract::<String>() {
-            let st = s.trim();
-            if !st.is_empty() {
-                tag.insert_text(ItemKey::MusicBrainzReleaseId, st.to_string());
-            }
-        }
+    let mb_album_val = tags
+        .get("musicbrainz_album_id")
+        .or_else(|| tags.get("mb_release_id"))
+        .or_else(|| tags.get("musicbrainz_releasegroupid"))
+        .or_else(|| tags.get("release_id"))
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty());
+    if let Some(s) = mb_album_val {
+        tag.insert_text(ItemKey::MusicBrainzReleaseId, s.to_string());
+    }
+
+    // Extract and set EchoSync Track UUID
+    if let Some(t_uuid) = tags
+        .get("echosync_track_uuid")
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+    {
+        let key_str = if tag.tag_type() == TagType::Mp4Ilst {
+            "----:com.apple.iTunes:ECHOSYNC_TRACK_UUID".to_string()
+        } else {
+            "ECHOSYNC_TRACK_UUID".to_string()
+        };
+        tag.insert_unchecked(TagItem::new(
+            ItemKey::Unknown(key_str),
+            ItemValue::Text(t_uuid.to_string()),
+        ));
+    }
+
+    // Extract and set EchoSync Media UUID
+    if let Some(m_uuid) = tags
+        .get("echosync_media_uuid")
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+    {
+        let key_str = if tag.tag_type() == TagType::Mp4Ilst {
+            "----:com.apple.iTunes:ECHOSYNC_MEDIA_UUID".to_string()
+        } else {
+            "ECHOSYNC_MEDIA_UUID".to_string()
+        };
+        tag.insert_unchecked(TagItem::new(
+            ItemKey::Unknown(key_str),
+            ItemValue::Text(m_uuid.to_string()),
+        ));
     }
 }
 
-fn populate_riff_items(tag: &mut Tag, tags: &Bound<'_, PyDict>) {
-    if let Ok(Some(val)) = tags.get_item("title") {
-        if let Ok(s) = val.extract::<String>() {
-            let st = s.trim();
-            if !st.is_empty() {
-                tag.insert_text(ItemKey::TrackTitle, st.to_string());
-            }
+fn populate_riff_items(tag: &mut Tag, tags: &HashMap<String, String>) {
+    let version_str = tags
+        .get("version")
+        .or_else(|| tags.get("subtitle"))
+        .or_else(|| tags.get("edition"))
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty());
+
+    if let Some(title_val) = tags.get("title") {
+        let st = title_val.trim();
+        if !st.is_empty() {
+            let final_title = if let Some(ver) = version_str {
+                if !st.to_lowercase().contains(&ver.to_lowercase()) {
+                    format!("{} ({})", st, ver)
+                } else {
+                    st.to_string()
+                }
+            } else {
+                st.to_string()
+            };
+            tag.insert_text(ItemKey::TrackTitle, final_title);
         }
     }
+
     let artist_val = tags
-        .get_item("artist")
-        .ok()
-        .flatten()
-        .or_else(|| tags.get_item("artist_name").ok().flatten());
-    if let Some(val) = artist_val {
-        if let Ok(s) = val.extract::<String>() {
-            let st = s.trim();
-            if !st.is_empty() {
-                tag.insert_text(ItemKey::TrackArtist, st.to_string());
-            }
-        }
+        .get("artist")
+        .or_else(|| tags.get("artist_name"))
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty());
+    if let Some(st) = artist_val {
+        tag.insert_text(ItemKey::TrackArtist, st.to_string());
     }
+
     let album_val = tags
-        .get_item("album")
-        .ok()
-        .flatten()
-        .or_else(|| tags.get_item("album_title").ok().flatten());
-    if let Some(val) = album_val {
-        if let Ok(s) = val.extract::<String>() {
-            let st = s.trim();
-            if !st.is_empty() {
-                tag.insert_text(ItemKey::AlbumTitle, st.to_string());
-            }
-        }
+        .get("album")
+        .or_else(|| tags.get("album_title"))
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty());
+    if let Some(st) = album_val {
+        tag.insert_text(ItemKey::AlbumTitle, st.to_string());
     }
+
     let track_val = tags
-        .get_item("track_number")
-        .ok()
-        .flatten()
-        .or_else(|| tags.get_item("track_no").ok().flatten())
-        .or_else(|| tags.get_item("track").ok().flatten());
-    if let Some(val) = track_val {
-        if let Ok(num) = val.extract::<u32>() {
+        .get("track_number")
+        .or_else(|| tags.get("track_no"))
+        .or_else(|| tags.get("track"))
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty());
+    if let Some(s) = track_val {
+        let clean_s = s.split('/').next().unwrap_or(s).trim();
+        if let Ok(num) = clean_s.parse::<u32>() {
             tag.set_track(num);
-        } else if let Ok(s) = val.extract::<String>() {
-            if let Ok(num) = s.parse::<u32>() {
-                tag.set_track(num);
-            }
         }
     }
+
     let year_val = tags
-        .get_item("year")
-        .ok()
-        .flatten()
-        .or_else(|| tags.get_item("release_year").ok().flatten())
-        .or_else(|| tags.get_item("date").ok().flatten());
-    if let Some(val) = year_val {
-        if let Ok(num) = val.extract::<u32>() {
+        .get("year")
+        .or_else(|| tags.get("release_year"))
+        .or_else(|| tags.get("date"))
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty());
+    if let Some(s) = year_val {
+        let year_4 = if s.len() >= 4 && s[..4].chars().all(|c| c.is_ascii_digit()) {
+            &s[..4]
+        } else {
+            s
+        };
+        if let Ok(num) = year_4.parse::<u32>() {
             tag.set_year(num);
-        } else if let Ok(s) = val.extract::<String>() {
-            if let Ok(num) = s.parse::<u32>() {
-                tag.set_year(num);
-            }
         }
     }
-    if let Ok(Some(val)) = tags.get_item("genre") {
-        if let Ok(s) = val.extract::<String>() {
-            let st = s.trim();
-            if !st.is_empty() {
-                tag.set_genre(st.to_string());
-            }
-        }
+
+    if let Some(g_val) = tags.get("genre").map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        tag.set_genre(g_val.to_string());
     }
 }
 
@@ -259,7 +298,7 @@ fn open_probe<P: AsRef<Path>>(path: P) -> Result<Probe<std::io::BufReader<std::f
     Ok(probe)
 }
 
-pub fn write_tags_to_file(path_str: &str, tags: &Bound<'_, PyDict>) -> Result<(), String> {
+pub fn write_tags_to_file(path_str: &str, tags: &HashMap<String, String>) -> Result<(), String> {
     let path = Path::new(path_str);
     if !path.exists() {
         return Err(format!("File does not exist: {}", path.display()));
@@ -277,8 +316,6 @@ pub fn write_tags_to_file(path_str: &str, tags: &Bound<'_, PyDict>) -> Result<()
     }) {
         Ok(tf) => tf,
         Err(_) => {
-            // Fallback: If existing tag chunks are corrupt (e.g. invalid RIFF INFO keys from external encoders),
-            // open with read_tags(false) so we can insert fresh tags and overwrite cleanly.
             let no_tags_opts = ParseOptions::new()
                 .read_properties(false)
                 .read_tags(false)
@@ -318,8 +355,19 @@ pub fn write_tags_to_file(path_str: &str, tags: &Bound<'_, PyDict>) -> Result<()
 }
 
 impl MetadataWriter {
-    pub fn write<P: AsRef<Path>>(path: P, tags: &Bound<'_, PyDict>) -> Result<(), String> {
+    pub fn write_map<P: AsRef<Path>>(path: P, tags: &HashMap<String, String>) -> Result<(), String> {
         let path_str = path.as_ref().to_string_lossy().to_string();
         write_tags_to_file(&path_str, tags)
+    }
+
+    pub fn write<P: AsRef<Path>>(path: P, tags: &Bound<'_, PyDict>) -> Result<(), String> {
+        let path_str = path.as_ref().to_string_lossy().to_string();
+        let mut map = HashMap::new();
+        for (k, v) in tags.iter() {
+            if let (Ok(key), Ok(val)) = (k.extract::<String>(), v.extract::<String>()) {
+                map.insert(key.to_lowercase(), val);
+            }
+        }
+        write_tags_to_file(&path_str, &map)
     }
 }

@@ -101,9 +101,12 @@ class AutoImportService:
     _instance = None
     _instance_lock = threading.Lock()
 
-    def __init__(self):
-        _lib = config_manager.get('storage.library_dir') or config_manager.get('library_dir')
-        self.library_root = Path(_lib) if _lib else None
+    def __init__(self, library_root: Optional[Path] = None):
+        if library_root is not None:
+            self.library_root = Path(library_root)
+        else:
+            _lib = config_manager.get('storage.library_dir') or config_manager.get('library_dir')
+            self.library_root = Path(_lib) if _lib else None
         self.enhancer = RetroactiveEnhancer()
         self._scan_lock = threading.Lock()
         self._processing_lock = threading.Lock()
@@ -672,36 +675,17 @@ class AutoImportService:
         Rename and move file to library with 'Keep Both' conflict resolution.
         """
         try:
-            # Load template from config
-            meta_config = config_manager.get('metadata_enhancement') or {}
-            template = meta_config.get('naming_template', "{Artist}/{Album}/{Track} - {Title}.{ext}")
-
-            from core.utils import extract_primary_artist
-            raw_artist = metadata.get('artist') or "Unknown Artist"
-            primary_artist = extract_primary_artist(raw_artist)
-            artist = self._sanitize(primary_artist)
-            
-            album = self._sanitize(metadata.get('album') or "Unknown Album")
-            title = self._sanitize(metadata.get('title') or file_path.stem)
-
-            track_num = metadata.get('track_number')
-            track_padded = f"{int(track_num):02d}" if track_num and str(track_num).isdigit() else "00"
-
-            year = str(metadata.get('date', '0000'))[:4]
+            from core.path_formatter import get_library_preferences, build_destination_path
+            pref_lib_root, pattern = get_library_preferences()
+            base_library_path = str(self.library_root) if getattr(self, "library_root", None) else pref_lib_root
             ext = file_path.suffix.lower().lstrip('.')
 
-            # Replace tokens
-            new_name = template.replace("{Artist}", artist)\
-                               .replace("{Album}", album)\
-                               .replace("{Track}", track_padded)\
-                               .replace("{Title}", title)\
-                               .replace("{Year}", year)\
-                               .replace("{Format}", ext)\
-                               .replace("{ext}", ext)
-
-            # Destination Path
-            rel_path = Path(new_name)
-            dest_path = self.library_root / rel_path
+            dest_path = build_destination_path(
+                base_library_path=base_library_path,
+                pattern=pattern,
+                meta=metadata,
+                ext=ext
+            )
 
             # Force Keep Both / Rename Duplicate logic
             if dest_path.exists() and dest_path.resolve() != file_path.resolve():

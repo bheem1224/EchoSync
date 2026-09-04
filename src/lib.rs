@@ -5,13 +5,13 @@ pub mod metadata;
 
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList, PyTuple};
+use rayon::prelude::*;
 use rusqlite::{Connection, Result as SqlResult};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use std::sync::mpsc::{channel, Receiver, Sender, RecvTimeoutError};
 use walkdir::WalkDir;
-use rayon::prelude::*;
 
 pub use errors::EchoSyncError;
 pub use file_handling::fs_ops::FsOperations;
@@ -50,7 +50,10 @@ pub fn open_db_connection(db_path: &str) -> SqlResult<Connection> {
     Ok(conn)
 }
 
-fn track_metadata_to_pydict<'py>(py: Python<'py>, meta: &TrackMetadata) -> PyResult<Bound<'py, PyDict>> {
+fn track_metadata_to_pydict<'py>(
+    py: Python<'py>,
+    meta: &TrackMetadata,
+) -> PyResult<Bound<'py, PyDict>> {
     let dict = PyDict::new_bound(py);
     dict.set_item("title", &meta.title)?;
     dict.set_item("artist_name", &meta.artist)?;
@@ -65,6 +68,12 @@ fn track_metadata_to_pydict<'py>(py: Python<'py>, meta: &TrackMetadata) -> PyRes
     dict.set_item("year", meta.year)?;
     dict.set_item("genre", &meta.genre)?;
     dict.set_item("mbid", &meta.mbid)?;
+    dict.set_item("version", &meta.version)?;
+    dict.set_item("isrc", &meta.isrc)?;
+    dict.set_item("musicbrainz_track_id", &meta.musicbrainz_track_id)?;
+    dict.set_item("musicbrainz_album_id", &meta.musicbrainz_album_id)?;
+    dict.set_item("echosync_track_uuid", &meta.echosync_track_uuid)?;
+    dict.set_item("echosync_media_uuid", &meta.echosync_media_uuid)?;
     dict.set_item("codec", &meta.codec)?;
     dict.set_item("bit_depth", meta.bit_depth)?;
     dict.set_item("sample_rate", meta.sample_rate)?;
@@ -81,9 +90,7 @@ fn track_metadata_to_pydict<'py>(py: Python<'py>, meta: &TrackMetadata) -> PyRes
 /// Extract audiophile metadata and stream properties using lofty.
 #[pyfunction]
 pub fn extract_metadata<'py>(py: Python<'py>, path: String) -> PyResult<PyObject> {
-    let extract_result = py.allow_threads(|| {
-        MetadataExtractor::extract(&path)
-    });
+    let extract_result = py.allow_threads(|| MetadataExtractor::extract(&path));
     match extract_result {
         Ok(meta) => {
             let dict = track_metadata_to_pydict(py, &meta)?;
@@ -99,10 +106,16 @@ pub fn read_metadata<'py>(py: Python<'py>, path: String) -> PyResult<PyObject> {
     extract_metadata(py, path)
 }
 
-/// Write audio metadata tags directly to audio files using lofty.
+/// Write audio metadata tags directly to audio files using lofty with GIL release during I/O.
 #[pyfunction]
-pub fn write_metadata(path: String, tags: &Bound<'_, PyDict>) -> PyResult<bool> {
-    MetadataWriter::write(&path, tags)
+pub fn write_metadata(py: Python<'_>, path: String, tags: &Bound<'_, PyDict>) -> PyResult<bool> {
+    let mut tag_map = std::collections::HashMap::new();
+    for (k, v) in tags.iter() {
+        if let (Ok(key), Ok(val)) = (k.extract::<String>(), v.extract::<String>()) {
+            tag_map.insert(key.to_lowercase(), val);
+        }
+    }
+    py.allow_threads(|| MetadataWriter::write_map(&path, &tag_map))
         .map(|_| true)
         .map_err(|e| pyo3::exceptions::PyIOError::new_err(e))
 }
@@ -110,19 +123,22 @@ pub fn write_metadata(path: String, tags: &Bound<'_, PyDict>) -> PyResult<bool> 
 /// Atomic file move with EXDEV cross-device link fallback.
 #[pyfunction]
 pub fn safe_move_file(py: Python<'_>, src: String, dst: String) -> PyResult<()> {
-    py.allow_threads(|| FsOperations::safe_move(&src, &dst)).map_err(|e| e.into())
+    py.allow_threads(|| FsOperations::safe_move(&src, &dst))
+        .map_err(|e| e.into())
 }
 
 /// High-speed copy file.
 #[pyfunction]
 pub fn copy_file(py: Python<'_>, src: String, dst: String) -> PyResult<u64> {
-    py.allow_threads(|| FsOperations::copy_file(&src, &dst)).map_err(|e| e.into())
+    py.allow_threads(|| FsOperations::copy_file(&src, &dst))
+        .map_err(|e| e.into())
 }
 
 /// Delete file safely.
 #[pyfunction]
 pub fn delete_file(py: Python<'_>, path: String) -> PyResult<()> {
-    py.allow_threads(|| FsOperations::delete_file(&path)).map_err(|e| e.into())
+    py.allow_threads(|| FsOperations::delete_file(&path))
+        .map_err(|e| e.into())
 }
 
 /// Telemetry Yielding Pattern (Event Bus Prep)
@@ -314,8 +330,8 @@ fn scan_directory<'py>(
     batch_size: usize,
     cancel_token: Option<CancellationToken>,
 ) -> PyResult<()> {
-    use std::panic::{catch_unwind, AssertUnwindSafe};
     use pyo3::exceptions::PyRuntimeError;
+    use std::panic::{catch_unwind, AssertUnwindSafe};
 
     let safe_batch_size = std::cmp::max(1, batch_size);
     let path_str = path.to_string();
@@ -386,7 +402,9 @@ fn scan_directory<'py>(
 
     match result {
         Ok(py_res) => py_res,
-        Err(_) => Err(PyRuntimeError::new_err("Rust FFI panic intercepted during scan_directory")),
+        Err(_) => Err(PyRuntimeError::new_err(
+            "Rust FFI panic intercepted during scan_directory",
+        )),
     }
 }
 

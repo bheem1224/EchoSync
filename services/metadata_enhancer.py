@@ -179,7 +179,13 @@ def build_native_tag_payload(track: Dict[str, Any]) -> Dict[str, Any]:
     else:
         display_title = track.get("display_title") or raw_title
         
-    mbid = track.get("mbid") or track.get("musicbrainz_id") or track.get("recording_id")
+    mbid = (
+        track.get("musicbrainz_track_id")
+        or track.get("musicbrainz_trackid")
+        or track.get("mbid")
+        or track.get("musicbrainz_id")
+        or track.get("recording_id")
+    )
     year_val = track.get("release_year") or track.get("year") or track.get("date")
 
     payload = {
@@ -196,10 +202,15 @@ def build_native_tag_payload(track: Dict[str, Any]) -> Dict[str, Any]:
         "year": str(year_val) if year_val is not None else "",
         "track_number": str(track.get("track_number")) if track.get("track_number") is not None else "",
         "disc_number": str(track.get("disc_number")) if track.get("disc_number") is not None else "",
+        "genre": track.get("genre") or "",
         "isrc": track.get("isrc") or "",
+        "musicbrainz_track_id": mbid or "",
         "musicbrainz_trackid": mbid or "",
         "musicbrainz_id": mbid or "",
         "recording_id": mbid or "",
+        "musicbrainz_album_id": track.get("musicbrainz_album_id") or track.get("mb_release_id") or track.get("release_id") or "",
+        "echosync_track_uuid": track.get("echosync_track_uuid") or track.get("track_uuid") or "",
+        "echosync_media_uuid": track.get("echosync_media_uuid") or track.get("media_uuid") or "",
         "acoustid_id": track.get("acoustid_id") or "",
         "cover_art_url": track.get("cover_art_url") or "",
     }
@@ -208,6 +219,20 @@ def build_native_tag_payload(track: Dict[str, Any]) -> Dict[str, Any]:
 
 class RetroactiveEnhancer:
     """Background service for library-wide batch metadata enhancement."""
+
+    def generate_preview_path(self, template: str, sample_data: Optional[Dict[str, Any]] = None) -> str:
+        """Preview file destination path based on template and sample/default metadata."""
+        from core.path_formatter import build_destination_path
+        data = sample_data or {
+            "artist": "Daft Punk",
+            "album": "Random Access Memories",
+            "title": "Get Lucky",
+            "track_number": "01",
+            "year": "2013",
+            "version": "",
+        }
+        dest = build_destination_path("/Music", template, data, "flac")
+        return dest.as_posix()
 
     def _get_plugin(self, capability: Capability, required_algorithm: str = None):
         from core.nexus_framework.plugin_loader import PluginRegistry
@@ -577,11 +602,23 @@ class RetroactiveEnhancer:
 
         exp_t = tags_to_write.get("title") or meta_dict.get("title") or getattr(metadata, "title", None) or ""
         exp_a = tags_to_write.get("artist") or meta_dict.get("artist") or getattr(metadata, "artist", None) or ""
+        exp_isrc = tags_to_write.get("isrc") or meta_dict.get("isrc") or getattr(metadata, "isrc", None) or ""
+        exp_uuid = (
+            tags_to_write.get("echosync_track_uuid")
+            or meta_dict.get("echosync_track_uuid")
+            or meta_dict.get("track_uuid")
+            or getattr(metadata, "echosync_track_uuid", None)
+            or ""
+        )
 
         read_title = (verified_tags.get("title") or "").strip().lower()
         expected_title = str(exp_t).strip().lower()
         read_artist = (verified_tags.get("artist") or verified_tags.get("artist_name") or "").strip().lower()
         expected_artist = str(exp_a).strip().lower()
+        read_isrc = (verified_tags.get("isrc") or "").strip().lower()
+        expected_isrc = str(exp_isrc).strip().lower()
+        read_uuid = (verified_tags.get("echosync_track_uuid") or "").strip().lower()
+        expected_uuid = str(exp_uuid).strip().lower()
 
         if (expected_title and read_title != expected_title) or (expected_artist and read_artist != expected_artist):
             raise MetadataWriteVerificationError(
@@ -590,7 +627,26 @@ class RetroactiveEnhancer:
                 f"artist ('{read_artist}' vs '{expected_artist}')"
             )
 
-        logger.info("tag_file_verified: successfully verified tags for %s (title='%s', artist='%s')", path.name, read_title, read_artist)
+        if expected_isrc and read_isrc != expected_isrc:
+            raise MetadataWriteVerificationError(
+                f"Tag verification failed for {path.name}: "
+                f"isrc ('{read_isrc}' vs '{expected_isrc}')"
+            )
+
+        if expected_uuid and read_uuid != expected_uuid:
+            raise MetadataWriteVerificationError(
+                f"Tag verification failed for {path.name}: "
+                f"echosync_track_uuid ('{read_uuid}' vs '{expected_uuid}')"
+            )
+
+        logger.info(
+            "tag_file_verified: successfully verified tags for %s (title='%s', artist='%s', isrc='%s', uuid='%s')",
+            path.name,
+            read_title,
+            read_artist,
+            read_isrc,
+            read_uuid,
+        )
         return verified_tags
 
     def tag_file(self, file_path: Path, metadata: Dict[str, Any], verify: bool = True) -> None:
@@ -598,15 +654,13 @@ class RetroactiveEnhancer:
 
         Translates the flat metadata dict produced by ``identify_file`` /
         ``auto_importer`` into the tag keys understood by ``_tagging_write``,
-        then writes them via echosync_core. When verify=True, validates the write
-        with an immediate readback check.
+        then writes them via echosync_core. When verify=True, strictly validates the write
+        with an immediate readback check; if verification fails, MetadataWriteVerificationError
+        is raised and the operation is aborted.
         """
         if verify:
-            try:
-                self.tag_file_verified(file_path, metadata)
-                return
-            except Exception as exc:
-                logger.warning("tag_file: verified write failed for %s: %s; falling back to direct write", file_path.name, exc)
+            self.tag_file_verified(file_path, metadata)
+            return
 
         payload = build_native_tag_payload(metadata)
         tags_to_write = {k: v for k, v in payload.items() if v not in (None, '')}

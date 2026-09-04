@@ -18,6 +18,12 @@ pub struct TrackMetadata {
     pub year: Option<u32>,
     pub genre: Option<String>,
     pub mbid: Option<String>,
+    pub version: Option<String>,
+    pub isrc: Option<String>,
+    pub musicbrainz_track_id: Option<String>,
+    pub musicbrainz_album_id: Option<String>,
+    pub echosync_track_uuid: Option<String>,
+    pub echosync_media_uuid: Option<String>,
     pub codec: String,
     pub bit_depth: Option<u8>,
     pub sample_rate: Option<u32>,
@@ -28,6 +34,25 @@ pub struct TrackMetadata {
     pub file_size_bytes: u64,
     pub mtime: Option<f64>,
     pub inode: Option<u64>,
+}
+
+fn get_unknown_or_text(t: &Tag, target_key: &str) -> Option<String> {
+    let lower_target = target_key.to_lowercase();
+    let suffix = format!(":{}", lower_target);
+    for item in t.items() {
+        if let ItemKey::Unknown(ref k) = item.key() {
+            let lower_k = k.to_lowercase();
+            if lower_k == lower_target || lower_k.ends_with(&suffix) {
+                if let Some(s) = item.value().text() {
+                    let st = s.trim();
+                    if !st.is_empty() {
+                        return Some(st.to_string());
+                    }
+                }
+            }
+        }
+    }
+    None
 }
 
 fn extract_from_tag(
@@ -41,6 +66,12 @@ fn extract_from_tag(
     year: &mut Option<u32>,
     genre: &mut Option<String>,
     mbid: &mut Option<String>,
+    version: &mut Option<String>,
+    isrc: &mut Option<String>,
+    musicbrainz_track_id: &mut Option<String>,
+    musicbrainz_album_id: &mut Option<String>,
+    echosync_track_uuid: &mut Option<String>,
+    echosync_media_uuid: &mut Option<String>,
 ) {
     if title.is_none() {
         let t_val = t
@@ -131,17 +162,78 @@ fn extract_from_tag(
             }
         }
     }
+    if version.is_none() {
+        let v_val = t
+            .get(&ItemKey::TrackSubtitle)
+            .and_then(|item| item.value().text())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .or_else(|| get_unknown_or_text(t, "VERSION"))
+            .or_else(|| get_unknown_or_text(t, "SUBTITLE"));
+        if v_val.is_some() {
+            *version = v_val;
+        }
+    }
+    if isrc.is_none() {
+        let i_val = t
+            .get(&ItemKey::Isrc)
+            .and_then(|item| item.value().text())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .or_else(|| get_unknown_or_text(t, "ISRC"));
+        if i_val.is_some() {
+            *isrc = i_val;
+        }
+    }
+    if musicbrainz_track_id.is_none() {
+        let m_val = t
+            .get(&ItemKey::MusicBrainzTrackId)
+            .and_then(|item| item.value().text())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .or_else(|| get_unknown_or_text(t, "MUSICBRAINZ_TRACKID"))
+            .or_else(|| get_unknown_or_text(t, "MUSICBRAINZ_TRACK_ID"));
+        if m_val.is_some() {
+            *musicbrainz_track_id = m_val;
+        }
+    }
+    if musicbrainz_album_id.is_none() {
+        let ma_val = t
+            .get(&ItemKey::MusicBrainzReleaseId)
+            .and_then(|item| item.value().text())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .or_else(|| get_unknown_or_text(t, "MUSICBRAINZ_ALBUMID"))
+            .or_else(|| get_unknown_or_text(t, "MUSICBRAINZ_ALBUM_ID"))
+            .or_else(|| get_unknown_or_text(t, "MUSICBRAINZ_RELEASEID"));
+        if ma_val.is_some() {
+            *musicbrainz_album_id = ma_val;
+        }
+    }
+    if echosync_track_uuid.is_none() {
+        *echosync_track_uuid = get_unknown_or_text(t, "ECHOSYNC_TRACK_UUID");
+    }
+    if echosync_media_uuid.is_none() {
+        *echosync_media_uuid = get_unknown_or_text(t, "ECHOSYNC_MEDIA_UUID");
+    }
+    if mbid.is_none() {
+        if let Some(ref mid) = musicbrainz_track_id {
+            *mbid = Some(mid.clone());
+        }
+    }
 }
 
 fn open_probe<P: AsRef<Path>>(path: P) -> Result<Probe<std::io::BufReader<std::fs::File>>, String> {
     let p = path.as_ref();
-    let file = std::fs::File::open(p).map_err(|e| format!("Failed to open {}: {}", p.display(), e))?;
+    let file =
+        std::fs::File::open(p).map_err(|e| format!("Failed to open {}: {}", p.display(), e))?;
     let reader = std::io::BufReader::new(file);
     let probe = Probe::new(reader);
     let mut probe = match probe.guess_file_type() {
         Ok(pr) => pr,
         Err(_) => Probe::new(std::io::BufReader::new(
-            std::fs::File::open(p).map_err(|e| format!("Failed to reopen {}: {}", p.display(), e))?,
+            std::fs::File::open(p)
+                .map_err(|e| format!("Failed to reopen {}: {}", p.display(), e))?,
         )),
     };
     if probe.file_type().is_none() {
@@ -185,23 +277,37 @@ impl MetadataExtractor {
             }
         }
 
-        let parse_opts = lofty::config::ParseOptions::new()
-            .parsing_mode(lofty::config::ParsingMode::Relaxed);
+        let parse_opts =
+            lofty::config::ParseOptions::new().parsing_mode(lofty::config::ParsingMode::Relaxed);
 
-        let tagged_file_opt = match open_probe(p).and_then(|probe| probe.options(parse_opts).read().map_err(|e| e.to_string())) {
+        let tagged_file_opt = match open_probe(p)
+            .and_then(|probe| probe.options(parse_opts).read().map_err(|e| e.to_string()))
+        {
             Ok(tf) => Some(tf),
             Err(_) => {
                 let tag_only_opts = lofty::config::ParseOptions::new()
                     .read_properties(false)
                     .parsing_mode(lofty::config::ParsingMode::Relaxed);
-                match open_probe(p).and_then(|probe| probe.options(tag_only_opts).read().map_err(|e| e.to_string())) {
+                match open_probe(p).and_then(|probe| {
+                    probe
+                        .options(tag_only_opts)
+                        .read()
+                        .map_err(|e| e.to_string())
+                }) {
                     Ok(tf) => Some(tf),
                     Err(_) => {
                         // Try reading only stream properties if tags are corrupt
                         let props_only_opts = lofty::config::ParseOptions::new()
                             .read_tags(false)
                             .parsing_mode(lofty::config::ParsingMode::Relaxed);
-                        open_probe(p).and_then(|probe| probe.options(props_only_opts).read().map_err(|e| e.to_string())).ok()
+                        open_probe(p)
+                            .and_then(|probe| {
+                                probe
+                                    .options(props_only_opts)
+                                    .read()
+                                    .map_err(|e| e.to_string())
+                            })
+                            .ok()
                     }
                 }
             }
@@ -240,6 +346,12 @@ impl MetadataExtractor {
         let mut year = None;
         let mut genre = None;
         let mut mbid = None;
+        let mut version = None;
+        let mut isrc = None;
+        let mut musicbrainz_track_id = None;
+        let mut musicbrainz_album_id = None;
+        let mut echosync_track_uuid = None;
+        let mut echosync_media_uuid = None;
 
         // Container-specific preferred and fallback tag search
         let mut candidate_tags: Vec<&Tag> = Vec::new();
@@ -281,6 +393,12 @@ impl MetadataExtractor {
                 &mut year,
                 &mut genre,
                 &mut mbid,
+                &mut version,
+                &mut isrc,
+                &mut musicbrainz_track_id,
+                &mut musicbrainz_album_id,
+                &mut echosync_track_uuid,
+                &mut echosync_media_uuid,
             );
         }
 
@@ -294,6 +412,12 @@ impl MetadataExtractor {
             year,
             genre,
             mbid,
+            version,
+            isrc,
+            musicbrainz_track_id,
+            musicbrainz_album_id,
+            echosync_track_uuid,
+            echosync_media_uuid,
             codec,
             bit_depth,
             sample_rate,
