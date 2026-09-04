@@ -1,8 +1,9 @@
 {
-  "id": "Test.Echo Test",
+  "id": "Test.echo_test",
   "version": "1.0.0",
-  "name": "Echo Test",
+  "name": "echo_test",
   "author": "Test",
   "category": "utility",
-  "beta_version": "1.0.1-beta.3"
+  "beta_version": "1.0.1-beta.3",
+  "display_name": "Echo Test"
 }

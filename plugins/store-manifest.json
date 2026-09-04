@@ -69,8 +69,8 @@
       "beta_url": "https://raw.githubusercontent.com/bheem1224/EchoSync/main/plugins/EchoSync/plex/beta.zip"
     },
     {
-      "id": "EchoSync.Outbound Gateway",
-      "name": "Outbound Gateway",
+      "id": "EchoSync.outbound_gateway",
+      "name": "outbound_gateway",
       "description": "Official EchoSync provider for outbound_gateway",
       "version": "2.4.2",
       "author": "EchoSync",
@@ -82,7 +82,8 @@
       "plugin_id": "outbound_gateway",
       "source_url": "https://github.com/bheem1224/EchoSync/tree/main/plugins/EchoSync/outbound_gateway",
       "download_url": "https://raw.githubusercontent.com/bheem1224/EchoSync/main/plugins/EchoSync/outbound_gateway/releases/v2.4.2.zip",
-      "beta_url": "https://raw.githubusercontent.com/bheem1224/EchoSync/main/plugins/EchoSync/outbound_gateway/beta.zip"
+      "beta_url": "https://raw.githubusercontent.com/bheem1224/EchoSync/main/plugins/EchoSync/outbound_gateway/beta.zip",
+      "display_name": "Outbound Gateway"
     },
     {
       "id": "EchoSync.Navidrome",
@@ -142,8 +143,8 @@
       "beta_url": "https://raw.githubusercontent.com/bheem1224/EchoSync/main/plugins/EchoSync/lrclib/beta.zip"
     },
     {
-      "id": "EchoSync.Local Server",
-      "name": "Local Server",
+      "id": "EchoSync.local_server",
+      "name": "local_server",
       "description": "Official EchoSync provider for local_server",
       "version": "2.4.2",
       "author": "EchoSync",
@@ -156,11 +157,12 @@
       "plugin_id": "local_server",
       "source_url": "https://github.com/bheem1224/EchoSync/tree/main/plugins/EchoSync/local_server",
       "download_url": "https://raw.githubusercontent.com/bheem1224/EchoSync/main/plugins/EchoSync/local_server/releases/v2.4.2.zip",
-      "beta_url": "https://raw.githubusercontent.com/bheem1224/EchoSync/main/plugins/EchoSync/local_server/beta.zip"
+      "beta_url": "https://raw.githubusercontent.com/bheem1224/EchoSync/main/plugins/EchoSync/local_server/beta.zip",
+      "display_name": "Local Server"
     },
     {
-      "id": "EchoSync.Local Player",
-      "name": "Local Player",
+      "id": "EchoSync.local_player",
+      "name": "local_player",
       "description": "Official EchoSync provider for local_player",
       "version": "2.4.2",
       "author": "EchoSync",
@@ -172,11 +174,12 @@
       "plugin_id": "local_player",
       "source_url": "https://github.com/bheem1224/EchoSync/tree/main/plugins/EchoSync/local_player",
       "download_url": "https://raw.githubusercontent.com/bheem1224/EchoSync/main/plugins/EchoSync/local_player/releases/v2.4.2.zip",
-      "beta_url": "https://raw.githubusercontent.com/bheem1224/EchoSync/main/plugins/EchoSync/local_player/beta.zip"
+      "beta_url": "https://raw.githubusercontent.com/bheem1224/EchoSync/main/plugins/EchoSync/local_player/beta.zip",
+      "display_name": "Local Player"
     },
     {
-      "id": "EchoSync.Local Metadata",
-      "name": "Local Metadata",
+      "id": "EchoSync.local_metadata",
+      "name": "local_metadata",
       "description": "Official EchoSync provider for local_metadata",
       "version": "2.4.2",
       "author": "EchoSync",
@@ -188,7 +191,8 @@
       "plugin_id": "local_metadata",
       "source_url": "https://github.com/bheem1224/EchoSync/tree/main/plugins/EchoSync/local_metadata",
       "download_url": "https://raw.githubusercontent.com/bheem1224/EchoSync/main/plugins/EchoSync/local_metadata/releases/v2.4.2.zip",
-      "beta_url": "https://raw.githubusercontent.com/bheem1224/EchoSync/main/plugins/EchoSync/local_metadata/beta.zip"
+      "beta_url": "https://raw.githubusercontent.com/bheem1224/EchoSync/main/plugins/EchoSync/local_metadata/beta.zip",
+      "display_name": "Local Metadata"
     },
     {
       "id": "EchoSync.Listenbrainz",
@@ -224,20 +228,21 @@
       "beta_url": "https://raw.githubusercontent.com/bheem1224/EchoSync/main/plugins/EchoSync/jellyfin/beta.zip"
     },
     {
-      "id": "Test.Echo Test",
+      "id": "Test.echo_test",
       "version": "1.0.0",
-      "name": "Echo Test",
+      "name": "echo_test",
       "author": "Test",
       "category": "utility",
       "beta_version": "1.0.1-beta.3",
       "plugin_id": "echo_test",
       "source_url": "https://github.com/bheem1224/EchoSync/tree/main/plugins/EchoSync/echo_test",
       "download_url": "https://raw.githubusercontent.com/bheem1224/EchoSync/main/plugins/EchoSync/echo_test/releases/v1.0.0.zip",
-      "beta_url": "https://raw.githubusercontent.com/bheem1224/EchoSync/main/plugins/EchoSync/echo_test/beta.zip"
+      "beta_url": "https://raw.githubusercontent.com/bheem1224/EchoSync/main/plugins/EchoSync/echo_test/beta.zip",
+      "display_name": "Echo Test"
     },
     {
-      "id": "EchoSync.CJK Language Pack",
-      "name": "CJK Language Pack",
+      "id": "EchoSync.cjk_language_pack",
+      "name": "cjk_language_pack",
       "description": "Transliterates Chinese (Simplified/Traditional), Japanese (Kanji/Kana), and Korean (Hangul) text to Romaji/Pinyin so the matching engine can compare CJK track titles against their Latin-script counterparts.",
       "version": "2.4.2",
       "author": "EchoSync",
@@ -249,7 +254,8 @@
       "plugin_id": "cjk_language_pack",
       "source_url": "https://github.com/bheem1224/EchoSync/tree/main/plugins/EchoSync/cjk_language_pack",
       "download_url": "https://raw.githubusercontent.com/bheem1224/EchoSync/main/plugins/EchoSync/cjk_language_pack/releases/v2.4.2.zip",
-      "beta_url": "https://raw.githubusercontent.com/bheem1224/EchoSync/main/plugins/EchoSync/cjk_language_pack/beta.zip"
+      "beta_url": "https://raw.githubusercontent.com/bheem1224/EchoSync/main/plugins/EchoSync/cjk_language_pack/beta.zip",
+      "display_name": "CJK Language Pack"
     },
     {
       "id": "EchoSync.Acoustid",

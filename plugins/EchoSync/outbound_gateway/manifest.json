@@ -1,6 +1,6 @@
 {
-  "id": "EchoSync.Outbound Gateway",
-  "name": "Outbound Gateway",
+  "id": "EchoSync.outbound_gateway",
+  "name": "outbound_gateway",
   "description": "Official EchoSync provider for outbound_gateway",
   "version": "2.4.2",
   "author": "EchoSync",
@@ -8,5 +8,6 @@
   "requirements": [],
   "hooks": [],
   "min_echosync_version": "2.4.0",
-  "beta_version": "2.4.3-beta.27"
+  "beta_version": "2.4.3-beta.27",
+  "display_name": "Outbound Gateway"
 }

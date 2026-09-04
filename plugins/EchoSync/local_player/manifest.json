@@ -1,6 +1,6 @@
 {
-  "id": "EchoSync.Local Player",
-  "name": "Local Player",
+  "id": "EchoSync.local_player",
+  "name": "local_player",
   "description": "Official EchoSync provider for local_player",
   "version": "2.4.2",
   "author": "EchoSync",
@@ -8,5 +8,6 @@
   "requirements": [],
   "hooks": [],
   "min_echosync_version": "2.4.0",
-  "beta_version": "2.4.3-beta.24"
+  "beta_version": "2.4.3-beta.24",
+  "display_name": "Local Player"
 }

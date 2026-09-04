@@ -1,6 +1,6 @@
 {
-  "id": "EchoSync.CJK Language Pack",
-  "name": "CJK Language Pack",
+  "id": "EchoSync.cjk_language_pack",
+  "name": "cjk_language_pack",
   "description": "Transliterates Chinese (Simplified/Traditional), Japanese (Kanji/Kana), and Korean (Hangul) text to Romaji/Pinyin so the matching engine can compare CJK track titles against their Latin-script counterparts.",
   "version": "2.4.2",
   "author": "EchoSync",
@@ -8,5 +8,6 @@
   "requirements": [],
   "hooks": [],
   "min_echosync_version": "2.4.0",
-  "beta_version": "2.4.3-beta.27"
+  "beta_version": "2.4.3-beta.27",
+  "display_name": "CJK Language Pack"
 }

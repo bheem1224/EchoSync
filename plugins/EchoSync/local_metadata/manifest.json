@@ -1,6 +1,6 @@
 {
-  "id": "EchoSync.Local Metadata",
-  "name": "Local Metadata",
+  "id": "EchoSync.local_metadata",
+  "name": "local_metadata",
   "description": "Official EchoSync provider for local_metadata",
   "version": "2.4.2",
   "author": "EchoSync",
@@ -8,5 +8,6 @@
   "requirements": [],
   "hooks": [],
   "min_echosync_version": "2.4.0",
-  "beta_version": "2.4.3-beta.29"
+  "beta_version": "2.4.3-beta.29",
+  "display_name": "Local Metadata"
 }

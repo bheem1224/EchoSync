@@ -1,6 +1,6 @@
 {
-  "id": "EchoSync.Local Server",
-  "name": "Local Server",
+  "id": "EchoSync.local_server",
+  "name": "local_server",
   "description": "Official EchoSync provider for local_server",
   "version": "2.4.2",
   "author": "EchoSync",
@@ -9,5 +9,6 @@
   "hooks": [],
   "min_echosync_version": "2.4.0",
   "beta_version": "2.4.3-beta.48",
-  "privileged": true
+  "privileged": true,
+  "display_name": "Local Server"
 }
