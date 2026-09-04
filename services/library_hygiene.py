@@ -279,33 +279,45 @@ class DuplicateHygieneService:
 
     def analyze_single_track(self, track_id: int) -> Optional[Dict]:
         """
-        Targeted scan for a single track's duplicate group.
+        Targeted scan for a single track's duplicate group, querying properly through LocalMedia.
         """
         try:
+            from database.music_database import LocalMedia
+            from services.deduplicator import get_deduplicator
+
+            dedup = get_deduplicator()
             with self.db.session_scope() as session:
-                fp = session.query(AudioFingerprint).filter_by(track_id=track_id).first()
-                if not fp or not fp.chromaprint:
-                    return None
+                # 1. Check if the track itself has 1:N relational duplicates
+                media_count = session.query(LocalMedia).filter(LocalMedia.track_id == track_id).count()
+                if media_count > 1:
+                    return dedup.resolve_relational_duplicates(track_id)
 
-                fingerprints = session.query(AudioFingerprint).filter_by(chromaprint=fp.chromaprint).all()
-                if len(fingerprints) < 2:
-                    return None
-
-                peer_track_ids = [f.track_id for f in fingerprints]
-                
-                from sqlalchemy.orm import joinedload
-                tracks = (
-                    session.query(Track)
-                    .options(joinedload(Track.artist), joinedload(Track.album))
-                    .join(Artist)
-                    .filter(Track.id.in_(peer_track_ids))
+                # 2. Check for acoustic duplicates by querying through LocalMedia
+                fps = (
+                    session.query(AudioFingerprint)
+                    .join(LocalMedia, AudioFingerprint.media_id == LocalMedia.media_id)
+                    .filter(LocalMedia.track_id == track_id)
                     .all()
                 )
-
-                if len(tracks) < 2:
+                if not fps:
                     return None
 
-                return self._analyze_group(tracks, fp.chromaprint)
+                for fp in fps:
+                    if not fp.chromaprint:
+                        continue
+                    matching_fps = (
+                        session.query(AudioFingerprint)
+                        .options(joinedload(AudioFingerprint.media))
+                        .filter(AudioFingerprint.chromaprint == fp.chromaprint)
+                        .all()
+                    )
+                    peer_track_ids = list({
+                        f.media.track_id for f in matching_fps if f.media and f.media.track_id
+                    })
+                    if len(peer_track_ids) > 1:
+                        return dedup.resolve_acoustic_duplicate_group(peer_track_ids, fp.chromaprint)
+
+                return None
         except Exception as e:
             logger.error(f"Error analyzing single track {track_id}: {e}", exc_info=True)
             return None

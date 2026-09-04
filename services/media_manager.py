@@ -72,10 +72,15 @@ class MediaManagerService:
             auto_allowed = True
 
         delete_ids = event_data.get('delete_ids', [])
+        delete_media_ids = event_data.get('delete_media_ids', [])
         
-        if auto_allowed and delete_ids:
-            logger.info(f"Event {event_type} auto-approved. Deleting {len(delete_ids)} tracks.")
-            self.execute_delete(delete_ids)
+        if auto_allowed and (delete_ids or delete_media_ids):
+            if delete_ids:
+                logger.info(f"Event {event_type} auto-approved. Deleting {len(delete_ids)} tracks.")
+                self.execute_delete(delete_ids)
+            if delete_media_ids:
+                logger.info(f"Event {event_type} auto-approved. Deleting {len(delete_media_ids)} media items.")
+                self.execute_delete_media(delete_media_ids)
         else:
             logger.info(f"Event {event_type} requires manual review. Staging to pending actions.")
             self._stage_pending_action(event_type, event_data)
@@ -86,7 +91,15 @@ class MediaManagerService:
         with db.session_scope() as session:
             reason = payload.get('reason', f'Lifecycle Action: {event_type}')
             keep_id = payload.get('keep_id')
+            sync_id = payload.get('sync_id')
             
+            if not sync_id and keep_id:
+                # Resolve sync_id if not present directly in payload
+                with self.db.session_scope() as music_session:
+                    t = music_session.query(Track).filter(Track.id == keep_id).first()
+                    if t:
+                        sync_id = t.sync_id
+
             intent_map = {
                 "user_request_upgrade": "USER_UPGRADE_REQUEST",
                 "user_request_delete": "USER_DELETE_REQUEST",
@@ -98,8 +111,8 @@ class MediaManagerService:
             system_user_id = db.get_system_user_id()
             
             staging = SuggestionStagingQueue(
-                user_id=system_user_id,
-                music_db_track_id=keep_id,
+                account_id=system_user_id,
+                sync_id=sync_id,
                 reason=reason,
                 intent_type=intent_type,
                 ui_label=f"Review needed for {event_type}",
@@ -290,6 +303,60 @@ class MediaManagerService:
                     logger.info(f"Deleted track {track_id} from local database")
             except Exception as e:
                 logger.error(f"Failed to delete local track {track_id}: {e}", exc_info=True)
+                all_success = False
+
+        return all_success
+
+    def execute_delete_media(self, media_ids: List[str]) -> bool:
+        """
+        Delete specific LocalMedia records and their physical files without deleting
+        the parent Track (unless no other media files remain).
+        """
+        from database.music_database import LocalMedia
+        from pathlib import Path
+
+        _lib = config_manager.get('storage.library_dir') or config_manager.get('library_dir')
+        library_root = Path(_lib).resolve() if _lib else None
+        all_success = True
+
+        for m_id in media_ids:
+            try:
+                with self.db.session_scope() as session:
+                    media = session.query(LocalMedia).filter(LocalMedia.media_id == m_id).first()
+                    if not media:
+                        continue
+
+                    track = media.track
+                    if media.file_path and not media.file_path.startswith("virtual://") and os.path.exists(media.file_path):
+                        m_path = Path(media.file_path).resolve()
+                        if library_root and not str(m_path).startswith(str(library_root)):
+                            logger.critical(f"Aborting deletion! Path {m_path} is OUTSIDE the library pool {library_root}.")
+                            all_success = False
+                            continue
+
+                        from core.hook_manager import hook_manager
+                        plugin_decision = hook_manager.apply_filters('ON_CORRUPTION_DETECTED', None, file_path=str(m_path))
+                        if plugin_decision == "SKIP":
+                            logger.info(f"Plugin quarantined/skipped deletion for file: {m_path}")
+                            all_success = False
+                            continue
+
+                        from core.io_gatekeeper import Gatekeeper
+                        Gatekeeper.authorize_and_execute({"operation": "delete_file", "target": m_path})
+                        logger.info(f"Deleted physical media file: {m_path}")
+
+                    session.delete(media)
+                    session.flush()
+
+                    # If no media remains on the track, delete track as well
+                    if track and len(track.media_files) <= 1: # session count before commit
+                        remaining = session.query(LocalMedia).filter(LocalMedia.track_id == track.id).count()
+                        if remaining == 0:
+                            session.delete(track)
+                            logger.info(f"Deleted track {track.id} because all media was deleted.")
+
+            except Exception as e:
+                logger.error(f"Failed to delete media {m_id}: {e}", exc_info=True)
                 all_success = False
 
         return all_success

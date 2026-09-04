@@ -1,3 +1,4 @@
+pub mod audio;
 pub mod database;
 pub mod errors;
 pub mod file_handling;
@@ -408,6 +409,21 @@ fn scan_directory<'py>(
     }
 }
 
+/// Generate Chromaprint fingerprint and duration from audio file with silence trimming.
+#[pyfunction]
+#[pyo3(signature = (path, trim_silence=true))]
+pub fn fingerprint_audio<'py>(
+    py: Python<'py>,
+    path: String,
+    trim_silence: bool,
+) -> PyResult<(String, f64)> {
+    let result = py.allow_threads(|| audio::fingerprint::generate_fingerprint(&path, trim_silence));
+    match result {
+        Ok((fp, dur)) => Ok((fp, dur)),
+        Err(err) => Err(pyo3::exceptions::PyRuntimeError::new_err(err)),
+    }
+}
+
 /// PyO3 Module Registration for echosync_core
 #[pymodule]
 fn echosync_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -421,5 +437,6 @@ fn echosync_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(safe_move_file, m)?)?;
     m.add_function(wrap_pyfunction!(copy_file, m)?)?;
     m.add_function(wrap_pyfunction!(delete_file, m)?)?;
+    m.add_function(wrap_pyfunction!(fingerprint_audio, m)?)?;
     Ok(())
 }

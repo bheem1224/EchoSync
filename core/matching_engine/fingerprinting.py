@@ -92,6 +92,16 @@ class FingerprintGenerator:
             )
             return None
 
+        # First try native Rust DSP engine (echosync_core)
+        try:
+            import echosync_core
+            if hasattr(echosync_core, "fingerprint_audio"):
+                fp, _ = echosync_core.fingerprint_audio(file_path, trim_silence=True)
+                if fp:
+                    return fp
+        except Exception as e:
+            logger.debug(f"Native Rust fingerprinting fallback to pyacoustid for {file_path}: {e}")
+
         try:
             # Generate fingerprint using Chromaprint
             # acoustid.fingerprint_file() returns (duration, fingerprint)
@@ -171,6 +181,16 @@ class FingerprintGenerator:
                 file_path, channels,
             )
             return None, None
+
+        # First try native Rust DSP engine (echosync_core)
+        try:
+            import echosync_core
+            if hasattr(echosync_core, "fingerprint_audio"):
+                fp, dur = echosync_core.fingerprint_audio(file_path, trim_silence=True)
+                if fp:
+                    return fp, int(round(dur)) if dur is not None else None
+        except Exception as e:
+            logger.debug(f"Native Rust fingerprinting fallback to pyacoustid for {file_path}: {e}")
 
         try:
             raw_duration, fingerprint = acoustid.fingerprint_file(file_path)

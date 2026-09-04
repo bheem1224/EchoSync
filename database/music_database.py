@@ -382,6 +382,9 @@ class ExternalIdentifier(Base):
 
 class AudioFingerprint(Base):
     __tablename__ = "audio_fingerprints"
+    __table_args__ = (
+        UniqueConstraint("media_id", name="uq_audio_fingerprints_media_id"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     media_id: Mapped[str] = mapped_column(
@@ -391,7 +394,7 @@ class AudioFingerprint(Base):
     # acoustid_id: the AcoustID service's confirmed UUID for this recording (returned after lookup).
     # These are deliberately separate — chromaprint is our local computation; acoustid_id is
     # the external service's canonical identifier.
-    chromaprint: Mapped[str] = mapped_column(String, unique=True, nullable=False)
+    chromaprint: Mapped[str] = mapped_column(String, index=True, nullable=False)
     acoustid_id: Mapped[Optional[str]] = mapped_column(String)
 
     media: Mapped[LocalMedia] = relationship(back_populates="audio_fingerprints")
