@@ -547,6 +547,11 @@ class _SDK:
     def models(self):
         return _PluginModelFacade()
 
+    @property
+    def webhooks(self):
+        from core.plugins.sdk import _WebhooksSDKFacade
+        return _WebhooksSDKFacade(self._get_plugin_id())
+
     def _get_plugin_id(self):
         import inspect
         frame = inspect.currentframe()

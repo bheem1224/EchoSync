@@ -194,3 +194,51 @@ def get_api_key():
     except Exception as e:
         logger.error(f"Failed to fetch API key: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to fetch API key")
+
+
+# ---------------------------------------------------------------------------
+# Webhook info & test diagnostics
+# ---------------------------------------------------------------------------
+
+@router.get("/webhooks/info")
+def get_webhook_info():
+    """Retrieve registered webhook endpoints and configuration for UI."""
+    from core.plugins.sdk import sdk
+    try:
+        endpoint = sdk.webhooks.get_endpoint("download_status")
+        if not endpoint:
+            # Register if not registered yet
+            endpoint = sdk.webhooks.register_endpoint("download_status")
+        return {
+            "success": True,
+            "endpoint": endpoint,
+        }
+    except Exception as e:
+        logger.error(f"Failed to get webhook info: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to get webhook info")
+
+
+@router.post("/webhooks/test")
+async def test_webhook():
+    """Simulate a test webhook ping to verify local ingress and dispatch."""
+    from core.plugins.sdk import sdk, compute_plugin_crc32, dispatch_webhook
+    try:
+        endpoint = sdk.webhooks.get_endpoint("download_status")
+        if not endpoint:
+            endpoint = sdk.webhooks.register_endpoint("download_status")
+
+        crc32_id = compute_plugin_crc32("EchoSync.slskd")
+        test_payload = {
+            "event": "TestPing",
+            "message": "EchoSync Webhook Ping Verification",
+            "timestamp": "now",
+        }
+        await dispatch_webhook(crc32_id, "download_status", test_payload)
+        return {
+            "success": True,
+            "message": "Webhook dispatch test succeeded",
+            "endpoint": endpoint.get("url"),
+        }
+    except Exception as e:
+        logger.error(f"Webhook test dispatch failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Webhook test failed: {e}")

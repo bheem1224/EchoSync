@@ -339,24 +339,50 @@ class SlskdProvider(DownloaderProvider):
             return
         
         from core.health_check import HealthCheckResult
+        from core.event_bus import event_bus
         
         def slskd_health_check() -> HealthCheckResult:
             try:
-                # Try a lightweight API call to check connectivity
+                # Try a lightweight API call to check connectivity and soulseek connection state
                 try:
                     import requests
+                    # Query session/server status
                     response = requests.get(
                         f"{self.base_url}/api/v0/session",
                         headers={"X-API-Key": self.api_key},
                         timeout=5
                     )
                     if response.status_code == 200:
+                        sess_data = response.json() if response.content else {}
+                        # Check server connectivity status if provided
+                        server_state = sess_data.get("state") or sess_data.get("serverState")
+                        is_connected = sess_data.get("connected", True)
+                        if server_state and str(server_state).lower() in ["disconnected", "faulted", "degraded"]:
+                            is_connected = False
+
+                        if not is_connected:
+                            event_bus.publish({
+                                "event": "SERVICE_DEGRADED",
+                                "service": "EchoSync.slskd",
+                                "reason": f"Soulseek state degraded: {server_state or 'disconnected'}"
+                            })
+                            return HealthCheckResult(
+                                service_name="slskd",
+                                status="degraded",
+                                message=f"Slskd API reachable but Soulseek disconnected (state: {server_state})"
+                            )
+
                         return HealthCheckResult(
                             service_name="slskd",
                             status="healthy",
-                            message="Slskd API is reachable"
+                            message="Slskd API is reachable and connected"
                         )
                     else:
+                        event_bus.publish({
+                            "event": "SERVICE_DEGRADED",
+                            "service": "EchoSync.slskd",
+                            "reason": f"HTTP {response.status_code}"
+                        })
                         return HealthCheckResult(
                             service_name="slskd",
                             status="degraded",
@@ -376,6 +402,40 @@ class SlskdProvider(DownloaderProvider):
                 )
         
         self.sdk.health.register(slskd_health_check, interval_seconds=300)
+
+    async def delete_transfer(self, username: str, transfer_id: Optional[str] = None) -> bool:
+        """
+        Delete a transfer from slskd daemon memory.
+        If transfer_id is supplied, calls DELETE /api/v0/transfers/downloads/{username}/{transfer_id}.
+        Otherwise calls DELETE /api/v0/transfers/downloads/{username}.
+        """
+        if not self.base_url:
+            return False
+        try:
+            if transfer_id:
+                endpoint = f"transfers/downloads/{username}/{transfer_id}"
+            else:
+                endpoint = f"transfers/downloads/{username}"
+            await self._make_request("DELETE", endpoint)
+            logger.info("Evicted transfer from slskd memory: username=%s, transfer_id=%s", username, transfer_id)
+            return True
+        except Exception as e:
+            logger.warning("Failed to evict transfer from slskd (%s / %s): %s", username, transfer_id, e)
+            return False
+
+    async def reconnect_server(self) -> bool:
+        """
+        Attempt to trigger Soulseek reconnection via POST /api/v0/server/connect.
+        """
+        if not self.base_url:
+            return False
+        try:
+            res = await self._make_request("POST", "server/connect")
+            logger.info("Triggered slskd server reconnect: %s", res)
+            return True
+        except Exception as e:
+            logger.warning("Failed to trigger slskd reconnect: %s", e)
+            return False
 
     def _setup_client(self):
         # Retrieve Slskd connection details from namespaced config facade
