@@ -78,12 +78,12 @@
       "requirements": [],
       "hooks": [],
       "min_echosync_version": "2.4.0",
-      "beta_version": "2.4.3-beta.27",
+      "beta_version": "2.4.3-beta.28",
+      "display_name": "Outbound Gateway",
       "plugin_id": "outbound_gateway",
       "source_url": "https://github.com/bheem1224/EchoSync/tree/main/plugins/EchoSync/outbound_gateway",
       "download_url": "https://raw.githubusercontent.com/bheem1224/EchoSync/main/plugins/EchoSync/outbound_gateway/releases/v2.4.2.zip",
-      "beta_url": "https://raw.githubusercontent.com/bheem1224/EchoSync/main/plugins/EchoSync/outbound_gateway/beta.zip",
-      "display_name": "Outbound Gateway"
+      "beta_url": "https://raw.githubusercontent.com/bheem1224/EchoSync/main/plugins/EchoSync/outbound_gateway/beta.zip"
     },
     {
       "id": "EchoSync.Navidrome",
@@ -152,13 +152,13 @@
       "requirements": [],
       "hooks": [],
       "min_echosync_version": "2.4.0",
-      "beta_version": "2.4.3-beta.48",
+      "beta_version": "2.4.3-beta.49",
       "privileged": true,
+      "display_name": "Local Server",
       "plugin_id": "local_server",
       "source_url": "https://github.com/bheem1224/EchoSync/tree/main/plugins/EchoSync/local_server",
       "download_url": "https://raw.githubusercontent.com/bheem1224/EchoSync/main/plugins/EchoSync/local_server/releases/v2.4.2.zip",
-      "beta_url": "https://raw.githubusercontent.com/bheem1224/EchoSync/main/plugins/EchoSync/local_server/beta.zip",
-      "display_name": "Local Server"
+      "beta_url": "https://raw.githubusercontent.com/bheem1224/EchoSync/main/plugins/EchoSync/local_server/beta.zip"
     },
     {
       "id": "EchoSync.local_player",
@@ -170,12 +170,12 @@
       "requirements": [],
       "hooks": [],
       "min_echosync_version": "2.4.0",
-      "beta_version": "2.4.3-beta.24",
+      "beta_version": "2.4.3-beta.25",
+      "display_name": "Local Player",
       "plugin_id": "local_player",
       "source_url": "https://github.com/bheem1224/EchoSync/tree/main/plugins/EchoSync/local_player",
       "download_url": "https://raw.githubusercontent.com/bheem1224/EchoSync/main/plugins/EchoSync/local_player/releases/v2.4.2.zip",
-      "beta_url": "https://raw.githubusercontent.com/bheem1224/EchoSync/main/plugins/EchoSync/local_player/beta.zip",
-      "display_name": "Local Player"
+      "beta_url": "https://raw.githubusercontent.com/bheem1224/EchoSync/main/plugins/EchoSync/local_player/beta.zip"
     },
     {
       "id": "EchoSync.local_metadata",
@@ -187,12 +187,12 @@
       "requirements": [],
       "hooks": [],
       "min_echosync_version": "2.4.0",
-      "beta_version": "2.4.3-beta.29",
+      "beta_version": "2.4.3-beta.30",
+      "display_name": "Local Metadata",
       "plugin_id": "local_metadata",
       "source_url": "https://github.com/bheem1224/EchoSync/tree/main/plugins/EchoSync/local_metadata",
       "download_url": "https://raw.githubusercontent.com/bheem1224/EchoSync/main/plugins/EchoSync/local_metadata/releases/v2.4.2.zip",
-      "beta_url": "https://raw.githubusercontent.com/bheem1224/EchoSync/main/plugins/EchoSync/local_metadata/beta.zip",
-      "display_name": "Local Metadata"
+      "beta_url": "https://raw.githubusercontent.com/bheem1224/EchoSync/main/plugins/EchoSync/local_metadata/beta.zip"
     },
     {
       "id": "EchoSync.Listenbrainz",
@@ -233,12 +233,12 @@
       "name": "echo_test",
       "author": "Test",
       "category": "utility",
-      "beta_version": "1.0.1-beta.3",
+      "beta_version": "1.0.1-beta.4",
+      "display_name": "Echo Test",
       "plugin_id": "echo_test",
       "source_url": "https://github.com/bheem1224/EchoSync/tree/main/plugins/EchoSync/echo_test",
       "download_url": "https://raw.githubusercontent.com/bheem1224/EchoSync/main/plugins/EchoSync/echo_test/releases/v1.0.0.zip",
-      "beta_url": "https://raw.githubusercontent.com/bheem1224/EchoSync/main/plugins/EchoSync/echo_test/beta.zip",
-      "display_name": "Echo Test"
+      "beta_url": "https://raw.githubusercontent.com/bheem1224/EchoSync/main/plugins/EchoSync/echo_test/beta.zip"
     },
     {
       "id": "EchoSync.cjk_language_pack",
@@ -250,12 +250,12 @@
       "requirements": [],
       "hooks": [],
       "min_echosync_version": "2.4.0",
-      "beta_version": "2.4.3-beta.27",
+      "beta_version": "2.4.3-beta.28",
+      "display_name": "CJK Language Pack",
       "plugin_id": "cjk_language_pack",
       "source_url": "https://github.com/bheem1224/EchoSync/tree/main/plugins/EchoSync/cjk_language_pack",
       "download_url": "https://raw.githubusercontent.com/bheem1224/EchoSync/main/plugins/EchoSync/cjk_language_pack/releases/v2.4.2.zip",
-      "beta_url": "https://raw.githubusercontent.com/bheem1224/EchoSync/main/plugins/EchoSync/cjk_language_pack/beta.zip",
-      "display_name": "CJK Language Pack"
+      "beta_url": "https://raw.githubusercontent.com/bheem1224/EchoSync/main/plugins/EchoSync/cjk_language_pack/beta.zip"
     },
     {
       "id": "EchoSync.Acoustid",
