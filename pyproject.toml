@@ -55,3 +55,8 @@ dependencies = [
     "hangul-romanize>=0.1.0",
     "fastapi[standard]>=0.136.1",
 ]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.16.6",
+]

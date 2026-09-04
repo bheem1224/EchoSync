@@ -12,6 +12,7 @@ from typing import Any, Dict, Optional, Tuple
 
 DEFAULT_LIBRARY_ROOT = "/data/library"
 DEFAULT_RENAMING_PATTERN = "{Artist}/{Album}/{Track} - {Title}.{ext}"
+DEFAULT_SINGLES_PATTERN = "{Artist}/Singles/{Track} - {Title}.{ext}"
 
 
 def sanitize_path_segment(segment: str) -> str:
@@ -27,6 +28,66 @@ def sanitize_path_segment(segment: str) -> str:
     # Strip leading/trailing dots and spaces which are illegal/problematic on Windows
     cleaned = cleaned.strip(". ")
     return cleaned
+
+
+def get_singles_pattern() -> str:
+    """Query active singles path pattern preference."""
+    try:
+        from database.config_database import get_config_database
+        db = get_config_database()
+        with db._get_connection() as conn:
+            c = conn.cursor()
+            c.execute("SELECT value FROM system_settings WHERE key = 'library_import.singles_pattern'")
+            row = c.fetchone()
+            if row and row[0]:
+                val = row[0]
+                if isinstance(val, str) and val.startswith('"') and val.endswith('"'):
+                    import json
+                    try:
+                        val = json.loads(val)
+                    except Exception:
+                        pass
+                return str(val)
+    except Exception:
+        pass
+
+    try:
+        from core.settings import config_manager
+        val = config_manager.get("library_import.singles_pattern")
+        if val:
+            return str(val)
+    except Exception:
+        pass
+
+    return DEFAULT_SINGLES_PATTERN
+
+
+def get_prefer_canonical_studio_album() -> bool:
+    """Query preference for realigning compilation tracks to canonical studio albums."""
+    try:
+        from database.config_database import get_config_database
+        db = get_config_database()
+        with db._get_connection() as conn:
+            c = conn.cursor()
+            c.execute("SELECT value FROM system_settings WHERE key = 'metadata_enhancement.prefer_canonical_studio_album'")
+            row = c.fetchone()
+            if row and row[0]:
+                val = str(row[0]).strip().lower()
+                return val in ("1", "true", "yes", "on")
+    except Exception:
+        pass
+
+    try:
+        from core.settings import config_manager
+        val = config_manager.get("metadata_enhancement.prefer_canonical_studio_album")
+        if val is not None:
+            if isinstance(val, bool):
+                return val
+            return str(val).strip().lower() in ("1", "true", "yes", "on")
+    except Exception:
+        pass
+
+    return True
 
 
 def get_library_preferences() -> Tuple[str, str]:
@@ -132,6 +193,8 @@ def build_destination_path(
     pattern: str,
     meta: Dict[str, Any],
     ext: str,
+    singles_pattern: Optional[str] = None
+) -> Path:
     """
     Interpolate dynamic tokens into destination library path.
 
@@ -154,7 +217,31 @@ def build_destination_path(
     raw_album_lower = raw_album.lower()
     is_single = (
         meta.get("release_type") in ("single", "standalone")
+        or bool(meta.get("is_single"))
+        or raw_album_lower in (
+            "[standalone recordings]",
+            "[non-album tracks]",
+            "standalone recordings",
+            "non-album tracks",
+            "unknown album",
+            "singles",
+            ""
+        )
+    )
+
+    if is_single:
+        album = "Singles"
+        working_pattern = singles_pattern or get_singles_pattern()
+    else:
+        album = sanitize_path_segment(raw_album) if raw_album else "Singles"
+        if not album:
             album = "Singles"
+        working_pattern = pattern
+
+    # Resolve title and version injection
+    raw_title = meta.get("title") or "Unknown Track"
+    version = meta.get("version") or meta.get("subtitle") or meta.get("edition")
+    if version:
         version_clean = str(version).strip()
         if version_clean and version_clean.lower() not in raw_title.lower():
             raw_title = f"{raw_title} ({version_clean})"
@@ -167,16 +254,15 @@ def build_destination_path(
         track_num = ""
     year = extract_year_token(meta)
     if not track_num:
-        # Replace common prefixes like '{Track} - ', '{Track} . ', '{Track}_', '{Track}.'
+        working_pattern = re.sub(r"\{Track\}\s*[-_.]\s*", "", working_pattern)
+        working_pattern = working_pattern.replace("{Track}", "")
 
-    # If year is empty, clean empty parentheticals like '({Year})' or '[{Year}]'
     if not year:
         working_pattern = re.sub(r"\(\s*\{Year\}\s*\)", "", working_pattern)
         working_pattern = re.sub(r"\[\s*\{Year\}\s*\]", "", working_pattern)
         working_pattern = re.sub(r"\{Year\}\s*[-_.]\s*", "", working_pattern)
         working_pattern = working_pattern.replace("{Year}", "")
 
-    # Perform token replacement
     rel_path_str = working_pattern.format(
         Artist=artist,
         Album=album,
@@ -187,21 +273,17 @@ def build_destination_path(
         ext=ext_clean
     )
 
-    # Normalize separators and sanitize each individual directory segment
-    # Split by / or \ so user tokens (e.g. AC/DC) don't create unwanted nested folders
     segments = re.split(r"[\\/]+", rel_path_str.strip("\\/"))
     cleaned_segments = []
     for seg in segments:
         s = sanitize_path_segment(seg)
-        # Clean any leading dangling punctuation like "- Track"
         s = re.sub(r"^[-_.]\s*", "", s).strip()
         if s:
-            cleaned_segments.push(s) if hasattr(cleaned_segments, 'push') else cleaned_segments.append(s)
+            cleaned_segments.append(s)
 
     if not cleaned_segments:
         cleaned_segments = [f"{title}.{ext_clean}"]
 
-    # Ensure last segment has the extension
     filename = cleaned_segments[-1]
     if not filename.lower().endswith(f".{ext_clean}"):
         cleaned_segments[-1] = f"{filename}.{ext_clean}"

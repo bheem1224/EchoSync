@@ -1,3 +1,4 @@
+from core.nexus_framework.plugin_loader import generate_plugin_id
 """
 Metadata Enhancer Service - Service for identifying and tagging audio.
 
@@ -10,31 +11,33 @@ This service focuses on:
 It does NOT move files or scan directories (see AutoImportService).
 """
 
-from pathlib import Path
-from typing import Optional, Dict, Any, Tuple, List
 import datetime
+from pathlib import Path
+from typing import Any
 
-from sqlalchemy.orm.attributes import flag_modified
-from sqlalchemy.exc import OperationalError
+import echosync_core  # pyright: ignore[reportMissingImports]
+from sqlalchemy.exc import OperationalError  # pyright: ignore[reportMissingImports]
+from sqlalchemy.orm.attributes import flag_modified  # pyright: ignore[reportMissingImports]
+
+from core.db.echo_sync_track import EchosyncTrack
 from core.enums import Capability
 from core.hook_manager import hook_manager
-from core.tiered_logger import get_logger
 from core.matching_engine.fingerprinting import FingerprintGenerator
 from core.matching_engine.matching_engine import WeightedMatchingEngine
-from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
 from core.matching_engine.scoring_profile import PROFILE_EXACT_SYNC
-from core.matching_engine.text_utils import normalize_track_comparison_fields, extract_version_info
-from core.db.echo_sync_track import EchosyncTrack
-from core.settings import config_manager
-from database.working_database import get_working_database, ReviewTask
-import echosync_core
+from core.matching_engine.text_utils import (
+    extract_version_info,
+    normalize_track_comparison_fields,
+)
+from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
+from core.tiered_logger import get_logger
+from database.working_database import ReviewTask, get_working_database
 
 logger = get_logger("services.metadata_enhancer")
 
 
 class MetadataWriteVerificationError(Exception):
     """Raised when audio tag write-and-verify roundtrip fails."""
-    pass
 
 # ── DIAGNOSTIC FLAG ────────────────────────────────────────────────────────────
 # Set True to bypass ALL network calls (Steps 2.5 / 3 / 4 / 5).
@@ -56,7 +59,7 @@ def _title_similarity(a: str, b: str) -> float:
     return len(words_a & words_b) / len(words_a | words_b)
 
 
-def _track_entry_to_metadata(track: Dict[str, Any]) -> Dict[str, Any]:
+def _track_entry_to_metadata(track: dict[str, Any]) -> dict[str, Any]:
     """Convert an album_cache track entry to the standard identify_file return format."""
     return {
         "title": track.get("title"),
@@ -75,8 +78,8 @@ def _track_entry_to_metadata(track: Dict[str, Any]) -> Dict[str, Any]:
 
 def _match_from_album_cache(
     file_path: Path,
-    album_cache: Dict[str, Any],
-) -> "Optional[Tuple[Optional[Dict[str, Any]], float]]":
+    album_cache: dict[str, Any],
+) -> "tuple[dict[str, Any] | None, float] | None":
     """Try to match *file_path* against any release stored in *album_cache*.
 
     Matching priority:
@@ -94,7 +97,7 @@ def _match_from_album_cache(
     raw_track_num = tags.get("track_number") or tags.get("tracknumber")
     raw_disc_num = tags.get("disc_number") or tags.get("discnumber") or "1"
     try:
-        tag_track_num: Optional[int] = int(str(raw_track_num).split("/")[0].strip())
+        tag_track_num: int | None = int(str(raw_track_num).split("/")[0].strip())
     except (TypeError, ValueError):
         tag_track_num = None
     try:
@@ -132,7 +135,7 @@ def _match_from_album_cache(
     return None
 
 
-def _tagging_write(file_path: Any, tags: Dict[str, Any]) -> None:
+def _tagging_write(file_path: Any, tags: dict[str, Any]) -> None:
     """
     Write physical audio tags to a file via echosync_core.
     If PyO3 bindings for physical tag writing are not exposed for a specific format,
@@ -160,7 +163,7 @@ def _tagging_write(file_path: Any, tags: Dict[str, Any]) -> None:
         logger.warning("_tagging_write: failed writing tags to %s via echosync_core: %s", path.name, e)
 
 
-def build_native_tag_payload(track: Dict[str, Any]) -> Dict[str, Any]:
+def build_native_tag_payload(track: dict[str, Any]) -> dict[str, Any]:
     """
     Construct standardized downstream physical tag payload for audio writers.
     
@@ -263,7 +266,7 @@ def normalize_singles_metadata(track: Any) -> Any:
     return track
 
 
-def realign_repack_metadata(track: Any, studio_release_data: Dict[str, Any]) -> Any:
+def realign_repack_metadata(track: Any, studio_release_data: dict[str, Any]) -> Any:
     """
     Realigns compilation/repack tracks to their canonical studio album while preserving
     compilation provenance in repack_source and repack_release_mbid.
@@ -343,7 +346,7 @@ def apply_ensemble_disambiguation(track: Any, parent_ensemble_name: str) -> Any:
 class RetroactiveEnhancer:
     """Background service for library-wide batch metadata enhancement."""
 
-    def generate_preview_path(self, template: str, sample_data: Optional[Dict[str, Any]] = None) -> str:
+    def generate_preview_path(self, template: str, sample_data: dict[str, Any] | None = None) -> str:
         """Preview file destination path based on template and sample/default metadata."""
         from core.path_formatter import build_destination_path
         data = sample_data or {
@@ -358,7 +361,6 @@ class RetroactiveEnhancer:
         return dest.as_posix()
 
     def _get_plugin(self, capability: Capability, required_algorithm: str = None):
-        from core.nexus_framework.plugin_loader import PluginRegistry
         
         plugins = PluginRegistry.get_plugins_with_capability(capability)
         for p in plugins:
@@ -376,7 +378,7 @@ class RetroactiveEnhancer:
                     
         return None
 
-    def identify_file(self, file_path: Path) -> Tuple[Optional[Dict[str, Any]], float]:
+    def identify_file(self, file_path: Path) -> tuple[dict[str, Any] | None, float]:
         """
         Identify a file using Fingerprinting and/or Metadata Search.
         Returns (metadata, confidence_score).
@@ -397,7 +399,7 @@ class RetroactiveEnhancer:
             duration_sec = None
 
             try:
-                import echosync_core
+                import echosync_core  # pyright: ignore[reportMissingImports]
                 raw_tags = echosync_core.extract_metadata(str(file_path)) or {}
 
                 # Support both echosync_core native keys and legacy fallback keys
@@ -502,13 +504,13 @@ class RetroactiveEnhancer:
                     acoustid_id = None
                     mbids = []
                     score = None
-                    if hasattr(fingerprint_provider, "resolve_fingerprint_details"):
-                        details = fingerprint_provider.resolve_fingerprint_details(fingerprint, duration_sec_int)
+                    if hasattr(fingerprint_provider, "resolve_fingerprint_details"):  # type: ignore[attr-defined]
+                        details = fingerprint_provider.resolve_fingerprint_details(fingerprint, duration_sec_int)  # type: ignore[attr-defined]
                         if isinstance(details, dict):
                             acoustid_id = details.get("acoustid_id")
                             mbids = details.get("mbids") or []
                             score = details.get("score")
-                    elif hasattr(fingerprint_provider, "resolve_fingerprint"):
+                    elif hasattr(fingerprint_provider, "resolve_fingerprint"):  # type: ignore[attr-defined]
                         mbids = fingerprint_provider.resolve_fingerprint(fingerprint, duration_sec_int) or []
 
                     if mbids and metadata_provider:
@@ -568,7 +570,16 @@ class RetroactiveEnhancer:
                             or "ISRC"
                         )
                         logger.info(f"Identified file via ISRC waterfall from provider: {src_name}")
-                        return isrc_track, 0.92
+                        return {
+                            "title": isrc_track.title,
+                            "artist": isrc_track.artist_name,
+                            "album": isrc_track.album_title,
+                            "recording_id": isrc_track.identifiers.get("musicbrainz_id", "") if isrc_track.identifiers else "",
+                            "release_id": isrc_track.identifiers.get("musicbrainz_release_group_id", "") if isrc_track.identifiers else "",
+                            "track_number": isrc_track.track_number,
+                            "isrc": isrc_track.isrc,
+                            "date": isrc_track.release_year,
+                        }, 0.92
                 except Exception as isrc_err:
                     logger.warning(f"ISRC waterfall lookup error for {file_path.name}: {isrc_err}")
 
@@ -584,7 +595,7 @@ class RetroactiveEnhancer:
                         album_title=track_obj.album_title,
                         duration=track_obj.duration
                     )
-                    results = metadata_provider.search_metadata(search_query_track, limit=10)
+                    results = metadata_provider.search_metadata(search_query_track, limit=10)  # type: ignore[attr-defined]
                     if results:
                         if isinstance(results, EchosyncTrack):
                             results_list = [results]
@@ -611,8 +622,12 @@ class RetroactiveEnhancer:
                                 candidate_tracks.append((candidate, mbid))
 
                         if candidate_tracks:
-                            from core.matching_engine.scoring_profile import PROFILE_EXACT_SYNC
-                            from core.matching_engine.matching_engine import WeightedMatchingEngine
+                            from core.matching_engine.matching_engine import (
+                                WeightedMatchingEngine,
+                            )
+                            from core.matching_engine.scoring_profile import (
+                                PROFILE_EXACT_SYNC,
+                            )
                             engine_cls = ServiceRegistry.resolve('matching_engine') or WeightedMatchingEngine
                             matcher = engine_cls(PROFILE_EXACT_SYNC)
                             best_score = 0.0
@@ -636,7 +651,7 @@ class RetroactiveEnhancer:
                                 if best_candidate:
                                     return best_candidate, best_score / 100.0
                     else:
-                        logger.debug(f"No search results for fallback query using local_metadata")
+                        logger.debug("No search results for fallback query using local_metadata")
                 except Exception as e:
                     logger.warning(f"Fallback search using local_metadata failed: {e}", exc_info=True)
 
@@ -663,11 +678,11 @@ class RetroactiveEnhancer:
 
         return results
 
-    def read_tags(self, file_path: Path) -> Dict[str, Any]:
+    def read_tags(self, file_path: Path) -> dict[str, Any]:
         """Read tags from a file using the internal tagging helper."""
         return echosync_core.extract_metadata(str(file_path))
 
-    def tag_file_verified(self, file_path: Path, metadata: Any) -> Dict[str, Any]:
+    def tag_file_verified(self, file_path: Path, metadata: Any) -> dict[str, Any]:
         """Write metadata to physical audio file and verify roundtrip via readback.
 
         Raises MetadataWriteVerificationError if the written tags do not match
@@ -756,7 +771,7 @@ class RetroactiveEnhancer:
         )
         return verified_tags
 
-    def tag_file(self, file_path: Path, metadata: Dict[str, Any], verify: bool = True) -> None:
+    def tag_file(self, file_path: Path, metadata: dict[str, Any], verify: bool = True) -> None:
         """Write *metadata* to the physical audio file at *file_path*.
 
         Translates the flat metadata dict produced by ``identify_file`` /
@@ -804,12 +819,11 @@ class RetroactiveEnhancer:
                 
                 # 2. Get/Create EchosyncTrack
                 from core.db.echo_sync_track import EchosyncTrack
-                from core.nexus_framework.plugin_loader import PluginRegistry
                 from core.matching_engine.fingerprinting import FingerprintGenerator
                 
                 track = None
                 try:
-                    import echosync_core
+                    import echosync_core  # pyright: ignore[reportMissingImports]
                     raw_tags = echosync_core.extract_metadata(file_path_str) or {}
                     # Support both echosync_core native keys and legacy fallback keys
                     raw_dur_ms = raw_tags.get("duration_ms")
@@ -881,7 +895,7 @@ class RetroactiveEnhancer:
                 from core.io_gatekeeper import Gatekeeper
                 file_exists = False
                 try:
-                    Gatekeeper.authorize_and_execute({"operation": "validate_only", "target": file_path_str})
+                    Gatekeeper().authorize_and_execute({"operation": "validate_only", "target": file_path_str})
                     file_exists = Path(file_path_str).is_file()
                 except Exception:
                     pass
@@ -890,7 +904,7 @@ class RetroactiveEnhancer:
                         fingerprint = FingerprintGenerator.generate(file_path_str)
                         if fingerprint:
                             track.fingerprint = fingerprint
-                            track.fingerprint_confidence = 1.0
+                            track.fingerprint_confidence = 1.0  # type: ignore[attr-defined]
                     except Exception as fp_err:
                         logger.warning(f"Failed to generate fingerprint for review task: {fp_err}")
                 
@@ -975,7 +989,7 @@ class RetroactiveEnhancer:
         except Exception as e:
             logger.error(f"Failed to update review task: {e}", exc_info=True)
 
-    def approve_match(self, file_path: Path, metadata: Dict[str, Any]):
+    def approve_match(self, file_path: Path, metadata: dict[str, Any]):
         """
         Approve a match manually.
         Delegates to AutoImportService to finalize (Tag & Move).
@@ -990,7 +1004,7 @@ class RetroactiveEnhancer:
 
 
 
-    def search_metadata_waterfall(self, track: EchosyncTrack) -> Optional[Any]:
+    def search_metadata_waterfall(self, track: EchosyncTrack) -> Any | None:
         """
         Execute a cascading text-based metadata search waterfall across MusicBrainz and Spotify
         for tracks where acoustic fingerprinting returned zero matches.
@@ -1009,21 +1023,19 @@ class RetroactiveEnhancer:
         search_query_track = EchosyncTrack(
             raw_title=clean_t,
             artist_name=clean_a,
-            album_title=track.album_title if hasattr(track, 'album_title') else None,
+            album_title=track.album_title if hasattr(track, 'album_title') and track.album_title else "",
             duration=track.duration if hasattr(track, 'duration') else None
         )
 
-        from core.matching_engine.scoring_profile import PROFILE_EXACT_SYNC
-        from core.matching_engine.matching_engine import WeightedMatchingEngine
         from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
         engine_cls = ServiceRegistry.resolve('matching_engine') or WeightedMatchingEngine
         matcher = engine_cls(PROFILE_EXACT_SYNC)
 
         # Stage 1: MusicBrainz Text Search
-        mb_client = PluginRegistry.get_plugin("musicbrainz") or self._get_plugin(Capability.FETCH_METADATA)
+        mb_client = PluginRegistry.get_plugin(generate_plugin_id("EchoSync.musicbrainz")) or self._get_plugin(Capability.FETCH_METADATA)
         if mb_client and hasattr(mb_client, "search_metadata"):
             try:
-                results = mb_client.search_metadata(search_query_track, limit=10)
+                results = mb_client.search_metadata(search_query_track, limit=10)  # type: ignore[attr-defined]
                 if results:
                     results_list = results if isinstance(results, (list, tuple)) else [results]
                     candidate_tracks = []
@@ -1066,7 +1078,7 @@ class RetroactiveEnhancer:
                 logger.warning("Waterfall Stage 1 (MusicBrainz) error for '%s': %s", title, mb_err)
 
         # Stage 2: Spotify Text Search Fallback
-        spotify_client = PluginRegistry.get_plugin("spotify")
+        spotify_client = PluginRegistry.get_plugin(generate_plugin_id("EchoSync.spotify"))
         if spotify_client and hasattr(spotify_client, "search"):
             try:
                 query = f"track:{clean_t} artist:{clean_a}"
@@ -1090,7 +1102,9 @@ class RetroactiveEnhancer:
                         logger.info("Waterfall Stage 2 (Spotify) match for '%s' (score: %.1f%%)", title, best_score)
                         if best_spotify_cand.isrc:
                             try:
-                                from services.isrc_lookup_service import dispatch_isrc_lookup
+                                from services.isrc_lookup_service import (
+                                    dispatch_isrc_lookup,
+                                )
                                 isrc_track = dispatch_isrc_lookup(best_spotify_cand.isrc)
                                 if isrc_track:
                                     return isrc_track
@@ -1102,7 +1116,7 @@ class RetroactiveEnhancer:
 
         return None
 
-    def _search_result_to_track(self, result: Dict[str, Any]) -> Optional[EchosyncTrack]:
+    def _search_result_to_track(self, result: dict[str, Any]) -> EchosyncTrack | None:
         """Convert MusicBrainz search result to EchosyncTrack using provider_base helper."""
         from core.nexus_framework.plugin_SDK import PluginBase
 
@@ -1126,23 +1140,24 @@ class RetroactiveEnhancer:
         import re
         return re.sub(r'[<>:"/\\|?*\x00-\x1f]', '', filename).strip()
 
-    def enhance_library_metadata(self, batch_size=50, check_all_files: bool = False, limit: Optional[int] = None) -> None:
+    def enhance_library_metadata(self, batch_size=50, check_all_files: bool = False, limit: int | None = None) -> None:
         """Retroactive metadata enhancer following a Local-First, highly efficient 5-Step Pipeline.
 
         Loops through batches until no more tracks require enhancement or limit is reached. Each batch is
         committed in its own session so memory stays flat even on large libraries.
         Adheres strictly to the canonical EchosyncTrack model with nested EchosyncMedia objects.
         """
-        from sqlalchemy import or_, and_, func, Integer
-        from sqlalchemy.exc import OperationalError
-        from database.music_database import get_database, Track, Artist, AudioFingerprint, LocalMedia
-        from core.utils import PathMapper
-        from core.matching_engine.scoring_profile import ExactSyncProfile
-        from core.matching_engine.fingerprinting import FingerprintGenerator
-        from core.db.echo_sync_track import EchosyncTrack, EchosyncMedia
-        from core.matching_engine.matching_engine import WeightedMatchingEngine
-        from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
         from pathlib import Path
+
+        from core.db.echo_sync_track import EchosyncTrack
+        from core.matching_engine.fingerprinting import FingerprintGenerator
+        from core.nexus_framework.plugin_loader import PluginRegistry
+        from core.utils import PathMapper
+        from database.music_database import (
+            AudioFingerprint,
+            Track,
+            get_database,
+        )
 
         MAX_REATTEMPTS = 5
 
@@ -1225,7 +1240,7 @@ class RetroactiveEnhancer:
             results_to_commit = []
 
             # ── Chunked Processing with Absolute Trust Waterfall ──
-            mb_client = PluginRegistry.get_plugin("musicbrainz")
+            mb_client = PluginRegistry.get_plugin(generate_plugin_id("EchoSync.musicbrainz"))
             CHUNK_SIZE = 50
 
             for chunk_start in range(0, len(track_items), CHUNK_SIZE):
@@ -1452,7 +1467,7 @@ class RetroactiveEnhancer:
                     if fingerprint_provider and t_track.fingerprint and duration:
                         try:
                             duration_secs = int(duration / 1000) if duration > 10000 else duration
-                            details = fingerprint_provider.resolve_fingerprint_details(t_track.fingerprint, duration_secs)
+                            details = fingerprint_provider.resolve_fingerprint_details(t_track.fingerprint, duration_secs)  # type: ignore[attr-defined]
                             if details.get('mbids'):
                                 new_musicbrainz_id = details['mbids'][0]
                             if details.get('acoustid_id'):
