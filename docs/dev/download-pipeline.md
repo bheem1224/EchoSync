@@ -321,7 +321,7 @@ def _on_pre_provider_search(query, strategy_name="", **context):
     if strategy_name == "album+title" and some_condition(query):
         logger.debug(f"Skipping {strategy_name} for this query")
         return []  # <-- Empty list = skip this strategy
-    
+
     # Otherwise, return expanded queries as normal
     return [query] or list_of_variants
 ```
@@ -342,16 +342,16 @@ The CJK Language Pack skips the `album+title` strategy for CJK queries because P
 ```python
 def _on_pre_provider_search(query, strategy_name="", **kwargs):
     _probe = query if isinstance(query, str) else " ".join(str(q) for q in (query or []))
-    
+
     # Skip album+title for CJK to avoid wasting HTTP requests
     if strategy_name == "album+title" and _has_cjk(_probe):
         logger.debug("Pruning album+title strategy for CJK query %r", query)
         return []  # <-- Skip this strategy
-    
+
     # For other strategies, expand normally
     if _has_cjk(query):
         return _expand_query(query, ...)
-    
+
     return query  # No expansion needed
 ```
 
@@ -375,11 +375,11 @@ def _on_pre_provider_search(query, strategy_name="", artist_name="", title="", *
 def _on_pre_provider_search(query, **context):
     provider = context.get('provider')  # If available in context
     strategy = context.get('strategy_name')
-    
+
     # Skip strategies not supported by this provider
     if provider == 'slskd' and strategy == 'title+strict-duration':
         return []  # Slskd doesn't support strict filters
-    
+
     return query
 ```
 
@@ -389,7 +389,7 @@ def _on_pre_provider_search(query, strategy_name="", **context):
     if strategy_name == "artist+title":
         # Skip default artist+title, return custom variant instead
         return [f"custom_prefix {query}"]  # Still returns a list
-    
+
     return query
 ```
 
