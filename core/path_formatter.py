@@ -131,8 +131,7 @@ def build_destination_path(
     base_library_path: str,
     pattern: str,
     meta: Dict[str, Any],
-    ext: str
-) -> Path:
+    ext: str,
     """
     Interpolate dynamic tokens into destination library path.
 
@@ -150,16 +149,12 @@ def build_destination_path(
     raw_artist = meta.get("album_artist") or meta.get("artist") or "Unknown Artist"
     artist = sanitize_path_segment(raw_artist) or "Unknown Artist"
 
-    # Resolve album
-    raw_album = meta.get("album")
-    album = sanitize_path_segment(raw_album) if raw_album else "Singles"
-    if not album:
-        album = "Singles"
-
-    # Resolve title and version injection
-    raw_title = meta.get("title") or "Unknown Track"
-    version = meta.get("version") or meta.get("subtitle") or meta.get("edition")
-    if version:
+    # Detect if track is a single or standalone recording
+    raw_album = str(meta.get("album") or "").strip()
+    raw_album_lower = raw_album.lower()
+    is_single = (
+        meta.get("release_type") in ("single", "standalone")
+            album = "Singles"
         version_clean = str(version).strip()
         if version_clean and version_clean.lower() not in raw_title.lower():
             raw_title = f"{raw_title} ({version_clean})"
@@ -168,14 +163,11 @@ def build_destination_path(
 
     # Resolve track & year
     track_num = extract_track_token(meta)
+    if is_single and track_num in ("00", "0"):
+        track_num = ""
     year = extract_year_token(meta)
-
-    # Clean pattern when track is empty so no dangling hyphens remain
-    working_pattern = pattern
     if not track_num:
         # Replace common prefixes like '{Track} - ', '{Track} . ', '{Track}_', '{Track}.'
-        working_pattern = re.sub(r"\{Track\}\s*[-_.]\s*", "", working_pattern)
-        working_pattern = working_pattern.replace("{Track}", "")
 
     # If year is empty, clean empty parentheticals like '({Year})' or '[{Year}]'
     if not year:

@@ -209,12 +209,135 @@ def build_native_tag_payload(track: Dict[str, Any]) -> Dict[str, Any]:
         "musicbrainz_id": mbid or "",
         "recording_id": mbid or "",
         "musicbrainz_album_id": track.get("musicbrainz_album_id") or track.get("mb_release_id") or track.get("release_id") or "",
-        "echosync_track_uuid": track.get("echosync_track_uuid") or track.get("track_uuid") or "",
-        "echosync_media_uuid": track.get("echosync_media_uuid") or track.get("media_uuid") or "",
+        "repack_source": track.get("repack_source") or "",
+        "repack_release_mbid": track.get("repack_release_mbid") or "",
+        "musicbrainz_release_group_id": track.get("musicbrainz_release_group_id") or track.get("release_group_id") or "",
         "acoustid_id": track.get("acoustid_id") or "",
         "cover_art_url": track.get("cover_art_url") or "",
     }
     return payload
+
+
+def normalize_singles_metadata(track: Any) -> Any:
+    """
+    Normalizes metadata for single releases and standalone recordings:
+    Intercepts placeholders '[standalone recordings]', '[non-album tracks]', or empty album,
+    and normalizes album to 'Singles' and release_type to 'single'.
+    Supports dict and object interfaces.
+    """
+    is_dict = isinstance(track, dict)
+    album_val = (track.get("album") or track.get("album_title") or "") if is_dict else (getattr(track, "album", None) or getattr(track, "album_title", None) or "")
+    album_str = str(album_val).strip()
+    album_lower = album_str.lower()
+    rel_type = (track.get("release_type") or "") if is_dict else (getattr(track, "release_type", None) or "")
+
+    is_single_or_standalone = (
+        rel_type in ("single", "standalone")
+        or album_lower in (
+            "[standalone recordings]",
+            "[non-album tracks]",
+            "standalone recordings",
+            "non-album tracks",
+            "unknown album",
+            "singles",
+            ""
+        )
+    )
+
+    if is_single_or_standalone:
+        if is_dict:
+            track["album"] = "Singles"
+            track["album_title"] = "Singles"
+            track["release_type"] = "single"
+            track["is_single"] = True
+        else:
+            if hasattr(track, "album"):
+                track.album = "Singles"
+            if hasattr(track, "album_title"):
+                track.album_title = "Singles"
+            if hasattr(track, "release_type"):
+                track.release_type = "single"
+            if hasattr(track, "is_single"):
+                track.is_single = True
+
+    return track
+
+
+def realign_repack_metadata(track: Any, studio_release_data: Dict[str, Any]) -> Any:
+    """
+    Realigns compilation/repack tracks to their canonical studio album while preserving
+    compilation provenance in repack_source and repack_release_mbid.
+    """
+    if not studio_release_data:
+        return track
+
+    is_dict = isinstance(track, dict)
+    current_album = (track.get("album") or track.get("album_title") or "") if is_dict else (getattr(track, "album", None) or getattr(track, "album_title", None) or "")
+    current_mbid = (track.get("musicbrainz_album_id") or track.get("release_id") or "") if is_dict else (getattr(track, "musicbrainz_album_id", None) or getattr(track, "mb_release_id", None) or "")
+
+    canonical_album = studio_release_data.get("canonical_studio_album")
+    canonical_mbid = studio_release_data.get("canonical_studio_release_mbid")
+    canonical_rgid = studio_release_data.get("canonical_studio_release_group_mbid")
+    canonical_year = studio_release_data.get("canonical_year")
+
+    if is_dict:
+        track["repack_source"] = str(current_album)
+        track["repack_release_mbid"] = str(current_mbid)
+        if canonical_album:
+            track["album"] = canonical_album
+            track["album_title"] = canonical_album
+        if canonical_mbid:
+            track["musicbrainz_album_id"] = canonical_mbid
+        if canonical_rgid:
+            track["musicbrainz_release_group_id"] = canonical_rgid
+            track["release_group_id"] = canonical_rgid
+        if canonical_year:
+            track["year"] = canonical_year
+            track["release_year"] = canonical_year
+            track["date"] = str(canonical_year)
+    else:
+        if hasattr(track, "repack_source"):
+            track.repack_source = str(current_album)
+        if hasattr(track, "repack_release_mbid"):
+            track.repack_release_mbid = str(current_mbid)
+        if canonical_album:
+            if hasattr(track, "album"):
+                track.album = canonical_album
+            if hasattr(track, "album_title"):
+                track.album_title = canonical_album
+        if canonical_mbid and hasattr(track, "musicbrainz_album_id"):
+            track.musicbrainz_album_id = canonical_mbid
+        if canonical_rgid:
+            if hasattr(track, "release_group_id"):
+                track.release_group_id = canonical_rgid
+        if canonical_year:
+            if hasattr(track, "release_year"):
+                track.release_year = canonical_year
+            if hasattr(track, "year"):
+                track.year = canonical_year
+
+    return track
+
+
+def apply_ensemble_disambiguation(track: Any, parent_ensemble_name: str) -> Any:
+    """
+    Sets album_artist to the parent ensemble (e.g. ATEEZ, Wu-Tang Clan) while preserving
+    the performing member on artist / track_artist.
+    """
+    if not parent_ensemble_name:
+        return track
+
+    is_dict = isinstance(track, dict)
+    if is_dict:
+        track["album_artist"] = parent_ensemble_name
+        track["albumartist"] = parent_ensemble_name
+    else:
+        if hasattr(track, "album_artist"):
+            track.album_artist = parent_ensemble_name
+        if hasattr(track, "albumartist"):
+            track.albumartist = parent_ensemble_name
+
+    return track
 
 
 class RetroactiveEnhancer:
@@ -603,13 +726,6 @@ class RetroactiveEnhancer:
         exp_t = tags_to_write.get("title") or meta_dict.get("title") or getattr(metadata, "title", None) or ""
         exp_a = tags_to_write.get("artist") or meta_dict.get("artist") or getattr(metadata, "artist", None) or ""
         exp_isrc = tags_to_write.get("isrc") or meta_dict.get("isrc") or getattr(metadata, "isrc", None) or ""
-        exp_uuid = (
-            tags_to_write.get("echosync_track_uuid")
-            or meta_dict.get("echosync_track_uuid")
-            or meta_dict.get("track_uuid")
-            or getattr(metadata, "echosync_track_uuid", None)
-            or ""
-        )
 
         read_title = (verified_tags.get("title") or "").strip().lower()
         expected_title = str(exp_t).strip().lower()
@@ -617,8 +733,6 @@ class RetroactiveEnhancer:
         expected_artist = str(exp_a).strip().lower()
         read_isrc = (verified_tags.get("isrc") or "").strip().lower()
         expected_isrc = str(exp_isrc).strip().lower()
-        read_uuid = (verified_tags.get("echosync_track_uuid") or "").strip().lower()
-        expected_uuid = str(exp_uuid).strip().lower()
 
         if (expected_title and read_title != expected_title) or (expected_artist and read_artist != expected_artist):
             raise MetadataWriteVerificationError(
@@ -633,19 +747,12 @@ class RetroactiveEnhancer:
                 f"isrc ('{read_isrc}' vs '{expected_isrc}')"
             )
 
-        if expected_uuid and read_uuid != expected_uuid:
-            raise MetadataWriteVerificationError(
-                f"Tag verification failed for {path.name}: "
-                f"echosync_track_uuid ('{read_uuid}' vs '{expected_uuid}')"
-            )
-
         logger.info(
-            "tag_file_verified: successfully verified tags for %s (title='%s', artist='%s', isrc='%s', uuid='%s')",
+            "tag_file_verified: successfully verified tags for %s (title='%s', artist='%s', isrc='%s')",
             path.name,
             read_title,
             read_artist,
             read_isrc,
-            read_uuid,
         )
         return verified_tags
 

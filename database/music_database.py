@@ -43,8 +43,17 @@ from sqlalchemy.orm import (
 
 
 
+from enum import Enum
 import string
 import secrets
+
+
+class ReleaseType(str, Enum):
+    ALBUM = "album"
+    SINGLE = "single"
+    EP = "ep"
+    COMPILATION = "compilation"
+    STANDALONE = "standalone"
 
 def generate_nanoid(size=8) -> str:
     alphabet = string.ascii_letters + string.digits
@@ -113,6 +122,9 @@ class Artist(Base):
     musicbrainz_id: Mapped[Optional[str]] = mapped_column(String, unique=True, index=True)
     image_url: Mapped[Optional[str]] = mapped_column(String)
     metadata_status: Mapped[Optional[dict]] = mapped_column(JSON, default=dict, server_default='{}')
+    parent_artist_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("artists.id", ondelete="SET NULL"), nullable=True, index=True
+    )
 
     albums: Mapped[List["Album"]] = relationship(
         back_populates="artist", cascade="all, delete-orphan"
@@ -125,6 +137,12 @@ class Artist(Base):
     )
     aliases: Mapped[List["ArtistAlias"]] = relationship(
         back_populates="artist", cascade="all, delete-orphan"
+    )
+    parent_artist: Mapped[Optional["Artist"]] = relationship(
+        "Artist", remote_side=[id], back_populates="sub_artists"
+    )
+    sub_artists: Mapped[List["Artist"]] = relationship(
+        "Artist", back_populates="parent_artist"
     )
 
     @validates("name")
@@ -193,6 +211,7 @@ class Track(Base):
     musicbrainz_id: Mapped[Optional[str]] = mapped_column(String, index=True)
     isrc: Mapped[Optional[str]] = mapped_column(String)
     sync_id: Mapped[str] = mapped_column(String, unique=True, index=True, nullable=False, default=generate_nanoid)
+    release_type: Mapped[Optional[str]] = mapped_column(String, index=True, default="album", server_default="album")
     global_rating: Mapped[Optional[float]] = mapped_column(Float)
     metadata_status: Mapped[Optional[dict]] = mapped_column(JSON, default=dict, server_default='{}')
 

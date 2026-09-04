@@ -131,7 +131,11 @@ fn populate_tag_items(tag: &mut Tag, tags: &HashMap<String, String>) {
     }
 
     // Extract and set genre
-    if let Some(g_val) = tags.get("genre").map(|s| s.trim()).filter(|s| !s.is_empty()) {
+    if let Some(g_val) = tags
+        .get("genre")
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+    {
         tag.set_genre(g_val.to_string());
     }
 
@@ -165,38 +169,55 @@ fn populate_tag_items(tag: &mut Tag, tags: &HashMap<String, String>) {
         tag.insert_text(ItemKey::MusicBrainzReleaseId, s.to_string());
     }
 
-    // Extract and set EchoSync Track UUID
-    if let Some(t_uuid) = tags
-        .get("echosync_track_uuid")
+    // Extract and set Repack Source (compilation name for realigned studio tracks)
+    if let Some(r_source) = tags
+        .get("repack_source")
         .map(|s| s.trim())
         .filter(|s| !s.is_empty())
     {
         let key_str = if tag.tag_type() == TagType::Mp4Ilst {
-            "----:com.apple.iTunes:ECHOSYNC_TRACK_UUID".to_string()
+            "----:com.apple.iTunes:REPACK_SOURCE".to_string()
         } else {
-            "ECHOSYNC_TRACK_UUID".to_string()
+            "REPACK_SOURCE".to_string()
         };
         tag.insert_unchecked(TagItem::new(
             ItemKey::Unknown(key_str),
-            ItemValue::Text(t_uuid.to_string()),
+            ItemValue::Text(r_source.to_string()),
         ));
     }
 
-    // Extract and set EchoSync Media UUID
-    if let Some(m_uuid) = tags
-        .get("echosync_media_uuid")
+    // Extract and set Repack Release MBID (compilation release MBID for realigned tracks)
+    if let Some(r_mbid) = tags
+        .get("repack_release_mbid")
         .map(|s| s.trim())
         .filter(|s| !s.is_empty())
     {
         let key_str = if tag.tag_type() == TagType::Mp4Ilst {
-            "----:com.apple.iTunes:ECHOSYNC_MEDIA_UUID".to_string()
+            "----:com.apple.iTunes:REPACK_RELEASE_MBID".to_string()
         } else {
-            "ECHOSYNC_MEDIA_UUID".to_string()
+            "REPACK_RELEASE_MBID".to_string()
         };
         tag.insert_unchecked(TagItem::new(
             ItemKey::Unknown(key_str),
-            ItemValue::Text(m_uuid.to_string()),
+            ItemValue::Text(r_mbid.to_string()),
         ));
+    }
+
+    // Extract and set MusicBrainz Release Group ID
+    let rgid_val = tags
+        .get("musicbrainz_release_group_id")
+        .or_else(|| tags.get("release_group_id"))
+        .or_else(|| tags.get("musicbrainz_releasegroupid"))
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty());
+    if let Some(s) = rgid_val {
+        tag.insert_text(ItemKey::MusicBrainzReleaseGroupId, s.to_string());
+        if tag.tag_type() != TagType::Mp4Ilst {
+            tag.insert_unchecked(TagItem::new(
+                ItemKey::Unknown("MUSICBRAINZ_RELEASEGROUPID".to_string()),
+                ItemValue::Text(s.to_string()),
+            ));
+        }
     }
 }
 
@@ -272,20 +293,26 @@ fn populate_riff_items(tag: &mut Tag, tags: &HashMap<String, String>) {
         }
     }
 
-    if let Some(g_val) = tags.get("genre").map(|s| s.trim()).filter(|s| !s.is_empty()) {
+    if let Some(g_val) = tags
+        .get("genre")
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+    {
         tag.set_genre(g_val.to_string());
     }
 }
 
 fn open_probe<P: AsRef<Path>>(path: P) -> Result<Probe<std::io::BufReader<std::fs::File>>, String> {
     let p = path.as_ref();
-    let file = std::fs::File::open(p).map_err(|e| format!("Failed to open {}: {}", p.display(), e))?;
+    let file =
+        std::fs::File::open(p).map_err(|e| format!("Failed to open {}: {}", p.display(), e))?;
     let reader = std::io::BufReader::new(file);
     let probe = Probe::new(reader);
     let mut probe = match probe.guess_file_type() {
         Ok(pr) => pr,
         Err(_) => Probe::new(std::io::BufReader::new(
-            std::fs::File::open(p).map_err(|e| format!("Failed to reopen {}: {}", p.display(), e))?,
+            std::fs::File::open(p)
+                .map_err(|e| format!("Failed to reopen {}: {}", p.display(), e))?,
         )),
     };
     if probe.file_type().is_none() {
@@ -338,7 +365,9 @@ pub fn write_tags_to_file(path_str: &str, tags: &HashMap<String, String>) -> Res
         let tag_type = match tagged_file.file_type() {
             FileType::Mpeg | FileType::Aiff => TagType::Id3v2,
             FileType::Mp4 | FileType::Aac => TagType::Mp4Ilst,
-            FileType::Flac | FileType::Opus | FileType::Vorbis | FileType::Speex => TagType::VorbisComments,
+            FileType::Flac | FileType::Opus | FileType::Vorbis | FileType::Speex => {
+                TagType::VorbisComments
+            }
             FileType::Ape => TagType::Ape,
             _ => tagged_file.primary_tag_type(),
         };
@@ -355,7 +384,10 @@ pub fn write_tags_to_file(path_str: &str, tags: &HashMap<String, String>) -> Res
 }
 
 impl MetadataWriter {
-    pub fn write_map<P: AsRef<Path>>(path: P, tags: &HashMap<String, String>) -> Result<(), String> {
+    pub fn write_map<P: AsRef<Path>>(
+        path: P,
+        tags: &HashMap<String, String>,
+    ) -> Result<(), String> {
         let path_str = path.as_ref().to_string_lossy().to_string();
         write_tags_to_file(&path_str, tags)
     }

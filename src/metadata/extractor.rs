@@ -22,8 +22,9 @@ pub struct TrackMetadata {
     pub isrc: Option<String>,
     pub musicbrainz_track_id: Option<String>,
     pub musicbrainz_album_id: Option<String>,
-    pub echosync_track_uuid: Option<String>,
-    pub echosync_media_uuid: Option<String>,
+    pub repack_source: Option<String>,
+    pub repack_release_mbid: Option<String>,
+    pub release_group_id: Option<String>,
     pub codec: String,
     pub bit_depth: Option<u8>,
     pub sample_rate: Option<u32>,
@@ -70,8 +71,9 @@ fn extract_from_tag(
     isrc: &mut Option<String>,
     musicbrainz_track_id: &mut Option<String>,
     musicbrainz_album_id: &mut Option<String>,
-    echosync_track_uuid: &mut Option<String>,
-    echosync_media_uuid: &mut Option<String>,
+    repack_source: &mut Option<String>,
+    repack_release_mbid: &mut Option<String>,
+    release_group_id: &mut Option<String>,
 ) {
     if title.is_none() {
         let t_val = t
@@ -210,11 +212,23 @@ fn extract_from_tag(
             *musicbrainz_album_id = ma_val;
         }
     }
-    if echosync_track_uuid.is_none() {
-        *echosync_track_uuid = get_unknown_or_text(t, "ECHOSYNC_TRACK_UUID");
+    if repack_source.is_none() {
+        *repack_source = get_unknown_or_text(t, "REPACK_SOURCE");
     }
-    if echosync_media_uuid.is_none() {
-        *echosync_media_uuid = get_unknown_or_text(t, "ECHOSYNC_MEDIA_UUID");
+    if repack_release_mbid.is_none() {
+        *repack_release_mbid = get_unknown_or_text(t, "REPACK_RELEASE_MBID");
+    }
+    if release_group_id.is_none() {
+        let rg_val = t
+            .get(&ItemKey::MusicBrainzReleaseGroupId)
+            .and_then(|item| item.value().text())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .or_else(|| get_unknown_or_text(t, "MUSICBRAINZ_RELEASEGROUPID"))
+            .or_else(|| get_unknown_or_text(t, "MUSICBRAINZ_RELEASE_GROUP_ID"));
+        if rg_val.is_some() {
+            *release_group_id = rg_val;
+        }
     }
     if mbid.is_none() {
         if let Some(ref mid) = musicbrainz_track_id {
@@ -350,8 +364,9 @@ impl MetadataExtractor {
         let mut isrc = None;
         let mut musicbrainz_track_id = None;
         let mut musicbrainz_album_id = None;
-        let mut echosync_track_uuid = None;
-        let mut echosync_media_uuid = None;
+        let mut repack_source = None;
+        let mut repack_release_mbid = None;
+        let mut release_group_id = None;
 
         // Container-specific preferred and fallback tag search
         let mut candidate_tags: Vec<&Tag> = Vec::new();
@@ -397,8 +412,9 @@ impl MetadataExtractor {
                 &mut isrc,
                 &mut musicbrainz_track_id,
                 &mut musicbrainz_album_id,
-                &mut echosync_track_uuid,
-                &mut echosync_media_uuid,
+                &mut repack_source,
+                &mut repack_release_mbid,
+                &mut release_group_id,
             );
         }
 
@@ -416,8 +432,9 @@ impl MetadataExtractor {
             isrc,
             musicbrainz_track_id,
             musicbrainz_album_id,
-            echosync_track_uuid,
-            echosync_media_uuid,
+            repack_source,
+            repack_release_mbid,
+            release_group_id,
             codec,
             bit_depth,
             sample_rate,

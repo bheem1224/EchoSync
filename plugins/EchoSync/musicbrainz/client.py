@@ -174,6 +174,89 @@ class MusicBrainzClient(PluginBase):
                 deduped[key] = d
         return list(deduped.values())
 
+    @plugin_cache(ttl_seconds=2592000)
+    def get_artist_ensemble_relationship(self, artist_mbid: str) -> Optional[Dict[str, str]]:
+        """Look up band/group membership for an artist via MusicBrainz artist-rels."""
+        artist_mbid = str(artist_mbid or "").strip()
+        if not artist_mbid:
+            return None
+
+        try:
+            response = self.http.get(
+                f"{self.api_base}/artist/{artist_mbid}",
+                params={
+                    "fmt": "json",
+                    "inc": "artist-rels",
+                },
+            )
+            if response.status_code != 200:
+                return None
+
+            payload = response.json() or {}
+            relations = payload.get("relations", []) or []
+            for rel in relations:
+                if rel.get("type") == "member of band":
+                    target = rel.get("artist") or {}
+                    band_name = target.get("name")
+                    band_mbid = target.get("id")
+                    if band_name and band_mbid:
+                        return {
+                            "parent_ensemble_name": str(band_name).strip(),
+                            "parent_ensemble_mbid": str(band_mbid).strip(),
+                        }
+        except Exception as exc:
+            logger.debug("Failed to resolve artist ensemble relationship for %s: %s", artist_mbid, exc)
+
+        return None
+
+    def resolve_canonical_studio_release(self, releases: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """
+        Traverse releases attached to a recording to find the earliest non-compilation
+        canonical studio album/EP.
+        """
+        if not releases:
+            return None
+
+        candidates = []
+        for r in releases:
+            if not isinstance(r, dict):
+                continue
+            title = (r.get("title") or "").strip()
+            if not title:
+                continue
+
+            rg = r.get("release-group") or {}
+            p_type = (rg.get("primary-type") or "").strip().lower()
+            s_types = [str(st).strip().lower() for st in (rg.get("secondary-types") or [])]
+
+            is_compilation = "compilation" in s_types or "various artists" in str((r.get("artist-credit") or [])).lower()
+            if is_compilation:
+                continue
+
+            date_str = str(r.get("date") or "").strip()
+            year_val = None
+            if len(date_str) >= 4 and date_str[:4].isdigit():
+                try:
+                    year_val = int(date_str[:4])
+                except ValueError:
+                    pass
+
+            is_studio_type = p_type in ("album", "ep") or not p_type
+            if is_studio_type:
+                candidates.append({
+                    "canonical_studio_album": title,
+                    "canonical_studio_release_mbid": r.get("id"),
+                    "canonical_studio_release_group_mbid": rg.get("id"),
+                    "canonical_year": year_val,
+                    "date": date_str,
+                })
+
+        if not candidates:
+            return None
+
+        candidates.sort(key=lambda c: c.get("date") or "9999")
+        return candidates[0]
+
     def get_artist_tracks(self, artist_name: str) -> List[EchosyncTrack]:
         """Fetch a full-ish artist tracklist from MusicBrainz recordings search.
 

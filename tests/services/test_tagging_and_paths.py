@@ -114,14 +114,12 @@ def test_version_tag_injection(tmp_path):
 
 
 def test_deterministic_ids_persistence(tmp_path):
-    """Verifies ISRC, MBIDs, and EchoSync UUIDs survive write/read roundtrip across FLAC, MP3, WAV, and M4A."""
+    """Verifies ISRC and MBIDs survive write/read roundtrip across FLAC, MP3, WAV, and M4A."""
     enhancer = RetroactiveEnhancer()
 
     expected_isrc = "GBAYE0601498"
     expected_mbid = "863a3d5e-60f3-4217-bf41-69234aeef48d"
     expected_album_mbid = "4591ae2f-934c-473d-82d6-44485eb1743f"
-    expected_track_uuid = "019159bf-1e64-7040-a118-2e06c74ad624"
-    expected_media_uuid = "019159bf-1e64-7040-a118-2e06c74ad625"
 
     for ext, creator in [
         ("flac", _create_minimal_flac_file),
@@ -137,8 +135,6 @@ def test_deterministic_ids_persistence(tmp_path):
             "isrc": expected_isrc,
             "musicbrainz_track_id": expected_mbid,
             "musicbrainz_album_id": expected_album_mbid,
-            "echosync_track_uuid": expected_track_uuid,
-            "echosync_media_uuid": expected_media_uuid,
         }
 
         # 1. Verified tag write
@@ -149,8 +145,6 @@ def test_deterministic_ids_persistence(tmp_path):
         readback = echosync_core.read_metadata(str(audio_file))
         assert readback.get("isrc") == expected_isrc
         assert readback.get("musicbrainz_track_id") == expected_mbid
-        assert readback.get("echosync_track_uuid") == expected_track_uuid
-        assert readback.get("echosync_media_uuid") == expected_media_uuid
 
 
 def test_verification_failure_blocks_move(tmp_path):
@@ -169,14 +163,12 @@ def test_verification_failure_blocks_move(tmp_path):
             "title": "Corrupted Title",
             "artist": "Unknown Artist",
             "isrc": "CORRUPTED_ISRC",
-            "echosync_track_uuid": "wrong-uuid",
         }
 
         meta = {
             "title": "Expected Title",
             "artist": "Expected Artist",
             "isrc": "USRC17607839",
-            "echosync_track_uuid": "019159bf-1e64-7040-a118-2e06c74ad624",
         }
 
         # 1. Direct tag_file with verify=True must raise MetadataWriteVerificationError

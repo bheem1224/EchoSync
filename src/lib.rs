@@ -73,8 +73,10 @@ fn track_metadata_to_pydict<'py>(
     dict.set_item("isrc", &meta.isrc)?;
     dict.set_item("musicbrainz_track_id", &meta.musicbrainz_track_id)?;
     dict.set_item("musicbrainz_album_id", &meta.musicbrainz_album_id)?;
-    dict.set_item("echosync_track_uuid", &meta.echosync_track_uuid)?;
-    dict.set_item("echosync_media_uuid", &meta.echosync_media_uuid)?;
+    dict.set_item("repack_source", &meta.repack_source)?;
+    dict.set_item("repack_release_mbid", &meta.repack_release_mbid)?;
+    dict.set_item("release_group_id", &meta.release_group_id)?;
+    dict.set_item("musicbrainz_release_group_id", &meta.release_group_id)?;
     dict.set_item("codec", &meta.codec)?;
     dict.set_item("bit_depth", meta.bit_depth)?;
     dict.set_item("sample_rate", meta.sample_rate)?;
