@@ -345,8 +345,10 @@ def test_retroactive_enhancer_falls_back_to_text_on_acoustid_miss(
         assert t.metadata_status.get("enhanced") is True
 
 
-def test_get_tracks_for_enhancement_prioritizes_bad_metadata(tmp_path):
+def test_get_tracks_for_enhancement_prioritizes_bad_metadata(tmp_path, monkeypatch):
     """Verify TrackRepository.get_tracks_for_enhancement prioritizes Unknown Artist / Unknown Album over normal tracks."""
+    from core.hook_manager import hook_manager
+    monkeypatch.setattr(hook_manager, "apply_filters", lambda event, initial, *args, **kwargs: [] if event == "register_metadata_requirements" else initial)
     from core.database.repositories.track_repo import TrackRepository
     from database.music_database import (
         Album,

@@ -177,26 +177,12 @@ def _resolve_task_file(task: ReviewTask) -> Path | None:
 
 
 def _get_fingerprint_provider():
-    """Resolve fingerprint provider bound by plugin ID or capability."""
-    from core.nexus_framework.plugin_loader import PluginRegistry, generate_plugin_id
-
-    acoustid_id = generate_plugin_id("echosync.acoustid")
-    if not PluginRegistry.is_plugin_disabled(acoustid_id):
-        provider = PluginRegistry.get_plugin(acoustid_id)
-        if provider:
-            return provider
+    """Resolve fingerprint provider bound by capability."""
     return get_plugin_by_capability(Capability.RESOLVE_FINGERPRINT)
 
 
 def _get_metadata_provider():
-    """Resolve metadata provider bound by plugin ID or capability."""
-    from core.nexus_framework.plugin_loader import PluginRegistry, generate_plugin_id
-
-    mb_id = generate_plugin_id("echosync.musicbrainz")
-    if not PluginRegistry.is_plugin_disabled(mb_id):
-        provider = PluginRegistry.get_plugin(mb_id)
-        if provider:
-            return provider
+    """Resolve metadata provider bound by capability."""
     return get_plugin_by_capability(Capability.FETCH_METADATA)
 
 
