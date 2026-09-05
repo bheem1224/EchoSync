@@ -80,6 +80,7 @@ async def lifespan(app: FastAPI):
         from database.config_database import get_config_database
 
         cfg_db = get_config_database()
+        cfg_db._ensure_schema_once()
         if config_manager.config_path.exists():
             migrate_legacy_json_to_db(config_manager.config_path, cfg_db)
         from database.music_database import get_database

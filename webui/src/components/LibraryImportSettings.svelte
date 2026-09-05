@@ -1,24 +1,37 @@
 <script>
-  import { onMount, onDestroy } from 'svelte';
-  import { settings } from '../stores/settings';
+  import { onMount, onDestroy } from "svelte";
+  import { settings } from "../stores/settings";
 
   let data = {
     auto_import_enabled: false,
-    renaming_template: '{Artist}/{Album}/{Track} - {Title}.{ext}'
+    renaming_template: "{Artist}/{Album}/{Track} - {Title}.{ext}",
+    singles_pattern: "{Artist}/Singles/{Track} - {Title}.{ext}",
+    prefer_canonical_studio_album: true,
   };
 
-  const tokens = ['Artist', 'Album', 'Title', 'Year', 'Track', 'Format'];
+  const tokens = ["Artist", "Album", "Title", "Year", "Track", "Format"];
+  const singlesTokens = ["Artist", "Title", "Track", "Format"];
+
   const previewData = {
-    Artist: 'Daft Punk',
-    Album: 'Random Access Memories',
-    Title: 'Get Lucky',
-    Year: '2013',
-    Track: '01',
-    Format: 'flac',
-    ext: 'flac'
+    Artist: "Daft Punk",
+    Album: "Random Access Memories",
+    Title: "Get Lucky",
+    Year: "2013",
+    Track: "01",
+    Format: "flac",
+    ext: "flac",
   };
 
-  let preview = '';
+  const singlesPreviewData = {
+    Artist: "Daft Punk",
+    Title: "Get Lucky",
+    Track: "01",
+    Format: "flac",
+    ext: "flac",
+  };
+
+  let preview = "";
+  let singlesPreview = "";
 
   // subscribe to settings store to read current values
   let current;
@@ -32,38 +45,66 @@
 
   onMount(async () => {
     await settings.load();
-    const config = current?.data?.metadata_enhancement || {};
+    const metaConfig = current?.data?.metadata_enhancement || {};
+    const importConfig = current?.data?.library_import || {};
     data = {
-      auto_import_enabled: config.auto_import ?? false,
-      renaming_template: config.naming_template ?? '{Artist}/{Album}/{Track} - {Title}.{ext}'
+      auto_import_enabled: metaConfig.auto_import ?? false,
+      renaming_template:
+        metaConfig.naming_template ??
+        "{Artist}/{Album}/{Track} - {Title}.{ext}",
+      prefer_canonical_studio_album:
+        metaConfig.prefer_canonical_studio_album ?? true,
+      singles_pattern:
+        importConfig.singles_pattern ??
+        "{Artist}/Singles/{Track} - {Title}.{ext}",
     };
   });
 
   $: {
-    let p = data.renaming_template;
+    let p = data.renaming_template || "";
     for (const [key, val] of Object.entries(previewData)) {
-      p = p.replace(new RegExp(`{${key}}`, 'g'), val);
+      p = p.replace(new RegExp(`{${key}}`, "g"), val);
     }
-    preview = '/Music/' + p;
+    preview = "/Music/" + p;
+  }
+
+  $: {
+    let sp = data.singles_pattern || "";
+    for (const [key, val] of Object.entries(singlesPreviewData)) {
+      sp = sp.replace(new RegExp(`{${key}}`, "g"), val);
+    }
+    singlesPreview = (sp.startsWith("/") ? "" : "/data/library/") + sp;
   }
 
   function addToken(token) {
     data.renaming_template += `{${token}}`;
   }
 
+  function addSinglesToken(token) {
+    data.singles_pattern += `{${token}}`;
+  }
+
   export async function save() {
     const patch = {
       metadata_enhancement: {
         auto_import: data.auto_import_enabled,
-        conflict_resolution: 'keep_both', // Enforce 'keep_both' in backend logic
-        naming_template: data.renaming_template
-      }
+        conflict_resolution: "keep_both", // Enforce 'keep_both' in backend logic
+        naming_template: data.renaming_template,
+        prefer_canonical_studio_album: data.prefer_canonical_studio_album,
+      },
+      library_import: {
+        singles_pattern: data.singles_pattern,
+      },
     };
     await settings.save(patch);
   }
 
   export function getCurrentPattern() {
     return data.renaming_template;
+  }
+
+  export function getCurrentSinglesPattern() {
+    return data.singles_pattern;
   }
 </script>
 
@@ -86,11 +127,19 @@
     <div class="field stack">
       <span class="field-label">Renaming Pattern</span>
       <div class="input-group">
-        <input class="dark-input input" type="text" bind:value={data.renaming_template} />
+        <input
+          class="dark-input input"
+          type="text"
+          bind:value={data.renaming_template}
+        />
 
         <div class="tokens">
           {#each tokens as token}
-            <button class="token-btn active:scale-95 transition-all duration-200" on:click={() => addToken(token)}>{token}</button>
+            <button
+              type="button"
+              class="token-btn active:scale-95 transition-all duration-200"
+              on:click={() => addToken(token)}>{token}</button
+            >
           {/each}
         </div>
 
@@ -100,47 +149,163 @@
       </div>
     </div>
 
+    <!-- Row 3: Singles Pattern -->
+    <div class="field stack">
+      <span class="field-label">Singles Pattern</span>
+      <div class="input-group">
+        <input
+          class="dark-input input"
+          type="text"
+          bind:value={data.singles_pattern}
+          placeholder="{Artist}/Singles/{Track} - {Title}.{ext}"
+        />
+
+        <div class="tokens">
+          {#each singlesTokens as token}
+            <button
+              type="button"
+              class="token-btn active:scale-95 transition-all duration-200"
+              on:click={() => addSinglesToken(token)}>{token}</button
+            >
+          {/each}
+        </div>
+
+        <div class="preview-terminal">
+          <span class="preview-text">Preview: {singlesPreview}</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Row 4: Prefer Canonical Studio Album -->
+    <div class="row-canonical-album">
+      <div class="toggle-info">
+        <span class="label-bold">Prefer Canonical Studio Album</span>
+        <p class="description-text">
+          Realign tracks sourced from multi-artist compilations and repacks to
+          their original canonical studio albums, preserving compilation
+          provenance in custom tags.
+        </p>
+      </div>
+      <label class="switch">
+        <input
+          type="checkbox"
+          bind:checked={data.prefer_canonical_studio_album}
+        />
+        <span class="slider round"></span>
+      </label>
+    </div>
   </div>
 </section>
 
 <style>
-  .library-import { padding: 12px }
-  .library-import .form { display:flex; flex-direction:column; gap:20px; padding-left:8px; padding-right:8px; }
+  .library-import {
+    padding: 12px;
+  }
+  .library-import .form {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    padding-left: 8px;
+    padding-right: 8px;
+  }
 
   /* Row 1 Styles */
-  .row-auto-import { display: flex; justify-content: space-between; align-items: center; }
-  .label-bold { font-weight: 600; color: var(--text-main); font-size: 1rem; }
+  .row-auto-import {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .label-bold {
+    font-weight: 600;
+    color: var(--text-main);
+    font-size: 1rem;
+  }
 
   /* Switch Styles */
-  .switch { position: relative; display: inline-block; width: 40px; height: 24px; }
-  .switch input { opacity: 0; width: 0; height: 0; }
-  .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #333; transition: .4s; border-radius: 24px; }
-  .slider:before { position: absolute; content: ""; height: 18px; width: 18px; left: 3px; bottom: 3px; background-color: white; transition: .4s; border-radius: 50%; }
-  input:checked + .slider { background-color: var(--primary, #10b981); }
-  input:checked + .slider:before { transform: translateX(16px); }
+  .switch {
+    position: relative;
+    display: inline-block;
+    width: 40px;
+    height: 24px;
+    flex-shrink: 0;
+  }
+  .switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+  }
+  .slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: #333;
+    transition: 0.4s;
+    border-radius: 24px;
+  }
+  .slider:before {
+    position: absolute;
+    content: "";
+    height: 18px;
+    width: 18px;
+    left: 3px;
+    bottom: 3px;
+    background-color: white;
+    transition: 0.4s;
+    border-radius: 50%;
+  }
+  input:checked + .slider {
+    background-color: var(--primary, #10b981);
+  }
+  input:checked + .slider:before {
+    transform: translateX(16px);
+  }
 
-  /* Row 2 Styles */
-  .field.stack { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
-  .field-label { color: var(--muted); font-size: 0.9rem; margin-bottom: 4px; }
+  /* Row 2 & 3 Styles */
+  .field.stack {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    align-items: flex-start;
+  }
+  .field-label {
+    color: var(--muted);
+    font-size: 0.9rem;
+    margin-bottom: 4px;
+  }
 
-  .input-group { width: 100%; display: flex; flex-direction: column; gap: 12px; }
+  .input-group {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
   .dark-input {
     width: 100%;
     padding: 10px;
     border-radius: 8px;
-    background: rgba(255,255,255,0.05);
-    border: 1px solid rgba(255,255,255,0.1);
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
     color: var(--text);
     box-sizing: border-box;
     font-family: monospace;
     font-size: 0.95rem;
   }
-  .dark-input:focus { outline: none; border-color: var(--primary, #10b981); }
+  .dark-input:focus {
+    outline: none;
+    border-color: var(--primary, #10b981);
+  }
 
-  .tokens { display: flex; gap: 6px; flex-wrap: wrap; }
+  .tokens {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
   .token-btn {
-    background: rgba(255,255,255,0.1);
-    border: 1px solid rgba(255,255,255,0.05);
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.05);
     border-radius: 6px;
     color: var(--text-main);
     padding: 4px 10px;
@@ -148,7 +313,10 @@
     cursor: pointer;
     transition: all 0.2s;
   }
-  .token-btn:hover { background: rgba(255,255,255,0.2); transform: translateY(-1px); }
+  .token-btn:hover {
+    background: rgba(255, 255, 255, 0.2);
+    transform: translateY(-1px);
+  }
 
   /* Terminal Preview */
   .preview-terminal {
@@ -160,7 +328,30 @@
     padding: 12px; /* p-3 */
     border-radius: 6px; /* rounded */
     box-sizing: border-box;
-    border: 1px solid rgba(255,255,255,0.1);
+    border: 1px solid rgba(255, 255, 255, 0.1);
   }
-  .preview-text { word-break: break-all; }
+  .preview-text {
+    word-break: break-all;
+  }
+
+  /* Row 4: Prefer Canonical Studio Album */
+  .row-canonical-album {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 16px;
+    padding-top: 12px;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+  }
+  .toggle-info {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .description-text {
+    font-size: 0.8rem;
+    color: var(--muted, #94a3b8);
+    margin: 0;
+    line-height: 1.4;
+  }
 </style>

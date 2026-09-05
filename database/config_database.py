@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import re
 import sqlite3
+import threading
 import time
 from collections.abc import Generator
 from pathlib import Path
@@ -17,6 +18,11 @@ from . import ensure_writer, execute_write, execute_write_sql
 
 
 class ConfigDatabase:
+    _schema_lock = threading.Lock()
+    _schema_initialized: bool = False
+    _schema_verified: bool = False
+    _initialized_paths: set[str] = set()
+
     def __init__(self, db_path: str | None = None):
         if db_path:
             self.database_path = Path(db_path)
@@ -43,7 +49,7 @@ class ConfigDatabase:
             pass
 
         try:
-            self._initialize_schema()
+            self._ensure_schema_once()
         except sqlite3.DatabaseError as de:
             if "malformed database schema" in str(de) or "orphan index" in str(de):
                 logger.warning(
@@ -57,12 +63,40 @@ class ConfigDatabase:
                     logger.info(
                         "Automatic database recovery completed successfully. Retrying schema initialization..."
                     )
-                    self._initialize_schema()
+                    self._ensure_schema_once(force=True)
                 except Exception as ree:
                     logger.error(f"Automatic database recovery failed: {ree}")
                     raise de
             else:
                 raise
+
+    def _ensure_schema_once(self, force: bool = False) -> None:
+        try:
+            path_key = str(self.database_path.resolve())
+        except Exception:
+            path_key = str(self.database_path)
+
+        if (
+            not force
+            and ConfigDatabase._schema_initialized
+            and path_key in ConfigDatabase._initialized_paths
+        ):
+            return
+
+        with ConfigDatabase._schema_lock:
+            if (
+                not force
+                and ConfigDatabase._schema_initialized
+                and path_key in ConfigDatabase._initialized_paths
+            ):
+                return
+            self._run_schema_migrations()
+            ConfigDatabase._initialized_paths.add(path_key)
+            ConfigDatabase._schema_initialized = True
+            ConfigDatabase._schema_verified = True
+
+    def _run_schema_migrations(self) -> None:
+        self._initialize_schema()
 
     @contextlib.contextmanager
     def _get_connection(self) -> Generator[sqlite3.Connection, None, None]:
@@ -526,7 +560,9 @@ class ConfigDatabase:
 
             # Run schema creation and inline migrations on writer thread to avoid concurrent-writes
             execute_write(str(self.database_path), _schema)
-            logger.info("Config database schema ensured and legacy services migrated")
+            logger.debug(
+                "[system] - Config database schema ensured and legacy services migrated"
+            )
             self.seed_default_system_settings()
         except Exception as e:
             logger.error(f"Failed to initialize config schema: {e}", exc_info=True)
@@ -1605,6 +1641,7 @@ class ConfigDatabase:
                 val = row[0]
                 if isinstance(val, str):
                     import json
+
                     try:
                         return json.loads(val)
                     except (json.JSONDecodeError, ValueError):
@@ -1841,28 +1878,45 @@ class ConfigDatabase:
             return False
 
 
-import threading
-
 _config_db: ConfigDatabase | None = None
+_config_db_instances: dict[str, ConfigDatabase] = {}
 _config_db_lock = threading.Lock()
 
 
 def get_config_database(db_path: Any | None = None) -> ConfigDatabase:
+    """Return a shared, thread-safe ConfigDatabase instance."""
     global _config_db
-    if db_path is not None:
-        return ConfigDatabase(db_path=str(db_path))
-    if _config_db is None:
-        with _config_db_lock:
+    with _config_db_lock:
+        if db_path is None:
             if _config_db is None:
                 _config_db = ConfigDatabase()
-    return _config_db
+                try:
+                    p = str(_config_db.database_path.resolve())
+                    _config_db_instances[p] = _config_db
+                except Exception:
+                    pass
+            return _config_db
+
+        try:
+            path_str = str(Path(db_path).resolve())
+        except Exception:
+            path_str = str(db_path)
+
+        if path_str not in _config_db_instances:
+            _config_db_instances[path_str] = ConfigDatabase(db_path=str(db_path))
+        return _config_db_instances[path_str]
+
+
+def get_config_db(db_path: Any | None = None) -> ConfigDatabase:
+    """FastAPI Depends provider and alias for get_config_database."""
+    return get_config_database(db_path=db_path)
 
 
 def close_config_database() -> None:
     global _config_db
-    if _config_db is not None:
-        # No explicit dispose on sqlite3 Connection, but we can set to None
+    with _config_db_lock:
         _config_db = None
+        _config_db_instances.clear()
 
 
 from sqlalchemy import Boolean, Column, Integer, String  # pyright: ignore[reportMissingImports]

@@ -734,9 +734,18 @@ class ConfigManager:
     def _get_db(self):
         """Get the ConfigDatabase instance matching this ConfigManager's database_path."""
         try:
+            if (
+                hasattr(self, "_cached_db")
+                and self._cached_db is not None
+                and getattr(self._cached_db, "database_path", None)
+                == self.database_path
+            ):
+                return self._cached_db
+
             from database.config_database import get_config_database
 
-            return get_config_database(db_path=self.database_path)
+            self._cached_db = get_config_database(db_path=self.database_path)
+            return self._cached_db
         except Exception:
             return None
 
@@ -775,21 +784,26 @@ class ConfigManager:
         Hot runtime keys are persisted to config.db (system_settings).
         Cold bootstrap keys are saved to plaintext config.json.
         """
-        root_key = key.split(".")[0]
-        if root_key not in COLD_BOOTSTRAP_KEYS:
-            try:
-                db = self._get_db()
-                if db:
-                    db.set_system_setting(key, value)
-            except Exception:
-                pass
-
         keys = key.split(".")
         config_level = self.config_data
         for k in keys[:-1]:
             config_level = config_level.setdefault(k, {})
 
         config_level[keys[-1]] = value
+
+        root_key = keys[0]
+        if root_key not in COLD_BOOTSTRAP_KEYS:
+            try:
+                db = self._get_db()
+                if db:
+                    db.set_system_setting(key, value)
+                    if isinstance(value, dict):
+                        for sub_k, sub_v in value.items():
+                            db.set_system_setting(f"{key}.{sub_k}", sub_v)
+                    elif len(keys) > 1 and root_key in self.config_data:
+                        db.set_system_setting(root_key, self.config_data[root_key])
+            except Exception:
+                pass
 
         # Save non-secrets to plaintext JSON only if cold bootstrap key
         if root_key in COLD_BOOTSTRAP_KEYS:

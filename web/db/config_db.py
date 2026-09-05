@@ -122,13 +122,23 @@ class ConfigDatabaseWrapper:
         return self._db.cleanup_expired_pkce_sessions()
 
 
+import threading
+
 # Singleton instance for app-wide use
 _instance: ConfigDatabaseWrapper | None = None
+_instance_lock = threading.Lock()
 
 
 def get_config_database() -> ConfigDatabaseWrapper:
     """Get or create the singleton wrapper instance."""
     global _instance
     if _instance is None:
-        _instance = ConfigDatabaseWrapper()
+        with _instance_lock:
+            if _instance is None:
+                _instance = ConfigDatabaseWrapper()
     return _instance
+
+
+def get_config_db() -> ConfigDatabaseWrapper:
+    """Alias for FastAPI Depends provider."""
+    return get_config_database()
