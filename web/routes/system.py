@@ -301,6 +301,7 @@ _SETTINGS_ALLOWLIST: frozenset = frozenset({
     "active_media_server",
     "active_download_client",
     "metadata_enhancement",
+    "library_import",
     "quality_profiles",
     "scan_interval",
     "file_rename_template",
@@ -532,6 +533,12 @@ async def update_settings(request: Request):
         for key, value in payload.items():
             config_manager.set(key, value)
 
+        try:
+            from core.event_bus import event_bus
+            event_bus.publish("system", "CONFIG_UPDATED", {"updated_keys": list(payload.keys())})
+        except Exception as eb_err:
+            logger.debug(f"Could not publish CONFIG_UPDATED event: {eb_err}")
+
         resp = {"success": True}
         if restart_warning:
             resp["warning"] = "Application restart is required to apply the Custom UI Path."
@@ -630,6 +637,13 @@ async def save_quality_profiles(request: Request):
         ok = config_manager.set_quality_profiles(profiles)
         if not ok:
             return {'error': 'Failed to persist profiles'}
+
+        try:
+            from core.event_bus import event_bus
+            event_bus.publish("system", "CONFIG_UPDATED", {"updated_keys": ["quality_profiles"]})
+        except Exception as eb_err:
+            logger.debug(f"Could not publish CONFIG_UPDATED event: {eb_err}")
+
         return {'success': True}
     except Exception as e:
         logger.error(f"Error saving quality profiles: {e}")
@@ -681,6 +695,13 @@ async def save_single_quality_profile(request: Request):
         ok = config_manager.set_quality_profiles(existing)
         if not ok:
             return {'error': 'Failed to persist profile'}
+
+        try:
+            from core.event_bus import event_bus
+            event_bus.publish("system", "CONFIG_UPDATED", {"updated_keys": ["quality_profiles"]})
+        except Exception as eb_err:
+            logger.debug(f"Could not publish CONFIG_UPDATED event: {eb_err}")
+
         return {'success': True, 'profile': profile}
     except Exception as e:
         logger.error(f"Error saving single quality profile: {e}")

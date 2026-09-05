@@ -347,7 +347,31 @@ class ConfigDatabase:
                         updated_at INTEGER DEFAULT (strftime('%s','now'))
                     )
                 """)
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS system_settings (
+                        key VARCHAR NOT NULL PRIMARY KEY,
+                        value TEXT,
+                        updated_at DATETIME
+                    )
+                """)
 
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS quality_profiles (
+                        id VARCHAR NOT NULL PRIMARY KEY,
+                        name VARCHAR,
+                        prefer_max_quality BOOLEAN
+                    )
+                """)
+
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS quality_profile_steps (
+                        id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+                        profile_id VARCHAR NOT NULL,
+                        priority INTEGER NOT NULL,
+                        rules JSON,
+                        FOREIGN KEY(profile_id) REFERENCES quality_profiles (id) ON DELETE CASCADE
+                    )
+                """)
 
                 # Migration: Add missing columns to services table if they don't exist
                 cursor.execute("PRAGMA table_info(services)")
@@ -417,6 +441,7 @@ class ConfigDatabase:
             # Run schema creation and inline migrations on writer thread to avoid concurrent-writes
             execute_write(str(self.database_path), _schema)
             logger.info("Config database schema ensured and legacy services migrated")
+            self.seed_default_system_settings()
         except Exception as e:
             logger.error(f"Failed to initialize config schema: {e}", exc_info=True)
 
@@ -1270,13 +1295,246 @@ class ConfigDatabase:
         except Exception as e:
             logger.error(f"Error cleaning expired plugin snapshots: {e}")
 
+    # =========================================================================
+    # System Settings (Hot Live Configuration Key-Value Store)
+    # =========================================================================
+
+    def get_system_setting(self, key: str, default: Any = None) -> Any:
+        """Fetch and deserialize a value from system_settings.
+
+        Attempts JSON deserialization for complex objects, booleans, and numbers;
+        falls back to raw string on error.
+        """
+        try:
+            with self._get_connection() as conn:
+                c = conn.cursor()
+                c.execute("SELECT value FROM system_settings WHERE key = ?", (key,))
+                row = c.fetchone()
+                if not row or row[0] is None:
+                    return default
+                val = row[0]
+                if isinstance(val, str):
+                    try:
+                        import json
+                        return json.loads(val)
+                    except (json.JSONDecodeError, ValueError):
+                        return val
+                return val
+        except Exception as e:
+            logger.error(f"Error getting system setting '{key}': {e}")
+            return default
+
+    def set_system_setting(self, key: str, value: Any) -> bool:
+        """Upsert a key, serialized value, and updated_at timestamp into system_settings."""
+        try:
+            import json
+            import time
+            if isinstance(value, (dict, list, bool, int, float)):
+                val_str = json.dumps(value)
+            elif value is None:
+                val_str = json.dumps(None)
+            else:
+                val_str = str(value)
+
+            now_str = time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime())
+            execute_write_sql(
+                str(self.database_path),
+                """
+                INSERT INTO system_settings(key, value, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+                """,
+                (key, val_str, now_str),
+            )
+            return True
+        except Exception as e:
+            logger.error(f"Error setting system setting '{key}': {e}")
+            return False
+
+    def get_all_system_settings(self) -> Dict[str, Any]:
+        """Return all system_settings as a key-value dictionary with JSON deserialization."""
+        try:
+            import json
+            result = {}
+            with self._get_connection() as conn:
+                c = conn.cursor()
+                c.execute("SELECT key, value FROM system_settings")
+                for row in c.fetchall():
+                    k, v = row[0], row[1]
+                    if v is not None and isinstance(v, str):
+                        try:
+                            result[k] = json.loads(v)
+                        except (json.JSONDecodeError, ValueError):
+                            result[k] = v
+                    else:
+                        result[k] = v
+            return result
+        except Exception as e:
+            logger.error(f"Error retrieving all system settings: {e}")
+            return {}
+
+    def delete_system_setting(self, key: str) -> bool:
+        """Delete a key from system_settings."""
+        try:
+            execute_write_sql(
+                str(self.database_path),
+                "DELETE FROM system_settings WHERE key = ?",
+                (key,),
+            )
+            return True
+        except Exception as e:
+            logger.error(f"Error deleting system setting '{key}': {e}")
+            return False
+
+    def seed_default_system_settings(self) -> None:
+        """Seed canonical default settings if they are not already populated."""
+        defaults = {
+            "library_import.renaming_pattern": "{Artist}/{Album}/{Track} - {Title}.{ext}",
+            "library_import.singles_pattern": "{Artist}/Singles/{Track} - {Title}.{ext}",
+            "metadata_enhancement.prefer_canonical_studio_album": True,
+            "storage_locations.library": "/data/library",
+        }
+        for k, v in defaults.items():
+            if self.get_system_setting(k) is None:
+                self.set_system_setting(k, v)
+
+    # =========================================================================
+    # Quality Profiles & Steps (Relational Storage)
+    # =========================================================================
+
+    def get_quality_profiles(self) -> List[Dict[str, Any]]:
+        """Retrieve all quality profiles with reconstructed formats and step hierarchies."""
+        try:
+            import json
+            profiles_map: Dict[str, Dict[str, Any]] = {}
+            with self._get_connection() as conn:
+                c = conn.cursor()
+                c.execute("SELECT id, name, prefer_max_quality FROM quality_profiles")
+                for row in c.fetchall():
+                    pid = str(row[0])
+                    profiles_map[pid] = {
+                        "id": pid,
+                        "name": str(row[1] or ""),
+                        "prefer_max_quality": bool(row[2]),
+                        "formats": [],
+                        "advanced_filters": {},
+                    }
+
+                if not profiles_map:
+                    return []
+
+                c.execute("SELECT profile_id, priority, rules FROM quality_profile_steps ORDER BY priority ASC")
+                for row in c.fetchall():
+                    pid, priority, rules_raw = str(row[0]), row[1], row[2]
+                    if pid not in profiles_map:
+                        continue
+                    rules = {}
+                    if rules_raw:
+                        if isinstance(rules_raw, str):
+                            try:
+                                rules = json.loads(rules_raw)
+                            except Exception:
+                                rules = {}
+                        elif isinstance(rules_raw, dict):
+                            rules = rules_raw
+
+                    # If rules contains advanced_filters metadata
+                    if isinstance(rules, dict) and "advanced_filters" in rules and len(rules) == 1:
+                        profiles_map[pid]["advanced_filters"] = rules["advanced_filters"]
+                    elif isinstance(rules, dict) and "formats" in rules and len(rules) == 1:
+                        profiles_map[pid]["formats"] = rules["formats"]
+                    else:
+                        profiles_map[pid]["formats"].append(rules)
+
+            for p in profiles_map.values():
+                p["steps"] = p["formats"]
+
+            return list(profiles_map.values())
+        except Exception as e:
+            logger.error(f"Error fetching quality profiles: {e}")
+            return []
+
+    def get_quality_profile(self, profile_id: str) -> Optional[Dict[str, Any]]:
+        """Retrieve a single quality profile by ID."""
+        for p in self.get_quality_profiles():
+            if str(p.get("id")) == str(profile_id):
+                return p
+        return None
+
+    def set_quality_profile(self, profile: Dict[str, Any]) -> bool:
+        """Upsert a single quality profile and its step hierarchy."""
+        return self.set_quality_profiles([profile], overwrite_all=False)
+
+    def set_quality_profiles(self, profiles: List[Dict[str, Any]], overwrite_all: bool = True) -> bool:
+        """Persist quality profiles and steps relationally into quality_profiles and quality_profile_steps."""
+        try:
+            import json
+            def _write_profiles(cursor):
+                if overwrite_all:
+                    cursor.execute("DELETE FROM quality_profile_steps")
+                    cursor.execute("DELETE FROM quality_profiles")
+
+                for p in profiles:
+                    if not isinstance(p, dict):
+                        continue
+                    pid = str(p.get("id") or "")
+                    name = str(p.get("name") or pid)
+                    prefer_max = 1 if p.get("prefer_max_quality") else 0
+
+                    if not overwrite_all:
+                        cursor.execute("DELETE FROM quality_profile_steps WHERE profile_id = ?", (pid,))
+                        cursor.execute("DELETE FROM quality_profiles WHERE id = ?", (pid,))
+
+                    cursor.execute(
+                        "INSERT INTO quality_profiles (id, name, prefer_max_quality) VALUES (?, ?, ?)",
+                        (pid, name, prefer_max),
+                    )
+
+                    formats = p.get("formats") or p.get("types") or p.get("steps") or []
+                    for idx, fmt in enumerate(formats):
+                        fmt_rules = json.dumps(fmt) if not isinstance(fmt, str) else fmt
+                        cursor.execute(
+                            "INSERT INTO quality_profile_steps (profile_id, priority, rules) VALUES (?, ?, ?)",
+                            (pid, idx, fmt_rules),
+                        )
+
+                    # Store advanced_filters if provided
+                    if p.get("advanced_filters"):
+                        adv_rules = json.dumps({"advanced_filters": p["advanced_filters"]})
+                        cursor.execute(
+                            "INSERT INTO quality_profile_steps (profile_id, priority, rules) VALUES (?, ?, ?)",
+                            (pid, 9999, adv_rules),
+                        )
+
+            execute_write(str(self.database_path), _write_profiles)
+            return True
+        except Exception as e:
+            logger.error(f"Error persisting quality profiles: {e}")
+            return False
+
+    def delete_quality_profile(self, profile_id: str) -> bool:
+        """Delete a quality profile and its steps by ID."""
+        try:
+            execute_write_sql(
+                str(self.database_path),
+                "DELETE FROM quality_profiles WHERE id = ?",
+                (str(profile_id),),
+            )
+            return True
+        except Exception as e:
+            logger.error(f"Error deleting quality profile '{profile_id}': {e}")
+            return False
+
 
 import threading
 _config_db: Optional[ConfigDatabase] = None
 _config_db_lock = threading.Lock()
 
 def get_config_database() -> ConfigDatabase:
+def get_config_database(db_path: Optional[Any] = None) -> ConfigDatabase:
     global _config_db
+    if db_path is not None:
+        return ConfigDatabase(db_path=str(db_path))
     if _config_db is None:
         with _config_db_lock:
             if _config_db is None:

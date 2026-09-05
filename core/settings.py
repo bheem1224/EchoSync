@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 # Ensure environment variables from project .env are loaded before ConfigManager initializes
 load_dotenv(dotenv_path=Path(__file__).resolve().parent.parent / ".env", override=True)
 from typing import Dict, Any, Optional, Callable, List
+from typing import Dict, Any, Optional, Callable, List, Tuple
 from cryptography.fernet import Fernet
 from pathlib import Path
 import copy
@@ -24,6 +25,93 @@ SECRETS = [
     "*api_key",
     "*password",
 ]
+
+# Cold bootstrap keys that are permitted to live in config.json
+COLD_BOOTSTRAP_KEYS: frozenset = frozenset({
+    "storage",
+    "server",
+    "logging",
+    "database",
+    "security",
+    "auth",
+    "custom_ui_path",
+    "cors_origins",
+    "dev_mode",
+    "safe_mode",
+})
+
+
+def sanitize_legacy_config_json(raw_json: dict) -> Tuple[dict, dict]:
+    """Separate a legacy config.json into cold bootstrap settings and hot runtime settings."""
+    cold_config = {}
+    hot_settings = {}
+    for key, val in raw_json.items():
+        if key in COLD_BOOTSTRAP_KEYS:
+            cold_config[key] = val
+        else:
+            hot_settings[key] = val
+    return cold_config, hot_settings
+
+
+def migrate_legacy_json_to_db(config_json_path: Path, db: Any) -> bool:
+    """Migrate stranded runtime settings from config.json into config.db.
+
+    Idempotent: checks 'migration.legacy_config_json_imported' marker first.
+    Atomic: writes to config.db first; prunes config.json only upon verified DB commit.
+    """
+    try:
+        if not config_json_path.exists():
+            return False
+
+        # 1. Idempotency Check
+        migrated_marker = db.get_system_setting("migration.legacy_config_json_imported")
+        if str(migrated_marker).lower() in ("true", "1", "yes"):
+            return False
+
+        logger.info(f"Starting legacy config migration from {config_json_path} to config.db...")
+
+        with open(config_json_path, "r", encoding="utf-8") as f:
+            raw_json = json.load(f)
+
+        if not isinstance(raw_json, dict):
+            logger.warning(f"Invalid config.json format in {config_json_path}; skipping migration.")
+            return False
+
+        cold_config, hot_settings = sanitize_legacy_config_json(raw_json)
+
+        # 2. Extract and upsert quality profiles
+        if "quality_profiles" in hot_settings and isinstance(hot_settings["quality_profiles"], list):
+            profiles = hot_settings.pop("quality_profiles")
+            if profiles:
+                db.set_quality_profiles(profiles)
+                logger.info(f"Migrated {len(profiles)} quality profile(s) to config.db")
+
+        # 3. Flatten and upsert hot runtime settings into system_settings
+        for root_key, root_val in hot_settings.items():
+            if isinstance(root_val, dict):
+                for sub_k, sub_v in root_val.items():
+                    db.set_system_setting(f"{root_key}.{sub_k}", sub_v)
+                db.set_system_setting(root_key, root_val)
+            else:
+                db.set_system_setting(root_key, root_val)
+
+        # Seed defaults for any missing keys
+        db.seed_default_system_settings()
+
+        # 4. Set migration completion marker in DB
+        db.set_system_setting("migration.legacy_config_json_imported", "true")
+
+        # 5. Atomically prune config.json
+        tmp_path = config_json_path.with_suffix(".tmp")
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(cold_config, f, indent=2)
+        tmp_path.replace(config_json_path)
+
+        logger.info("Successfully migrated runtime settings to config.db and pruned config.json.")
+        return True
+    except Exception as e:
+        logger.error(f"Legacy config migration failed (transaction aborted): {e}", exc_info=True)
+        return False
 
 
 class ConfigManager:
@@ -175,6 +263,14 @@ class ConfigManager:
             self.plugins_path.mkdir(parents=True, exist_ok=True)
         except Exception as e:
             logger.warning(f"Could not create data directories: {e}")
+
+        # Migrate legacy runtime keys into config.db if present
+        try:
+            from database.config_database import get_config_database
+            db = get_config_database()
+            migrate_legacy_json_to_db(self.config_path, db)
+        except Exception as e:
+            logger.debug(f"Config DB migration deferred at init: {e}")
 
     def _initialize_encryption(self):
         """Initialize Fernet cipher from MASTER_KEY environment variable.
@@ -334,10 +430,15 @@ class ConfigManager:
     def _get_default_config(self) -> Dict[str, Any]:
         """Get default configuration"""
         # Use container-friendly defaults when available, fall back to project-relative paths
+        """Get default cold bootstrap configuration."""
         cfg = {
             "custom_ui_path": "",
             "active_media_server": "plex",
             "active_download_client": None,
+            "server": {
+                "host": "0.0.0.0",
+                "port": 5000
+            },
             "logging": {"path": str(self.logs_path / 'app.log'), "level": "INFO"},
             "database": {"path": str(self.media_db_path), "max_workers": 2},
             "metadata_enhancement": {
@@ -600,8 +701,28 @@ class ConfigManager:
         
         return result
 
+    def _get_db(self):
+        """Get the ConfigDatabase instance matching this ConfigManager's database_path."""
+        try:
+            from database.config_database import get_config_database
+            return get_config_database(db_path=self.database_path)
+        except Exception:
+            return None
+
     def get(self, key: str, default: Any = None) -> Any:
         """Get a configuration value, decrypting if necessary."""
+        """Get a configuration value, checking hot config.db first, then cold config.json."""
+        root_key = key.split('.')[0]
+        if root_key not in COLD_BOOTSTRAP_KEYS:
+            try:
+                db = self._get_db()
+                if db:
+                    db_val = db.get_system_setting(key)
+                    if db_val is not None:
+                        return db_val
+            except Exception:
+                pass
+
         keys = key.split('.')
         value = self.config_data
         
@@ -623,7 +744,18 @@ class ConfigManager:
         
         Non-secrets are saved to plaintext config.json.
         Legacy secrets handled here are dropped. Use database/config_database.py instead.
+        Hot runtime keys are persisted to config.db (system_settings).
+        Cold bootstrap keys are saved to plaintext config.json.
         """
+        root_key = key.split('.')[0]
+        if root_key not in COLD_BOOTSTRAP_KEYS:
+            try:
+                db = self._get_db()
+                if db:
+                    db.set_system_setting(key, value)
+            except Exception:
+                pass
+
         keys = key.split('.')
         config_level = self.config_data
         for k in keys[:-1]:
@@ -633,6 +765,9 @@ class ConfigManager:
         
         # Save non-secrets to plaintext JSON
         self._save_non_secrets_to_json()
+        # Save non-secrets to plaintext JSON only if cold bootstrap key
+        if root_key in COLD_BOOTSTRAP_KEYS:
+            self._save_non_secrets_to_json()
 
     def get_plugin_channel(self, plugin_id: Any) -> str:
         """Get the active update channel ('stable' or 'beta') for a plugin."""
@@ -655,19 +790,49 @@ class ConfigManager:
 
     def get_active_download_client(self) -> Optional[str]:
         """Get the configured active download client name."""
+        """Get the configured active download client name (checking config.db first)."""
+        try:
+            db = self._get_db()
+            if db:
+                val = db.get_system_setting("active_download_client")
+                if val is not None:
+                    return str(val)
+        except Exception:
+            pass
         return self.get("active_download_client")
 
     def set_active_download_client(self, client_name: Optional[str]) -> bool:
         """Set and persist the active download client name."""
+        try:
+            db = self._get_db()
+            if db:
+                db.set_system_setting("active_download_client", client_name)
+        except Exception:
+            pass
         self.set("active_download_client", client_name)
         return True
 
     def get_active_media_server(self) -> str:
         """Get the configured active media server name."""
+        """Get the configured active media server name (checking config.db first)."""
+        try:
+            db = self._get_db()
+            if db:
+                val = db.get_system_setting("active_media_server")
+                if val is not None:
+                    return str(val)
+        except Exception:
+            pass
         return self.get("active_media_server", "plex")
 
     def set_active_media_server(self, server_name: str) -> bool:
         """Set and persist the active media server name."""
+        try:
+            db = self._get_db()
+            if db:
+                db.set_system_setting("active_media_server", server_name)
+        except Exception:
+            pass
         self.set("active_media_server", server_name)
         return True
 
@@ -689,16 +854,42 @@ class ConfigManager:
 
         This exposes only non-secret values (the same subset saved to config.json).
         """
+        """Return the full configuration suitable for the UI, merging hot settings from config.db."""
         try:
             # Return a deep copy of non-secret config to avoid accidental mutation
             non_secrets = self._extract_non_secrets(self.config_data)
             return copy.deepcopy(non_secrets)
+            result = copy.deepcopy(non_secrets)
+            try:
+                db = self._get_db()
+                if db:
+                    hot_settings = db.get_all_system_settings()
+                    for k, v in hot_settings.items():
+                        parts = k.split(".")
+                        curr = result
+                        for part in parts[:-1]:
+                            if part not in curr or not isinstance(curr[part], dict):
+                                curr[part] = {}
+                            curr = curr[part]
+                        curr[parts[-1]] = v
+            except Exception:
+                pass
+            return result
         except Exception as e:
             print(f"[ERROR] get_all failed: {e}")
             return {}
 
     def get_quality_profiles(self) -> list:
         """Return the stored quality profiles list (no defaults merged)."""
+        """Return the stored quality profiles list (prefers config.db)."""
+        try:
+            db = self._get_db()
+            if db:
+                profiles = db.get_quality_profiles()
+                if profiles:
+                    return profiles
+        except Exception:
+            pass
         try:
             profiles = self.config_data.get('quality_profiles')
             return profiles if isinstance(profiles, list) else []
@@ -711,6 +902,7 @@ class ConfigManager:
 
         Returns True on success, False otherwise.
         """
+        """Validate/normalize and persist quality profiles to config.db."""
         try:
             if not isinstance(profiles, list):
                 raise ValueError('profiles must be a list')
@@ -721,6 +913,7 @@ class ConfigManager:
                 np['id'] = str(np.get('id', ''))
                 np['name'] = str(np.get('name', ''))
                 formats = np.get('formats') or np.get('types') or []
+                formats = np.get('formats') or np.get('types') or np.get('steps') or []
                 norm_formats = []
                 for f in formats:
                     nf = dict(f)
@@ -756,6 +949,9 @@ class ConfigManager:
             normalized = [_norm_profile(p) for p in profiles]
 
             # Set into in-memory config and persist non-secrets JSON
+            db = self._get_db()
+            if db:
+                db.set_quality_profiles(normalized)
             self.config_data['quality_profiles'] = normalized
             self._save_non_secrets_to_json()
             return True

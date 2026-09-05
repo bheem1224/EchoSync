@@ -68,6 +68,11 @@ async def lifespan(app: FastAPI):
 
     # Initialize databases safely inside the ASGI lifecycle
     try:
+        from database.config_database import get_config_database
+        from core.settings import migrate_legacy_json_to_db, config_manager
+        cfg_db = get_config_database()
+        if config_manager.config_path.exists():
+            migrate_legacy_json_to_db(config_manager.config_path, cfg_db)
         from database.music_database import get_database
         from database.working_database import get_working_database
         get_database()

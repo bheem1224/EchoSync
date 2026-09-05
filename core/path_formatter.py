@@ -48,6 +48,9 @@ def get_singles_pattern() -> str:
                     except Exception:
                         pass
                 return str(val)
+        val = db.get_system_setting("library_import.singles_pattern")
+        if val:
+            return str(val)
     except Exception:
         pass
 
@@ -74,6 +77,11 @@ def get_prefer_canonical_studio_album() -> bool:
             if row and row[0]:
                 val = str(row[0]).strip().lower()
                 return val in ("1", "true", "yes", "on")
+        val = db.get_system_setting("metadata_enhancement.prefer_canonical_studio_album")
+        if val is not None:
+            if isinstance(val, bool):
+                return val
+            return str(val).strip().lower() in ("1", "true", "yes", "on")
     except Exception:
         pass
 
@@ -133,6 +141,12 @@ def get_library_preferences() -> Tuple[str, str]:
                     except Exception:
                         pass
                 renaming_pattern = str(val)
+        lib_val = db.get_system_setting("storage_locations.library")
+        if lib_val:
+            library_root = str(lib_val)
+        pat_val = db.get_system_setting("library_import.renaming_pattern")
+        if pat_val:
+            renaming_pattern = str(pat_val)
     except Exception:
         pass
 
