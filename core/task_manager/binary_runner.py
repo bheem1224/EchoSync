@@ -1,10 +1,9 @@
 import subprocess
 import threading
-from typing import List, Optional, Tuple
 
-from core.tiered_logger import get_logger
 from core.task_manager.models import OwnerType, ProcessOwner
 from core.task_manager.supervisor import supervisor
+from core.tiered_logger import get_logger
 
 logger = get_logger("binary_runner")
 
@@ -20,12 +19,12 @@ class CoreBinaryRunner:
     @classmethod
     def run_binary(
         cls,
-        cmd_list: List[str],
+        cmd_list: list[str],
         timeout: float = 30.0,
-        cwd: Optional[str] = None,
+        cwd: str | None = None,
         owner_id: str = "core.binary_runner",
         owner_type: OwnerType = OwnerType.CORE,
-    ) -> Tuple[int, str, str]:
+    ) -> tuple[int, str, str]:
         """
         Executes a binary and returns its exit code, stdout, and stderr.
         Registers process PID with supervisor during execution.
@@ -48,7 +47,7 @@ class CoreBinaryRunner:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
-                cwd=cwd
+                cwd=cwd,
             )
 
             # Automatically register process PID with supervisor
@@ -57,7 +56,7 @@ class CoreBinaryRunner:
                 owner_type=owner_type,
                 pid=process.pid,
                 task_name=cmd_list[0] if cmd_list else "unknown_binary",
-                metadata={"cmd": cmd_list, "cwd": cwd}
+                metadata={"cmd": cmd_list, "cwd": cwd},
             )
             reg_id = supervisor.register_process(owner_info)
 
@@ -69,13 +68,17 @@ class CoreBinaryRunner:
                     line = line.strip()
                     if line:
                         lines.append(line)
-                        if log_level == 'info':
+                        if log_level == "info":
                             logger.info(f"[{cmd_list[0]} stdout] {line}")
                         else:
                             logger.error(f"[{cmd_list[0]} stderr] {line}")
 
-            stdout_thread = threading.Thread(target=read_stream, args=(process.stdout, stdout_lines, 'info'))
-            stderr_thread = threading.Thread(target=read_stream, args=(process.stderr, stderr_lines, 'error'))
+            stdout_thread = threading.Thread(
+                target=read_stream, args=(process.stdout, stdout_lines, "info")
+            )
+            stderr_thread = threading.Thread(
+                target=read_stream, args=(process.stderr, stderr_lines, "error")
+            )
 
             stdout_thread.start()
             stderr_thread.start()
@@ -85,13 +88,21 @@ class CoreBinaryRunner:
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait()
-                logger.error(f"Binary execution timed out after {timeout}s: {' '.join(cmd_list)}")
-                return -1, "\n".join(stdout_lines), f"TimeoutExpired: Process killed after {timeout} seconds."
+                logger.error(
+                    f"Binary execution timed out after {timeout}s: {' '.join(cmd_list)}"
+                )
+                return (
+                    -1,
+                    "\n".join(stdout_lines),
+                    f"TimeoutExpired: Process killed after {timeout} seconds.",
+                )
 
             stdout_thread.join()
             stderr_thread.join()
 
-            logger.info(f"Binary execution completed with return code {process.returncode}")
+            logger.info(
+                f"Binary execution completed with return code {process.returncode}"
+            )
             return process.returncode, "\n".join(stdout_lines), "\n".join(stderr_lines)
 
         except Exception as e:

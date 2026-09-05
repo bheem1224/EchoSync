@@ -1,7 +1,6 @@
-import pytest
-from database.music_database import get_database, Track, LocalMedia, Base
-from core.db.echo_sync_track import EchosyncTrack, EchosyncMedia
 from core.database.repositories.track_repo import TrackRepository, bulk_upsert_tracks
+from core.db.echo_sync_track import EchosyncMedia, EchosyncTrack
+from database.music_database import Base, LocalMedia, Track, get_database
 
 
 def test_echosync_track_nanoid_generation():
@@ -45,7 +44,7 @@ def test_track_version_separation_and_no_collapsing():
                     file_path="/music/Capital Cities/Safe and Sound.flac",
                     file_format="FLAC",
                 )
-            ]
+            ],
         )
         # Extended Remix
         remix = EchosyncTrack(
@@ -59,7 +58,7 @@ def test_track_version_separation_and_no_collapsing():
                     file_path="/music/Capital Cities/Safe and Sound (Remix).flac",
                     file_format="FLAC",
                 )
-            ]
+            ],
         )
 
         bulk_upsert_tracks(session, [original, remix])
@@ -98,7 +97,7 @@ def test_track_version_separation_and_no_collapsing():
                     file_path="/music/Capital Cities/Safe and Sound.flac",
                     file_format="FLAC",
                 )
-            ]
+            ],
         )
         bulk_upsert_tracks(session, [original_rescan])
         session.commit()
@@ -132,7 +131,7 @@ def test_legacy_sync_id_in_batch_is_remediated_to_nanoid():
                     file_path="/music/test.flac",
                     file_format="FLAC",
                 )
-            ]
+            ],
         )
 
         bulk_upsert_tracks(session, [legacy_track])
@@ -148,10 +147,20 @@ def test_legacy_sync_id_in_batch_is_remediated_to_nanoid():
 
 def test_alembic_data_migration_sync_id_backfill():
     """Verify that Alembic migration f1e2d3c4b5a6 updates legacy ss: URIs to NanoIDs in both music.db and working.db."""
-    from database.music_database import get_database as get_music_db, Artist, Album, Track, Base as MusicBase
-    from database.working_database import get_working_database, UserRating, UserTrackState, Account, WorkingBase
-    from database.migrations.music.versions.f1e2d3c4b5a6_backfill_nanoid_sync_ids import upgrade as run_migration
-    import sqlalchemy as sa
+
+    from database.migrations.music.versions.f1e2d3c4b5a6_backfill_nanoid_sync_ids import (
+        upgrade as run_migration,
+    )
+    from database.music_database import Artist, Track
+    from database.music_database import Base as MusicBase
+    from database.music_database import get_database as get_music_db
+    from database.working_database import (
+        Account,
+        UserRating,
+        UserTrackState,
+        WorkingBase,
+        get_working_database,
+    )
 
     music_db = get_music_db()
     working_db = get_working_database()
@@ -203,6 +212,7 @@ def test_alembic_data_migration_sync_id_backfill():
             return music_db.engine.connect()
 
     import alembic.op as alembic_op
+
     orig_get_bind = getattr(alembic_op, "get_bind", None)
     try:
         alembic_op.get_bind = MockOpContext.get_bind
@@ -221,12 +231,16 @@ def test_alembic_data_migration_sync_id_backfill():
 
     # Verify working.db tables were mapped to the new NanoID
     with working_db.session_scope() as w_sess:
-        migrated_rating = w_sess.query(UserRating).filter_by(sync_id=new_sync_id).first()
+        migrated_rating = (
+            w_sess.query(UserRating).filter_by(sync_id=new_sync_id).first()
+        )
         assert migrated_rating is not None
         assert migrated_rating.rating == 5.0
         assert migrated_rating.play_count == 12
 
-        migrated_state = w_sess.query(UserTrackState).filter_by(sync_id=new_sync_id).first()
+        migrated_state = (
+            w_sess.query(UserTrackState).filter_by(sync_id=new_sync_id).first()
+        )
         assert migrated_state is not None
 
 
@@ -240,6 +254,7 @@ def test_decouple_collapsed_media_files_and_rescan():
     try:
         # Create artist and collapsed track 9819 with 2 LocalMedia files
         from database.music_database import Artist
+
         artist = Artist(name="Capital Cities")
         session.add(artist)
         session.flush()
@@ -255,6 +270,7 @@ def test_decouple_collapsed_media_files_and_rescan():
         session.flush()
 
         from database import _canonicalize_path
+
         m1 = LocalMedia(
             media_id="med_0001",
             track_id=9819,
@@ -264,7 +280,9 @@ def test_decouple_collapsed_media_files_and_rescan():
         m2 = LocalMedia(
             media_id="med_0002",
             track_id=9819,
-            file_path=_canonicalize_path("/music/Capital Cities/Safe and Sound (Remix).flac"),
+            file_path=_canonicalize_path(
+                "/music/Capital Cities/Safe and Sound (Remix).flac"
+            ),
             file_format="FLAC",
         )
         session.add_all([m1, m2])
@@ -304,7 +322,7 @@ def test_decouple_collapsed_media_files_and_rescan():
                     file_path="/music/Capital Cities/Safe and Sound.flac",
                     file_format="FLAC",
                 )
-            ]
+            ],
         )
         t2_scan = EchosyncTrack(
             raw_title="Safe and Sound (Remix)",
@@ -317,7 +335,7 @@ def test_decouple_collapsed_media_files_and_rescan():
                     file_path="/music/Capital Cities/Safe and Sound (Remix).flac",
                     file_format="FLAC",
                 )
-            ]
+            ],
         )
         bulk_upsert_tracks(session, [t1_scan, t2_scan])
         session.commit()
@@ -350,7 +368,7 @@ def test_rescan_clears_stale_edition_tags():
                     file_path="/music/Linkin Park/In the End.flac",
                     file_format="FLAC",
                 )
-            ]
+            ],
         )
         bulk_upsert_tracks(session, [initial_track])
         session.commit()
@@ -370,7 +388,7 @@ def test_rescan_clears_stale_edition_tags():
                     file_path="/music/Linkin Park/In the End.flac",
                     file_format="FLAC",
                 )
-            ]
+            ],
         )
         bulk_upsert_tracks(session, [rescan_track])
         session.commit()
@@ -384,9 +402,10 @@ def test_rescan_clears_stale_edition_tags():
 
 def test_sync_service_skips_suppressed_paths(tmp_path):
     """Verify LibrarySyncService skips active in-flight transfer paths."""
-    from services.library_watcher import suppress_path, is_path_suppressed
-    from services.library_sync_service import LibrarySyncService
     from unittest.mock import patch
+
+    from services.library_sync_service import LibrarySyncService
+    from services.library_watcher import is_path_suppressed, suppress_path
 
     test_file = tmp_path / "song.flac"
     test_file.write_bytes(b"dummy audio data")

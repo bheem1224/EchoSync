@@ -1,19 +1,28 @@
-from typing import Dict, List, Optional, Any
-from core.tiered_logger import get_logger
+from typing import Any
 
-from core.request_manager import RequestManager, RetryConfig, RateLimitConfig
-from core.nexus_framework.plugin_SDK import PluginBase, ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
-import time
+from core.nexus_framework.plugin_SDK import (
+    MetadataRichness,
+    PlaylistSupport,
+    PluginBase,
+    ProviderCapabilities,
+    SearchCapabilities,
+)
+from core.request_manager import RateLimitConfig
+from core.tiered_logger import get_logger
 
 logger = get_logger("listenbrainz_client")
 
+
 class ListenBrainzClient(PluginBase):
     """Client for interacting with ListenBrainz API"""
+
     name = "EchoSync.listenbrainz"
     capabilities = ProviderCapabilities(
-        name='EchoSync.listenbrainz',
+        name="EchoSync.listenbrainz",
         supports_playlists=PlaylistSupport.READ,
-        search=SearchCapabilities(tracks=False, artists=False, albums=False, playlists=True),
+        search=SearchCapabilities(
+            tracks=False, artists=False, albums=False, playlists=True
+        ),
         metadata=MetadataRichness.MEDIUM,
         supports_cover_art=False,
         supports_lyrics=False,
@@ -31,12 +40,9 @@ class ListenBrainzClient(PluginBase):
         self.username = None
 
         # Configure rate limit: 2 requests/second per ListenBrainz API guidelines
-        from core.request_manager import RateLimitConfig
         self.http.rate = RateLimitConfig(requests_per_second=2.0)
-        
-        self.http._session.headers.update({
-            'User-Agent': 'Echosync/1.0'
-        })
+
+        self.http._session.headers.update({"User-Agent": "Echosync/1.0"})
 
         # Legacy plugin_system registration removed - now uses PluginRegistry for auto-registration
 
@@ -44,13 +50,15 @@ class ListenBrainzClient(PluginBase):
             # Validate token and get username
             self._validate_and_get_username()
 
-    def _make_request_with_retry(self, method: str, url: str, max_retries: int = 3, **kwargs):
+    def _make_request_with_retry(
+        self, method: str, url: str, max_retries: int = 3, **kwargs
+    ):
         """Make HTTP request with retry logic - now delegated to RequestManager"""
         # RequestManager already handles retries, so this is just a wrapper
         try:
-            if method.lower() == 'get':
+            if method.lower() == "get":
                 response = self.http.get(url, **kwargs)
-            elif method.lower() == 'post':
+            elif method.lower() == "post":
                 response = self.http.post(url, **kwargs)
             else:
                 # For other methods, use the request method directly
@@ -64,13 +72,13 @@ class ListenBrainzClient(PluginBase):
         """Validate token and retrieve username"""
         try:
             url = f"{self.base_url}/validate-token"
-            headers = {'Authorization': f'Token {self.token}'}
-            response = self._make_request_with_retry('get', url, headers=headers)
+            headers = {"Authorization": f"Token {self.token}"}
+            response = self._make_request_with_retry("get", url, headers=headers)
 
             if response and response.status_code == 200:
                 data = response.json()
-                if data.get('valid'):
-                    self.username = data.get('user_name')
+                if data.get("valid"):
+                    self.username = data.get("user_name")
                     logger.info(f"✅ ListenBrainz authenticated as: {self.username}")
                     return True
 
@@ -84,7 +92,9 @@ class ListenBrainzClient(PluginBase):
         """Check if client is authenticated"""
         return bool(self.token and self.username)
 
-    def get_playlists_created_for_user(self, count: int = 25, offset: int = 0) -> List[Dict]:
+    def get_playlists_created_for_user(
+        self, count: int = 25, offset: int = 0
+    ) -> list[dict]:
         """
         Fetch playlists created FOR the user (recommendations, personalized playlists)
         These are all public and don't require authentication
@@ -95,23 +105,24 @@ class ListenBrainzClient(PluginBase):
 
         try:
             url = f"{self.base_url}/user/{self.username}/playlists/createdfor"
-            params = {
-                'count': count,
-                'offset': offset
-            }
+            params = {"count": count, "offset": offset}
 
-            response = self._make_request_with_retry('get', url, params=params, timeout=15)
+            response = self._make_request_with_retry(
+                "get", url, params=params, timeout=15
+            )
 
             if response and response.status_code == 200:
                 data = response.json()
-                playlists = data.get('playlists', [])
-                logger.info(f"📋 Fetched {len(playlists)} playlists created for {self.username}")
+                playlists = data.get("playlists", [])
+                logger.info(
+                    f"📋 Fetched {len(playlists)} playlists created for {self.username}"
+                )
                 return playlists
             elif response and response.status_code == 404:
                 logger.warning(f"User {self.username} not found")
                 return []
             else:
-                status = response.status_code if response else 'No response'
+                status = response.status_code if response else "No response"
                 logger.error(f"Failed to fetch created-for playlists: {status}")
                 return []
 
@@ -119,7 +130,7 @@ class ListenBrainzClient(PluginBase):
             logger.error(f"Error fetching created-for playlists: {e}")
             return []
 
-    def get_user_playlists(self, count: int = 25, offset: int = 0) -> List[Dict]:
+    def get_user_playlists(self, count: int = 25, offset: int = 0) -> list[dict]:
         """
         Fetch user's own playlists (both public and private)
         Requires authentication
@@ -130,24 +141,25 @@ class ListenBrainzClient(PluginBase):
 
         try:
             url = f"{self.base_url}/user/{self.username}/playlists"
-            headers = {'Authorization': f'Token {self.token}'}
-            params = {
-                'count': count,
-                'offset': offset
-            }
+            headers = {"Authorization": f"Token {self.token}"}
+            params = {"count": count, "offset": offset}
 
-            response = self._make_request_with_retry('get', url, headers=headers, params=params, timeout=15)
+            response = self._make_request_with_retry(
+                "get", url, headers=headers, params=params, timeout=15
+            )
 
             if response and response.status_code == 200:
                 data = response.json()
-                playlists = data.get('playlists', [])
-                logger.info(f"📋 Fetched {len(playlists)} user playlists for {self.username}")
+                playlists = data.get("playlists", [])
+                logger.info(
+                    f"📋 Fetched {len(playlists)} user playlists for {self.username}"
+                )
                 return playlists
             elif response and response.status_code == 404:
                 logger.warning(f"User {self.username} not found")
                 return []
             else:
-                status = response.status_code if response else 'No response'
+                status = response.status_code if response else "No response"
                 logger.error(f"Failed to fetch user playlists: {status}")
                 return []
 
@@ -155,7 +167,9 @@ class ListenBrainzClient(PluginBase):
             logger.error(f"Error fetching user playlists: {e}")
             return []
 
-    def get_collaborative_playlists(self, count: int = 25, offset: int = 0) -> List[Dict]:
+    def get_collaborative_playlists(
+        self, count: int = 25, offset: int = 0
+    ) -> list[dict]:
         """
         Fetch playlists where user is a collaborator
         Requires authentication for private playlists
@@ -166,24 +180,25 @@ class ListenBrainzClient(PluginBase):
 
         try:
             url = f"{self.base_url}/user/{self.username}/playlists/collaborator"
-            headers = {'Authorization': f'Token {self.token}'}
-            params = {
-                'count': count,
-                'offset': offset
-            }
+            headers = {"Authorization": f"Token {self.token}"}
+            params = {"count": count, "offset": offset}
 
-            response = self._make_request_with_retry('get', url, headers=headers, params=params, timeout=15)
+            response = self._make_request_with_retry(
+                "get", url, headers=headers, params=params, timeout=15
+            )
 
             if response and response.status_code == 200:
                 data = response.json()
-                playlists = data.get('playlists', [])
-                logger.info(f"📋 Fetched {len(playlists)} collaborative playlists for {self.username}")
+                playlists = data.get("playlists", [])
+                logger.info(
+                    f"📋 Fetched {len(playlists)} collaborative playlists for {self.username}"
+                )
                 return playlists
             elif response and response.status_code == 404:
                 logger.warning(f"User {self.username} not found")
                 return []
             else:
-                status = response.status_code if response else 'No response'
+                status = response.status_code if response else "No response"
                 logger.error(f"Failed to fetch collaborative playlists: {status}")
                 return []
 
@@ -191,7 +206,9 @@ class ListenBrainzClient(PluginBase):
             logger.error(f"Error fetching collaborative playlists: {e}")
             return []
 
-    def get_playlist_details(self, playlist_mbid: str, fetch_metadata: bool = True) -> Optional[Dict]:
+    def get_playlist_details(
+        self, playlist_mbid: str, fetch_metadata: bool = True
+    ) -> dict | None:
         """
         Fetch full playlist details including tracks
 
@@ -204,20 +221,24 @@ class ListenBrainzClient(PluginBase):
             params = {}
 
             if not fetch_metadata:
-                params['fetch_metadata'] = 'false'
+                params["fetch_metadata"] = "false"
 
             # Add auth header if we have a token (for private playlists)
             headers = {}
             if self.token:
-                headers['Authorization'] = f'Token {self.token}'
+                headers["Authorization"] = f"Token {self.token}"
 
-            response = self._make_request_with_retry('get', url, headers=headers, params=params, timeout=20)
+            response = self._make_request_with_retry(
+                "get", url, headers=headers, params=params, timeout=20
+            )
 
             if response and response.status_code == 200:
                 data = response.json()
-                playlist = data.get('playlist', {})
-                track_count = len(playlist.get('track', []))
-                logger.info(f"📋 Fetched playlist '{playlist.get('title')}' with {track_count} tracks")
+                playlist = data.get("playlist", {})
+                track_count = len(playlist.get("track", []))
+                logger.info(
+                    f"📋 Fetched playlist '{playlist.get('title')}' with {track_count} tracks"
+                )
                 return data
             elif response and response.status_code == 404:
                 logger.warning(f"Playlist {playlist_mbid} not found")
@@ -226,7 +247,7 @@ class ListenBrainzClient(PluginBase):
                 logger.warning(f"Unauthorized to access playlist {playlist_mbid}")
                 return None
             else:
-                status = response.status_code if response else 'No response'
+                status = response.status_code if response else "No response"
                 logger.error(f"Failed to fetch playlist: {status}")
                 return None
 
@@ -234,7 +255,7 @@ class ListenBrainzClient(PluginBase):
             logger.error(f"Error fetching playlist details: {e}")
             return None
 
-    def search_playlists(self, query: str) -> List[Dict]:
+    def search_playlists(self, query: str) -> list[dict]:
         """
         Search for playlists by name or description
 
@@ -247,18 +268,18 @@ class ListenBrainzClient(PluginBase):
 
         try:
             url = f"{self.base_url}/playlist/search"
-            params = {'query': query}
+            params = {"query": query}
 
             # Add auth header if we have a token
             headers = {}
             if self.token:
-                headers['Authorization'] = f'Token {self.token}'
+                headers["Authorization"] = f"Token {self.token}"
 
             response = self.http.get(url, headers=headers, params=params)
 
             if response.status_code == 200:
                 data = response.json()
-                playlists = data.get('playlists', [])
+                playlists = data.get("playlists", [])
                 logger.info(f"🔍 Found {len(playlists)} playlists matching '{query}'")
                 return playlists
             else:
@@ -269,7 +290,7 @@ class ListenBrainzClient(PluginBase):
             logger.error(f"Error searching playlists: {e}")
             return []
 
-    def get_similar_artists(self, artists: List[str]) -> List[Dict]:
+    def get_similar_artists(self, artists: list[str]) -> list[dict]:
         """
         Stub method to fetch similar artists/top tracks by those artists.
         For now, returns a mock list of dictionary track objects.
@@ -279,13 +300,13 @@ class ListenBrainzClient(PluginBase):
             {
                 "title": "Mock Track 1",
                 "artist_name": "Mock Similar Artist A",
-                "musicbrainz_id": "mock-mbid-1"
+                "musicbrainz_id": "mock-mbid-1",
             },
             {
                 "title": "Mock Track 2",
                 "artist_name": "Mock Similar Artist B",
-                "musicbrainz_id": "mock-mbid-2"
-            }
+                "musicbrainz_id": "mock-mbid-2",
+            },
         ]
 
     # =========================================================================
@@ -301,27 +322,27 @@ class ListenBrainzClient(PluginBase):
         query: str,
         type: str = "track",
         limit: int = 10,
-        quality_profile: Optional[Dict[str, Any]] = None,
-        includes: Optional[List[str]] = None,
-        excludes: Optional[List[str]] = None,
+        quality_profile: dict[str, Any] | None = None,
+        includes: list[str] | None = None,
+        excludes: list[str] | None = None,
         **kwargs,
-    ) -> List[Any]:
+    ) -> list[Any]:
         """Search is not supported by ListenBrainzClient."""
         return []
 
-    def get_track(self, track_id: str) -> Optional[Any]:
+    def get_track(self, track_id: str) -> Any | None:
         """Get track metadata is not supported by ListenBrainzClient."""
         return None
 
-    def get_album(self, album_id: str) -> Optional[Dict[str, Any]]:
+    def get_album(self, album_id: str) -> dict[str, Any] | None:
         """Get album metadata is not supported by ListenBrainzClient."""
         return None
 
-    def get_artist(self, artist_id: str) -> Optional[Dict[str, Any]]:
+    def get_artist(self, artist_id: str) -> dict[str, Any] | None:
         """Get artist metadata is not supported by ListenBrainzClient."""
         return None
 
-    def get_playlist_tracks(self, playlist_id: str) -> List[Any]:
+    def get_playlist_tracks(self, playlist_id: str) -> list[Any]:
         """Get playlist tracks is not supported by ListenBrainzClient."""
         return []
 
@@ -332,4 +353,3 @@ class ListenBrainzClient(PluginBase):
     def get_logo_url(self) -> str:
         """Get logo URL for ListenBrainz."""
         return "https://listenbrainz.org/static/img/listenbrainz-logo.svg"
-

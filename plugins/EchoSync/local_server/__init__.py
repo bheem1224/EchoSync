@@ -9,4 +9,4 @@ except Exception:
 
 ProviderClass = LocalServerProvider
 
-__all__ = ['ProviderClass']
+__all__ = ["ProviderClass"]

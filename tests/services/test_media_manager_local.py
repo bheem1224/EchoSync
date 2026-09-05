@@ -2,15 +2,12 @@
 Tests for MediaManagerService — services/media_manager.py
 """
 
-import os
 import pytest
-from pathlib import PurePosixPath
-from unittest.mock import patch, MagicMock
 
 from services.media_manager import MediaManagerService
 
-
 # ── Fixture ────────────────────────────────────────────────────────────────────
+
 
 @pytest.fixture()
 def media_manager(monkeypatch, mock_db):
@@ -20,7 +17,7 @@ def media_manager(monkeypatch, mock_db):
       - Patches event_bus.subscribe so test runs don't accumulate real handlers.
     """
     monkeypatch.setattr("services.media_manager.get_database", lambda: mock_db)
-    monkeypatch.setattr("services.media_manager.event_bus.subscribe",
-                        lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        "services.media_manager.event_bus.subscribe", lambda *args, **kwargs: None
+    )
     return MediaManagerService()
-

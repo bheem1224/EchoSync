@@ -1,8 +1,10 @@
-import pytest
-from services.playlists_api import resolve_duplicate_matches
-from core.matching_engine.matching_engine import WeightedMatchingEngine, get_version_family
-from core.matching_engine.scoring_profile import ExactSyncProfile
 from core.db.echo_sync_track import EchosyncTrack
+from core.matching_engine.matching_engine import (
+    WeightedMatchingEngine,
+    get_version_family,
+)
+from core.matching_engine.scoring_profile import ExactSyncProfile
+from services.playlists_api import resolve_duplicate_matches
 
 
 def test_resolve_duplicate_matches_winner_take_all_and_relegation():
@@ -139,7 +141,9 @@ def test_version_family_extraction_karaoke_and_sea_shanty():
     assert get_version_family("Karaoke Version") == "karaoke"
     assert get_version_family("Sea Shanty") == "sea_shanty"
     assert get_version_family("Wellerman (Sea Shanty)") == "sea_shanty"
-    assert get_version_family("Acoustic Version") == "piano"  # grouped under acoustic/piano
+    assert (
+        get_version_family("Acoustic Version") == "piano"
+    )  # grouped under acoustic/piano
 
 
 def test_wellerman_sea_shanty_version_equivalence():
@@ -163,7 +167,10 @@ def test_wellerman_sea_shanty_version_equivalence():
     result = engine.calculate_match(source, candidate)
     assert result.passed_version_check is True
     assert result.confidence_score >= 85.0
-    assert "Subtitle descriptor equivalence" in result.reasoning or result.version_penalty_applied == 0.0
+    assert (
+        "Subtitle descriptor equivalence" in result.reasoning
+        or result.version_penalty_applied == 0.0
+    )
 
 
 def test_tier2_escalation_blocked_on_distinct_artist_cover():
@@ -248,6 +255,7 @@ def test_single_version_studio_release_equivalence():
 def test_tribute_band_substring_rejection():
     """Verify that 'Maroon 5' vs 'The Maroon 5 Tribute Band' does not receive containment boost and fails matching."""
     from core.matching_engine.text_utils import _cmp_artists
+
     engine = WeightedMatchingEngine(ExactSyncProfile())
 
     art_score = _cmp_artists("Maroon 5", "The Maroon 5 Tribute Band")
@@ -368,11 +376,31 @@ def test_tier2_evaluates_only_new_candidates():
 
     evaluated_candidate_ids = {101}
     tier2_raw_candidates = [
-        (101, "Sweater Weather (Remix)", 240000, "Remix", "The Neighbourhood", 1, None, "Album A"),
-        (102, "Sweater Weather", 240000, None, "The Neighbourhood", 1, None, "I Love You."),
+        (
+            101,
+            "Sweater Weather (Remix)",
+            240000,
+            "Remix",
+            "The Neighbourhood",
+            1,
+            None,
+            "Album A",
+        ),
+        (
+            102,
+            "Sweater Weather",
+            240000,
+            None,
+            "The Neighbourhood",
+            1,
+            None,
+            "I Love You.",
+        ),
     ]
 
-    tier2_candidates = filter_unevaluated_candidates(tier2_raw_candidates, evaluated_candidate_ids)
+    tier2_candidates = filter_unevaluated_candidates(
+        tier2_raw_candidates, evaluated_candidate_ids
+    )
     assert len(tier2_candidates) == 1
     assert tier2_candidates[0][0] == 102
 
@@ -475,22 +503,28 @@ def test_remixer_safe_semantic_equivalence():
 
 def test_tier2_unknown_artist_title_recovery():
     """Verify Unknown Artist files with encapsulated 'Artist - Title' in title receive full artist confidence in Tier 2."""
-    from services.playlists_api import evaluate_tier2_candidate, check_title_recovery
+    from services.playlists_api import check_title_recovery, evaluate_tier2_candidate
 
     # Verify helper directly
-    assert check_title_recovery(
-        source_artist="BTS",
-        source_title="Dynamite",
-        candidate_artist="Unknown Artist",
-        candidate_title="BTS - Dynamite",
-    ) is True
+    assert (
+        check_title_recovery(
+            source_artist="BTS",
+            source_title="Dynamite",
+            candidate_artist="Unknown Artist",
+            candidate_title="BTS - Dynamite",
+        )
+        is True
+    )
 
-    assert check_title_recovery(
-        source_artist="BTS",
-        source_title="Dynamite",
-        candidate_artist="Different Artist",
-        candidate_title="BTS - Dynamite",
-    ) is False
+    assert (
+        check_title_recovery(
+            source_artist="BTS",
+            source_title="Dynamite",
+            candidate_artist="Different Artist",
+            candidate_title="BTS - Dynamite",
+        )
+        is False
+    )
 
     # Verify end-to-end evaluation
     engine = WeightedMatchingEngine(ExactSyncProfile())
@@ -599,20 +633,25 @@ def test_encapsulated_artist_title_recovery():
 
 def test_scan_modes_execution(tmp_path, monkeypatch):
     """Verify scan_mode parameter execution across incremental, force_rescan, and full_rebuild modes."""
-    from services.library_sync_service import LibrarySyncService
     from core.settings import config_manager
     from database.music_database import MusicDatabase
+    from services.library_sync_service import LibrarySyncService
 
     # Setup dummy directory and test database
     lib_dir = tmp_path / "music"
     lib_dir.mkdir(parents=True)
     db_file = tmp_path / "test_scan_modes.db"
     from database.music_database import Base
+
     db = MusicDatabase(str(db_file))
     Base.metadata.create_all(db.engine)
 
     orig_get = config_manager.get
-    monkeypatch.setattr(config_manager, "get", lambda k: str(lib_dir) if "library_dir" in k else orig_get(k))
+    monkeypatch.setattr(
+        config_manager,
+        "get",
+        lambda k: str(lib_dir) if "library_dir" in k else orig_get(k),
+    )
 
     service = LibrarySyncService(database_path=str(db_file))
     # Test all 3 modes can execute without exception
@@ -643,9 +682,9 @@ def test_unicode_cross_artist_splitting():
 
 def test_ingestion_remixer_extraction_to_junction(tmp_path):
     """Verify ingestion pipeline extracts remixer entities and attaches role='remixer' to track_artists."""
-    from database.music_database import MusicDatabase, Base, Track, Artist, TrackArtist
     from core.database.repositories.track_repo import TrackRepository
-    from core.db.echo_sync_track import EchosyncTrack, EchosyncMedia
+    from core.db.echo_sync_track import EchosyncMedia, EchosyncTrack
+    from database.music_database import Artist, Base, MusicDatabase, Track, TrackArtist
 
     db_file = tmp_path / "test_remixer_junction.db"
     db = MusicDatabase(str(db_file))
@@ -698,11 +737,17 @@ def test_ingestion_remixer_extraction_to_junction(tmp_path):
 def test_unidentifiable_file_ejection_and_cascade_purge(tmp_path, monkeypatch):
     """Verify unidentifiable media files are ejected to download directory and cascade purged from DB."""
     import echosync_core
-    from services.library_sync_service import LibrarySyncService
-    from database.music_database import MusicDatabase, Base, Track, Artist, Album, LocalMedia
+
     from core.database.repositories.track_repo import TrackRepository
-    from core.db.echo_sync_track import EchosyncTrack, EchosyncMedia
+    from core.db.echo_sync_track import EchosyncMedia, EchosyncTrack
     from core.settings import config_manager
+    from database.music_database import (
+        Base,
+        LocalMedia,
+        MusicDatabase,
+        Track,
+    )
+    from services.library_sync_service import LibrarySyncService
 
     lib_dir = tmp_path / "music"
     lib_dir.mkdir(parents=True)
@@ -715,7 +760,9 @@ def test_unidentifiable_file_ejection_and_cascade_purge(tmp_path, monkeypatch):
 
     # 1. Create a dummy untagged wav file in library
     bad_file = lib_dir / "corrupted_untagged.wav"
-    bad_file.write_bytes(b"RIFF\x00\x00\x00\x00WAVEfmt \x10\x00\x00\x00\x01\x00\x01\x00\x44\xac\x00\x00\x88\x58\x01\x00\x02\x00\x10\x00data\x00\x00\x00\x00")
+    bad_file.write_bytes(
+        b"RIFF\x00\x00\x00\x00WAVEfmt \x10\x00\x00\x00\x01\x00\x01\x00\x44\xac\x00\x00\x88\x58\x01\x00\x02\x00\x10\x00data\x00\x00\x00\x00"
+    )
 
     # 2. Mock echosync_core.extract_metadata and read_metadata to return empty title/artist
     empty_meta = {
@@ -735,7 +782,11 @@ def test_unidentifiable_file_ejection_and_cascade_purge(tmp_path, monkeypatch):
     monkeypatch.setattr(
         config_manager,
         "get",
-        lambda k: str(lib_dir) if "library_dir" in k else (str(dl_dir) if "download_dir" in k else orig_get(k))
+        lambda k: (
+            str(lib_dir)
+            if "library_dir" in k
+            else (str(dl_dir) if "download_dir" in k else orig_get(k))
+        ),
     )
 
     # Seed the DB with a record pointing to bad_file to test cascade purge
@@ -775,12 +826,15 @@ def test_unidentifiable_file_ejection_and_cascade_purge(tmp_path, monkeypatch):
         assert session.query(Track).count() == 0
 
 
-def test_tightened_ejection_preserves_valid_tagged_and_inferred_tracks(tmp_path, monkeypatch):
+def test_tightened_ejection_preserves_valid_tagged_and_inferred_tracks(
+    tmp_path, monkeypatch
+):
     """Verify tracks with valid tags or filename structure (e.g. Bobby McFerrin) are NOT ejected to quarantine."""
     import echosync_core
-    from services.library_sync_service import LibrarySyncService
-    from database.music_database import MusicDatabase, Base, Track, LocalMedia
+
     from core.settings import config_manager
+    from database.music_database import Base, MusicDatabase
+    from services.library_sync_service import LibrarySyncService
 
     lib_dir = tmp_path / "music"
     lib_dir.mkdir(parents=True)
@@ -802,29 +856,41 @@ def test_tightened_ejection_preserves_valid_tagged_and_inferred_tracks(tmp_path,
     monkeypatch.setattr(
         echosync_core,
         "read_metadata",
-        lambda path: {
-            "title": "Don't Worry Be Happy",
-            "artist": "Bobby McFerrin",
-            "album": "Simple Pleasures",
-            "duration": 290000,
-        } if "bobby_mcferrin.flac" in str(path) else {}
+        lambda path: (
+            {
+                "title": "Don't Worry Be Happy",
+                "artist": "Bobby McFerrin",
+                "album": "Simple Pleasures",
+                "duration": 290000,
+            }
+            if "bobby_mcferrin.flac" in str(path)
+            else {}
+        ),
     )
     monkeypatch.setattr(
         echosync_core,
         "extract_metadata",
-        lambda path: {
-            "title": "Don't Worry Be Happy",
-            "artist": "Bobby McFerrin",
-            "album": "Simple Pleasures",
-            "duration": 290000,
-        } if "bobby_mcferrin.flac" in str(path) else {}
+        lambda path: (
+            {
+                "title": "Don't Worry Be Happy",
+                "artist": "Bobby McFerrin",
+                "album": "Simple Pleasures",
+                "duration": 290000,
+            }
+            if "bobby_mcferrin.flac" in str(path)
+            else {}
+        ),
     )
 
     orig_get = config_manager.get
     monkeypatch.setattr(
         config_manager,
         "get",
-        lambda k: str(lib_dir) if "library_dir" in k else (str(dl_dir) if "download_dir" in k else orig_get(k))
+        lambda k: (
+            str(lib_dir)
+            if "library_dir" in k
+            else (str(dl_dir) if "download_dir" in k else orig_get(k))
+        ),
     )
 
     service = LibrarySyncService(database_path=str(db_file))
@@ -841,11 +907,12 @@ def test_tightened_ejection_preserves_valid_tagged_and_inferred_tracks(tmp_path,
 def test_library_sync_and_auto_importer_mutual_exclusion_lock(tmp_path, monkeypatch):
     """Verify mutual exclusion synchronization lock prevents collision between LibrarySyncService and AutoImporter."""
     import threading
-    from services.library_sync_service import LibrarySyncService
-    from services.auto_importer import AutoImporter
-    from core.system_lock import acquire_library_lock
+
     from core.settings import config_manager
-    from database.music_database import MusicDatabase, Base
+    from core.system_lock import acquire_library_lock
+    from database.music_database import Base, MusicDatabase
+    from services.auto_importer import AutoImporter
+    from services.library_sync_service import LibrarySyncService
 
     lib_dir = tmp_path / "music"
     lib_dir.mkdir(parents=True)
@@ -860,7 +927,11 @@ def test_library_sync_and_auto_importer_mutual_exclusion_lock(tmp_path, monkeypa
     monkeypatch.setattr(
         config_manager,
         "get",
-        lambda k: str(lib_dir) if "library_dir" in k else (str(dl_dir) if "download_dir" in k else orig_get(k))
+        lambda k: (
+            str(lib_dir)
+            if "library_dir" in k
+            else (str(dl_dir) if "download_dir" in k else orig_get(k))
+        ),
     )
 
     lock_acquired = threading.Event()
@@ -891,9 +962,10 @@ def test_library_sync_and_auto_importer_mutual_exclusion_lock(tmp_path, monkeypa
 
 def test_acoustid_duration_integer_rounding():
     """Verify that floating point durations (e.g. 384.44, 179.4) are normalized to rounded integers."""
-    from plugins.EchoSync.acoustid.client import AcoustIDProvider
-    from web.routes.metadata_review import _normalize_duration_seconds, _coerce_int
     from pathlib import Path
+
+    from plugins.EchoSync.acoustid.client import AcoustIDProvider
+    from web.routes.metadata_review import _coerce_int, _normalize_duration_seconds
 
     # 1. Test _coerce_int with float strings and floats
     assert _coerce_int("384.44") == 384
@@ -913,13 +985,17 @@ def test_acoustid_duration_integer_rounding():
 
     # 3. Test AcoustIDProvider payload generation
     provider = AcoustIDProvider()
+
     class DummyHTTP:
         def post(self, url, data):
             self.last_data = data
+
             class DummyResp:
                 status_code = 200
+
                 def json(self):
                     return {"status": "ok", "results": []}
+
             return DummyResp()
 
     dummy_http = DummyHTTP()
@@ -934,9 +1010,10 @@ def test_acoustid_duration_integer_rounding():
 
 def test_filename_hyphen_parsing():
     """Verify that '04 - A Drawing-Down of Blinds.wav' parses title without corrupting internal hyphens."""
+    from pathlib import Path
+
     from core.matching_engine.track_parser import TrackParser
     from services.auto_importer import parse_fallback_filename
-    from pathlib import Path
 
     raw_filename = "04 - A Drawing-Down of Blinds.wav"
 
@@ -952,7 +1029,9 @@ def test_filename_hyphen_parsing():
     assert track.title == "A Drawing-Down of Blinds"
 
     # Test Artist - Title with internal hyphens
-    track_with_artist = parser.parse_filename("01 - The Artist - A Drawing-Down of Blinds.flac")
+    track_with_artist = parser.parse_filename(
+        "01 - The Artist - A Drawing-Down of Blinds.flac"
+    )
     assert track_with_artist is not None
     assert track_with_artist.artist_name.lower() == "the artist"
     assert track_with_artist.title == "A Drawing-Down of Blinds"
@@ -960,7 +1039,7 @@ def test_filename_hyphen_parsing():
 
 def test_review_approval_suppresses_watcher(tmp_path, monkeypatch):
     """Verify that review approval suppresses watcher events during destination move."""
-    from services.library_watcher import suppress_path, is_path_suppressed
+    from services.library_watcher import is_path_suppressed, suppress_path
 
     dest_file = tmp_path / "library" / "Artist" / "Album" / "Track.mp3"
     dest_path_str = str(dest_file)
@@ -975,7 +1054,14 @@ def test_review_approval_suppresses_watcher(tmp_path, monkeypatch):
 
 def test_wavin_flag_double_space_candidate_matching(tmp_path, monkeypatch):
     """Verify that a track with multiple spaces in title is matched via normalized_title in candidate search."""
-    from database.music_database import MusicDatabase, Base, Artist, Album, Track, LocalMedia
+    from database.music_database import (
+        Album,
+        Artist,
+        Base,
+        LocalMedia,
+        MusicDatabase,
+        Track,
+    )
     from web.routes.playlists import _fetch_tier1_candidates
 
     db = MusicDatabase(tmp_path / "test.db")
@@ -998,7 +1084,12 @@ def test_wavin_flag_double_space_candidate_matching(tmp_path, monkeypatch):
         session.add(track)
         session.flush()
 
-        media = LocalMedia(track_id=track.id, file_path="/data/library/K’naan/Troubadour/00 - Wavin' Flag.flac", file_format="flac", media_id="wf_01")
+        media = LocalMedia(
+            track_id=track.id,
+            file_path="/data/library/K’naan/Troubadour/00 - Wavin' Flag.flac",
+            file_format="flac",
+            media_id="wf_01",
+        )
         session.add(media)
 
     with db.engine.connect() as conn:
@@ -1017,18 +1108,28 @@ def test_wavin_flag_double_space_candidate_matching(tmp_path, monkeypatch):
 
 def test_seeb_remix_filepath_edition_detection(tmp_path, monkeypatch):
     """Verify that candidate edition is detected from filepath when Track.edition is NULL."""
-    from database.music_database import MusicDatabase, Base, Artist, Album, Track, LocalMedia
-    from web.routes.playlists import _fetch_tier1_candidates
-    from core.matching_engine.matching_engine import WeightedMatchingEngine
-    from core.db.echo_sync_track import EchosyncTrack
     import re
+
+    from core.db.echo_sync_track import EchosyncTrack
+    from core.matching_engine.matching_engine import WeightedMatchingEngine
+    from database.music_database import (
+        Album,
+        Artist,
+        Base,
+        LocalMedia,
+        MusicDatabase,
+        Track,
+    )
+    from web.routes.playlists import _fetch_tier1_candidates
 
     db = MusicDatabase(tmp_path / "test.db")
     Base.metadata.create_all(db.engine)
 
     with db.session_scope() as session:
         artist = Artist(name="Mike Posner", normalized_name="mike posner")
-        album = Album(title="At Night, Alone.", normalized_title="at night alone", artist=artist)
+        album = Album(
+            title="At Night, Alone.", normalized_title="at night alone", artist=artist
+        )
         session.add_all([artist, album])
         session.flush()
 
@@ -1066,21 +1167,33 @@ def test_seeb_remix_filepath_edition_detection(tmp_path, monkeypatch):
         assert media_file_path is not None
         assert "SeeB remix" in media_file_path
 
-        m_ed = re.search(r'[\(\[]([^\]\)]*(?:remix|mix|edit|version|live|acoustic|instrumental|remaster)[^\]\)]*)[\)\]]', media_file_path, re.IGNORECASE)
+        m_ed = re.search(
+            r"[\(\[]([^\]\)]*(?:remix|mix|edit|version|live|acoustic|instrumental|remaster)[^\]\)]*)[\)\]]",
+            media_file_path,
+            re.IGNORECASE,
+        )
         edition_candidate = m_ed.group(1).strip() if m_ed else None
         assert edition_candidate is not None
         assert "remix" in edition_candidate.lower()
 
         # Engine test: source requested Remix vs candidate with SeeB remix edition
-        source_track = EchosyncTrack(raw_title="I Took A Pill In Ibiza", artist_name="Mike Posner", album_title="", duration=197933, edition="Remix")
-        cand_track = EchosyncTrack(raw_title="I Took A Pill In Ibiza", artist_name="Mike Posner", album_title="", duration=197936, edition=edition_candidate)
+        source_track = EchosyncTrack(
+            raw_title="I Took A Pill In Ibiza",
+            artist_name="Mike Posner",
+            album_title="",
+            duration=197933,
+            edition="Remix",
+        )
+        cand_track = EchosyncTrack(
+            raw_title="I Took A Pill In Ibiza",
+            artist_name="Mike Posner",
+            album_title="",
+            duration=197936,
+            edition=edition_candidate,
+        )
         from core.matching_engine.scoring_profile import PROFILE_EXACT_SYNC
+
         engine = WeightedMatchingEngine(PROFILE_EXACT_SYNC)
         res = engine.calculate_match(source_track, cand_track)
         assert res.confidence_score >= 90.0
         assert res.passed_version_check is True
-
-
-
-
-

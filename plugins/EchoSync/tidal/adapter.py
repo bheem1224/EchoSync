@@ -7,12 +7,12 @@ attaches PluginRef, and progressively enriches available fields.
 Adapters NEVER own data; all operations go through MusicDatabase.
 """
 
-from typing import List, Optional
-from core.tiered_logger import get_logger
-from core.db.echo_sync_track import EchosyncTrack as Track
-from core.nexus_framework.plugin_SDK import sdk
 # (removed get_music_database import)
 from typing import Any
+
+from core.db.echo_sync_track import EchosyncTrack as Track
+from core.tiered_logger import get_logger
+
 
 def _safe_getattr(obj: Any, attr: str, default: Any = None) -> Any:
     """AST-compliant alternative to getattr()."""
@@ -25,18 +25,20 @@ def _safe_getattr(obj: Any, attr: str, default: Any = None) -> Any:
             return default
     return default
 
+
 logger = get_logger("tidal_adapter")
+
 
 # TidalAdapter class deprecated - use convert_tidal_track_to_echosync instead
 class TidalAdapter:
     def __init__(self, tidal_client=None):
-        
-        db = None # deprecated
+
+        db = None  # deprecated
         super().__init__(db=db, provider_type="tidal")
         self.tidal = tidal_client
 
     # Field contracts
-    def get_provides_fields(self) -> List[str]:
+    def get_provides_fields(self) -> list[str]:
         return [
             "title",
             "artists",
@@ -45,7 +47,7 @@ class TidalAdapter:
             "isrc",
         ]
 
-    def get_consumes_fields(self) -> List[str]:
+    def get_consumes_fields(self) -> list[str]:
         # Playlist ingestion does not require prior fields
         return []
 
@@ -53,7 +55,7 @@ class TidalAdapter:
         return True
 
     # High-level operations
-    def ingest_playlist(self, playlist_id: str) -> List[Track]:
+    def ingest_playlist(self, playlist_id: str) -> list[Track]:
         """Create Track stubs for each TIDAL track in a playlist."""
         if not self.tidal:
             logger.warning("Tidal client not provided; cannot ingest playlist")
@@ -65,7 +67,7 @@ class TidalAdapter:
         playlist = self.tidal.get_playlist_by_id(playlist_id)
         if not playlist:
             return []
-        created: List[Track] = []
+        created: list[Track] = []
         for td_track in _safe_getattr(playlist, "tracks", []):
             initial = {
                 "title": _safe_getattr(td_track, "name", None),
@@ -93,7 +95,7 @@ class TidalAdapter:
         logger.info(f"Ingested {len(created)} tracks from TIDAL playlist {playlist_id}")
         return created
 
-    def ingest_favorites(self, limit: Optional[int] = None) -> List[Track]:
+    def ingest_favorites(self, limit: int | None = None) -> list[Track]:
         """Create Track stubs from user's TIDAL favorites/saved tracks."""
         if not self.tidal:
             logger.warning("Tidal client not provided; cannot ingest favorites")
@@ -105,7 +107,7 @@ class TidalAdapter:
         saved = self.tidal.get_saved_tracks() or []
         if limit is not None:
             saved = saved[:limit]
-        created: List[Track] = []
+        created: list[Track] = []
         for td_track in saved:
             initial = {
                 "title": _safe_getattr(td_track, "name", None),
@@ -132,9 +134,16 @@ class TidalAdapter:
         logger.info(f"Ingested {len(created)} favorite tracks from TIDAL")
         return created
 
+
 # Register adapter in plugin system (declaration only; instance created by services)
 try:
-    from plugins.plugin_system import PluginType, PluginScope, PluginDeclaration, register_plugin
+    from plugins.plugin_system import (
+        PluginDeclaration,
+        PluginScope,
+        PluginType,
+        register_plugin,
+    )
+
     decl = PluginDeclaration(
         name="tidal_adapter",
         plugin_type=PluginType.PLAYLIST_PROVIDER,

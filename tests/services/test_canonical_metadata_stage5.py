@@ -3,28 +3,27 @@ Stage 5 Test Suite: Canonical Singles Normalization, Band Member Disambiguation,
 Canonical Studio Realignment for Repacks, Zero Telemetry Tags, and Reorganizer Retroactive Run.
 """
 
-import os
 import uuid
-import pytest
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 import echosync_core
-from database.music_database import get_database, Track, Album, Artist, LocalMedia
-from core.path_formatter import build_destination_path, sanitize_path_segment
+
+from core.path_formatter import build_destination_path
+from database.music_database import Album, Artist, LocalMedia, Track, get_database
+from services.library_reorganizer import LibraryReorganizerService
 from services.metadata_enhancer import (
     MetadataEnhancerService,
-    normalize_singles_metadata,
-    realign_repack_metadata,
     apply_ensemble_disambiguation,
     build_native_tag_payload,
+    normalize_singles_metadata,
+    realign_repack_metadata,
 )
-from services.library_reorganizer import LibraryReorganizerService
 from tests.core.test_metadata_writer import (
-    _create_minimal_wav_file,
     _create_minimal_flac_file,
-    _create_minimal_mp3_file,
     _create_minimal_m4a_file,
+    _create_minimal_mp3_file,
+    _create_minimal_wav_file,
 )
 
 
@@ -210,16 +209,21 @@ def test_reorganize_library_retroactive_run(tmp_path):
     library_dir.mkdir(parents=True, exist_ok=True)
 
     # Create test physical audio file in a staging directory
-    staging_file = _create_minimal_flac_file(library_dir / f"incoming_raw_{suffix}.flac")
+    staging_file = _create_minimal_flac_file(
+        library_dir / f"incoming_raw_{suffix}.flac"
+    )
 
     # Stamp repack tag on physical file
-    echosync_core.write_metadata(str(staging_file), {
-        "title": f"Stage5 Track {suffix}",
-        "artist": f"Artist {suffix}",
-        "album": "Original Studio Master",
-        "repack_source": "Now 99",
-        "repack_release_mbid": "repack-mbid-99",
-    })
+    echosync_core.write_metadata(
+        str(staging_file),
+        {
+            "title": f"Stage5 Track {suffix}",
+            "artist": f"Artist {suffix}",
+            "album": "Original Studio Master",
+            "repack_source": "Now 99",
+            "repack_release_mbid": "repack-mbid-99",
+        },
+    )
 
     with music_db.session_scope() as session:
         artist = Artist(name=f"Artist {suffix}")
@@ -257,6 +261,7 @@ def test_reorganize_library_retroactive_run(tmp_path):
 
     # Allow tmp_path in Gatekeeper roots for test execution
     from core.io_gatekeeper import Gatekeeper
+
     orig_get_roots = Gatekeeper._get_default_allowed_roots
 
     def mock_roots(self_gk):
@@ -264,13 +269,19 @@ def test_reorganize_library_retroactive_run(tmp_path):
         roots.append(tmp_path.resolve())
         return roots
 
-    with patch.object(Gatekeeper, "_get_default_allowed_roots", side_effect=mock_roots, autospec=True):
+    with patch.object(
+        Gatekeeper, "_get_default_allowed_roots", side_effect=mock_roots, autospec=True
+    ):
         # Run library reorganization targeting this track
         reorganizer.reorganize_library(track_ids=[track_id])
 
     # Verify physical file was moved into structured folder hierarchy
     with music_db.session_scope() as session:
-        updated_media = session.query(LocalMedia).filter(LocalMedia.media_id == f"m_{suffix}").first()
+        updated_media = (
+            session.query(LocalMedia)
+            .filter(LocalMedia.media_id == f"m_{suffix}")
+            .first()
+        )
         assert updated_media is not None
         new_path = Path(updated_media.file_path)
         assert new_path.exists()

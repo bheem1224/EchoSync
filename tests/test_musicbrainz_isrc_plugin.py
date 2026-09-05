@@ -1,12 +1,14 @@
-import pytest
-from core.enums import Capability
-from core.nexus_framework.plugin_loader import get_plugin_by_capability, PluginRegistry
 from core.db.echo_sync_track import EchosyncTrack
+from core.enums import Capability
+from core.nexus_framework.plugin_loader import PluginRegistry
 from plugins.EchoSync.musicbrainz.client import MusicBrainzClient
+
 
 def test_musicbrainz_isrc_plugin_resolution():
     # Register the plugin class with PluginRegistry manually for testing
-    PluginRegistry.register(MusicBrainzClient, name="EchoSync.musicbrainz", source_type="core")
+    PluginRegistry.register(
+        MusicBrainzClient, name="EchoSync.musicbrainz", source_type="core"
+    )
 
     providers = PluginRegistry.get_plugins_with_capability(Capability.FETCH_BY_ISRC)
     provider = next((p for p in providers if p.name == "EchoSync.musicbrainz"), None)

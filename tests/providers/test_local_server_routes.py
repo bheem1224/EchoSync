@@ -10,17 +10,16 @@ Coverage:
                                                send_file is NOT called
 """
 
-import pytest
-from pathlib import Path
 from unittest.mock import MagicMock, patch
+
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from fastapi.responses import Response
 
 import web.routes.local_server as route_module
 
-
 # ── Shared fixture ─────────────────────────────────────────────────────────────
+
 
 @pytest.fixture()
 def stream_client(tmp_path, monkeypatch):
@@ -31,7 +30,9 @@ def stream_client(tmp_path, monkeypatch):
     library.mkdir()
 
     mock_cm = MagicMock()
-    mock_cm.get.side_effect = lambda key, default=None: str(library) if key in ('storage.library_dir', 'library_dir') else default
+    mock_cm.get.side_effect = lambda key, default=None: (
+        str(library) if key in ("storage.library_dir", "library_dir") else default
+    )
     monkeypatch.setattr(route_module, "config_manager", mock_cm)
 
     app = FastAPI()
@@ -42,8 +43,8 @@ def stream_client(tmp_path, monkeypatch):
 
 # ── 1. Directory-traversal prevention ─────────────────────────────────────────
 
-class TestDirectoryTraversalPrevention:
 
+class TestDirectoryTraversalPrevention:
     def test_path_sibling_to_library_returns_403(self, stream_client, tmp_path):
         client, _library = stream_client
 
@@ -57,7 +58,9 @@ class TestDirectoryTraversalPrevention:
         assert body is not None
         assert "Access denied" in body.get("detail", "")
 
-    def test_path_resolving_above_library_root_returns_403(self, stream_client, tmp_path):
+    def test_path_resolving_above_library_root_returns_403(
+        self, stream_client, tmp_path
+    ):
         client, library = stream_client
 
         traversal_target = tmp_path / "above.txt"
@@ -81,15 +84,18 @@ class TestDirectoryTraversalPrevention:
 
 # ── 2. Native formats → FileResponse (Accept-Ranges delivery) ─────────────────
 
-class TestNativeFormatDelivery:
 
-    @pytest.mark.parametrize("filename", [
-        "track.flac",
-        "track.mp3",
-        "track.wav",
-        "track.m4a",
-        "track.ogg",
-    ])
+class TestNativeFormatDelivery:
+    @pytest.mark.parametrize(
+        "filename",
+        [
+            "track.flac",
+            "track.mp3",
+            "track.wav",
+            "track.m4a",
+            "track.ogg",
+        ],
+    )
     def test_native_format_delegates_to_send_file(self, stream_client, filename):
         client, library = stream_client
 
@@ -114,14 +120,17 @@ class TestNativeFormatDelivery:
 
 # ── 3. Exotic formats → subprocess.Popen (FFmpeg live transcode) ──────────────
 
-class TestExoticFormatTranscoding:
 
-    @pytest.mark.parametrize("filename", [
-        "hires.dsf",
-        "dsd_stereo.dff",
-        "lossless.ape",
-        "legacy.wma",
-    ])
+class TestExoticFormatTranscoding:
+    @pytest.mark.parametrize(
+        "filename",
+        [
+            "hires.dsf",
+            "dsd_stereo.dff",
+            "lossless.ape",
+            "legacy.wma",
+        ],
+    )
     def test_exotic_format_triggers_ffmpeg_popen(self, stream_client, filename):
         client, library = stream_client
 
@@ -133,7 +142,9 @@ class TestExoticFormatTranscoding:
         mock_proc.returncode = 0
         mock_proc.stderr.read.return_value = b""
 
-        with patch("web.routes.local_server.subprocess.Popen", return_value=mock_proc) as mock_popen:
+        with patch(
+            "web.routes.local_server.subprocess.Popen", return_value=mock_proc
+        ) as mock_popen:
             resp = client.get(f"/api/local_server/stream?path={audio_file}")
             _ = resp.content
 
@@ -180,7 +191,9 @@ class TestExoticFormatTranscoding:
         mock_proc.returncode = 0
         mock_proc.stderr.read.return_value = b""
 
-        with patch("web.routes.local_server.subprocess.Popen", return_value=mock_proc) as mock_popen:
+        with patch(
+            "web.routes.local_server.subprocess.Popen", return_value=mock_proc
+        ) as mock_popen:
             resp = client.get(f"/api/local_server/stream?path={ape_file}")
             _ = resp.content
 

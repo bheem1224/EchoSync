@@ -2,7 +2,6 @@
 Core Plugins SDK package.
 """
 
-from core.plugins.sdk import sdk, hookimpl, _WebhooksSDKFacade, dispatch_webhook
+from core.plugins.sdk import _WebhooksSDKFacade, dispatch_webhook, hookimpl, sdk
 
-__all__ = ["sdk", "hookimpl", "_WebhooksSDKFacade", "dispatch_webhook"]
-
+__all__ = ["_WebhooksSDKFacade", "dispatch_webhook", "hookimpl", "sdk"]

@@ -1,13 +1,18 @@
 import hashlib
+import json
 import secrets
-from typing import List, Optional, Dict, Any
 from dataclasses import dataclass
 from datetime import datetime
-import json
-from core.tiered_logger import get_logger
+from typing import Any
 
-from core.request_manager import RequestManager, RetryConfig, RateLimitConfig, HttpError
-from core.nexus_framework.plugin_SDK import ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
+from core.nexus_framework.plugin_SDK import (
+    MetadataRichness,
+    PlaylistSupport,
+    ProviderCapabilities,
+    SearchCapabilities,
+)
+from core.request_manager import HttpError, RateLimitConfig, RequestManager, RetryConfig
+from core.tiered_logger import get_logger
 from time_utils import utc_now
 
 
@@ -20,7 +25,9 @@ def _safe_getattr(obj: Any, attr: str, default: Any = None) -> Any:
             return default
     return default
 
+
 logger = get_logger("navidrome_client")
+
 
 @dataclass
 class NavidromeTrackInfo:
@@ -29,49 +36,52 @@ class NavidromeTrackInfo:
     artist: str
     album: str
     duration: int
-    track_number: Optional[int] = None
-    year: Optional[int] = None
-    rating: Optional[float] = None
+    track_number: int | None = None
+    year: int | None = None
+    rating: float | None = None
+
 
 @dataclass
 class NavidromePlaylistInfo:
     id: str
     title: str
-    description: Optional[str]
+    description: str | None
     duration: int
     leaf_count: int
-    tracks: List[NavidromeTrackInfo]
+    tracks: list[NavidromeTrackInfo]
+
 
 class NavidromeArtist:
     """Wrapper class to mimic Plex artist object interface"""
-    def __init__(self, navidrome_data: Dict[str, Any], client: 'NavidromeClient'):
+
+    def __init__(self, navidrome_data: dict[str, Any], client: "NavidromeClient"):
         self._data = navidrome_data
         self._client = client
-        self.ratingKey = navidrome_data.get('id', '')
-        self.title = navidrome_data.get('name', 'Unknown Artist')
-        self.addedAt = self._parse_date(navidrome_data.get('dateAdded'))
+        self.ratingKey = navidrome_data.get("id", "")
+        self.title = navidrome_data.get("name", "Unknown Artist")
+        self.addedAt = self._parse_date(navidrome_data.get("dateAdded"))
 
         # Create genres property from Navidrome data
         self.genres = []
         # TODO: Map Navidrome genre data to match Plex format
 
         # Create summary property (used for timestamp storage)
-        self.summary = navidrome_data.get('biography', '') or ''
+        self.summary = navidrome_data.get("biography", "") or ""
 
         # Create thumb property for artist images
         self.thumb = self._get_artist_image_url()
 
-    def _parse_date(self, date_str: Optional[str]) -> Optional[datetime]:
+    def _parse_date(self, date_str: str | None) -> datetime | None:
         """Parse Navidrome date string to datetime"""
         if not date_str:
             return None
         try:
             # Navidrome uses ISO format
-            return datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+            return datetime.fromisoformat(date_str.replace("Z", "+00:00"))
         except:
             return None
 
-    def _get_artist_image_url(self) -> Optional[str]:
+    def _get_artist_image_url(self) -> str | None:
         """Generate Navidrome artist image URL using Subsonic getCoverArt API"""
         if not self.ratingKey:
             return None
@@ -79,83 +89,93 @@ class NavidromeArtist:
         # Subsonic getCoverArt API for artist images
         return f"/rest/getCoverArt?id={self.ratingKey}"
 
-    def albums(self) -> List['NavidromeAlbum']:
+    def albums(self) -> list["NavidromeAlbum"]:
         """Get all albums for this artist"""
         return self._client.get_albums_for_artist(self.ratingKey)
 
+
 class NavidromeAlbum:
     """Wrapper class to mimic Plex album object interface"""
-    def __init__(self, navidrome_data: Dict[str, Any], client: 'NavidromeClient'):
+
+    def __init__(self, navidrome_data: dict[str, Any], client: "NavidromeClient"):
         self._data = navidrome_data
         self._client = client
-        self.ratingKey = navidrome_data.get('id', '')
-        self.title = navidrome_data.get('name', 'Unknown Album')
-        self.year = navidrome_data.get('year')
-        self.addedAt = self._parse_date(navidrome_data.get('created'))
-        self._artist_id = navidrome_data.get('artistId', '')
+        self.ratingKey = navidrome_data.get("id", "")
+        self.title = navidrome_data.get("name", "Unknown Album")
+        self.year = navidrome_data.get("year")
+        self.addedAt = self._parse_date(navidrome_data.get("created"))
+        self._artist_id = navidrome_data.get("artistId", "")
 
-    def _parse_date(self, date_str: Optional[str]) -> Optional[datetime]:
+    def _parse_date(self, date_str: str | None) -> datetime | None:
         if not date_str:
             return None
         try:
-            return datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+            return datetime.fromisoformat(date_str.replace("Z", "+00:00"))
         except:
             return None
 
-    def artist(self) -> Optional[NavidromeArtist]:
+    def artist(self) -> NavidromeArtist | None:
         """Get the album artist"""
         if self._artist_id:
             return self._client.get_artist_by_id(self._artist_id)
         return None
 
-    def tracks(self) -> List['NavidromeTrack']:
+    def tracks(self) -> list["NavidromeTrack"]:
         """Get all tracks for this album"""
         return self._client.get_tracks_for_album(self.ratingKey)
 
+
 class NavidromeTrack:
     """Wrapper class to mimic Plex track object interface"""
-    def __init__(self, navidrome_data: Dict[str, Any], client: 'NavidromeClient'):
+
+    def __init__(self, navidrome_data: dict[str, Any], client: "NavidromeClient"):
         self._data = navidrome_data
         self._client = client
-        self.ratingKey = navidrome_data.get('id', '')
-        self.title = navidrome_data.get('title', 'Unknown Track')
-        self.duration = navidrome_data.get('duration', 0) * 1000  # Convert to milliseconds
-        self.trackNumber = navidrome_data.get('track')
-        self.year = navidrome_data.get('year')
-        self.userRating = navidrome_data.get('userRating')
-        self.addedAt = self._parse_date(navidrome_data.get('created'))
+        self.ratingKey = navidrome_data.get("id", "")
+        self.title = navidrome_data.get("title", "Unknown Track")
+        self.duration = (
+            navidrome_data.get("duration", 0) * 1000
+        )  # Convert to milliseconds
+        self.trackNumber = navidrome_data.get("track")
+        self.year = navidrome_data.get("year")
+        self.userRating = navidrome_data.get("userRating")
+        self.addedAt = self._parse_date(navidrome_data.get("created"))
 
-        self._album_id = navidrome_data.get('albumId', '')
-        self._artist_id = navidrome_data.get('artistId', '')
+        self._album_id = navidrome_data.get("albumId", "")
+        self._artist_id = navidrome_data.get("artistId", "")
 
-    def _parse_date(self, date_str: Optional[str]) -> Optional[datetime]:
+    def _parse_date(self, date_str: str | None) -> datetime | None:
         if not date_str:
             return None
         try:
-            return datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+            return datetime.fromisoformat(date_str.replace("Z", "+00:00"))
         except:
             return None
 
-    def artist(self) -> Optional[NavidromeArtist]:
+    def artist(self) -> NavidromeArtist | None:
         """Get the track artist"""
         if self._artist_id:
             return self._client.get_artist_by_id(self._artist_id)
         return None
 
-    def album(self) -> Optional[NavidromeAlbum]:
+    def album(self) -> NavidromeAlbum | None:
         """Get the track's album"""
         if self._album_id:
             return self._client.get_album_by_id(self._album_id)
         return None
 
+
 from core.nexus_framework.plugin_SDK import MediaServerProvider
+
 
 class NavidromeClient(MediaServerProvider):
     name = "EchoSync.navidrome"
     capabilities = ProviderCapabilities(
-        name='navidrome',
+        name="navidrome",
         supports_playlists=PlaylistSupport.READ_WRITE,
-        search=SearchCapabilities(tracks=True, artists=True, albums=True, playlists=True),
+        search=SearchCapabilities(
+            tracks=True, artists=True, albums=True, playlists=True
+        ),
         metadata=MetadataRichness.MEDIUM,
         supports_cover_art=True,
         supports_lyrics=False,
@@ -164,16 +184,23 @@ class NavidromeClient(MediaServerProvider):
         supports_streaming=False,
         supports_downloads=False,
     )
+
     def authenticate(self, **kwargs) -> bool:
         return self.ensure_connection()
 
-    def search(self, query: str, type: str = "track", limit: int = 10, quality_profile: Optional[Dict[str, Any]] = None) -> list:
+    def search(
+        self,
+        query: str,
+        type: str = "track",
+        limit: int = 10,
+        quality_profile: dict[str, Any] | None = None,
+    ) -> list:
         if not self.ensure_connection():
             return []
         # Stub: implement actual search logic
         return []
 
-    def get_library_stats(self) -> Dict[str, int]:
+    def get_library_stats(self) -> dict[str, int]:
         # Stub implementation
         return {}
 
@@ -201,7 +228,7 @@ class NavidromeClient(MediaServerProvider):
         # Stub implementation
         return None
 
-    def get_user_playlists(self, user_id: Optional[str] = None) -> list:
+    def get_user_playlists(self, user_id: str | None = None) -> list:
         # Stub implementation
         return []
 
@@ -214,11 +241,12 @@ class NavidromeClient(MediaServerProvider):
 
     def is_configured(self) -> bool:
         return self.base_url is not None
+
     def __init__(self):
         super().__init__()
-        self.base_url: Optional[str] = None
-        self.username: Optional[str] = None
-        self.password: Optional[str] = None
+        self.base_url: str | None = None
+        self.username: str | None = None
+        self.password: str | None = None
         self._connection_attempted = False
         self._is_connecting = False
 
@@ -229,30 +257,34 @@ class NavidromeClient(MediaServerProvider):
 
         # Progress callback for UI updates
         self._progress_callback = None
-        
+
         # Initialize centralized HTTP client for Navidrome (10 requests/second)
         self._http = RequestManager(
-            provider='navidrome',
+            provider="navidrome",
             retry=RetryConfig(max_retries=3, base_backoff=0.5, max_backoff=8.0),
-            rate=RateLimitConfig(requests_per_second=10.0)
+            rate=RateLimitConfig(requests_per_second=10.0),
         )
 
         self._register_health_check()
-        
+
         # Legacy plugin_system registration removed - now uses PluginRegistry for auto-registration
-    
+
     def _register_health_check(self):
         """Register periodic health check for Navidrome server."""
         if not self.is_configured():
             return
-        
+
         from core.health_check import HealthCheckResult
-        
+
         def navidrome_health_check() -> HealthCheckResult:
             try:
                 connected = self.ensure_connection()
                 status = "healthy" if connected else "unhealthy"
-                message = "Navidrome server is reachable" if connected else "Navidrome server connection failed"
+                message = (
+                    "Navidrome server is reachable"
+                    if connected
+                    else "Navidrome server connection failed"
+                )
                 return HealthCheckResult(
                     service_name="navidrome",
                     status=status,
@@ -262,9 +294,9 @@ class NavidromeClient(MediaServerProvider):
                 return HealthCheckResult(
                     service_name="navidrome",
                     status="unhealthy",
-                    message=f"Navidrome connection error: {str(e)}",
+                    message=f"Navidrome connection error: {e!s}",
                 )
-        
+
         self.sdk.health.register(navidrome_health_check, interval_seconds=300)
 
     def set_progress_callback(self, callback):
@@ -290,9 +322,9 @@ class NavidromeClient(MediaServerProvider):
     def _setup_client(self):
         """Setup Navidrome client configuration"""
         # Retrieve Navidrome connection details from namespaced config facade
-        base_url = self.config.get('base_url')
-        username = self.config.get('username')
-        password = self.config.get('password')
+        base_url = self.config.get("base_url")
+        username = self.config.get("username")
+        password = self.config.get("password")
 
         if not base_url:
             logger.warning("Navidrome server URL not configured")
@@ -302,16 +334,18 @@ class NavidromeClient(MediaServerProvider):
             logger.warning("Navidrome username/password not configured")
             return
 
-        self.base_url = base_url.rstrip('/')
+        self.base_url = base_url.rstrip("/")
         self.username = username
         self.password = password
 
         try:
             # Test connection with ping
-            response = self._make_request('ping')
-            if response and response.get('status') == 'ok':
-                server_version = response.get('version', 'Unknown')
-                logger.info(f"Successfully connected to Navidrome server version: {server_version}")
+            response = self._make_request("ping")
+            if response and response.get("status") == "ok":
+                server_version = response.get("version", "Unknown")
+                logger.info(
+                    f"Successfully connected to Navidrome server version: {server_version}"
+                )
             else:
                 logger.error("Failed to connect to Navidrome server")
                 self.base_url = None
@@ -324,7 +358,7 @@ class NavidromeClient(MediaServerProvider):
             self.username = None
             self.password = None
 
-    def _generate_auth_params(self) -> Dict[str, str]:
+    def _generate_auth_params(self) -> dict[str, str]:
         """Generate authentication parameters for Subsonic API"""
         if not self.username or not self.password:
             return {}
@@ -332,18 +366,22 @@ class NavidromeClient(MediaServerProvider):
         # Generate random salt (at least 6 characters)
         salt = secrets.token_hex(8)
         # Calculate token: md5(password + salt) (Subsonic API protocol specification)
-        token = hashlib.md5((self.password + salt).encode(), usedforsecurity=False).hexdigest()
+        token = hashlib.md5(
+            (self.password + salt).encode(), usedforsecurity=False
+        ).hexdigest()
 
         return {
-            'u': self.username,
-            't': token,
-            's': salt,
-            'v': '1.16.1',  # API version
-            'c': 'Echosync',  # Client name
-            'f': 'json'  # Response format
+            "u": self.username,
+            "t": token,
+            "s": salt,
+            "v": "1.16.1",  # API version
+            "c": "Echosync",  # Client name
+            "f": "json",  # Response format
         }
 
-    def _make_request(self, endpoint: str, params: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+    def _make_request(
+        self, endpoint: str, params: dict[str, Any] | None = None
+    ) -> dict[str, Any] | None:
         """Make authenticated request to Navidrome Subsonic API"""
         if not self.base_url or not self.username:
             return None
@@ -362,10 +400,10 @@ class NavidromeClient(MediaServerProvider):
             data = response.json()
 
             # Check for Subsonic API errors
-            subsonic_response = data.get('subsonic-response', {})
-            if subsonic_response.get('status') == 'failed':
-                error = subsonic_response.get('error', {})
-                error_message = error.get('message', 'Unknown error')
+            subsonic_response = data.get("subsonic-response", {})
+            if subsonic_response.get("status") == "failed":
+                error = subsonic_response.get("error", {})
+                error_message = error.get("message", "Unknown error")
                 logger.error(f"Navidrome API error: {error_message}")
                 return None
 
@@ -383,11 +421,13 @@ class NavidromeClient(MediaServerProvider):
         if not self._connection_attempted:
             if not self._is_connecting:
                 self.ensure_connection()
-        return (self.base_url is not None and
-                self.username is not None and
-                self.password is not None)
+        return (
+            self.base_url is not None
+            and self.username is not None
+            and self.password is not None
+        )
 
-    def get_all_artists(self) -> List[NavidromeArtist]:
+    def get_all_artists(self) -> list[NavidromeArtist]:
         """Get all artists from the music library"""
         if not self.ensure_connection():
             logger.error("Not connected to Navidrome server")
@@ -397,7 +437,7 @@ class NavidromeClient(MediaServerProvider):
             if self._progress_callback:
                 self._progress_callback("Fetching artists from Navidrome...")
 
-            response = self._make_request('getArtists')
+            response = self._make_request("getArtists")
             if not response:
                 return []
 
@@ -405,22 +445,26 @@ class NavidromeClient(MediaServerProvider):
                 self._progress_callback("Processing artist data...")
 
             artists = []
-            indexes = response.get('artists', {}).get('index', [])
+            indexes = response.get("artists", {}).get("index", [])
             total_indexes = len(indexes)
 
             for i, index in enumerate(indexes):
                 if self._progress_callback and total_indexes > 1:
                     progress_pct = int((i / total_indexes) * 100)
-                    self._progress_callback(f"Processing artist index {i+1}/{total_indexes} ({progress_pct}%)")
+                    self._progress_callback(
+                        f"Processing artist index {i + 1}/{total_indexes} ({progress_pct}%)"
+                    )
 
-                for artist_data in index.get('artist', []):
+                for artist_data in index.get("artist", []):
                     artist = NavidromeArtist(artist_data, self)
                     # Cache the artist for quick lookup
                     self._artist_cache[artist.ratingKey] = artist
                     artists.append(artist)
 
             if self._progress_callback:
-                self._progress_callback(f"Retrieved {len(artists)} artists from Navidrome")
+                self._progress_callback(
+                    f"Retrieved {len(artists)} artists from Navidrome"
+                )
 
             logger.info(f"Retrieved {len(artists)} artists from Navidrome")
             return artists
@@ -429,7 +473,7 @@ class NavidromeClient(MediaServerProvider):
             logger.error(f"Error getting artists from Navidrome: {e}")
             return []
 
-    def get_albums_for_artist(self, artist_id: str) -> List[NavidromeAlbum]:
+    def get_albums_for_artist(self, artist_id: str) -> list[NavidromeAlbum]:
         """Get all albums for a specific artist"""
         # Check cache first
         if artist_id in self._album_cache:
@@ -441,22 +485,24 @@ class NavidromeClient(MediaServerProvider):
         try:
             # Get artist name for progress display
             artist_name = "Unknown Artist"
-            if hasattr(self, '_artist_cache'):
+            if hasattr(self, "_artist_cache"):
                 for cached_artist in self._artist_cache.values():
-                    if _safe_getattr(cached_artist, 'ratingKey', None) == artist_id:
-                        artist_name = _safe_getattr(cached_artist, 'title', 'Unknown Artist')
+                    if _safe_getattr(cached_artist, "ratingKey", None) == artist_id:
+                        artist_name = _safe_getattr(
+                            cached_artist, "title", "Unknown Artist"
+                        )
                         break
 
             if self._progress_callback:
                 self._progress_callback(f"Fetching albums for artist {artist_name}...")
 
-            response = self._make_request('getArtist', {'id': artist_id})
+            response = self._make_request("getArtist", {"id": artist_id})
             if not response:
                 return []
 
             albums = []
-            artist_data = response.get('artist', {})
-            album_list = artist_data.get('album', [])
+            artist_data = response.get("artist", {})
+            album_list = artist_data.get("album", [])
 
             if self._progress_callback and album_list:
                 self._progress_callback(f"Processing {len(album_list)} albums...")
@@ -473,7 +519,7 @@ class NavidromeClient(MediaServerProvider):
             logger.error(f"Error getting albums for artist {artist_id}: {e}")
             return []
 
-    def get_tracks_for_album(self, album_id: str) -> List[NavidromeTrack]:
+    def get_tracks_for_album(self, album_id: str) -> list[NavidromeTrack]:
         """Get all tracks for a specific album"""
         # Check cache first
         if album_id in self._track_cache:
@@ -485,11 +531,13 @@ class NavidromeClient(MediaServerProvider):
         try:
             # Get album name for progress display
             album_name = "Unknown Album"
-            if hasattr(self, '_album_cache'):
+            if hasattr(self, "_album_cache"):
                 for artist_albums in self._album_cache.values():
                     for cached_album in artist_albums:
-                        if _safe_getattr(cached_album, 'ratingKey', None) == album_id:
-                            album_name = _safe_getattr(cached_album, 'title', 'Unknown Album')
+                        if _safe_getattr(cached_album, "ratingKey", None) == album_id:
+                            album_name = _safe_getattr(
+                                cached_album, "title", "Unknown Album"
+                            )
                             break
                     if album_name != "Unknown Album":
                         break
@@ -497,13 +545,13 @@ class NavidromeClient(MediaServerProvider):
             if self._progress_callback:
                 self._progress_callback(f"Fetching tracks for album {album_name}...")
 
-            response = self._make_request('getAlbum', {'id': album_id})
+            response = self._make_request("getAlbum", {"id": album_id})
             if not response:
                 return []
 
             tracks = []
-            album_data = response.get('album', {})
-            track_list = album_data.get('song', [])
+            album_data = response.get("album", {})
+            track_list = album_data.get("song", [])
 
             if self._progress_callback and track_list:
                 self._progress_callback(f"Processing {len(track_list)} tracks...")
@@ -520,7 +568,7 @@ class NavidromeClient(MediaServerProvider):
             logger.error(f"Error getting tracks for album {album_id}: {e}")
             return []
 
-    def get_artist_by_id(self, artist_id: str) -> Optional[NavidromeArtist]:
+    def get_artist_by_id(self, artist_id: str) -> NavidromeArtist | None:
         """Get a specific artist by ID"""
         # Check cache first
         if artist_id in self._artist_cache:
@@ -530,9 +578,9 @@ class NavidromeClient(MediaServerProvider):
             return None
 
         try:
-            response = self._make_request('getArtist', {'id': artist_id})
-            if response and 'artist' in response:
-                artist = NavidromeArtist(response['artist'], self)
+            response = self._make_request("getArtist", {"id": artist_id})
+            if response and "artist" in response:
+                artist = NavidromeArtist(response["artist"], self)
                 # Cache for future use
                 self._artist_cache[artist_id] = artist
                 return artist
@@ -542,22 +590,22 @@ class NavidromeClient(MediaServerProvider):
             logger.error(f"Error getting artist {artist_id}: {e}")
             return None
 
-    def get_album_by_id(self, album_id: str) -> Optional[NavidromeAlbum]:
+    def get_album_by_id(self, album_id: str) -> NavidromeAlbum | None:
         """Get a specific album by ID"""
         if not self.ensure_connection():
             return None
 
         try:
-            response = self._make_request('getAlbum', {'id': album_id})
-            if response and 'album' in response:
-                return NavidromeAlbum(response['album'], self)
+            response = self._make_request("getAlbum", {"id": album_id})
+            if response and "album" in response:
+                return NavidromeAlbum(response["album"], self)
             return None
 
         except Exception as e:
             logger.error(f"Error getting album {album_id}: {e}")
             return None
 
-    def get_identifier_mappings(self, limit: Optional[int] = None):
+    def get_identifier_mappings(self, limit: int | None = None):
         """
         Lightweight identifiers-only fetch for Navidrome tracks using Subsonic search3 API.
         """
@@ -570,43 +618,47 @@ class NavidromeClient(MediaServerProvider):
 
         while offset < max_limit:
             current_limit = min(chunk_size, max_limit - offset)
-            response = self._make_request('search3', {
-                'query': '',
-                'songCount': current_limit,
-                'songOffset': offset,
-            })
-            if not response or 'searchResult3' not in response:
+            response = self._make_request(
+                "search3",
+                {
+                    "query": "",
+                    "songCount": current_limit,
+                    "songOffset": offset,
+                },
+            )
+            if not response or "searchResult3" not in response:
                 break
 
-            songs = response['searchResult3'].get('song', [])
+            songs = response["searchResult3"].get("song", [])
             if not songs:
                 break
 
             for song in songs:
-                song_id = song.get('id')
+                song_id = song.get("id")
                 if not song_id:
                     continue
-                file_path = song.get('path')
+                file_path = song.get("path")
                 if file_path:
                     from core.utils import PathMapper
+
                     file_path = PathMapper.to_local(file_path)
 
-                title = song.get('title')
-                artist = song.get('artist')
+                title = song.get("title")
+                artist = song.get("artist")
 
                 yield {
-                    'file_path': file_path,
-                    'plugin_source': 'navidrome',
-                    'plugin_item_id': str(song_id),
-                    'title': title,
-                    'artist_name': artist,
+                    "file_path": file_path,
+                    "plugin_source": "navidrome",
+                    "plugin_item_id": str(song_id),
+                    "title": title,
+                    "artist_name": artist,
                 }
 
             offset += len(songs)
             if len(songs) < current_limit:
                 break
 
-    def get_library_stats(self) -> Dict[str, int]:
+    def get_library_stats(self) -> dict[str, int]:
         """Get library statistics"""
         if not self.ensure_connection():
             return {}
@@ -617,13 +669,13 @@ class NavidromeClient(MediaServerProvider):
 
             # Get artist count
             artists = self.get_all_artists()
-            stats['artists'] = len(artists)
+            stats["artists"] = len(artists)
 
             # For albums and tracks, we'd need to iterate through all artists
             # This is expensive, so let's use reasonable estimates or make separate calls
             # For now, return what we can efficiently get
-            stats['albums'] = 0
-            stats['tracks'] = 0
+            stats["albums"] = 0
+            stats["tracks"] = 0
 
             # TODO: Implement more efficient counting if Navidrome provides bulk stats
 
@@ -633,27 +685,28 @@ class NavidromeClient(MediaServerProvider):
             logger.error(f"Error getting library stats: {e}")
             return {}
 
-    def get_all_playlists(self) -> List[NavidromePlaylistInfo]:
+    def get_all_playlists(self) -> list[NavidromePlaylistInfo]:
         """Get all playlists from Navidrome server"""
         if not self.ensure_connection():
             return []
 
         try:
-            response = self._make_request('getPlaylists')
+            response = self._make_request("getPlaylists")
             if not response:
                 return []
 
             playlists = []
-            playlists_data = response.get('playlists', {}).get('playlist', [])
+            playlists_data = response.get("playlists", {}).get("playlist", [])
 
             for playlist_data in playlists_data:
                 playlist_info = NavidromePlaylistInfo(
-                    id=playlist_data.get('id', ''),
-                    title=playlist_data.get('name', 'Unknown Playlist'),
-                    description=playlist_data.get('comment'),
-                    duration=playlist_data.get('duration', 0) * 1000,  # Convert to milliseconds
-                    leaf_count=playlist_data.get('songCount', 0),
-                    tracks=[]  # Will be populated when needed
+                    id=playlist_data.get("id", ""),
+                    title=playlist_data.get("name", "Unknown Playlist"),
+                    description=playlist_data.get("comment"),
+                    duration=playlist_data.get("duration", 0)
+                    * 1000,  # Convert to milliseconds
+                    leaf_count=playlist_data.get("songCount", 0),
+                    tracks=[],  # Will be populated when needed
                 )
                 playlists.append(playlist_info)
 
@@ -664,7 +717,7 @@ class NavidromeClient(MediaServerProvider):
             logger.error(f"Error getting playlists from Navidrome: {e}")
             return []
 
-    def get_playlist_by_name(self, name: str) -> Optional[NavidromePlaylistInfo]:
+    def get_playlist_by_name(self, name: str) -> NavidromePlaylistInfo | None:
         """Get a specific playlist by name"""
         playlists = self.get_all_playlists()
         for playlist in playlists:
@@ -681,27 +734,31 @@ class NavidromeClient(MediaServerProvider):
             # Convert tracks to Navidrome track IDs
             track_ids = []
             for track in tracks:
-                if hasattr(track, 'ratingKey'):
+                if hasattr(track, "ratingKey"):
                     track_ids.append(str(track.ratingKey))
-                elif hasattr(track, 'id'):
+                elif hasattr(track, "id"):
                     track_ids.append(str(track.id))
 
             if not track_ids:
                 logger.warning(f"No valid tracks provided for playlist '{name}'")
                 return False
 
-            logger.info(f"Creating Navidrome playlist '{name}' with {len(track_ids)} tracks")
+            logger.info(
+                f"Creating Navidrome playlist '{name}' with {len(track_ids)} tracks"
+            )
 
             # Create playlist with tracks
             params = {
-                'name': name,
-                'songId': track_ids  # Subsonic API accepts multiple songId parameters
+                "name": name,
+                "songId": track_ids,  # Subsonic API accepts multiple songId parameters
             }
 
-            response = self._make_request('createPlaylist', params)
+            response = self._make_request("createPlaylist", params)
 
-            if response and response.get('status') == 'ok':
-                logger.info(f"✅ Created Navidrome playlist '{name}' with {len(track_ids)} tracks")
+            if response and response.get("status") == "ok":
+                logger.info(
+                    f"✅ Created Navidrome playlist '{name}' with {len(track_ids)} tracks"
+                )
                 return True
             else:
                 logger.error(f"Failed to create Navidrome playlist '{name}'")
@@ -725,7 +782,9 @@ class NavidromeClient(MediaServerProvider):
 
             # Get tracks from source playlist
             source_tracks = self.get_playlist_tracks(source_playlist.id)
-            logger.debug(f"Retrieved {len(source_tracks) if source_tracks else 0} tracks from source playlist")
+            logger.debug(
+                f"Retrieved {len(source_tracks) if source_tracks else 0} tracks from source playlist"
+            )
 
             # Validate tracks
             if not source_tracks:
@@ -736,7 +795,7 @@ class NavidromeClient(MediaServerProvider):
             try:
                 target_playlist = self.get_playlist_by_name(target_name)
                 if target_playlist:
-                    self._make_request('deletePlaylist', {'id': target_playlist.id})
+                    self._make_request("deletePlaylist", {"id": target_playlist.id})
                     logger.info(f"Deleted existing backup playlist '{target_name}'")
             except Exception:
                 pass  # Target doesn't exist, which is fine
@@ -745,7 +804,9 @@ class NavidromeClient(MediaServerProvider):
             try:
                 success = self.create_playlist(target_name, source_tracks)
                 if success:
-                    logger.info(f"✅ Created backup playlist '{target_name}' with {len(source_tracks)} tracks")
+                    logger.info(
+                        f"✅ Created backup playlist '{target_name}' with {len(source_tracks)} tracks"
+                    )
                     return True
                 else:
                     logger.error(f"Failed to create backup playlist '{target_name}'")
@@ -755,23 +816,25 @@ class NavidromeClient(MediaServerProvider):
                 return False
 
         except Exception as e:
-            logger.error(f"Error copying playlist '{source_name}' to '{target_name}': {e}")
+            logger.error(
+                f"Error copying playlist '{source_name}' to '{target_name}': {e}"
+            )
             return False
 
-    def get_playlist_tracks(self, playlist_id: str) -> List[NavidromeTrack]:
+    def get_playlist_tracks(self, playlist_id: str) -> list[NavidromeTrack]:
         """Get all tracks from a specific playlist"""
         if not self.ensure_connection():
             return []
 
         try:
-            response = self._make_request('getPlaylist', {'id': playlist_id})
+            response = self._make_request("getPlaylist", {"id": playlist_id})
             if not response:
                 return []
 
             tracks = []
-            playlist_data = response.get('playlist', {})
+            playlist_data = response.get("playlist", {})
 
-            for track_data in playlist_data.get('entry', []):
+            for track_data in playlist_data.get("entry", []):
                 tracks.append(NavidromeTrack(track_data, self))
 
             logger.debug(f"Retrieved {len(tracks)} tracks from playlist {playlist_id}")
@@ -794,24 +857,30 @@ class NavidromeClient(MediaServerProvider):
 
             # Check if backup is enabled in config
 
-            create_backup = self.sdk.config.get('playlist_sync.create_backup', True)
+            create_backup = self.sdk.config.get("playlist_sync.create_backup", True)
 
             if existing_playlist and create_backup:
                 backup_name = f"{playlist_name} Backup"
                 logger.info(f"🛡️ Creating backup playlist '{backup_name}' before sync")
 
                 if self.copy_playlist(playlist_name, backup_name):
-                    logger.info(f"✅ Backup created successfully")
+                    logger.info("✅ Backup created successfully")
                 else:
-                    logger.warning(f"⚠️ Failed to create backup, continuing with sync")
+                    logger.warning("⚠️ Failed to create backup, continuing with sync")
 
             if existing_playlist:
                 # Delete existing playlist
-                response = self._make_request('deletePlaylist', {'id': existing_playlist.id})
-                if response and response.get('status') == 'ok':
-                    logger.info(f"Deleted existing Navidrome playlist '{playlist_name}'")
+                response = self._make_request(
+                    "deletePlaylist", {"id": existing_playlist.id}
+                )
+                if response and response.get("status") == "ok":
+                    logger.info(
+                        f"Deleted existing Navidrome playlist '{playlist_name}'"
+                    )
                 else:
-                    logger.warning(f"Could not delete existing playlist '{playlist_name}', creating anyway")
+                    logger.warning(
+                        f"Could not delete existing playlist '{playlist_name}', creating anyway"
+                    )
 
             # Create new playlist with tracks
             return self.create_playlist(playlist_name, tracks)
@@ -820,82 +889,87 @@ class NavidromeClient(MediaServerProvider):
             logger.error(f"Error updating Navidrome playlist '{playlist_name}': {e}")
             return False
 
-    def add_tracks_to_playlist(self, playlist_id: str, provider_track_ids: List[str]) -> bool:
+    def add_tracks_to_playlist(
+        self, playlist_id: str, provider_track_ids: list[str]
+    ) -> bool:
         """
         Add tracks to an existing Navidrome playlist using provider-specific track IDs.
-        
+
         Args:
             playlist_id: The Navidrome playlist ID (string UUID)
             provider_track_ids: List of Navidrome track IDs (string UUIDs)
-            
+
         Returns:
             bool: True if tracks were successfully added, False otherwise
         """
         if not self.ensure_connection():
             return False
-        
+
         if not provider_track_ids:
             logger.warning("add_tracks_to_playlist called with empty track list")
             return False
-        
+
         try:
             # Navidrome uses Subsonic API - addSongsToPlaylist endpoint
             # POST /rest/addSongsToPlaylist.view?playlistId=xxx&songId=id1&songId=id2...
             params = {
-                'playlistId': playlist_id,
-                'songId': provider_track_ids  # Subsonic API accepts multiple songId parameters
+                "playlistId": playlist_id,
+                "songId": provider_track_ids,  # Subsonic API accepts multiple songId parameters
             }
-            
-            response = self._make_request('addSongsToPlaylist', params)
-            
-            if response and response.get('status') == 'ok':
-                logger.info(f"✅ Added {len(provider_track_ids)} tracks to Navidrome playlist {playlist_id}")
+
+            response = self._make_request("addSongsToPlaylist", params)
+
+            if response and response.get("status") == "ok":
+                logger.info(
+                    f"✅ Added {len(provider_track_ids)} tracks to Navidrome playlist {playlist_id}"
+                )
                 return True
             else:
-                logger.error(f"Failed to add tracks to Navidrome playlist {playlist_id}: {response}")
+                logger.error(
+                    f"Failed to add tracks to Navidrome playlist {playlist_id}: {response}"
+                )
                 return False
-            
+
         except Exception as e:
-            logger.error(f"Error adding tracks to Navidrome playlist {playlist_id}: {e}")
+            logger.error(
+                f"Error adding tracks to Navidrome playlist {playlist_id}: {e}"
+            )
             return False
 
-    def _trigger_scan_api(self, path: Optional[str] = None) -> bool:
+    def _trigger_scan_api(self, path: str | None = None) -> bool:
         """
         Navidrome-specific: Trigger library scan on the Navidrome server API.
         """
         return self._trigger_library_scan_api(path)
 
-    def _trigger_library_scan_api(self, path: Optional[str] = None) -> bool:
+    def _trigger_library_scan_api(self, path: str | None = None) -> bool:
         """
         Navidrome-specific: Trigger library scan.
         Navidrome doesn't require explicit scans - library is always current.
         """
-        logger.info(f"Navidrome doesn't require library scans - library is always current")
+        logger.info(
+            "Navidrome doesn't require library scans - library is always current"
+        )
         return True
 
-    def _get_scan_status_api(self) -> Dict[str, Any]:
+    def _get_scan_status_api(self) -> dict[str, Any]:
         """
         Navidrome-specific: Get library scan status.
         Navidrome doesn't have scanning - always idle.
         """
-        return {
-            'scanning': False,
-            'progress': 100,
-            'eta_seconds': None,
-            'error': None
-        }
+        return {"scanning": False, "progress": 100, "eta_seconds": None, "error": None}
 
-    def get_content_changes_since(self, last_update: Optional[datetime] = None):
+    def get_content_changes_since(self, last_update: datetime | None = None):
         """
         Get content changes since last update using Navidrome-specific incremental detection.
         Uses date-sorted album approach since Navidrome doesn't have direct recent content APIs.
         """
         from core.content_models import ContentChanges
-        
+
         if not self.ensure_connection():
             logger.error("Not connected to Navidrome server")
             return ContentChanges()
-        
+
         # If no last_update provided, return all content (full refresh)
         if last_update is None:
             logger.info("No last_update provided - performing full content retrieval")
@@ -905,23 +979,23 @@ class NavidromeClient(MediaServerProvider):
                 albums=[],  # Will be fetched per-artist during processing
                 tracks=[],  # Will be fetched per-album during processing
                 full_refresh=True,
-                last_checked=utc_now()
+                last_checked=utc_now(),
             )
-        
+
         try:
             logger.info(f"Getting Navidrome content changes since {last_update}")
-            
+
             # Navidrome doesn't have direct "recent albums" API
             # Get albums from sample of artists and sort by date
             all_artists = self.get_all_artists()
             if not all_artists:
                 logger.info("No artists found")
                 return ContentChanges(last_checked=utc_now())
-            
+
             # Sample first 200 artists to get recent albums
             sample_artists = all_artists[:200]
             all_albums = []
-            
+
             for artist in sample_artists:
                 try:
                     artist_albums = self.get_albums_for_artist(artist.ratingKey)
@@ -929,31 +1003,32 @@ class NavidromeClient(MediaServerProvider):
                 except Exception as e:
                     logger.warning(f"Error getting albums for artist: {e}")
                     continue
-            
+
             if not all_albums:
                 logger.info("No albums found")
                 return ContentChanges(last_checked=utc_now())
-            
+
             # Sort by addedAt date (newest first) and take recent ones
             try:
+
                 def get_sort_date(album):
-                    date_val = _safe_getattr(album, 'addedAt', None)
+                    date_val = _safe_getattr(album, "addedAt", None)
                     if date_val is None:
                         return 0
                     return date_val
-                
+
                 all_albums.sort(key=get_sort_date, reverse=True)
                 recent_albums = all_albums[:400]  # Take most recent 400
-                
+
                 logger.info(f"Found {len(recent_albums)} recent albums from Navidrome")
             except Exception as e:
                 logger.warning(f"Error sorting albums: {e}")
                 recent_albums = all_albums[:400]
-            
+
             # Extract unique artists from recent albums
             processed_artist_ids = set()
             artists_to_return = []
-            
+
             for album in recent_albums:
                 try:
                     album_artist = album.artist()
@@ -965,27 +1040,34 @@ class NavidromeClient(MediaServerProvider):
                 except Exception as e:
                     logger.debug(f"Error getting artist for album: {e}")
                     continue
-            
-            logger.info(f"Navidrome incremental: Found {len(artists_to_return)} artists with recent albums")
-            
+
+            logger.info(
+                f"Navidrome incremental: Found {len(artists_to_return)} artists with recent albums"
+            )
+
             return ContentChanges(
                 artists=artists_to_return,
                 albums=recent_albums,
                 tracks=[],  # Will be fetched per-album during processing
                 full_refresh=False,
                 last_checked=utc_now(),
-                metadata={'recent_albums_checked': len(recent_albums), 'sample_artists': len(sample_artists)}
+                metadata={
+                    "recent_albums_checked": len(recent_albums),
+                    "sample_artists": len(sample_artists),
+                },
             )
-            
+
         except Exception as e:
             logger.error(f"Error getting Navidrome content changes: {e}")
             return ContentChanges()
 
     # Metadata update methods for compatibility with metadata updater
-    def update_artist_genres(self, artist, genres: List[str]):
+    def update_artist_genres(self, artist, genres: list[str]):
         """Update artist genres - not implemented for Navidrome"""
         try:
-            logger.debug(f"Genre update not implemented for Navidrome artist: {artist.title}")
+            logger.debug(
+                f"Genre update not implemented for Navidrome artist: {artist.title}"
+            )
             return True
         except Exception as e:
             logger.error(f"Error updating genres for {artist.title}: {e}")
@@ -994,7 +1076,9 @@ class NavidromeClient(MediaServerProvider):
     def update_artist_poster(self, artist, image_data: bytes):
         """Update artist poster image - not implemented for Navidrome"""
         try:
-            logger.debug(f"Poster update not implemented for Navidrome artist: {artist.title}")
+            logger.debug(
+                f"Poster update not implemented for Navidrome artist: {artist.title}"
+            )
             return True
         except Exception as e:
             logger.error(f"Error updating poster for {artist.title}: {e}")
@@ -1003,7 +1087,9 @@ class NavidromeClient(MediaServerProvider):
     def update_album_poster(self, album, image_data: bytes):
         """Update album poster image - not implemented for Navidrome"""
         try:
-            logger.debug(f"Poster update not implemented for Navidrome album: {album.title}")
+            logger.debug(
+                f"Poster update not implemented for Navidrome album: {album.title}"
+            )
             return True
         except Exception as e:
             logger.error(f"Error updating poster for album {album.title}: {e}")
@@ -1012,7 +1098,9 @@ class NavidromeClient(MediaServerProvider):
     def update_artist_biography(self, artist) -> bool:
         """Update artist biography - not implemented for Navidrome"""
         try:
-            logger.debug(f"Biography update not implemented for Navidrome artist: {artist.title}")
+            logger.debug(
+                f"Biography update not implemented for Navidrome artist: {artist.title}"
+            )
             return True
         except Exception as e:
             logger.error(f"Error updating biography for {artist.title}: {e}")
@@ -1036,7 +1124,7 @@ class NavidromeClient(MediaServerProvider):
             logger.debug(f"Error checking ignore status for {artist.title}: {e}")
             return False
 
-    def parse_update_timestamp(self, artist) -> Optional[datetime]:
+    def parse_update_timestamp(self, artist) -> datetime | None:
         """Parse the last update timestamp from artist summary - not implemented for Navidrome"""
         try:
             return None
@@ -1047,11 +1135,15 @@ class NavidromeClient(MediaServerProvider):
     def get_cache_stats(self):
         """Get cache statistics for debugging/logging"""
         return {
-            'artists_cached': len(self._artist_cache),
-            'albums_cached': len(self._album_cache),
-            'tracks_cached': len(self._track_cache),
-            'bulk_albums_cached': len(self._album_cache),  # For compatibility with Jellyfin interface
-            'bulk_tracks_cached': len(self._track_cache)   # For compatibility with Jellyfin interface
+            "artists_cached": len(self._artist_cache),
+            "albums_cached": len(self._album_cache),
+            "tracks_cached": len(self._track_cache),
+            "bulk_albums_cached": len(
+                self._album_cache
+            ),  # For compatibility with Jellyfin interface
+            "bulk_tracks_cached": len(
+                self._track_cache
+            ),  # For compatibility with Jellyfin interface
         }
 
     def clear_cache(self):
@@ -1061,7 +1153,9 @@ class NavidromeClient(MediaServerProvider):
         self._track_cache.clear()
         logger.info("Navidrome client cache cleared")
 
-    def search_tracks(self, title: str, artist: str, limit: int = 15) -> List[NavidromeTrackInfo]:
+    def search_tracks(
+        self, title: str, artist: str, limit: int = 15
+    ) -> list[NavidromeTrackInfo]:
         """Search for tracks using Navidrome search API"""
         if not self.ensure_connection():
             logger.warning("Navidrome not connected. Cannot perform search.")
@@ -1070,29 +1164,28 @@ class NavidromeClient(MediaServerProvider):
         try:
             # Use Subsonic search3 API for music search
             query = f"{artist} {title}".strip()
-            response = self._make_request('search3', {
-                'query': query,
-                'songCount': limit,
-                'artistCount': 0,
-                'albumCount': 0
-            })
+            response = self._make_request(
+                "search3",
+                {"query": query, "songCount": limit, "artistCount": 0, "albumCount": 0},
+            )
 
             if not response:
                 return []
 
             tracks = []
-            search_result = response.get('searchResult3', {})
+            search_result = response.get("searchResult3", {})
 
-            for track_data in search_result.get('song', []):
+            for track_data in search_result.get("song", []):
                 track_info = NavidromeTrackInfo(
-                    id=track_data.get('id', ''),
-                    title=track_data.get('title', ''),
-                    artist=track_data.get('artist', ''),
-                    album=track_data.get('album', ''),
-                    duration=track_data.get('duration', 0) * 1000,  # Convert to milliseconds
-                    track_number=track_data.get('track'),
-                    year=track_data.get('year'),
-                    rating=track_data.get('userRating')
+                    id=track_data.get("id", ""),
+                    title=track_data.get("title", ""),
+                    artist=track_data.get("artist", ""),
+                    album=track_data.get("album", ""),
+                    duration=track_data.get("duration", 0)
+                    * 1000,  # Convert to milliseconds
+                    track_number=track_data.get("track"),
+                    year=track_data.get("year"),
+                    rating=track_data.get("userRating"),
                 )
 
                 # Store reference to original track for playlist creation
@@ -1105,33 +1198,36 @@ class NavidromeClient(MediaServerProvider):
         except Exception as e:
             logger.error(f"Error searching for tracks: {e}")
             return []
-    
-    def get_album_tracks_as_echosync(self, album) -> List:
+
+    def get_album_tracks_as_echosync(self, album) -> list:
         """
         Get all tracks from a Navidrome album converted to EchosyncTrack objects.
-        
+
         Args:
             album: Navidrome album object (NavidromeAlbum wrapper)
-            
+
         Returns:
             List of EchosyncTrack objects with ISRC/MBID extracted
         """
-        from core.db.echo_sync_track import EchosyncTrack
         from .adapter import convert_navidrome_track_to_echosync
-        
+
         echo_sync_tracks = []
-        
+
         try:
             # Get album ID from the album object
-            album_id = _safe_getattr(album, 'id', _safe_getattr(album, 'ratingKey', None))
+            album_id = _safe_getattr(
+                album, "id", _safe_getattr(album, "ratingKey", None)
+            )
             if not album_id:
                 logger.warning("Could not get album ID for Navidrome album")
                 return echo_sync_tracks
-            
+
             # Get tracks for this album
             tracks = self.get_tracks_for_album(album_id)
-            logger.debug(f"Getting {len(tracks)} tracks from Navidrome album '{_safe_getattr(album, 'title', 'Unknown')}'")
-            
+            logger.debug(
+                f"Getting {len(tracks)} tracks from Navidrome album '{_safe_getattr(album, 'title', 'Unknown')}'"
+            )
+
             failed_count = 0
             for track in tracks:
                 try:
@@ -1140,15 +1236,19 @@ class NavidromeClient(MediaServerProvider):
                         echo_sync_tracks.append(echo_track)
                     else:
                         failed_count += 1
-                        logger.warning(f"Converter returned None for Navidrome track at album {album_id}")
+                        logger.warning(
+                            f"Converter returned None for Navidrome track at album {album_id}"
+                        )
                 except Exception as track_err:
                     failed_count += 1
                     logger.error(f"Error converting Navidrome track: {track_err}")
-            
+
             if failed_count > 0:
-                logger.warning(f"⚠️ Navidrome album '{_safe_getattr(album, 'title', 'Unknown')}': {len(tracks)} tracks, {len(echo_sync_tracks)} converted, {failed_count} failed")
-                
+                logger.warning(
+                    f"⚠️ Navidrome album '{_safe_getattr(album, 'title', 'Unknown')}': {len(tracks)} tracks, {len(echo_sync_tracks)} converted, {failed_count} failed"
+                )
+
         except Exception as e:
             logger.error(f"Error getting Navidrome album tracks as EchosyncTrack: {e}")
-        
+
         return echo_sync_tracks

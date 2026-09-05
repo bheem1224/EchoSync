@@ -9,6 +9,7 @@ PUT  /api/musicbrainz/accounts/<id>/activate — toggle active flag
 GET  /api/musicbrainz/auth?account_id=N      — start PKCE OAuth2 flow
 GET  /api/musicbrainz/callback               — handle OAuth2 callback & token exchange
 """
+
 import base64
 import hashlib
 import json
@@ -17,8 +18,7 @@ import time
 import urllib.parse
 import uuid
 
-import logging
-from fastapi import APIRouter, Request, HTTPException
+from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
 from core.nexus_framework.plugin_SDK import sdk
@@ -38,22 +38,34 @@ config_router = APIRouter()
 def get_config():
     """Return the current MusicBrainz settings-card configuration."""
     try:
-        token = sdk.config.get('user_token') or sdk.secrets.get('user_token')
+        token = sdk.config.get("user_token") or sdk.secrets.get("user_token")
         if not token:
             from database.config_database import get_config_database
-            db = get_config_database()
-            svc_id = db.get_service_id(2070622029) or db.get_service_id('EchoSync.Musicbrainz') or db.get_service_id('EchoSync.musicbrainz') or db.get_service_id('musicbrainz')
-            if svc_id:
-                token = db.get_service_config(svc_id, 'user_token')
 
-        auto_contribute = sdk.config.get('auto_contribute')
-        return JSONResponse(content={
-            "token_configured": bool(token),
-            "auto_contribute": auto_contribute == "true" if isinstance(auto_contribute, str) else bool(auto_contribute),
-        })
+            db = get_config_database()
+            svc_id = (
+                db.get_service_id(2070622029)
+                or db.get_service_id("EchoSync.Musicbrainz")
+                or db.get_service_id("EchoSync.musicbrainz")
+                or db.get_service_id("musicbrainz")
+            )
+            if svc_id:
+                token = db.get_service_config(svc_id, "user_token")
+
+        auto_contribute = sdk.config.get("auto_contribute")
+        return JSONResponse(
+            content={
+                "token_configured": bool(token),
+                "auto_contribute": auto_contribute == "true"
+                if isinstance(auto_contribute, str)
+                else bool(auto_contribute),
+            }
+        )
     except Exception as e:
         logger.error(f"Error reading MusicBrainz config: {e}", exc_info=True)
-        return JSONResponse(content={"error": "Failed to read MusicBrainz config"}, status_code=500)
+        return JSONResponse(
+            content={"error": "Failed to read MusicBrainz config"}, status_code=500
+        )
 
 
 @config_router.post("/config")
@@ -64,34 +76,58 @@ async def save_config(request: Request):
 
         if "user_token" in payload and payload["user_token"].strip():
             from core.security import encrypt_string
+
             enc_token = encrypt_string(payload["user_token"].strip())
-            sdk.config.set('user_token', enc_token)
+            sdk.config.set("user_token", enc_token)
             from database.config_database import get_config_database
+
             db = get_config_database()
-            svc_id = db.get_service_id(2070622029) or db.get_service_id('EchoSync.Musicbrainz') or db.get_service_id('EchoSync.musicbrainz') or db.get_service_id('musicbrainz')
+            svc_id = (
+                db.get_service_id(2070622029)
+                or db.get_service_id("EchoSync.Musicbrainz")
+                or db.get_service_id("EchoSync.musicbrainz")
+                or db.get_service_id("musicbrainz")
+            )
             if svc_id:
-                db.set_service_config(svc_id, 'user_token', enc_token, is_sensitive=True)
+                db.set_service_config(
+                    svc_id, "user_token", enc_token, is_sensitive=True
+                )
 
         if "auto_contribute" in payload:
-            sdk.config.set('auto_contribute', str(bool(payload["auto_contribute"])).lower())
+            sdk.config.set(
+                "auto_contribute", str(bool(payload["auto_contribute"])).lower()
+            )
 
-        token = sdk.config.get('user_token') or sdk.secrets.get('user_token')
+        token = sdk.config.get("user_token") or sdk.secrets.get("user_token")
         if not token:
             from database.config_database import get_config_database
-            db = get_config_database()
-            svc_id = db.get_service_id(2070622029) or db.get_service_id('EchoSync.Musicbrainz') or db.get_service_id('EchoSync.musicbrainz') or db.get_service_id('musicbrainz')
-            if svc_id:
-                token = db.get_service_config(svc_id, 'user_token')
 
-        auto_contribute = sdk.config.get('auto_contribute')
-        return JSONResponse(content={
-            "success": True,
-            "token_configured": bool(token),
-            "auto_contribute": auto_contribute == "true" if isinstance(auto_contribute, str) else bool(auto_contribute)
-        })
+            db = get_config_database()
+            svc_id = (
+                db.get_service_id(2070622029)
+                or db.get_service_id("EchoSync.Musicbrainz")
+                or db.get_service_id("EchoSync.musicbrainz")
+                or db.get_service_id("musicbrainz")
+            )
+            if svc_id:
+                token = db.get_service_config(svc_id, "user_token")
+
+        auto_contribute = sdk.config.get("auto_contribute")
+        return JSONResponse(
+            content={
+                "success": True,
+                "token_configured": bool(token),
+                "auto_contribute": auto_contribute == "true"
+                if isinstance(auto_contribute, str)
+                else bool(auto_contribute),
+            }
+        )
     except Exception as e:
         logger.error(f"Error saving MusicBrainz config: {e}", exc_info=True)
-        return JSONResponse(content={"error": "Failed to save MusicBrainz config"}, status_code=500)
+        return JSONResponse(
+            content={"error": "Failed to save MusicBrainz config"}, status_code=500
+        )
+
 
 _AUTH_URL = "https://musicbrainz.org/oauth2/authorize"
 _TOKEN_URL = "https://musicbrainz.org/oauth2/token"
@@ -103,20 +139,28 @@ _SCOPES = "profile email submit_isrc tag rating collection"
 
 # ── Account Management ────────────────────────────────────────────────────────
 
+
 @router.get("/accounts")
 def list_accounts():
     """List all MusicBrainz accounts with authentication status."""
     try:
         from core.nexus_framework.plugin_loader import PluginRegistry
+
         if PluginRegistry.is_plugin_disabled("musicbrainz"):
-            return JSONResponse(content={"accounts": [], "redirect_uri": ""}, status_code=200)
+            return JSONResponse(
+                content={"accounts": [], "redirect_uri": ""}, status_code=200
+            )
 
         db_accounts = sdk.accounts.get_all()
         accounts = [
             {
                 "id": a.get("id"),
-                "account_name": a.get("account_name") or a.get("display_name") or "Unnamed",
-                "display_name": a.get("display_name") or a.get("account_name") or "Unnamed",
+                "account_name": a.get("account_name")
+                or a.get("display_name")
+                or "Unnamed",
+                "display_name": a.get("display_name")
+                or a.get("account_name")
+                or "Unnamed",
                 "user_id": a.get("user_id"),
                 "is_active": a.get("is_active"),
                 "is_authenticated": a.get("is_authenticated"),
@@ -124,22 +168,26 @@ def list_accounts():
             for a in db_accounts
         ]
 
-        from .client import MusicBrainzClient
         from core.network_utils import get_lan_ip
+
         redirect_uri = f"https://{get_lan_ip()}:5001/api/oauth/callback/musicbrainz"
 
-        client_id = sdk.config.get('client_id')
-        client_secret_configured = bool(sdk.config.get('client_secret'))
+        client_id = sdk.config.get("client_id")
+        client_secret_configured = bool(sdk.config.get("client_secret"))
 
-        return JSONResponse(content={
-            "accounts": accounts,
-            "redirect_uri": redirect_uri,
-            "client_id_configured": bool(client_id),
-            "client_secret_configured": client_secret_configured,
-        })
+        return JSONResponse(
+            content={
+                "accounts": accounts,
+                "redirect_uri": redirect_uri,
+                "client_id_configured": bool(client_id),
+                "client_secret_configured": client_secret_configured,
+            }
+        )
     except Exception as e:
         logger.error(f"Error listing MusicBrainz accounts: {e}", exc_info=True)
-        return JSONResponse(content={"error": "Failed to list MusicBrainz accounts"}, status_code=500)
+        return JSONResponse(
+            content={"error": "Failed to list MusicBrainz accounts"}, status_code=500
+        )
 
 
 @router.post("/accounts")
@@ -153,41 +201,54 @@ async def create_account(request: Request):
         payload = await request.json() or {}
         account_name = (payload.get("account_name") or "").strip()
         if not account_name:
-            return JSONResponse(content={"error": "account_name is required"}, status_code=400)
+            return JSONResponse(
+                content={"error": "account_name is required"}, status_code=400
+            )
 
         account_id = sdk.accounts.ensure_account(
             account_name=account_name,
             display_name=account_name,
         )
         if not account_id:
-            return JSONResponse(content={"error": "Failed to create account"}, status_code=500)
+            return JSONResponse(
+                content={"error": "Failed to create account"}, status_code=500
+            )
 
-        return JSONResponse(content={
-            "account": {
-                "id": account_id,
-                "account_name": account_name,
-                "display_name": account_name,
-                "is_active": False,
-                "is_authenticated": False,
+        return JSONResponse(
+            content={
+                "account": {
+                    "id": account_id,
+                    "account_name": account_name,
+                    "display_name": account_name,
+                    "is_active": False,
+                    "is_authenticated": False,
+                }
             }
-        }), 201
+        ), 201
     except Exception as e:
         logger.error(f"Error creating MusicBrainz account: {e}", exc_info=True)
-        return JSONResponse(content={"error": "Failed to create MusicBrainz account"}, status_code=500)
+        return JSONResponse(
+            content={"error": "Failed to create MusicBrainz account"}, status_code=500
+        )
 
 
 @router.delete("/accounts/{account_id}")
 def delete_account(account_id: int):
     """Delete a MusicBrainz account and its stored tokens."""
     try:
-        
         ok = sdk.accounts.delete_account(account_id)
         if ok:
             return JSONResponse(content={"success": True}, status_code=200)
-        return JSONResponse(content={"error": "Account not found or deletion failed"}, status_code=404)
+        return JSONResponse(
+            content={"error": "Account not found or deletion failed"}, status_code=404
+        )
     except Exception as e:
-        logger.error(f"Error deleting MusicBrainz account {account_id}: {e}", exc_info=True)
-        return JSONResponse(content={"error": "Failed to delete MusicBrainz account"}, status_code=500)
+        logger.error(
+            f"Error deleting MusicBrainz account {account_id}: {e}", exc_info=True
+        )
+        return JSONResponse(
+            content={"error": "Failed to delete MusicBrainz account"}, status_code=500
+        )
 
 
 @router.put("/accounts/{account_id}/activate")
@@ -196,17 +257,26 @@ async def activate_account(account_id: int, request: Request):
     try:
         payload = await request.json() or {}
         is_active = bool(payload.get("is_active", True))
-        
+
         ok = sdk.accounts.toggle_account_active(account_id, is_active)
         if ok:
-            return JSONResponse(content={"success": True, "is_active": is_active}, status_code=200)
-        return JSONResponse(content={"error": "Failed to update account status"}, status_code=500)
+            return JSONResponse(
+                content={"success": True, "is_active": is_active}, status_code=200
+            )
+        return JSONResponse(
+            content={"error": "Failed to update account status"}, status_code=500
+        )
     except Exception as e:
-        logger.error(f"Error toggling MusicBrainz account {account_id}: {e}", exc_info=True)
-        return JSONResponse(content={"error": "Failed to update account status"}, status_code=500)
+        logger.error(
+            f"Error toggling MusicBrainz account {account_id}: {e}", exc_info=True
+        )
+        return JSONResponse(
+            content={"error": "Failed to update account status"}, status_code=500
+        )
 
 
 # ── OAuth2 PKCE Flow ──────────────────────────────────────────────────────────
+
 
 @router.get("/auth")
 async def begin_auth(request: Request):
@@ -221,10 +291,10 @@ async def begin_auth(request: Request):
     try:
         raw_id = request.query_params.get("account_id")
         if not raw_id:
-            return JSONResponse(content={"error": "account_id is required"}, status_code=400)
+            return JSONResponse(
+                content={"error": "account_id is required"}, status_code=400
+            )
         account_id = int(raw_id)
-
-        
 
         # Verify the account exists
         accounts = sdk.accounts.get_all()
@@ -232,29 +302,37 @@ async def begin_auth(request: Request):
             return JSONResponse(content={"error": "Account not found"}, status_code=404)
 
         # Application credentials must be configured before an auth flow can start
-        client_id = sdk.config.get('client_id')
+        client_id = sdk.config.get("client_id")
         if not client_id:
-            return JSONResponse(content={
-                "error": (
-                    "MusicBrainz client_id is not configured. "
-                    "Register your application at https://musicbrainz.org/account/applications "
-                    "then save the credentials on the Metadata settings page."
-                )
-            }, status_code=400)
+            return JSONResponse(
+                content={
+                    "error": (
+                        "MusicBrainz client_id is not configured. "
+                        "Register your application at https://musicbrainz.org/account/applications "
+                        "then save the credentials on the Metadata settings page."
+                    )
+                },
+                status_code=400,
+            )
 
-        if not sdk.config.get('client_secret'):
-            return JSONResponse(content={"error": "MusicBrainz client_secret is not configured."}, status_code=400)
+        if not sdk.config.get("client_secret"):
+            return JSONResponse(
+                content={"error": "MusicBrainz client_secret is not configured."},
+                status_code=400,
+            )
 
         # Derive redirect URI from centralized PluginBase helper (OAuth sidecar)
-        from .client import MusicBrainzClient
         from core.network_utils import get_lan_ip
+
         redirect_uri = f"https://{get_lan_ip()}:5001/api/oauth/callback/musicbrainz"
 
         # Generate PKCE verifier / challenge pair
         verifier = secrets.token_urlsafe(64)[:128]
-        challenge = base64.urlsafe_b64encode(
-            hashlib.sha256(verifier.encode()).digest()
-        ).decode().rstrip("=")
+        challenge = (
+            base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest())
+            .decode()
+            .rstrip("=")
+        )
 
         pkce_id = str(uuid.uuid4())
         ok = storage.store_pkce_session(
@@ -268,13 +346,17 @@ async def begin_auth(request: Request):
             ttl_seconds=600,
         )
         if not ok:
-            return JSONResponse(content={"error": "Failed to store OAuth session"}, status_code=500)
+            return JSONResponse(
+                content={"error": "Failed to store OAuth session"}, status_code=500
+            )
 
         storage.cleanup_expired_pkce_sessions()
 
-        state = base64.urlsafe_b64encode(
-            json.dumps({"pkce_id": pkce_id}).encode()
-        ).decode().rstrip("=")
+        state = (
+            base64.urlsafe_b64encode(json.dumps({"pkce_id": pkce_id}).encode())
+            .decode()
+            .rstrip("=")
+        )
 
         params = {
             "response_type": "code",
@@ -290,10 +372,15 @@ async def begin_auth(request: Request):
         return JSONResponse(content={"auth_url": auth_url}, status_code=200)
 
     except ValueError:
-        return JSONResponse(content={"error": "Invalid account_id format"}, status_code=400)
+        return JSONResponse(
+            content={"error": "Invalid account_id format"}, status_code=400
+        )
     except Exception as e:
         logger.error(f"Error starting MusicBrainz OAuth: {e}", exc_info=True)
-        return JSONResponse(content={"error": "Failed to initiate MusicBrainz authentication"}, status_code=500)
+        return JSONResponse(
+            content={"error": "Failed to initiate MusicBrainz authentication"},
+            status_code=500,
+        )
 
 
 @router.get("/callback")
@@ -312,12 +399,14 @@ async def oauth_callback(request: Request):
             <p><strong>Error:</strong> {desc}</p>
             <p>Please close this window, check your application settings, and try again.</p>
             </body></html>""",
-            status_code=400
+            status_code=400,
         )
 
     if not code or not state:
         logger.error("MusicBrainz callback missing code or state parameter")
-        return JSONResponse(content={"error": "Missing authorization code or state"}, status_code=400)
+        return JSONResponse(
+            content={"error": "Missing authorization code or state"}, status_code=400
+        )
 
     # Decode PKCE session ID from state
     try:
@@ -328,12 +417,18 @@ async def oauth_callback(request: Request):
             raise ValueError("No pkce_id in state payload")
     except Exception as e:
         logger.error(f"Failed to decode OAuth state: {e}")
-        return JSONResponse(content={"error": "Invalid state parameter"}, status_code=400)
+        return JSONResponse(
+            content={"error": "Invalid state parameter"}, status_code=400
+        )
 
-    
     pkce = storage.get_pkce_session(pkce_id)
     if not pkce:
-        return JSONResponse(content={"error": "OAuth session not found or expired. Please start the flow again."}, status_code=400)
+        return JSONResponse(
+            content={
+                "error": "OAuth session not found or expired. Please start the flow again."
+            },
+            status_code=400,
+        )
 
     account_id = pkce.get("account_id")
     verifier = pkce.get("code_verifier")
@@ -341,18 +436,26 @@ async def oauth_callback(request: Request):
     client_id = pkce.get("client_id")
 
     if not all([account_id, verifier, redirect_uri, client_id]):
-        return JSONResponse(content={"error": "Incomplete OAuth session data"}, status_code=400)
+        return JSONResponse(
+            content={"error": "Incomplete OAuth session data"}, status_code=400
+        )
 
-    account_id = int(account_id)  # narrow type: None already excluded by all() guard above
+    account_id = int(
+        account_id
+    )  # narrow type: None already excluded by all() guard above
 
     from core.security import decrypt_string
-    raw_secret = sdk.config.get('client_secret')
+
+    raw_secret = sdk.config.get("client_secret")
     if not raw_secret:
-        return JSONResponse(content={"error": "client_secret not configured"}, status_code=400)
+        return JSONResponse(
+            content={"error": "client_secret not configured"}, status_code=400
+        )
     client_secret = decrypt_string(raw_secret)
 
     # Exchange code for tokens using HTTP Basic auth (client_id:client_secret)
     from core.request_manager import RequestManager
+
     http = RequestManager("musicbrainz_oauth")
     creds_b64 = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
 
@@ -368,8 +471,13 @@ async def oauth_callback(request: Request):
     )
 
     if resp.status_code != 200:
-        logger.error(f"MusicBrainz token exchange failed: {resp.status_code} — {resp.text}")
-        return JSONResponse(content={"error": f"Token exchange failed (HTTP {resp.status_code})"}, status_code=400)
+        logger.error(
+            f"MusicBrainz token exchange failed: {resp.status_code} — {resp.text}"
+        )
+        return JSONResponse(
+            content={"error": f"Token exchange failed (HTTP {resp.status_code})"},
+            status_code=400,
+        )
 
     token = resp.json()
     access_token = token.get("access_token")
@@ -379,11 +487,18 @@ async def oauth_callback(request: Request):
     expires_at = int(time.time() + expires_in - 60)
 
     if not access_token:
-        return JSONResponse(content={"error": "No access_token in token response"}, status_code=400)
+        return JSONResponse(
+            content={"error": "No access_token in token response"}, status_code=400
+        )
 
     from core.security import encrypt_string
+
     sdk.accounts.save_token(
-        account_id=account_id, access_token=encrypt_string(access_token), refresh_token=encrypt_string(refresh_token) if refresh_token else None, expires_at=expires_at)
+        account_id=account_id,
+        access_token=encrypt_string(access_token),
+        refresh_token=encrypt_string(refresh_token) if refresh_token else None,
+        expires_at=expires_at,
+    )
     sdk.accounts.mark_account_authenticated(account_id)
     storage.delete_pkce_session(pkce_id)
 
@@ -409,45 +524,68 @@ async def oauth_callback(request: Request):
         <p>You may close this window and return to Echosync.</p>
         <script>setTimeout(function(){ window.close(); }, 2000);</script>
         </body></html>""",
-        status_code=200
+        status_code=200,
     )
+
 
 @router.get("/settings")
 def get_settings():
     """Get MusicBrainz server settings (e.g. api_base_url)."""
     try:
         from core.nexus_framework.plugin_SDK import sdk
-        api_base_url = sdk.config.get('api_base_url', 'https://musicbrainz.org/ws/2')
-        return JSONResponse(content={"settings": {"api_base_url": api_base_url}}, status_code=200)
+
+        api_base_url = sdk.config.get("api_base_url", "https://musicbrainz.org/ws/2")
+        return JSONResponse(
+            content={"settings": {"api_base_url": api_base_url}}, status_code=200
+        )
     except Exception as e:
         logger.error(f"Error reading MusicBrainz settings: {e}", exc_info=True)
-        return JSONResponse(content={"error": "Failed to read MusicBrainz settings"}, status_code=500)
+        return JSONResponse(
+            content={"error": "Failed to read MusicBrainz settings"}, status_code=500
+        )
+
 
 @router.post("/settings")
 async def save_settings(request: Request):
     """Save MusicBrainz server settings."""
     try:
         from core.nexus_framework.plugin_SDK import sdk
+
         payload = await request.json() or {}
         settings = payload.get("settings", {})
         if "api_base_url" in settings:
-            sdk.config.set('api_base_url', settings["api_base_url"].strip())
+            sdk.config.set("api_base_url", settings["api_base_url"].strip())
         return JSONResponse(content={"success": True}, status_code=200)
     except Exception as e:
         logger.error(f"Error saving MusicBrainz settings: {e}", exc_info=True)
-        return JSONResponse(content={"error": "Failed to save MusicBrainz settings"}, status_code=500)
+        return JSONResponse(
+            content={"error": "Failed to save MusicBrainz settings"}, status_code=500
+        )
+
 
 @router.get("/credentials")
 def get_credentials():
     """Get MusicBrainz OAuth credentials status."""
     try:
         from core.nexus_framework.plugin_SDK import sdk
-        client_id = sdk.config.get('client_id', '')
-        client_secret = sdk.config.get('client_secret', '')
-        return JSONResponse(content={"credentials": {"client_id": client_id, "has_secret": bool(client_secret)}}, status_code=200)
+
+        client_id = sdk.config.get("client_id", "")
+        client_secret = sdk.config.get("client_secret", "")
+        return JSONResponse(
+            content={
+                "credentials": {
+                    "client_id": client_id,
+                    "has_secret": bool(client_secret),
+                }
+            },
+            status_code=200,
+        )
     except Exception as e:
         logger.error(f"Error reading MusicBrainz credentials: {e}", exc_info=True)
-        return JSONResponse(content={"error": "Failed to read MusicBrainz credentials"}, status_code=500)
+        return JSONResponse(
+            content={"error": "Failed to read MusicBrainz credentials"}, status_code=500
+        )
+
 
 @router.post("/credentials")
 async def save_credentials(request: Request):
@@ -455,13 +593,18 @@ async def save_credentials(request: Request):
     try:
         from core.nexus_framework.plugin_SDK import sdk
         from core.security import encrypt_string
+
         payload = await request.json() or {}
         creds = payload.get("credentials", {})
         if "client_id" in creds:
-            sdk.config.set('client_id', creds["client_id"].strip())
+            sdk.config.set("client_id", creds["client_id"].strip())
         if "client_secret" in creds and creds["client_secret"].strip():
-            sdk.config.set('client_secret', encrypt_string(creds["client_secret"].strip()))
+            sdk.config.set(
+                "client_secret", encrypt_string(creds["client_secret"].strip())
+            )
         return JSONResponse(content={"success": True}, status_code=200)
     except Exception as e:
         logger.error(f"Error saving MusicBrainz credentials: {e}", exc_info=True)
-        return JSONResponse(content={"error": "Failed to save MusicBrainz credentials"}, status_code=500)
+        return JSONResponse(
+            content={"error": "Failed to save MusicBrainz credentials"}, status_code=500
+        )

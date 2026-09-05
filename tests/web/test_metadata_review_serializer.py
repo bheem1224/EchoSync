@@ -1,6 +1,6 @@
-import pytest
 from database.working_database import ReviewTask
 from web.routes.metadata_review import _serialize_task
+
 
 def test_serialize_task_reflects_track_data_in_proposed_fields():
     """Ensure _serialize_task reflects track_data['artist_name'] and track_data['title'] in proposed_artist and proposed_title."""
@@ -12,9 +12,9 @@ def test_serialize_task_reflects_track_data_in_proposed_fields():
             "artist_name": "J. Cole",
             "title": "No Role Modelz",
             "album_title": "2014 Forest Hills Drive",
-            "display_title": "No Role Modelz"
+            "display_title": "No Role Modelz",
         },
-        confidence_score=0.0
+        confidence_score=0.0,
     )
 
     serialized = _serialize_task(task)

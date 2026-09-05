@@ -1,29 +1,30 @@
 import sys
-import os
 from pathlib import Path
 
 # Add project root to Python path so tests can import modules
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
+from unittest.mock import ANY, MagicMock
+
 import pytest
-from unittest.mock import MagicMock, ANY
+
 
 @pytest.fixture
 def mock_config_manager(monkeypatch):
     """Mocks the config_manager singleton, providing a consistent configuration for tests."""
     mock_manager = MagicMock()
-    
+
     # --- Default Test Configuration ---
     # This provides a predictable state for all tests.
     # Individual tests can override these values if needed.
-    
+
     test_config = {
         "active_media_server": "plex",
         "spotify": {
             "client_id": "test_spotify_client_id",
             "client_secret": "test_spotify_client_secret",
-            "redirect_uri": "http://localhost:8008/api/spotify/callback"
+            "redirect_uri": "http://localhost:8008/api/spotify/callback",
         },
         "spotify_accounts": [
             {
@@ -33,29 +34,26 @@ def mock_config_manager(monkeypatch):
                 "client_secret": "test_spotify_client_secret",
                 "redirect_uri": "http://localhost:8008/api/spotify/callback",
                 "refresh_token": "test_refresh_token",
-                "access_token": None
+                "access_token": None,
             }
         ],
         "active_spotify_account_id": 1,
-        "plex": {
-            "base_url": "http://mock-plex:32400",
-            "token": "test_plex_token"
-        },
+        "plex": {"base_url": "http://mock-plex:32400", "token": "test_plex_token"},
         "jellyfin": {
             "base_url": "http://mock-jellyfin:8096",
-            "api_key": "test_jellyfin_api_key"
+            "api_key": "test_jellyfin_api_key",
         },
         "navidrome": {
             "base_url": "http://mock-navidrome:4533",
             "username": "testuser",
-            "password": "testpassword"
+            "password": "testpassword",
         },
         "soulseek": {
             "slskd_url": "http://mock-slskd:5030",
             "api_key": "test_slskd_api_key",
             "download_path": "/tmp/downloads",
-            "transfer_path": "/tmp/transfer"
-        }
+            "transfer_path": "/tmp/transfer",
+        },
     }
 
     # --- Mock Implementations ---
@@ -65,7 +63,7 @@ def mock_config_manager(monkeypatch):
     # Mock the general-purpose .get() method
     def mock_get(key, default=None):
         """A more robust mock for the .get() method."""
-        keys = key.split('.')
+        keys = key.split(".")
         value = test_config
         try:
             for k in keys:
@@ -75,42 +73,52 @@ def mock_config_manager(monkeypatch):
             return default
 
     mock_manager.get.side_effect = mock_get
-    
+
     # The set method can be a simple MagicMock for most tests,
     # as we just want to verify it was called.
     mock_manager.set.return_value = None
 
     return mock_manager
 
+
 # Provide unittest.mock.ANY under pytest.ANY for tests that accidentally use it
 pytest.ANY = ANY
+
 
 @pytest.fixture
 def mock_work_db(tmp_path):
     from database.working_database import WorkingDatabase
+
     db_path = tmp_path / "working.db"
     work_db = WorkingDatabase(str(db_path))
     from database.working_database import WorkingBase
+
     WorkingBase.metadata.create_all(work_db.engine)
     yield work_db
     work_db.dispose()
 
+
 @pytest.fixture
 def mock_db(tmp_path):
     from database.music_database import MusicDatabase
+
     db_path = tmp_path / "music.db"
     db = MusicDatabase(str(db_path))
     from database.music_database import Base
+
     Base.metadata.create_all(db.engine)
     yield db
     db.dispose()
 
+
 def pytest_configure(config):
     import sys
     from pathlib import Path
+
     sys.path.insert(0, str(Path(__file__).parent.parent))
     try:
         from core.nexus_framework.plugin_loader import PluginLoader
+
         loader = PluginLoader(Path(__file__).parent.parent)
     except Exception as e:
         print(f"Failed to load plugins in conftest: {e}")

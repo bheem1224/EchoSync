@@ -1,10 +1,10 @@
 """Sync history and logging for observability."""
+
 import json
-from dataclasses import dataclass, field, asdict
-from datetime import datetime, timezone
-from pathlib import Path
-from typing import List, Optional
 import threading
+from dataclasses import asdict, dataclass, field
+from datetime import UTC, datetime
+from pathlib import Path
 
 from core.tiered_logger import get_logger
 
@@ -14,6 +14,7 @@ logger = get_logger("sync_history")
 @dataclass
 class SyncRecord:
     """Record of a single sync operation."""
+
     timestamp: str  # ISO format
     source: str  # e.g. "spotify"
     target: str  # e.g. "plex"
@@ -23,8 +24,8 @@ class SyncRecord:
     failed: int
     missing: int = 0
     download_missing: bool = False
-    job_name: Optional[str] = None
-    errors: List[str] = field(default_factory=lambda: [])
+    job_name: str | None = None
+    errors: list[str] = field(default_factory=list)
 
     def to_dict(self):
         """Convert to dict for serialization."""
@@ -34,9 +35,9 @@ class SyncRecord:
 class SyncHistory:
     """Thread-safe sync history tracker (in-memory + optional file logging)."""
 
-    def __init__(self, history_file: Optional[str] = None, max_records: int = 100):
+    def __init__(self, history_file: str | None = None, max_records: int = 100):
         self._lock = threading.Lock()
-        self._records: List[SyncRecord] = []
+        self._records: list[SyncRecord] = []
         self._max_records = max_records
         self._history_file = Path(history_file) if history_file else None
 
@@ -50,12 +51,12 @@ class SyncHistory:
         failed: int,
         missing: int = 0,
         download_missing: bool = False,
-        job_name: Optional[str] = None,
-        errors: Optional[List[str]] = None,
+        job_name: str | None = None,
+        errors: list[str] | None = None,
     ) -> SyncRecord:
         """Record a completed sync operation."""
         record = SyncRecord(
-            timestamp=datetime.now(timezone.utc).isoformat(),
+            timestamp=datetime.now(UTC).isoformat(),
             source=source,
             target=target,
             playlist=playlist,
@@ -72,7 +73,7 @@ class SyncHistory:
             self._records.append(record)
             # Keep only the most recent max_records
             if len(self._records) > self._max_records:
-                self._records = self._records[-self._max_records:]
+                self._records = self._records[-self._max_records :]
 
         # Log to file if configured
         if self._history_file:
@@ -85,7 +86,9 @@ class SyncHistory:
 
         return record
 
-    def get_records(self, source: Optional[str] = None, target: Optional[str] = None) -> List[SyncRecord]:
+    def get_records(
+        self, source: str | None = None, target: str | None = None
+    ) -> list[SyncRecord]:
         """Get recent sync records, optionally filtered by source/target."""
         with self._lock:
             records = list(self._records)
@@ -97,7 +100,7 @@ class SyncHistory:
 
         return records
 
-    def get_recent(self, limit: int = 10) -> List[SyncRecord]:
+    def get_recent(self, limit: int = 10) -> list[SyncRecord]:
         """Get the N most recent sync records."""
         with self._lock:
             return list(self._records[-limit:])

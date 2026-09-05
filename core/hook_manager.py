@@ -1,15 +1,19 @@
 import asyncio
-from typing import Callable, Dict, List, Any
+from collections.abc import Callable
+from typing import Any
+
 
 class HookManager:
     """
     Middleware filter registry for plugins.
     Allows plugins to register hooks that intercept and modify data.
     """
+
     def __init__(self):
         # hook_name -> list of callback functions
-        self._filters: Dict[str, List[Callable]] = {}
+        self._filters: dict[str, list[Callable]] = {}
         import threading
+
         self._local = threading.local()
         self.MAX_DEPTH = 10
 
@@ -24,7 +28,7 @@ class HookManager:
         Pass a value through all registered filters for a hook.
         Each callback must accept the value (and optionally args) and return the modified value.
         """
-        if not hasattr(self._local, 'depths'):
+        if not hasattr(self._local, "depths"):
             self._local.depths = {}
 
         current_depth = self._local.depths.get(hook_name, 0)
@@ -38,6 +42,7 @@ class HookManager:
             if hook_name in self._filters:
                 for callback in self._filters[hook_name]:
                     import logging
+
                     prev_value = value
                     try:
                         value = callback(value, *args, **kwargs)
@@ -55,7 +60,8 @@ class HookManager:
                     except Exception as e:
                         value = prev_value
                         logging.getLogger("hook_manager").error(
-                            f"Error applying filter for hook '{hook_name}': {e}", exc_info=True
+                            f"Error applying filter for hook '{hook_name}': {e}",
+                            exc_info=True,
                         )
         finally:
             self._local.depths[hook_name] -= 1
@@ -72,9 +78,11 @@ class HookManager:
                     callback(*args, **kwargs)
                 except Exception as e:
                     import logging
+
                     logging.getLogger("hook_manager").error(
                         f"Error triggering hook '{hook_name}': {e}", exc_info=True
                     )
+
 
 # Global singleton
 hook_manager = HookManager()

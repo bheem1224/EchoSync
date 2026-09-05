@@ -1,21 +1,18 @@
-from fastapi import APIRouter, Request, Depends, Query, HTTPException
-from fastapi.responses import JSONResponse, FileResponse
-from typing import Optional
-from fastapi import APIRouter
-from fastapi.responses import StreamingResponse
 import asyncio
 import json
-import time
-from core.scan_state import scan_state_manager
-from web.services.library_service import LibraryAdapter
-from services.media_manager import MediaManagerService
-from core.settings import config_manager
-from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
-from core.tiered_logger import get_logger
 import threading
+
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+
+from core.scan_state import scan_state_manager
+from core.tiered_logger import get_logger
+from services.media_manager import MediaManagerService
+from web.services.library_service import LibraryAdapter
 
 logger = get_logger("library")
 router = APIRouter(prefix="/api/v1/core/library", tags=["Library"])
+
 
 @router.get("/")
 def library_overview():
@@ -28,48 +25,60 @@ def library_overview():
 def trigger_library_scan(request: Request):
     """
     Trigger a library scan/refresh on the active media server.
-    
+
     Query params:
         - path: Optional library section path (Plex section ID, Jellyfin library name, etc.)
     """
     try:
         path = request.query_params.get("path")
-        
+
         # Get active media server
         from core.nexus_framework.plugin_loader import PluginRegistry
-        active_servers = PluginRegistry.get_active_services_by_type('media_server')
+
+        active_servers = PluginRegistry.get_active_services_by_type("media_server")
         active_server = active_servers[0] if active_servers else None
 
         if not active_server:
-            raise HTTPException(status_code=400, detail={"error": "No active media server configured"})
+            raise HTTPException(
+                status_code=400, detail={"error": "No active media server configured"}
+            )
 
         try:
             provider = PluginRegistry.create_instance(active_server)
         except Exception as e:
             logger.error(f"Failed to create provider instance for {active_server}: {e}")
-            raise HTTPException(status_code=500, detail={"error": f"Media server '{active_server}' not available"})
-        
+            raise HTTPException(
+                status_code=500,
+                detail={"error": f"Media server '{active_server}' not available"},
+            )
+
         # Check if it has scan capability
-        if not hasattr(provider, 'trigger_library_scan'):
-            raise HTTPException(status_code=400, detail={
-                "error": f"Media server '{active_server}' does not support library scans"
-            })
-        
+        if not hasattr(provider, "trigger_library_scan"):
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": f"Media server '{active_server}' does not support library scans"
+                },
+            )
+
         # Trigger scan
         success = provider.trigger_library_scan(path=path)
-        
+
         if success:
-            logger.info(f"Library scan initiated on {active_server} {f'(path: {path})' if path else ''}")
+            logger.info(
+                f"Library scan initiated on {active_server} {f'(path: {path})' if path else ''}"
+            )
             return {
                 "success": True,
                 "server": active_server,
-                "message": "Library scan initiated"
+                "message": "Library scan initiated",
             }
         else:
-            raise HTTPException(status_code=500, detail={
-                "error": f"Failed to initiate library scan on {active_server}"
-            })
-            
+            raise HTTPException(
+                status_code=500,
+                detail={"error": f"Failed to initiate library scan on {active_server}"},
+            )
+
     except Exception as e:
         logger.error(f"Library scan error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail={"error": str(e)})
@@ -79,7 +88,7 @@ def trigger_library_scan(request: Request):
 def get_library_scan_status(request: Request):
     """
     Get current library scan status from the active media server.
-    
+
     Returns:
         {
             'server': str,
@@ -92,32 +101,41 @@ def get_library_scan_status(request: Request):
     try:
         # Get active media server
         from core.nexus_framework.plugin_loader import PluginRegistry
-        active_servers = PluginRegistry.get_active_services_by_type('media_server')
+
+        active_servers = PluginRegistry.get_active_services_by_type("media_server")
         active_server = active_servers[0] if active_servers else None
 
         if not active_server:
-            raise HTTPException(status_code=400, detail={"error": "No active media server configured"})
+            raise HTTPException(
+                status_code=400, detail={"error": "No active media server configured"}
+            )
 
         try:
             provider = PluginRegistry.create_instance(active_server)
         except Exception as e:
             logger.error(f"Failed to create provider instance for {active_server}: {e}")
-            raise HTTPException(status_code=500, detail={"error": f"Media server '{active_server}' not available"})
-        
+            raise HTTPException(
+                status_code=500,
+                detail={"error": f"Media server '{active_server}' not available"},
+            )
+
         # Check if it has scan capability
-        if not hasattr(provider, 'get_scan_status'):
-            raise HTTPException(status_code=400, detail={
-                "error": f"Media server '{active_server}' does not support scan status"
-            })
-        
+        if not hasattr(provider, "get_scan_status"):
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": f"Media server '{active_server}' does not support scan status"
+                },
+            )
+
         # Get status
         status = provider.get_scan_status()
-        
+
         return {
             "server": active_server,
-            **status  # Merge in the status dict (scanning, progress, eta_seconds, error)
+            **status,  # Merge in the status dict (scanning, progress, eta_seconds, error)
         }
-            
+
     except Exception as e:
         logger.error(f"Library scan status error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail={"error": str(e)})
@@ -132,28 +150,34 @@ _db_update_lock = threading.Lock()
 def update_database(request: Request):
     """
     Update Echosync database from active media server library.
-    
+
     Query params:
         - mode: 'full' or 'incremental' (default: 'incremental')
     """
     global _db_update_worker
-    
+
     try:
         mode = request.query_params.get("mode", "incremental").lower()
-        full_refresh = (mode == "full")
-        
+        full_refresh = mode == "full"
+
         # Get active media server
         try:
             from core.nexus_framework.plugin_loader import PluginRegistry
-            active_servers = PluginRegistry.get_active_services_by_type('media_server')
+
+            active_servers = PluginRegistry.get_active_services_by_type("media_server")
             active_server = active_servers[0] if active_servers else None
         except Exception as e:
             logger.error(f"Failed to get active media server: {e}")
-            raise HTTPException(status_code=500, detail={"error": f"Failed to get active media server: {str(e)}"})
-        
+            raise HTTPException(
+                status_code=500,
+                detail={"error": f"Failed to get active media server: {e!s}"},
+            )
+
         if not active_server:
-            raise HTTPException(status_code=400, detail={"error": "No active media server configured"})
-        
+            raise HTTPException(
+                status_code=400, detail={"error": "No active media server configured"}
+            )
+
         # Check if update is already running
         with _db_update_lock:
             if _db_update_worker is not None:
@@ -161,38 +185,54 @@ def update_database(request: Request):
                 # self.thread is never set (start() dispatches via job_queue),
                 # so the old thread.is_alive() guard always evaluated False.
                 _already_running = False
-                _job_name = getattr(_db_update_worker, '_job_name', None)
+                _job_name = getattr(_db_update_worker, "_job_name", None)
                 if _job_name:
                     try:
                         from core.job_queue import job_queue
+
                         _already_running = job_queue._is_running.get(_job_name, False)
                     except Exception:
                         pass
                 if _already_running:
-                    raise HTTPException(status_code=409, detail={
-                        "error": "Database update already in progress",
-                        "current_progress": {
-                            "artists": _db_update_worker.processed_artists,
-                            "albums": _db_update_worker.processed_albums,
-                            "tracks": _db_update_worker.processed_tracks
-                        }
-                    })
-        
+                    raise HTTPException(
+                        status_code=409,
+                        detail={
+                            "error": "Database update already in progress",
+                            "current_progress": {
+                                "artists": _db_update_worker.processed_artists,
+                                "albums": _db_update_worker.processed_albums,
+                                "tracks": _db_update_worker.processed_tracks,
+                            },
+                        },
+                    )
+
         # Get provider instance
         provider = None
         try:
             from core.nexus_framework.plugin_loader import PluginRegistry
-            active_servers = PluginRegistry.get_active_services_by_type('media_server')
+
+            active_servers = PluginRegistry.get_active_services_by_type("media_server")
             active_server = active_servers[0] if active_servers else None
             if active_server:
                 provider = PluginRegistry.create_instance(active_server)
         except Exception as e:
-            logger.error(f"Failed to create provider instance for {active_server}: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail={"error": f"Media server '{active_server}' not available: {str(e)}"})
-        
+            logger.error(
+                f"Failed to create provider instance for {active_server}: {e}",
+                exc_info=True,
+            )
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "error": f"Media server '{active_server}' not available: {e!s}"
+                },
+            )
+
         if not provider:
-            raise HTTPException(status_code=500, detail={"error": f"Media server '{active_server}' not available"})
-        
+            raise HTTPException(
+                status_code=500,
+                detail={"error": f"Media server '{active_server}' not available"},
+            )
+
         # Ensure connection
         try:
             if not provider.ensure_connection():
@@ -209,36 +249,55 @@ def update_database(request: Request):
         except Exception as e:
             logger.error(
                 "update-database: connection to %s raised an exception: %s",
-                active_server, e, exc_info=True,
+                active_server,
+                e,
+                exc_info=True,
             )
-            raise HTTPException(status_code=500, detail={"error": f"Could not connect to {active_server}: {str(e)}"})
-        
+            raise HTTPException(
+                status_code=500,
+                detail={"error": f"Could not connect to {active_server}: {e!s}"},
+            )
+
         # Import LibrarySyncService
         try:
             from services.library_sync_service import LibrarySyncService
         except ImportError as e:
             logger.error(f"Failed to import LibrarySyncService: {e}")
-            raise HTTPException(status_code=500, detail={"error": "Database update module not available"})
-        
+            raise HTTPException(
+                status_code=500,
+                detail={"error": "Database update module not available"},
+            )
+
         # Create and start worker
         try:
             with _db_update_lock:
                 import threading
-                scan_mode_val = "full_rebuild" if mode == "full" else ("force_rescan" if mode == "force" else "incremental")
-                _db_update_worker = threading.Thread(target=LibrarySyncService().sync_library, kwargs={"scan_mode": scan_mode_val})
+
+                scan_mode_val = (
+                    "full_rebuild"
+                    if mode == "full"
+                    else ("force_rescan" if mode == "force" else "incremental")
+                )
+                _db_update_worker = threading.Thread(
+                    target=LibrarySyncService().sync_library,
+                    kwargs={"scan_mode": scan_mode_val},
+                )
                 # Start worker thread
                 _db_update_worker.start()
-            
+
             return {
                 "success": True,
                 "server": active_server,
                 "mode": mode,
-                "message": f"Database update started in {mode} mode"
+                "message": f"Database update started in {mode} mode",
             }
         except Exception as e:
             logger.error(f"Failed to start database update worker: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail={"error": f"Failed to start database update: {str(e)}"})
-        
+            raise HTTPException(
+                status_code=500,
+                detail={"error": f"Failed to start database update: {e!s}"},
+            )
+
     except Exception as e:
         logger.error(f"Database update error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail={"error": str(e)})
@@ -248,7 +307,7 @@ def update_database(request: Request):
 def get_database_update_status(request: Request):
     """
     Get current database update progress.
-    
+
     Returns:
         {
             'running': bool,
@@ -265,44 +324,39 @@ def get_database_update_status(request: Request):
     global _db_update_worker
     try:
         from core.nexus_framework.plugin_loader import PluginRegistry
-        active_servers = PluginRegistry.get_active_services_by_type('media_server')
+
+        active_servers = PluginRegistry.get_active_services_by_type("media_server")
         active_server = active_servers[0] if active_servers else None
     except Exception as e:
         logger.error(f"Database update status error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail={"error": str(e)})
 
     is_running = False
-    stats = {
-        "artists": 0, "albums": 0, "tracks": 0,
-        "successful": 0, "failed": 0
-    }
-    
+    stats = {"artists": 0, "albums": 0, "tracks": 0, "successful": 0, "failed": 0}
+
     with _db_update_lock:
         if _db_update_worker is not None:
             # Check if job is still in progress via job_queue
-            _job_name = getattr(_db_update_worker, '_job_name', None)
+            _job_name = getattr(_db_update_worker, "_job_name", None)
             if _job_name:
                 try:
                     from core.job_queue import job_queue
+
                     is_running = job_queue._is_running.get(_job_name, False)
                 except Exception:
                     # Fallback to thread check if job_queue fails
                     is_running = False
-            
+
             stats = {
                 "artists": _db_update_worker.processed_artists,
                 "albums": _db_update_worker.processed_albums,
                 "tracks": _db_update_worker.processed_tracks,
                 "successful": _db_update_worker.successful_operations,
                 "failed": _db_update_worker.failed_operations,
-                "warnings": getattr(_db_update_worker, "warnings", [])
+                "warnings": getattr(_db_update_worker, "warnings", []),
             }
 
-    return {
-        "running": is_running,
-        "progress": stats,
-        "server": active_server
-    }
+    return {"running": is_running, "progress": stats, "server": active_server}
 
 
 @router.post("/backfill-identifiers")
@@ -319,24 +373,27 @@ def backfill_identifiers():
     """
     try:
         from core.nexus_framework.plugin_loader import PluginRegistry
-        active_servers = PluginRegistry.get_active_services_by_type('media_server')
-        active_server = active_servers[0] if active_servers else None
-        
-        if not active_server:
-            raise HTTPException(status_code=400, detail={"error": "No active media server configured"})
 
-        from database.music_database import get_database
+        active_servers = PluginRegistry.get_active_services_by_type("media_server")
+        active_server = active_servers[0] if active_servers else None
+
+        if not active_server:
+            raise HTTPException(
+                status_code=400, detail={"error": "No active media server configured"}
+            )
+
         from database import LibraryManager
-        
+        from database.music_database import get_database
+
         db = get_database()
         library_manager = LibraryManager(db.session_factory)
-        
+
         count = library_manager.backfill_provider_identifiers(active_server)
-        
+
         return {
             "success": True,
             "count": count,
-            "message": f"Successfully backfilled {count} identifiers for {active_server}"
+            "message": f"Successfully backfilled {count} identifiers for {active_server}",
         }
     except Exception as e:
         logger.error(f"Backfill error: {e}", exc_info=True)
@@ -347,38 +404,41 @@ def backfill_identifiers():
 def cancel_database_update():
     """Cancel the running database update."""
     global _db_update_worker
-    
+
     try:
         with _db_update_lock:
             if _db_update_worker is None:
-                raise HTTPException(status_code=400, detail={"error": "No database update in progress"})
-            
+                raise HTTPException(
+                    status_code=400, detail={"error": "No database update in progress"}
+                )
+
             # Check if running
             is_running = False
-            _job_name = getattr(_db_update_worker, '_job_name', None)
+            _job_name = getattr(_db_update_worker, "_job_name", None)
             if _job_name:
                 try:
                     from core.task_manager import job_queue
+
                     is_running = job_queue._is_running.get(_job_name, False)
                 except Exception:
                     pass
-            
+
             if not is_running:
-                raise HTTPException(status_code=400, detail={"error": "No database update in progress"})
-            
+                raise HTTPException(
+                    status_code=400, detail={"error": "No database update in progress"}
+                )
+
             # Stop the worker and kill job
             _db_update_worker.stop()
             if _job_name:
                 from core.task_manager import job_queue
+
                 job_queue.kill_job(_job_name)
-            
+
             logger.info("Database update cancelled by user")
-            
-            return {
-                "success": True,
-                "message": "Database update cancelled"
-            }
-            
+
+            return {"success": True, "message": "Database update cancelled"}
+
     except Exception as e:
         logger.error(f"Database update cancel error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail={"error": str(e)})
@@ -388,6 +448,7 @@ def cancel_database_update():
 
 media_manager = MediaManagerService()
 
+
 @router.get("/index")
 def get_library_index(request: Request):
     """Get the full library hierarchy.
@@ -396,8 +457,8 @@ def get_library_index(request: Request):
     try:
         index = media_manager.get_library_index()
         response = JSONResponse(content=index)
-        response.headers['Deprecation'] = 'true'
-        response.headers['X-EchoSync-Warning'] = 'Legacy nested tracks payload'
+        response.headers["Deprecation"] = "true"
+        response.headers["X-EchoSync-Warning"] = "Legacy nested tracks payload"
         return response
     except Exception as e:
         logger.error(f"Error fetching library index: {e}")
@@ -410,7 +471,9 @@ def stream_track(track_id):
     try:
         file_path = media_manager.get_track_stream(track_id)
         if not file_path:
-            raise HTTPException(status_code=404, detail={"error": "Track not found or file missing"})
+            raise HTTPException(
+                status_code=404, detail={"error": "Track not found or file missing"}
+            )
 
         return FileResponse(file_path)
     except Exception as e:
@@ -426,21 +489,23 @@ def delete_track_endpoint(track_id):
         if success:
             return {"success": True, "message": f"Track {track_id} deleted"}
         else:
-            raise HTTPException(status_code=500, detail={"error": "Failed to delete track"})
+            raise HTTPException(
+                status_code=500, detail={"error": "Failed to delete track"}
+            )
     except Exception as e:
         logger.error(f"Error deleting track {track_id}: {e}")
         raise HTTPException(status_code=500, detail={"error": str(e)})
 
 
-
-
 # FastAPI Router for SSE (as requested by user directives)
+
 
 @router.get("/scan/stream")
 async def stream_scan_progress():
     """
     SSE endpoint streaming the live progress of the Rust local ingestion scanner.
     """
+
     async def event_generator():
         try:
             last_status = None

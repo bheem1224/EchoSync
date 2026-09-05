@@ -1,33 +1,38 @@
-import pytest
-import tempfile
-import wave
-import struct
 import math
 import os
+import struct
+import tempfile
+import wave
 from pathlib import Path
 
-from database.music_database import get_database, Track, LocalMedia, AudioFingerprint, Artist, Album
-from database.working_database import get_working_database, SuggestionStagingQueue
+from core.event_bus import event_bus
+from database.music_database import (
+    Artist,
+    AudioFingerprint,
+    LocalMedia,
+    Track,
+    get_database,
+)
+from database.working_database import SuggestionStagingQueue, get_working_database
 from services.deduplicator import DeduplicationService
 from services.media_manager import MediaManagerService
-from core.event_bus import event_bus
-from core.db.echo_sync_track import EchosyncTrack
 
 
 def create_dummy_wav(path: str, duration_sec: float = 1.0, freq: int = 440):
-    with wave.open(path, 'wb') as wf:
+    with wave.open(path, "wb") as wf:
         wf.setnchannels(1)
         wf.setsampwidth(2)
         wf.setframerate(44100)
         num_frames = int(44100 * duration_sec)
         for i in range(num_frames):
             val = int(math.sin(2 * math.pi * freq * i / 44100) * 16000)
-            wf.writeframes(struct.pack('<h', val))
+            wf.writeframes(struct.pack("<h", val))
 
 
 def test_native_rust_fingerprinting():
     import echosync_core
-    with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as f:
+
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
         wav_path = f.name
     try:
         create_dummy_wav(wav_path, duration_sec=1.5, freq=440)
@@ -42,6 +47,7 @@ def test_native_rust_fingerprinting():
 
 def test_audio_fingerprint_schema_duplicate_chromaprint():
     import uuid
+
     music_db = get_database()
     suffix = uuid.uuid4().hex[:8]
     with music_db.session_scope() as session:
@@ -50,30 +56,53 @@ def test_audio_fingerprint_schema_duplicate_chromaprint():
         session.add(artist)
         session.flush()
 
-        track = Track(title=f"Duplicate FP Test Track {suffix}", artist_id=artist.id, sync_id=f"fp_test_sync_{suffix}")
+        track = Track(
+            title=f"Duplicate FP Test Track {suffix}",
+            artist_id=artist.id,
+            sync_id=f"fp_test_sync_{suffix}",
+        )
         session.add(track)
         session.flush()
 
-        media1 = LocalMedia(track_id=track.id, file_path=f"/mock/path/m1_{suffix}.flac", media_id=f"test_m1_{suffix}", file_format="flac")
-        media2 = LocalMedia(track_id=track.id, file_path=f"/mock/path/m2_{suffix}.flac", media_id=f"test_m2_{suffix}", file_format="flac")
+        media1 = LocalMedia(
+            track_id=track.id,
+            file_path=f"/mock/path/m1_{suffix}.flac",
+            media_id=f"test_m1_{suffix}",
+            file_format="flac",
+        )
+        media2 = LocalMedia(
+            track_id=track.id,
+            file_path=f"/mock/path/m2_{suffix}.flac",
+            media_id=f"test_m2_{suffix}",
+            file_format="flac",
+        )
         session.add_all([media1, media2])
         session.flush()
 
         # Insert same chromaprint on both distinct media rows
         shared_chromaprint = f"AQAAAAshared_hash_{suffix}"
-        afp1 = AudioFingerprint(media_id=media1.media_id, chromaprint=shared_chromaprint)
-        afp2 = AudioFingerprint(media_id=media2.media_id, chromaprint=shared_chromaprint)
+        afp1 = AudioFingerprint(
+            media_id=media1.media_id, chromaprint=shared_chromaprint
+        )
+        afp2 = AudioFingerprint(
+            media_id=media2.media_id, chromaprint=shared_chromaprint
+        )
         session.add_all([afp1, afp2])
         session.commit()
 
         # Verify both exist
-        fps = session.query(AudioFingerprint).filter(AudioFingerprint.chromaprint == shared_chromaprint).all()
+        fps = (
+            session.query(AudioFingerprint)
+            .filter(AudioFingerprint.chromaprint == shared_chromaprint)
+            .all()
+        )
         assert len(fps) == 2
 
 
 def test_relational_1_to_n_duplicate_detection_and_staging():
-    import uuid
     import time
+    import uuid
+
     music_db = get_database()
     working_db = get_working_database()
     media_mgr = MediaManagerService()
@@ -85,7 +114,9 @@ def test_relational_1_to_n_duplicate_detection_and_staging():
         session.add(artist)
         session.flush()
 
-        track = Track(title="1:N Resolution Song", artist_id=artist.id, sync_id=unique_sync_id)
+        track = Track(
+            title="1:N Resolution Song", artist_id=artist.id, sync_id=unique_sync_id
+        )
         session.add(track)
         session.flush()
 
@@ -97,7 +128,7 @@ def test_relational_1_to_n_duplicate_detection_and_staging():
             file_format="flac",
             bitrate=1411,
             bit_depth=24,
-            sample_rate=48000
+            sample_rate=48000,
         )
         # Media 2: MP3 (lossy, lower quality)
         m_loser = LocalMedia(
@@ -107,7 +138,7 @@ def test_relational_1_to_n_duplicate_detection_and_staging():
             file_format="mp3",
             bitrate=320,
             bit_depth=16,
-            sample_rate=44100
+            sample_rate=44100,
         )
         session.add_all([m_winner, m_loser])
         session.commit()
@@ -127,9 +158,11 @@ def test_relational_1_to_n_duplicate_detection_and_staging():
 
     # Ensure staged into SuggestionStagingQueue
     with working_db.session_scope() as w_session:
-        staged = w_session.query(SuggestionStagingQueue).filter(
-            SuggestionStagingQueue.sync_id == unique_sync_id
-        ).first()
+        staged = (
+            w_session.query(SuggestionStagingQueue)
+            .filter(SuggestionStagingQueue.sync_id == unique_sync_id)
+            .first()
+        )
         assert staged is not None
         assert staged.intent_type == "HYGIENE_DUPLICATION"
         assert staged.context_data["keep_media_id"] == win_id
@@ -137,12 +170,13 @@ def test_relational_1_to_n_duplicate_detection_and_staging():
 
 
 def test_reactive_ingestion_interception():
-    import uuid
     import time
+    import uuid
+
     music_db = get_database()
     dedup = DeduplicationService()
 
-    with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as f:
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
         wav_path = str(Path(f.name).resolve())
 
     try:
@@ -157,7 +191,9 @@ def test_reactive_ingestion_interception():
             session.add(artist)
             session.flush()
 
-            track = Track(title="Ingestion Track", artist_id=artist.id, sync_id=ingest_sync)
+            track = Track(
+                title="Ingestion Track", artist_id=artist.id, sync_id=ingest_sync
+            )
             session.add(track)
             session.flush()
 
@@ -166,7 +202,7 @@ def test_reactive_ingestion_interception():
                 file_path=wav_path,
                 media_id=media_id_val,
                 file_format="wav",
-                bitrate=1411
+                bitrate=1411,
             )
             session.add(media)
             session.commit()
@@ -177,8 +213,8 @@ def test_reactive_ingestion_interception():
             "track": {
                 "title": "Ingestion Track",
                 "artist_name": "Ingestion Artist",
-                "file_path": wav_path
-            }
+                "file_path": wav_path,
+            },
         }
         event_bus.publish(event_payload)
 
@@ -187,9 +223,11 @@ def test_reactive_ingestion_interception():
 
         # Verify AudioFingerprint was generated & stored
         with music_db.session_scope() as session:
-            fp_record = session.query(AudioFingerprint).filter(
-                AudioFingerprint.media_id == media_id_val
-            ).first()
+            fp_record = (
+                session.query(AudioFingerprint)
+                .filter(AudioFingerprint.media_id == media_id_val)
+                .first()
+            )
             assert fp_record is not None
             assert len(fp_record.chromaprint) > 0
 

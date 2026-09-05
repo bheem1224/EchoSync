@@ -1,5 +1,3 @@
-import pytest
-
 from core import settings
 from core.account_manager import AccountManager
 
@@ -14,8 +12,14 @@ def test_get_service_config_prefers_service_credentials(monkeypatch):
     ``config_manager.get`` would otherwise provide.
     """
     # simulate database-backed credentials
-    monkeypatch.setattr(settings.config_manager, "get_service_credentials", lambda svc: {"client_id": "db-id"})
-    monkeypatch.setattr(settings.config_manager, "get", lambda key, default=None: "legacy-id")
+    monkeypatch.setattr(
+        settings.config_manager,
+        "get_service_credentials",
+        lambda svc: {"client_id": "db-id"},
+    )
+    monkeypatch.setattr(
+        settings.config_manager, "get", lambda key, default=None: "legacy-id"
+    )
 
     assert AccountManager.get_service_config("spotify", "client_id") == "db-id"
     # non-spotify service should behave the same
@@ -29,17 +33,28 @@ def test_get_service_config_legacy_fallback(monkeypatch):
     populate ``config_data`` and have not migrated to the service_config
     table.
     """
-    monkeypatch.setattr(settings.config_manager, "get_service_credentials", lambda svc: {})
-    monkeypatch.setattr(settings.config_manager, "get", lambda key, default=None: f"legacy-{key}")
+    monkeypatch.setattr(
+        settings.config_manager, "get_service_credentials", lambda svc: {}
+    )
+    monkeypatch.setattr(
+        settings.config_manager, "get", lambda key, default=None: f"legacy-{key}"
+    )
 
-    assert AccountManager.get_service_config("spotify", "client_id") == "legacy-spotify.client_id"
+    assert (
+        AccountManager.get_service_config("spotify", "client_id")
+        == "legacy-spotify.client_id"
+    )
     assert AccountManager.get_service_config("foobar", "xyz") == "legacy-foobar.xyz"
 
 
 def test_get_service_config_missing(monkeypatch):
     """If nothing is stored anywhere, ``None`` is returned."""
-    monkeypatch.setattr(settings.config_manager, "get_service_credentials", lambda svc: {})
-    monkeypatch.setattr(settings.config_manager, "get", lambda key, default=None: default)
+    monkeypatch.setattr(
+        settings.config_manager, "get_service_credentials", lambda svc: {}
+    )
+    monkeypatch.setattr(
+        settings.config_manager, "get", lambda key, default=None: default
+    )
 
     assert AccountManager.get_service_config("spotify", "client_id") is None
     assert AccountManager.get_service_config("foo", "bar") is None

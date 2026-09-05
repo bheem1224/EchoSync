@@ -38,15 +38,14 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from typing import Optional
 
 from core.tiered_logger import get_logger
 
 logger = get_logger("cjk_language_pack.vgmdb_proxy")
 
-_BASE_URL  = "https://vgmdb.info"
-_TIMEOUT   = 5        # seconds per HTTP request
-_MAX_CACHE = 512      # maximum cached query results
+_BASE_URL = "https://vgmdb.info"
+_TIMEOUT = 5  # seconds per HTTP request
+_MAX_CACHE = 512  # maximum cached query results
 
 
 class VGMdbProxy:
@@ -106,7 +105,7 @@ class VGMdbProxy:
         self._store(key, series)
         return series
 
-    def resolve_artist_for_series(self, series_name: str) -> Optional[str]:
+    def resolve_artist_for_series(self, series_name: str) -> str | None:
         """
         Return the canonical (lowercased) artist name associated with
         *series_name* if a prior :meth:`lookup_series` call populated the
@@ -140,16 +139,12 @@ class VGMdbProxy:
         series: list[dict] = []
         seen_pairs: set[tuple[str, str]] = set()
 
-        for album in albums[:5]:   # inspect only the top 5 results
+        for album in albums[:5]:  # inspect only the top 5 results
             for product in album.get("products", []):
                 names = product.get("names", {})
 
                 # English / localised name
-                english: str = (
-                    names.get("en")
-                    or names.get("en-US")
-                    or ""
-                )
+                english: str = names.get("en") or names.get("en-US") or ""
 
                 # Native / original-language name (prefer non-English locales)
                 native: str = (

@@ -2,18 +2,18 @@
 System tasks router alias exposing the blueprint and models for API imports.
 """
 
-from web.routes.system_tasks import bp as router
 from api.schemas.system_tasks import (
-    TaskQueueSummaryResponse,
     ProcessListResponse,
     ProcessTerminateResponse,
     SystemHealthResponse,
+    TaskQueueSummaryResponse,
 )
+from web.routes.system_tasks import bp as router
 
 __all__ = [
-    "router",
-    "TaskQueueSummaryResponse",
     "ProcessListResponse",
     "ProcessTerminateResponse",
     "SystemHealthResponse",
+    "TaskQueueSummaryResponse",
+    "router",
 ]

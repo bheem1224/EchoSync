@@ -1,22 +1,23 @@
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any
+
 from pydantic import BaseModel, Field
-from core.task_manager.models import ProcessOwner, PluginStatus, PluginLifecycleState, OwnerType
+
+from core.task_manager.models import ProcessOwner
 
 
 class TaskQueueSummaryResponse(BaseModel):
-    stats: Dict[str, int] = Field(
+    stats: dict[str, int] = Field(
         default_factory=dict,
-        description="Summary statistics (total, running, pending, blocked)"
+        description="Summary statistics (total, running, pending, blocked)",
     )
-    running_jobs: List[Dict[str, Any]] = Field(default_factory=list)
-    pending_jobs: List[Dict[str, Any]] = Field(default_factory=list)
-    blocked_jobs: List[Dict[str, Any]] = Field(default_factory=list)
+    running_jobs: list[dict[str, Any]] = Field(default_factory=list)
+    pending_jobs: list[dict[str, Any]] = Field(default_factory=list)
+    blocked_jobs: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class ProcessListResponse(BaseModel):
     total: int
-    processes: List[ProcessOwner]
+    processes: list[ProcessOwner]
 
 
 class ProcessTerminateResponse(BaseModel):
@@ -28,5 +29,5 @@ class ProcessTerminateResponse(BaseModel):
 class SystemHealthResponse(BaseModel):
     status: str
     timestamp: str
-    health_checks: Dict[str, Any] = Field(default_factory=dict)
-    plugin_states: Dict[str, Any] = Field(default_factory=dict)
+    health_checks: dict[str, Any] = Field(default_factory=dict)
+    plugin_states: dict[str, Any] = Field(default_factory=dict)

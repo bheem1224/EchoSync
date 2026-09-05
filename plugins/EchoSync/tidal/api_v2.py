@@ -1,7 +1,9 @@
-import requests
 import logging
 
+import requests
+
 logger = logging.getLogger("tidal_api")
+
 
 class TidalAPI:
     BASE_URL = "https://openapi.tidal.com/v2"
@@ -11,7 +13,7 @@ class TidalAPI:
         self.country_code = country_code
         self.headers = {
             "Authorization": f"Bearer {self.access_token}",
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
         }
 
     def _get(self, endpoint: str, params: dict = None):
@@ -54,10 +56,7 @@ class TidalAPI:
     def get_playlist_tracks(self, playlist_id: str):
         """Fetch tracks from a playlist, including artist and album metadata."""
         endpoint = f"/playlists/{playlist_id}/relationships/items"
-        params = {
-            "include": "items.artists,items.album",
-            "limit": 100
-        }
+        params = {"include": "items.artists,items.album", "limit": 100}
         tracks = []
         has_more = True
 
@@ -75,12 +74,14 @@ class TidalAPI:
                     "title": item["title"],
                     "isrc": item.get("isrc"),
                     "artist_name": ", ".join(
-                        included[rel["id"]]["name"] for rel in item["artists"]
+                        included[rel["id"]]["name"]
+                        for rel in item["artists"]
                         if rel["id"] in included
                     ),
                     "album_name": included[item["album"]["id"]]["title"]
-                    if "album" in item and item["album"]["id"] in included else None,
-                    "duration_ms": item.get("duration", 0)
+                    if "album" in item and item["album"]["id"] in included
+                    else None,
+                    "duration_ms": item.get("duration", 0),
                 }
                 tracks.append(track)
 

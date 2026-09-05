@@ -1,8 +1,10 @@
 """Tests for DownloadManager Stage 1 closed-loop ingestion engine and DownloadQueue state machine."""
-import pytest
-from unittest.mock import MagicMock, patch
 
-from core.database.models.working import DownloadQueue, DownloadStatus, DownloadIntent
+from unittest.mock import patch
+
+import pytest
+
+from core.database.models.working import DownloadIntent, DownloadQueue, DownloadStatus
 from core.database.repositories.download_repo import DownloadRepository
 from core.db.echo_sync_track import EchosyncTrack
 from core.event_bus import event_bus
@@ -13,8 +15,12 @@ from services.download_manager import DownloadManager
 def dm(mock_db, mock_work_db):
     """Fixture providing a fresh DownloadManager bound to test databases."""
     DownloadManager._instance = None
-    with patch("services.download_manager.get_database", return_value=mock_db), \
-         patch("services.download_manager.get_working_database", return_value=mock_work_db):
+    with (
+        patch("services.download_manager.get_database", return_value=mock_db),
+        patch(
+            "services.download_manager.get_working_database", return_value=mock_work_db
+        ),
+    ):
         mgr = DownloadManager.get_instance()
     mgr.db = mock_db
     mgr.work_db = mock_work_db
@@ -60,9 +66,21 @@ def test_state_machine_happy_path(dm, mock_work_db):
             assert item.status == DownloadStatus.SEARCHING.value
 
         # 3. SEARCHING -> DOWNLOADING (Top candidate selected, remaining into stack)
-        cand1 = {"id": "peer1|happy.flac", "filename": "happy.flac", "username": "peer1"}
-        cand2 = {"id": "peer2|happy.flac", "filename": "happy.flac", "username": "peer2"}
-        cand3 = {"id": "peer3|happy.flac", "filename": "happy.flac", "username": "peer3"}
+        cand1 = {
+            "id": "peer1|happy.flac",
+            "filename": "happy.flac",
+            "username": "peer1",
+        }
+        cand2 = {
+            "id": "peer2|happy.flac",
+            "filename": "happy.flac",
+            "username": "peer2",
+        }
+        cand3 = {
+            "id": "peer3|happy.flac",
+            "filename": "happy.flac",
+            "username": "peer3",
+        }
 
         res_downloading = dm.transition_to_downloading(
             download_id=download_id,
@@ -80,7 +98,9 @@ def test_state_machine_happy_path(dm, mock_work_db):
             assert not item.is_exhausted()
 
         # 4. DOWNLOADING -> VERIFYING (Download completed on provider, awaits verification)
-        res_verifying = dm.transition_to_verifying(download_id, file_path="/data/downloads/happy.flac")
+        res_verifying = dm.transition_to_verifying(
+            download_id, file_path="/data/downloads/happy.flac"
+        )
         assert res_verifying is True
 
         with mock_work_db.session_scope() as session:
@@ -89,7 +109,9 @@ def test_state_machine_happy_path(dm, mock_work_db):
             assert not item.is_exhausted()
 
         # 5. VERIFYING -> COMPLETED (Verification succeeds, emits event)
-        res_completed = dm.handle_verification_success(download_id, file_path="/data/downloads/happy.flac")
+        res_completed = dm.handle_verification_success(
+            download_id, file_path="/data/downloads/happy.flac"
+        )
         assert res_completed is True
 
         with mock_work_db.session_scope() as session:
@@ -97,9 +119,13 @@ def test_state_machine_happy_path(dm, mock_work_db):
             assert item.status == DownloadStatus.COMPLETED.value
 
         # Verify event was emitted
+        import time
+        time.sleep(0.1)
         assert len(completed_events) >= 1
         ev = completed_events[-1]
-        ev_download_id = ev.get("download_id") or (ev.get("data") or {}).get("download_id")
+        ev_download_id = ev.get("download_id") or (ev.get("data") or {}).get(
+            "download_id"
+        )
         assert ev_download_id == download_id
 
     finally:

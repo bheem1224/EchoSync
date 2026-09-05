@@ -1,8 +1,10 @@
-from sqlalchemy import create_engine, event
-from sqlalchemy.engine import Engine
-from sqlalchemy.orm import sessionmaker, Session
 import os
 from pathlib import Path
+
+from sqlalchemy import create_engine, event
+from sqlalchemy.engine import Engine
+from sqlalchemy.orm import sessionmaker
+
 
 @event.listens_for(Engine, "connect")
 def set_sqlite_pragmas(dbapi_connection, connection_record):
@@ -16,6 +18,7 @@ def set_sqlite_pragmas(dbapi_connection, connection_record):
     cursor.execute("PRAGMA foreign_keys = ON;")
     cursor.close()
 
+
 def get_engine(database_path: str = None) -> Engine:
     if not database_path:
         data_dir = os.getenv("ECHOSYNC_DATA_DIR", "data")
@@ -26,8 +29,9 @@ def get_engine(database_path: str = None) -> Engine:
         engine_url,
         future=True,
         echo=False,
-        connect_args={"timeout": 5.0, "check_same_thread": False}
+        connect_args={"timeout": 5.0, "check_same_thread": False},
     )
+
 
 def get_session_factory(engine: Engine = None) -> sessionmaker:
     if engine is None:

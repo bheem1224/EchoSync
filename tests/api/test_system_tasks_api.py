@@ -1,28 +1,37 @@
-import pytest
+from fastapi.testclient import TestClient
 from unittest.mock import patch
-from web.api_app import create_app
-from core.task_manager import supervisor, ProcessOwner, OwnerType, plugin_state_manager, PluginLifecycleState
+
+import pytest
+
 from api.schemas.system_tasks import (
-    TaskQueueSummaryResponse,
     ProcessListResponse,
     ProcessTerminateResponse,
     SystemHealthResponse,
+    TaskQueueSummaryResponse,
 )
+from core.task_manager import (
+    OwnerType,
+    PluginLifecycleState,
+    ProcessOwner,
+    plugin_state_manager,
+    supervisor,
+)
+from web.api_app import create_app
 
 
 @pytest.fixture
 def client():
     app = create_app(testing=True)
-    with app.test_client() as client:
+    with TestClient(app) as client:
         yield client
 
 
 def test_get_task_queue_status_api(client):
-    """Test GET /api/v1/tasks/queue endpoint returns 200 OK and valid schema."""
-    resp = client.get("/api/v1/tasks/queue")
+    """Test GET /api/v1/system/tasks/queue endpoint returns 200 OK and valid schema."""
+    resp = client.get("/api/v1/system/tasks/queue")
     assert resp.status_code == 200
 
-    data = resp.get_json()
+    data = resp.json()
     model = TaskQueueSummaryResponse.model_validate(data)
     assert "running" in model.stats
     assert "pending" in model.stats
@@ -30,20 +39,20 @@ def test_get_task_queue_status_api(client):
 
 
 def test_get_active_processes_api(client):
-    """Test GET /api/v1/tasks/processes endpoint returns active process list."""
+    """Test GET /api/v1/system/tasks/processes endpoint returns active process list."""
     owner = ProcessOwner(
         owner_id="plugin.test_api",
         owner_type=OwnerType.PLUGIN,
         pid=7777,
-        task_name="api_test_task"
+        task_name="api_test_task",
     )
     reg_id = supervisor.register_process(owner)
 
     try:
-        resp = client.get("/api/v1/tasks/processes")
+        resp = client.get("/api/v1/system/tasks/processes")
         assert resp.status_code == 200
 
-        data = resp.get_json()
+        data = resp.json()
         model = ProcessListResponse.model_validate(data)
         assert model.total >= 1
         assert any(p.owner_id == "plugin.test_api" for p in model.processes)
@@ -52,39 +61,41 @@ def test_get_active_processes_api(client):
 
 
 def test_terminate_process_api_success_and_404(client):
-    """Test POST /api/v1/tasks/processes/<registration_id>/terminate endpoint."""
+    """Test POST /api/v1/system/tasks/processes/<registration_id>/terminate endpoint."""
     owner = ProcessOwner(
         owner_id="plugin.terminate_api",
         owner_type=OwnerType.PLUGIN,
         pid=8888,
-        task_name="to_be_terminated"
+        task_name="to_be_terminated",
     )
     reg_id = supervisor.register_process(owner)
 
     with patch("os.kill") as mock_kill:
         # Successful termination
-        resp = client.post(f"/api/v1/tasks/processes/{reg_id}/terminate")
+        resp = client.post(f"/api/v1/system/tasks/processes/{reg_id}/terminate")
         assert resp.status_code == 200
-        data = resp.get_json()
+        data = resp.json()
         model = ProcessTerminateResponse.model_validate(data)
         assert model.status == "terminated"
         assert model.registration_id == reg_id
         mock_kill.assert_called()
 
     # 404 for non-existent registration ID
-    resp_404 = client.post("/api/v1/tasks/processes/non_existent_id/terminate")
+    resp_404 = client.post("/api/v1/system/tasks/processes/non_existent_id/terminate")
     assert resp_404.status_code == 404
-    assert "error" in resp_404.get_json()
+    assert "detail" in resp_404.json() or "error" in resp_404.json()
 
 
 def test_get_unified_system_health_api(client):
-    """Test GET /api/v1/system/health endpoint returns unified health response."""
-    plugin_state_manager.set_state("echosync.health_test", PluginLifecycleState.READY, "All good")
+    """Test GET /api/v1/system/tasks/health endpoint returns unified health response."""
+    plugin_state_manager.set_state(
+        "echosync.health_test", PluginLifecycleState.READY, "All good"
+    )
 
-    resp = client.get("/api/v1/system/health")
+    resp = client.get("/api/v1/system/tasks/health")
     assert resp.status_code == 200
 
-    data = resp.get_json()
+    data = resp.json()
     model = SystemHealthResponse.model_validate(data)
     assert model.status in ("healthy", "degraded", "error")
     assert "echosync.health_test" in model.plugin_states

@@ -6,12 +6,12 @@ All lookups are keyed by media_id (NanoID), enforcing the 2-Model contract:
   - Tracks are identified by sync_id (logical identity)
   - Physical files are identified by media_id (physical telemetry)
 """
-from fastapi import APIRouter, Request, HTTPException, Depends
-from fastapi.responses import JSONResponse, FileResponse
-from web.auth import require_auth
+
+from fastapi import APIRouter, HTTPException, Request
+
 from core.database.repositories.track_repo import TrackRepository
-from database.music_database import get_database
 from core.tiered_logger import get_logger
+from database.music_database import get_database
 
 logger = get_logger("media_route")
 router = APIRouter(prefix="/api/v1/core/media", tags=["Media"])
@@ -47,7 +47,9 @@ def get_media(media_id: str):
         with db.get_session() as session:
             media = TrackRepository.get_media_by_media_id(session, media_id)
             if not media:
-                raise HTTPException(status_code=404, detail={"error": "Media not found"})
+                raise HTTPException(
+                    status_code=404, detail={"error": "Media not found"}
+                )
             return _media_to_dict(media)
     except Exception as e:
         logger.error(f"Error fetching media {media_id}: {e}", exc_info=True)
@@ -64,11 +66,15 @@ def get_media_bulk(request: Request):
     """
     ids_param = request.query_params.get("ids", "")
     if not ids_param:
-        raise HTTPException(status_code=400, detail={"error": "Missing required 'ids' query parameter"})
+        raise HTTPException(
+            status_code=400, detail={"error": "Missing required 'ids' query parameter"}
+        )
 
     media_ids = [i.strip() for i in ids_param.split(",") if i.strip()]
     if not media_ids:
-        raise HTTPException(status_code=400, detail={"error": "No valid media IDs provided"})
+        raise HTTPException(
+            status_code=400, detail={"error": "No valid media IDs provided"}
+        )
 
     try:
         db = get_database()
@@ -97,7 +103,9 @@ def get_media_for_track(sync_id: str):
         with db.get_session() as session:
             track = TrackRepository.get_track_by_sync_id(session, sync_id)
             if not track:
-                raise HTTPException(status_code=404, detail={"error": "Track not found"})
+                raise HTTPException(
+                    status_code=404, detail={"error": "Track not found"}
+                )
             media_list = TrackRepository.get_media_for_track(session, track.id)
             return {
                 "sync_id": sync_id,
@@ -106,4 +114,6 @@ def get_media_for_track(sync_id: str):
             }
     except Exception as e:
         logger.error(f"Error fetching media for track {sync_id}: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail={"error": "Failed to fetch media for track"})
+        raise HTTPException(
+            status_code=500, detail={"error": "Failed to fetch media for track"}
+        )

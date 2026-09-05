@@ -1,7 +1,9 @@
 import subprocess
 from pathlib import Path
+
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse, StreamingResponse
+
 from core.settings import config_manager
 from core.tiered_logger import get_logger
 
@@ -11,10 +13,10 @@ legacy_router = APIRouter(prefix="/api/local_server", tags=["Local Server Legacy
 bp = router
 
 # Formats that modern browsers can decode natively — served directly with Accept-Ranges.
-_NATIVE_FORMATS = {'.mp3', '.flac', '.wav', '.m4a', '.ogg'}
+_NATIVE_FORMATS = {".mp3", ".flac", ".wav", ".m4a", ".ogg"}
 
 # Formats that require server-side transcoding before the browser can play them.
-_TRANSCODE_FORMATS = {'.dsf', '.dff', '.ape', '.wma'}
+_TRANSCODE_FORMATS = {".dsf", ".dff", ".ape", ".wma"}
 
 
 @router.get("/stream")
@@ -33,25 +35,32 @@ def stream_audio(path: str = Query(..., description="Path to the audio file")):
         raise HTTPException(status_code=400, detail="Missing 'path' query parameter")
 
     candidate_roots = [
-        config_manager.get('storage.library_dir'),
-        config_manager.get('library_dir'),
-        config_manager.get('download_dir'),
-        config_manager.get('storage.download_dir'),
-        config_manager.get('data_dir'),
-        '.'
+        config_manager.get("storage.library_dir"),
+        config_manager.get("library_dir"),
+        config_manager.get("download_dir"),
+        config_manager.get("storage.download_dir"),
+        config_manager.get("data_dir"),
+        ".",
     ]
     allowed_roots = [Path(r).resolve() for r in candidate_roots if r]
 
     if not allowed_roots:
-        raise HTTPException(status_code=500, detail="Library directory is not configured")
+        raise HTTPException(
+            status_code=500, detail="Library directory is not configured"
+        )
 
     try:
-        from core.path_security import resolve_safe_path, PathTraversalError
+        from core.path_security import PathTraversalError, resolve_safe_path
+
         try:
             requested_path = resolve_safe_path(allowed_roots, path)
         except (PathTraversalError, ValueError):
-            logger.warning(f"Security violation: Attempted to access file outside library path: {path}")
-            raise HTTPException(status_code=403, detail="Security violation: Access denied")
+            logger.warning(
+                f"Security violation: Attempted to access file outside library path: {path}"
+            )
+            raise HTTPException(
+                status_code=403, detail="Security violation: Access denied"
+            )
 
         if not requested_path.exists() or not requested_path.is_file():
             raise HTTPException(status_code=404, detail="File not found")
@@ -60,7 +69,9 @@ def stream_audio(path: str = Query(..., description="Path to the audio file")):
 
         # --- Native formats: direct byte-range delivery ---
         if ext in _NATIVE_FORMATS:
-            return FileResponse(path=str(requested_path), media_type=f"audio/{ext.lstrip('.')}")
+            return FileResponse(
+                path=str(requested_path), media_type=f"audio/{ext.lstrip('.')}"
+            )
 
         # --- Exotic formats: server-side FFmpeg transcode to FLAC stream ---
         if ext in _TRANSCODE_FORMATS:
@@ -68,9 +79,17 @@ def stream_audio(path: str = Query(..., description="Path to the audio file")):
 
             # Fixed command line with pipe:0 input stream prevents CWE-078 command injection
             ffmpeg_cmd = [
-                "ffmpeg", "-hide_banner", "-loglevel", "error",
-                "-i", "pipe:0",
-                "-c:a", "flac", "-f", "flac", "pipe:1",
+                "ffmpeg",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-i",
+                "pipe:0",
+                "-c:a",
+                "flac",
+                "-f",
+                "flac",
+                "pipe:1",
             ]
 
             def generate():
@@ -84,18 +103,21 @@ def stream_audio(path: str = Query(..., description="Path to the audio file")):
                 )
                 reg_id = None
                 try:
+                    from core.task_manager.models import OwnerType, ProcessOwner
                     from core.task_manager.supervisor import supervisor
-                    from core.task_manager.models import ProcessOwner, OwnerType
+
                     owner_info = ProcessOwner(
                         owner_id="local_server.stream",
                         owner_type=OwnerType.CORE,
                         pid=proc.pid,
                         task_name="ffmpeg_transcode",
-                        metadata={"cmd": ffmpeg_cmd, "file": requested_path.name}
+                        metadata={"cmd": ffmpeg_cmd, "file": requested_path.name},
                     )
                     reg_id = supervisor.register_process(owner_info)
                 except Exception as reg_err:
-                    logger.warning(f"Could not register FFmpeg transcode process with supervisor: {reg_err}")
+                    logger.warning(
+                        f"Could not register FFmpeg transcode process with supervisor: {reg_err}"
+                    )
 
                 try:
                     while True:
@@ -138,4 +160,7 @@ def stream_audio(path: str = Query(..., description="Path to the audio file")):
         raise
     except Exception as e:
         logger.error(f"Error streaming local file {path}: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="An internal server error occurred while processing the request")
+        raise HTTPException(
+            status_code=500,
+            detail="An internal server error occurred while processing the request",
+        )

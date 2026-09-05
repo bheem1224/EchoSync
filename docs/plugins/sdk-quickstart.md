@@ -50,6 +50,7 @@ Plugins interact with EchoSync using `PluginStorageBox` from `core.nexus_framewo
 ```python
 from core.nexus_framework.plugin_SDK import PluginStorageBox
 
+
 class SpotifyPlugin:
     def __init__(self):
         # Initialize storage facade with zero arguments

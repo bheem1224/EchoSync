@@ -1,25 +1,28 @@
 from __future__ import annotations
-import os
-import sqlite3
-import re
-import time
+
 import contextlib
-from typing import Any, Dict, Optional, List, Generator
+import re
+import sqlite3
+import time
+from collections.abc import Generator
 from pathlib import Path
+from typing import Any
 
 from core.tiered_logger import get_logger
 
 logger = get_logger("config_database")
 
 # Import write helpers after logger to avoid circular issues
-from . import execute_write, execute_write_sql, ensure_writer
+from . import ensure_writer, execute_write, execute_write_sql
+
 
 class ConfigDatabase:
-    def __init__(self, db_path: Optional[str] = None):
+    def __init__(self, db_path: str | None = None):
         if db_path:
             self.database_path = Path(db_path)
         else:
             from core.settings import config_manager
+
             uri = config_manager.get("database.config_uri")
             if uri:
                 # We assume the config_database.py wrapper is heavily SQLite-dependent right now,
@@ -38,18 +41,22 @@ class ConfigDatabase:
         except Exception:
             # best-effort; don't fail startup if writer can't be created
             pass
-        
+
         try:
             self._initialize_schema()
         except sqlite3.DatabaseError as de:
             if "malformed database schema" in str(de) or "orphan index" in str(de):
-                logger.warning(f"Database schema malformed: {de}. Attempting automatic recovery via VACUUM and REINDEX...")
+                logger.warning(
+                    f"Database schema malformed: {de}. Attempting automatic recovery via VACUUM and REINDEX..."
+                )
                 try:
                     conn = sqlite3.connect(str(self.database_path), timeout=30.0)
                     conn.execute("VACUUM")
                     conn.execute("REINDEX")
                     conn.close()
-                    logger.info("Automatic database recovery completed successfully. Retrying schema initialization...")
+                    logger.info(
+                        "Automatic database recovery completed successfully. Retrying schema initialization..."
+                    )
                     self._initialize_schema()
                 except Exception as ree:
                     logger.error(f"Automatic database recovery failed: {ree}")
@@ -94,16 +101,21 @@ class ConfigDatabase:
 
     def _initialize_schema(self):
         try:
+
             def _schema(cursor):
                 def heal_table_schemas(cursor):
-                    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND sql LIKE '%accounts_temp_migration_swap%'")
+                    cursor.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table' AND sql LIKE '%accounts_temp_migration_swap%'"
+                    )
                     broken_tables = [r[0] for r in cursor.fetchall()]
-                    
-                    if 'account_tokens' in broken_tables:
+
+                    if "account_tokens" in broken_tables:
                         logger.warning("Healing corrupted account_tokens schema...")
-                        cursor.execute("CREATE TABLE account_tokens_backup AS SELECT * FROM account_tokens")
+                        cursor.execute(
+                            "CREATE TABLE account_tokens_backup AS SELECT * FROM account_tokens"
+                        )
                         cursor.execute("DROP TABLE account_tokens")
-                        cursor.execute('''
+                        cursor.execute("""
                             CREATE TABLE account_tokens (
                                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                                 account_id INTEGER NOT NULL UNIQUE,
@@ -116,16 +128,20 @@ class ConfigDatabase:
                                 updated_at INTEGER DEFAULT (strftime('%s','now')),
                                 FOREIGN KEY(account_id) REFERENCES accounts(id) ON DELETE CASCADE
                             )
-                        ''')
-                        cursor.execute("INSERT INTO account_tokens SELECT * FROM account_tokens_backup")
+                        """)
+                        cursor.execute(
+                            "INSERT INTO account_tokens SELECT * FROM account_tokens_backup"
+                        )
                         cursor.execute("DROP TABLE account_tokens_backup")
                         logger.info("Successfully healed account_tokens schema.")
 
-                    if 'account_mappings' in broken_tables:
+                    if "account_mappings" in broken_tables:
                         logger.warning("Healing corrupted account_mappings schema...")
-                        cursor.execute("CREATE TABLE account_mappings_backup AS SELECT * FROM account_mappings")
+                        cursor.execute(
+                            "CREATE TABLE account_mappings_backup AS SELECT * FROM account_mappings"
+                        )
                         cursor.execute("DROP TABLE account_mappings")
-                        cursor.execute('''
+                        cursor.execute("""
                             CREATE TABLE account_mappings (
                                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                                 source_account_id INTEGER NOT NULL,
@@ -136,30 +152,44 @@ class ConfigDatabase:
                                 FOREIGN KEY(source_account_id) REFERENCES accounts(id) ON DELETE CASCADE,
                                 FOREIGN KEY(mapped_account_id) REFERENCES accounts(id) ON DELETE CASCADE
                             )
-                        ''')
-                        cursor.execute("INSERT INTO account_mappings SELECT * FROM account_mappings_backup")
+                        """)
+                        cursor.execute(
+                            "INSERT INTO account_mappings SELECT * FROM account_mappings_backup"
+                        )
                         cursor.execute("DROP TABLE account_mappings_backup")
                         logger.info("Successfully healed account_mappings schema.")
 
                 # 0. Self-healing: Repair any tables whose foreign keys were rewritten to _old or _temp tables
                 heal_table_schemas(cursor)
-                
+
                 # Cleanup orphaned triggers/views from DB Browser migrations
-                cursor.execute("SELECT type, name FROM sqlite_master WHERE sql LIKE '%accounts_temp_migration_swap%' AND type IN ('trigger', 'view')")
+                cursor.execute(
+                    "SELECT type, name FROM sqlite_master WHERE sql LIKE '%accounts_temp_migration_swap%' AND type IN ('trigger', 'view')"
+                )
                 for t_row in cursor.fetchall():
                     cursor.execute(f"DROP {t_row[0].upper()} IF EXISTS {t_row[1]}")
 
                 # Check if services table exists and has UNIQUE name constraint
-                cursor.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='services'")
+                cursor.execute(
+                    "SELECT sql FROM sqlite_master WHERE type='table' AND name='services'"
+                )
                 row = cursor.fetchone()
                 has_unique_name = False
                 if row:
                     sql_str = row[0]
-                    col_unique = re.search(r'\bname\b[^,]*\bunique\b', sql_str, re.IGNORECASE) is not None
-                    table_unique = re.search(r'\bunique\s*\(\s*name\s*\)', sql_str, re.IGNORECASE) is not None
+                    col_unique = (
+                        re.search(r"\bname\b[^,]*\bunique\b", sql_str, re.IGNORECASE)
+                        is not None
+                    )
+                    table_unique = (
+                        re.search(r"\bunique\s*\(\s*name\s*\)", sql_str, re.IGNORECASE)
+                        is not None
+                    )
                     has_unique_name = col_unique or table_unique
                 if has_unique_name:
-                    logger.info("Migrating services table to remove UNIQUE constraint from name column...")
+                    logger.info(
+                        "Migrating services table to remove UNIQUE constraint from name column..."
+                    )
                     try:
                         cursor.connection.commit()
                         cursor.execute("PRAGMA foreign_keys = OFF")
@@ -200,17 +230,27 @@ class ConfigDatabase:
                             FROM services_old
                         """)
                         cursor.execute("DROP TABLE services_old")
-                        logger.info("Successfully migrated services table (removed UNIQUE constraint on name)")
+                        logger.info(
+                            "Successfully migrated services table (removed UNIQUE constraint on name)"
+                        )
                     except Exception as me:
-                        logger.error(f"Failed to migrate services table (UNIQUE removal): {me}")
+                        logger.error(
+                            f"Failed to migrate services table (UNIQUE removal): {me}"
+                        )
                         # Safe fallback recovery
                         try:
-                            cursor.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='services_old'")
+                            cursor.execute(
+                                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='services_old'"
+                            )
                             has_old = cursor.fetchone() is not None
-                            cursor.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='services'")
+                            cursor.execute(
+                                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='services'"
+                            )
                             has_new = cursor.fetchone() is not None
                             if has_old and not has_new:
-                                cursor.execute("ALTER TABLE services_old RENAME TO services")
+                                cursor.execute(
+                                    "ALTER TABLE services_old RENAME TO services"
+                                )
                             elif has_old and has_new:
                                 cursor.execute("DROP TABLE services_old")
                         except Exception as fe:
@@ -321,7 +361,7 @@ class ConfigDatabase:
                 # Plugin Snapshots (24h Grace Period)
                 cursor.execute("PRAGMA table_info(plugin_snapshots)")
                 ps_columns = [row[1] for row in cursor.fetchall()]
-                if ps_columns and 'plugin_id' not in ps_columns:
+                if ps_columns and "plugin_id" not in ps_columns:
                     cursor.execute("DROP TABLE IF EXISTS plugin_snapshots")
 
                 cursor.execute("""
@@ -376,62 +416,108 @@ class ConfigDatabase:
                 # Migration: Add missing columns to services table if they don't exist
                 cursor.execute("PRAGMA table_info(services)")
                 columns = [row[1] for row in cursor.fetchall()]
-                if 'absolute_install_path' not in columns:
-                    cursor.execute("ALTER TABLE services ADD COLUMN absolute_install_path TEXT")
-                if 'loaded_modules' not in columns:
-                    cursor.execute("ALTER TABLE services ADD COLUMN loaded_modules TEXT")
-                if 'plugin_id' not in columns:
+                if "absolute_install_path" not in columns:
+                    cursor.execute(
+                        "ALTER TABLE services ADD COLUMN absolute_install_path TEXT"
+                    )
+                if "loaded_modules" not in columns:
+                    cursor.execute(
+                        "ALTER TABLE services ADD COLUMN loaded_modules TEXT"
+                    )
+                if "plugin_id" not in columns:
                     cursor.execute("ALTER TABLE services ADD COLUMN plugin_id INTEGER")
-                if 'version' not in columns:
+                if "version" not in columns:
                     cursor.execute("ALTER TABLE services ADD COLUMN version TEXT")
-                if 'capabilities' not in columns:
-                    cursor.execute("ALTER TABLE services ADD COLUMN capabilities TEXT DEFAULT '{}'")
-                
+                if "capabilities" not in columns:
+                    cursor.execute(
+                        "ALTER TABLE services ADD COLUMN capabilities TEXT DEFAULT '{}'"
+                    )
+
                 # Cleanup: Drop deprecated tables
                 cursor.execute("DROP TABLE IF EXISTS accounts_metadata")
                 cursor.execute("DROP TABLE IF EXISTS config_kvs")
 
                 # Indexes
-                cursor.execute("CREATE INDEX IF NOT EXISTS idx_services_name ON services(name)")
+                cursor.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_services_name ON services(name)"
+                )
 
-                cursor.execute("CREATE INDEX IF NOT EXISTS idx_services_plugin_id ON services(plugin_id)")
-                cursor.execute("CREATE INDEX IF NOT EXISTS idx_accounts_service ON accounts(service_id)")
-                cursor.execute("CREATE INDEX IF NOT EXISTS idx_tokens_account ON account_tokens(account_id)")
-                cursor.execute("CREATE INDEX IF NOT EXISTS idx_pkce_expires ON pkce_sessions(expires_at)")
-                cursor.execute("CREATE INDEX IF NOT EXISTS idx_account_mappings_source ON account_mappings(source_account_id)")
-                cursor.execute("CREATE INDEX IF NOT EXISTS idx_account_mappings_mapped ON account_mappings(mapped_account_id)")
-                cursor.execute("CREATE INDEX IF NOT EXISTS idx_plugin_snapshots_plugin_id ON plugin_snapshots(plugin_id)")
-                cursor.execute("CREATE INDEX IF NOT EXISTS idx_plugin_snapshots_expires ON plugin_snapshots(expires_at)")
-                cursor.execute("CREATE INDEX IF NOT EXISTS idx_ui_components_plugin_id ON ui_components(plugin_id)")
-                cursor.execute("CREATE INDEX IF NOT EXISTS idx_ui_components_component_type ON ui_components(component_type)")
-
+                cursor.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_services_plugin_id ON services(plugin_id)"
+                )
+                cursor.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_accounts_service ON accounts(service_id)"
+                )
+                cursor.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_tokens_account ON account_tokens(account_id)"
+                )
+                cursor.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_pkce_expires ON pkce_sessions(expires_at)"
+                )
+                cursor.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_account_mappings_source ON account_mappings(source_account_id)"
+                )
+                cursor.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_account_mappings_mapped ON account_mappings(mapped_account_id)"
+                )
+                cursor.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_plugin_snapshots_plugin_id ON plugin_snapshots(plugin_id)"
+                )
+                cursor.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_plugin_snapshots_expires ON plugin_snapshots(expires_at)"
+                )
+                cursor.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_ui_components_plugin_id ON ui_components(plugin_id)"
+                )
+                cursor.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_ui_components_component_type ON ui_components(component_type)"
+                )
 
                 # Inline legacy services migration to avoid schema cache latency on separate connection
                 cursor.execute("PRAGMA table_info(services)")
                 current_columns = [row[1] for row in cursor.fetchall()]
-                if 'plugin_id' in current_columns:
+                if "plugin_id" in current_columns:
                     import binascii
-                    cursor.execute("SELECT id, name FROM services WHERE plugin_id IS NULL OR typeof(plugin_id) = 'text'")
+
+                    cursor.execute(
+                        "SELECT id, name FROM services WHERE plugin_id IS NULL OR typeof(plugin_id) = 'text'"
+                    )
                     rows = cursor.fetchall()
                     if rows:
                         try:
-                            from core.nexus_framework.plugin_loader import get_all_plugins
+                            from core.nexus_framework.plugin_loader import (
+                                get_all_plugins,
+                            )
+
                             all_plugins = get_all_plugins()
                             for r in rows:
                                 s_id, s_name = r[0], r[1]
                                 resolved_plugin_id_str = s_name
-                                resolved_version = '1.0.0'
+                                resolved_version = "1.0.0"
                                 for p in all_plugins:
-                                    p_id = p.get('id', '')
-                                    p_name = p.get('name', '')
-                                    p_folder = p.get('folder_name', '')
-                                    norm_s_name = s_name.replace('.', '/')
-                                    if s_name.lower() in p_folder.lower() or norm_s_name.lower() in p_folder.lower() or s_name.lower() == p_name.lower() or s_name.lower() in p_id.lower():
-                                        resolved_plugin_id_str = p_folder.split('/')[-1]
-                                        resolved_version = p.get('version', '1.0.0')
+                                    p_id = p.get("id", "")
+                                    p_name = p.get("name", "")
+                                    p_folder = p.get("folder_name", "")
+                                    norm_s_name = s_name.replace(".", "/")
+                                    if (
+                                        s_name.lower() in p_folder.lower()
+                                        or norm_s_name.lower() in p_folder.lower()
+                                        or s_name.lower() == p_name.lower()
+                                        or s_name.lower() in p_id.lower()
+                                    ):
+                                        resolved_plugin_id_str = p_folder.split("/")[-1]
+                                        resolved_version = p.get("version", "1.0.0")
                                         break
-                                plugin_id_int = binascii.crc32(resolved_plugin_id_str.encode('utf-8')) & 0xFFFFFFFF
-                                cursor.execute("UPDATE services SET plugin_id = ? WHERE id = ?", (plugin_id_int, s_id))
+                                plugin_id_int = (
+                                    binascii.crc32(
+                                        resolved_plugin_id_str.encode("utf-8")
+                                    )
+                                    & 0xFFFFFFFF
+                                )
+                                cursor.execute(
+                                    "UPDATE services SET plugin_id = ? WHERE id = ?",
+                                    (plugin_id_int, s_id),
+                                )
                         except Exception:
                             pass
 
@@ -449,8 +535,8 @@ class ConfigDatabase:
     def get_or_create_service_id(self, name) -> int:
         # Strip channel-suffix (@beta / @stable) produced by SDK._get_plugin_id()
         # so all lookups operate on the canonical plugin name regardless of active channel.
-        if isinstance(name, str) and '@' in name:
-            name = name.split('@')[0]
+        if isinstance(name, str) and "@" in name:
+            name = name.split("@")[0]
 
         # 1. Try to find existing using the extremely robust get_service_id
         existing_id = self.get_service_id(name)
@@ -461,74 +547,108 @@ class ConfigDatabase:
         import binascii
 
         resolved_plugin_id_str = name
-        resolved_version = '1.0.0'
+        resolved_version = "1.0.0"
         resolved_path = None
         is_matched = False
         try:
             from core.nexus_framework.plugin_loader import get_all_plugins
+
             for p in get_all_plugins():
-                p_id = p.get('id', '')
-                p_name = p.get('name', '')
-                if (name.lower() == p_id.lower() or 
-                    p_id.lower().endswith('.' + name.lower()) or 
-                    name.lower() == p_name.lower() or 
-                    p_name.lower().endswith('.' + name.lower())):
+                p_id = p.get("id", "")
+                p_name = p.get("name", "")
+                if (
+                    name.lower() == p_id.lower()
+                    or p_id.lower().endswith("." + name.lower())
+                    or name.lower() == p_name.lower()
+                    or p_name.lower().endswith("." + name.lower())
+                ):
                     resolved_plugin_id_str = p_id
-                    resolved_version = p.get('version', '1.0.0')
-                    resolved_path = p.get('abs_path')
+                    resolved_version = p.get("version", "1.0.0")
+                    resolved_path = p.get("abs_path")
                     is_matched = True
                     break
         except Exception as e:
             logger.error(f"Failed to resolve plugin details for {name}: {e}")
 
-        if not is_matched and name.lower().startswith('echosync.'):
+        if not is_matched and name.lower().startswith("echosync."):
             import re
+
+            from core.path_security import PathTraversalError, resolve_safe_path
             from core.settings import config_manager
-            from core.path_security import resolve_safe_path, PathTraversalError
-            plugin_name = name.split('.')[-1]
-            if re.match(r'^[a-zA-Z0-9_\-]+$', plugin_name):
-                plugins_root = Path(config_manager.get_plugins_dir()).resolve() / 'EchoSync'
+
+            plugin_name = name.split(".")[-1]
+            if re.match(r"^[a-zA-Z0-9_\-]+$", plugin_name):
+                plugins_root = (
+                    Path(config_manager.get_plugins_dir()).resolve() / "EchoSync"
+                )
                 try:
                     bundle_path = resolve_safe_path(plugins_root, plugin_name)
                     if bundle_path.is_dir():
                         resolved_plugin_id_str = name
-                        resolved_version = '1.0.0'
+                        resolved_version = "1.0.0"
                         resolved_path = str(bundle_path)
                         is_matched = True
                 except (PathTraversalError, ValueError):
                     pass
 
-        if name.lower() == 'system' or is_matched:
-            plugin_id_int = binascii.crc32(resolved_plugin_id_str.lower().encode('utf-8')) & 0xFFFFFFFF
-            self.register_service(resolved_plugin_id_str, 'streaming', f"{resolved_plugin_id_str.capitalize()} service", 
-                                  absolute_install_path=resolved_path, plugin_id=plugin_id_int, version=resolved_version)
+        if name.lower() == "system" or is_matched:
+            plugin_id_int = (
+                binascii.crc32(resolved_plugin_id_str.lower().encode("utf-8"))
+                & 0xFFFFFFFF
+            )
+            self.register_service(
+                resolved_plugin_id_str,
+                "streaming",
+                f"{resolved_plugin_id_str.capitalize()} service",
+                absolute_install_path=resolved_path,
+                plugin_id=plugin_id_int,
+                version=resolved_version,
+            )
 
             # 3. Try to find again after registration
             existing_id = self.get_service_id(name)
             if existing_id:
                 return existing_id
         else:
-            logger.debug(f"Service '{name}' is not physically installed or core. Not registering.")
+            logger.debug(
+                f"Service '{name}' is not physically installed or core. Not registering."
+            )
 
         return 0
 
-    def register_service(self, name: str, service_type: str, description: str, absolute_install_path: Optional[str] = None, plugin_id: Optional[int] = None, version: Optional[str] = None, loaded_modules: Optional[str] = None, beta_opt_in: Optional[int] = None, verified_source: Optional[int] = None, privileged_mode: Optional[int] = None, permissions: Optional[str] = None, capabilities: Optional[str] = None) -> int:
+    def register_service(
+        self,
+        name: str,
+        service_type: str,
+        description: str,
+        absolute_install_path: str | None = None,
+        plugin_id: int | None = None,
+        version: str | None = None,
+        loaded_modules: str | None = None,
+        beta_opt_in: int | None = None,
+        verified_source: int | None = None,
+        privileged_mode: int | None = None,
+        permissions: str | None = None,
+        capabilities: str | None = None,
+    ) -> int:
         import binascii
+
         if plugin_id is None:
             # Fallback CRC32 generation if not provided (ALWAYS use full lowercase namespace for consistency)
-            plugin_id = binascii.crc32(name.lower().encode('utf-8')) & 0xFFFFFFFF
+            plugin_id = binascii.crc32(name.lower().encode("utf-8")) & 0xFFFFFFFF
 
         if absolute_install_path is None:
             # Check if name is a core streaming/built-in service
-            core_services = {'system'}
+            core_services = {"system"}
             if name.lower() in core_services:
                 from pathlib import Path
+
                 app_root = Path(__file__).parent.parent
                 absolute_install_path = str((app_root / "core").resolve())
 
         try:
             execute_write_sql(
-                str(self.database_path), 
+                str(self.database_path),
                 """
                 INSERT INTO services(name, service_type, description, absolute_install_path, loaded_modules, plugin_id, version, is_active, beta_opt_in, verified_source, privileged_mode, permissions, capabilities)
                 VALUES(?,?,?,?,?,?,?,1,COALESCE(?, 0),COALESCE(?, 0),COALESCE(?, 0),COALESCE(?, '[]'),COALESCE(?, '{}'))
@@ -544,31 +664,49 @@ class ConfigDatabase:
                     permissions=COALESCE(excluded.permissions, services.permissions, '[]'),
                     capabilities=COALESCE(excluded.capabilities, services.capabilities, '{}'),
                     updated_at=strftime('%s','now')
-                """, 
-                (name, service_type, description, absolute_install_path, loaded_modules, plugin_id, version, beta_opt_in, verified_source, privileged_mode, permissions, capabilities)
+                """,
+                (
+                    name,
+                    service_type,
+                    description,
+                    absolute_install_path,
+                    loaded_modules,
+                    plugin_id,
+                    version,
+                    beta_opt_in,
+                    verified_source,
+                    privileged_mode,
+                    permissions,
+                    capabilities,
+                ),
             )
         except Exception as e:
             logger.error(f"Error registering service '{name}': {e}")
-        
+
         return 0
 
-    def set_service_config(self, service_id: int, key: str, value: Any, is_sensitive: bool = False) -> bool:
+    def set_service_config(
+        self, service_id: int, key: str, value: Any, is_sensitive: bool = False
+    ) -> bool:
         try:
-            from core.security import encrypt_string
             import json
-            
+
+            from core.security import encrypt_string
+
             # Resolve to primary key services.id if a plugin_id/name was passed
             resolved_id = self.get_service_id(service_id)
             if resolved_id:
                 service_id = resolved_id
 
             if not service_id:
-                logger.warning(f"Cannot set service config for unknown service: {service_id}")
+                logger.warning(
+                    f"Cannot set service config for unknown service: {service_id}"
+                )
                 return False
 
             if isinstance(value, (list, dict)):
                 value = json.dumps(value)
-                
+
             if is_sensitive and value is not None:
                 value = encrypt_string(str(value))
 
@@ -587,9 +725,8 @@ class ConfigDatabase:
             logger.error(f"Error setting service config: {e}")
             return False
 
-    def get_service_config(self, service_id: int, key: str) -> Optional[Any]:
+    def get_service_config(self, service_id: int, key: str) -> Any | None:
         try:
-            import contextlib
             import json
 
             resolved_id = self.get_service_id(service_id)
@@ -601,7 +738,10 @@ class ConfigDatabase:
 
             with self._get_connection() as conn:
                 c = conn.cursor()
-                c.execute("SELECT config_value, is_sensitive FROM service_config WHERE service_id=? AND config_key=?", (service_id, key))
+                c.execute(
+                    "SELECT config_value, is_sensitive FROM service_config WHERE service_id=? AND config_key=?",
+                    (service_id, key),
+                )
                 row = c.fetchone()
 
                 if not row:
@@ -610,22 +750,24 @@ class ConfigDatabase:
                 value, is_sensitive = row[0], row[1]
                 if is_sensitive and value is not None:
                     from core.security import decrypt_string
+
                     value = decrypt_string(value)
-                    
-                if isinstance(value, str) and (value.startswith('[') or value.startswith('{')):
+
+                if isinstance(value, str) and (
+                    value.startswith("[") or value.startswith("{")
+                ):
                     try:
                         value = json.loads(value)
                     except json.JSONDecodeError:
                         pass
-                        
+
                 return value
         except Exception as e:
             logger.error(f"Error getting service config: {e}")
             return None
 
-    def get_all_service_config(self, service_id: int) -> Dict[str, Any]:
+    def get_all_service_config(self, service_id: int) -> dict[str, Any]:
         try:
-            import contextlib
             import json
 
             resolved_id = self.get_service_id(service_id)
@@ -637,24 +779,30 @@ class ConfigDatabase:
 
             with self._get_connection() as conn:
                 c = conn.cursor()
-                c.execute("SELECT config_key, config_value, is_sensitive FROM service_config WHERE service_id=?", (service_id,))
+                c.execute(
+                    "SELECT config_key, config_value, is_sensitive FROM service_config WHERE service_id=?",
+                    (service_id,),
+                )
                 rows = c.fetchall()
 
                 config = {}
                 from core.security import decrypt_string
+
                 for key, value, is_sensitive in rows:
                     if is_sensitive and value is not None:
                         try:
                             value = decrypt_string(value)
                         except Exception:
                             pass
-                            
-                    if isinstance(value, str) and (value.startswith('[') or value.startswith('{')):
+
+                    if isinstance(value, str) and (
+                        value.startswith("[") or value.startswith("{")
+                    ):
                         try:
                             value = json.loads(value)
                         except json.JSONDecodeError:
                             pass
-                            
+
                     config[key] = value
 
                 return config
@@ -663,77 +811,111 @@ class ConfigDatabase:
             return {}
 
     # Accounts
-    def get_service_name(self, service_id: int) -> Optional[str]:
+    def get_service_name(self, service_id: int) -> str | None:
         """Resolve a service ID (PK or plugin_id) to its canonical name."""
         with self._get_connection() as conn:
             c = conn.cursor()
             c.execute("SELECT name FROM services WHERE id=?", (service_id,))
             row = c.fetchone()
-            if not row: return None
-            return row['name']
+            if not row:
+                return None
+            return row["name"]
 
-    def get_service_id(self, identifier: Any) -> Optional[int]:
+    def get_service_id(self, identifier: Any) -> int | None:
         """Resolve a name or plugin_id to the primary integer ID."""
-        if identifier is None: return None
+        if identifier is None:
+            return None
         with self._get_connection() as conn:
             c = conn.cursor()
             id_str = str(identifier).strip()
             if id_str.isdigit():
-                c.execute("SELECT id FROM services WHERE id=? OR plugin_id=?", (int(id_str), int(id_str)))
+                c.execute(
+                    "SELECT id FROM services WHERE id=? OR plugin_id=?",
+                    (int(id_str), int(id_str)),
+                )
                 row = c.fetchone()
-                if row: return int(row[0])
-            
+                if row:
+                    return int(row[0])
+
             # 1. Check exact name (case-insensitive)
             c.execute("SELECT id FROM services WHERE LOWER(name)=LOWER(?)", (id_str,))
             row = c.fetchone()
-            if row: return int(row[0])
-            
+            if row:
+                return int(row[0])
+
             # 2. Check canonical variations & CRC32
             import binascii
-            clean_name = id_str.lower().replace('echosync.', '').replace('echosync/', '').strip()
+
+            clean_name = (
+                id_str.lower().replace("echosync.", "").replace("echosync/", "").strip()
+            )
             variations = {
                 id_str.lower(),
                 clean_name,
                 f"echosync.{clean_name}",
                 f"echosync/{clean_name}",
             }
-            crc_list = [binascii.crc32(v.encode('utf-8')) & 0xFFFFFFFF for v in variations]
-            
-            placeholders = ','.join('?' * len(crc_list))
-            name_placeholders = ','.join('?' * len(variations))
+            crc_list = [
+                binascii.crc32(v.encode("utf-8")) & 0xFFFFFFFF for v in variations
+            ]
+
+            placeholders = ",".join("?" * len(crc_list))
+            name_placeholders = ",".join("?" * len(variations))
             c.execute(
                 f"SELECT id FROM services WHERE plugin_id IN ({placeholders}) OR LOWER(name) IN ({name_placeholders})",
-                (*crc_list, *variations)
+                (*crc_list, *variations),
             )
             row = c.fetchone()
-            if row: return int(row[0])
-            
+            if row:
+                return int(row[0])
+
             # 3. Suffix matching/normalized translation bridge
-            norm_name = clean_name.replace(' ', '_').replace('-', '_')
+            norm_name = clean_name.replace(" ", "_").replace("-", "_")
             c.execute("SELECT id, name FROM services")
             for r in c.fetchall():
-                row_name = r['name'].lower().replace('echosync.', '').replace('echosync/', '').replace(' ', '_').replace('-', '_')
-                if row_name == norm_name or row_name.endswith(f".{norm_name}") or norm_name.endswith(f".{row_name}"):
-                    return int(r['id'])
+                row_name = (
+                    r["name"]
+                    .lower()
+                    .replace("echosync.", "")
+                    .replace("echosync/", "")
+                    .replace(" ", "_")
+                    .replace("-", "_")
+                )
+                if (
+                    row_name == norm_name
+                    or row_name.endswith(f".{norm_name}")
+                    or norm_name.endswith(f".{row_name}")
+                ):
+                    return int(r["id"])
             return None
 
-    def get_accounts(self, service_id: Optional[int] = None, is_active: Optional[bool] = None) -> List[Dict[str, Any]]:
+    def get_accounts(
+        self, service_id: int | None = None, is_active: bool | None = None
+    ) -> list[dict[str, Any]]:
         try:
-            import contextlib
             with self._get_connection() as conn:
                 c = conn.cursor()
                 query = "SELECT id, service_id, account_name, display_name, user_id, account_email, is_active, is_authenticated, last_authenticated_at FROM accounts WHERE 1=1"
                 params: list[Any] = []
                 if service_id is not None:
-                    query += " AND service_id = ?"; params.append(service_id)
+                    query += " AND service_id = ?"
+                    params.append(service_id)
                 if is_active is not None:
-                    query += " AND is_active = ?"; params.append(1 if is_active else 0)
+                    query += " AND is_active = ?"
+                    params.append(1 if is_active else 0)
                 c.execute(query, params)
                 rows = c.fetchall()
                 return [
                     {
-                        'id': r[0], 'service_id': r[1], 'account_name': r[2], 'display_name': r[3], 'user_id': r[4],
-                        'account_email': r[5], 'is_active': bool(r[6]), 'is_authenticated': bool(r[7]), 'last_authenticated_at': r[8]
+                        "id": r[0],
+                        "service_id": r[1],
+                        "account_name": r[2],
+                        "display_name": r[3],
+                        "user_id": r[4],
+                        "account_email": r[5],
+                        "is_active": bool(r[6]),
+                        "is_authenticated": bool(r[7]),
+                        "last_authenticated_at": r[8],
                     }
                     for r in rows
                 ]
@@ -741,7 +923,14 @@ class ConfigDatabase:
             logger.error(f"Error getting accounts: {e}")
             return []
 
-    def ensure_account(self, service_id: int, account_id: Optional[int] = None, account_name: Optional[str] = None, display_name: Optional[str] = None, user_id: Optional[str] = None) -> int:
+    def ensure_account(
+        self,
+        service_id: int,
+        account_id: int | None = None,
+        account_name: str | None = None,
+        display_name: str | None = None,
+        user_id: str | None = None,
+    ) -> int:
         """Ensure an account row exists for the given service.
         If account_id is provided, attempt to insert with that explicit id; otherwise autogenerate.
         Returns the account id.
@@ -749,7 +938,6 @@ class ConfigDatabase:
         try:
             # If explicit account_id is provided, check existence using a reader
             if account_id is not None:
-                import contextlib
                 with self._get_connection() as conn:
                     c = conn.cursor()
                     c.execute("SELECT id FROM accounts WHERE id = ?", (account_id,))
@@ -770,6 +958,7 @@ class ConfigDatabase:
                 execute_write(str(self.database_path), _insert_with_id)
                 return int(account_id)
             else:
+
                 def _insert(cursor):
                     cursor.execute(
                         """
@@ -789,18 +978,16 @@ class ConfigDatabase:
     def upsert_account(
         self,
         service_id: int,
-        account_name: Optional[str] = None,
-        display_name: Optional[str] = None,
-        user_id: Optional[str] = None,
-        account_email: Optional[str] = None,
-        is_active: Optional[bool] = None,
-        is_authenticated: Optional[bool] = None,
-        account_id: Optional[int] = None,
+        account_name: str | None = None,
+        display_name: str | None = None,
+        user_id: str | None = None,
+        account_email: str | None = None,
+        is_active: bool | None = None,
+        is_authenticated: bool | None = None,
+        account_id: int | None = None,
     ) -> int:
         """Insert or update an account row using stable identity fields when available."""
         try:
-            import contextlib
-
             with self._get_connection() as conn:
                 c = conn.cursor()
 
@@ -880,9 +1067,11 @@ class ConfigDatabase:
             logger.error(f"Error upserting account: {e}")
             return int(account_id) if account_id is not None else 0
 
-    def set_active_account(self, service_id: int, account_id: int, exclusive: bool = True) -> bool:
-        """Set an account as active. 
-        
+    def set_active_account(
+        self, service_id: int, account_id: int, exclusive: bool = True
+    ) -> bool:
+        """Set an account as active.
+
         Args:
             service_id: The service ID
             account_id: The account ID to activate
@@ -890,11 +1079,18 @@ class ConfigDatabase:
                       If False, allows multiple accounts to be active simultaneously.
         """
         try:
+
             def _task(cursor):
                 if exclusive:
                     # Old behavior: single active account (deactivate all others first)
-                    cursor.execute("UPDATE accounts SET is_active = 0 WHERE service_id = ?", (service_id,))
-                cursor.execute("UPDATE accounts SET is_active = 1 WHERE id = ? AND service_id = ?", (account_id, service_id))
+                    cursor.execute(
+                        "UPDATE accounts SET is_active = 0 WHERE service_id = ?",
+                        (service_id,),
+                    )
+                cursor.execute(
+                    "UPDATE accounts SET is_active = 1 WHERE id = ? AND service_id = ?",
+                    (account_id, service_id),
+                )
 
             execute_write(str(self.database_path), _task)
             return True
@@ -904,13 +1100,17 @@ class ConfigDatabase:
 
     def toggle_account_active(self, account_id: int, is_active: bool) -> bool:
         """Toggle an account's active status (for multi-account support).
-        
+
         Args:
             account_id: The account ID
             is_active: True to activate, False to deactivate
         """
         try:
-            execute_write_sql(str(self.database_path), "UPDATE accounts SET is_active = ? WHERE id = ?", (1 if is_active else 0, account_id))
+            execute_write_sql(
+                str(self.database_path),
+                "UPDATE accounts SET is_active = ? WHERE id = ?",
+                (1 if is_active else 0, account_id),
+            )
             return True
         except Exception as e:
             logger.error(f"Error toggling account active status: {e}")
@@ -918,7 +1118,11 @@ class ConfigDatabase:
 
     def mark_account_authenticated(self, account_id: int) -> bool:
         try:
-            execute_write_sql(str(self.database_path), "UPDATE accounts SET is_authenticated = 1, last_authenticated_at = ? WHERE id = ?", (int(time.time()), account_id))
+            execute_write_sql(
+                str(self.database_path),
+                "UPDATE accounts SET is_authenticated = 1, last_authenticated_at = ? WHERE id = ?",
+                (int(time.time()), account_id),
+            )
             return True
         except Exception as e:
             logger.error(f"Error marking account authenticated: {e}")
@@ -926,32 +1130,53 @@ class ConfigDatabase:
 
     def set_account_user_id(self, account_id: int, user_id: str) -> bool:
         try:
-            rowcount = execute_write_sql(str(self.database_path), "UPDATE accounts SET user_id = ? WHERE id = ?", (user_id, account_id))
-            return (rowcount and rowcount > 0)
+            rowcount = execute_write_sql(
+                str(self.database_path),
+                "UPDATE accounts SET user_id = ? WHERE id = ?",
+                (user_id, account_id),
+            )
+            return bool(rowcount and rowcount > 0)
         except Exception as e:
             logger.error(f"Error setting account user_id: {e}")
             return False
 
     def delete_account(self, account_id: int) -> bool:
         try:
-            rowcount = execute_write_sql(str(self.database_path), "DELETE FROM accounts WHERE id = ?", (account_id,))
-            return (rowcount and rowcount > 0)
+            rowcount = execute_write_sql(
+                str(self.database_path),
+                "DELETE FROM accounts WHERE id = ?",
+                (account_id,),
+            )
+            return bool(rowcount and rowcount > 0)
         except Exception as e:
             logger.error(f"Error deleting account: {e}")
             return False
 
     def update_account_name(self, account_id: int, new_name: str) -> bool:
         try:
-            rowcount = execute_write_sql(str(self.database_path), "UPDATE accounts SET account_name = ?, display_name = ? WHERE id = ?", (new_name, new_name, account_id))
-            return (rowcount and rowcount > 0)
+            rowcount = execute_write_sql(
+                str(self.database_path),
+                "UPDATE accounts SET account_name = ?, display_name = ? WHERE id = ?",
+                (new_name, new_name, account_id),
+            )
+            return bool(rowcount and rowcount > 0)
         except Exception as e:
             logger.error(f"Error updating account name: {e}")
             return False
 
     # Tokens
-    def save_account_token(self, account_id: int, access_token: str, refresh_token: Optional[str] = None, token_type: str = 'Bearer', expires_at: Optional[int] = None, scope: Optional[str] = None) -> bool:
+    def save_account_token(
+        self,
+        account_id: int,
+        access_token: str,
+        refresh_token: str | None = None,
+        token_type: str = "Bearer",
+        expires_at: int | None = None,
+        scope: str | None = None,
+    ) -> bool:
         try:
             from core.security import encrypt_string
+
             if access_token:
                 access_token = encrypt_string(access_token)
             if refresh_token:
@@ -965,7 +1190,14 @@ class ConfigDatabase:
                     ON CONFLICT(account_id)
                     DO UPDATE SET access_token=excluded.access_token, refresh_token=excluded.refresh_token, token_type=excluded.token_type, expires_at=excluded.expires_at, scope=excluded.scope, updated_at=strftime('%s','now')
                 """,
-                (account_id, access_token, refresh_token, token_type, expires_at, scope),
+                (
+                    account_id,
+                    access_token,
+                    refresh_token,
+                    token_type,
+                    expires_at,
+                    scope,
+                ),
             )
             logger.info(f"Saved tokens for account {account_id} in config.db")
             return True
@@ -973,11 +1205,11 @@ class ConfigDatabase:
             logger.error(f"Error saving account token: {e}")
             return False
 
-    def get_account_config(self, account_id: int, key: str = None) -> Any:
+    def get_account_config(self, account_id: int, key: str | None = None) -> Any:
         """Get account configuration from the details JSON blob."""
         try:
             import json
-            import contextlib
+
             with self._get_connection() as conn:
                 c = conn.cursor()
                 c.execute("SELECT details FROM accounts WHERE id = ?", (account_id,))
@@ -993,23 +1225,27 @@ class ConfigDatabase:
             logger.error(f"Error getting account config for {account_id}: {e}")
             return None if key else {}
 
-    def get_account_token(self, account_id: int) -> Optional[Dict[str, Any]]:
+    def get_account_token(self, account_id: int) -> dict[str, Any] | None:
         try:
-            import contextlib
             with self._get_connection() as conn:
                 c = conn.cursor()
-                c.execute("""
+                c.execute(
+                    """
                     SELECT t.access_token, t.refresh_token, t.token_type, t.expires_at, t.scope, s.name as provider
                     FROM account_tokens t
                     LEFT JOIN accounts a ON t.account_id = a.id
                     LEFT JOIN services s ON a.service_id = s.id
                     WHERE t.account_id = ?
-                """, (account_id,))
+                """,
+                    (account_id,),
+                )
                 row = c.fetchone()
                 if not row:
                     return None
 
-                access_token, refresh_token, token_type, expires_at, scope, provider = row
+                access_token, refresh_token, token_type, expires_at, scope, provider = (
+                    row
+                )
                 from core.security import decrypt_string
 
                 if access_token:
@@ -1018,12 +1254,12 @@ class ConfigDatabase:
                     refresh_token = decrypt_string(refresh_token)
 
                 return {
-                    'access_token': access_token, 
-                    'refresh_token': refresh_token, 
-                    'token_type': token_type, 
-                    'expires_at': expires_at, 
-                    'scope': scope,
-                    'provider': provider or ''
+                    "access_token": access_token,
+                    "refresh_token": refresh_token,
+                    "token_type": token_type,
+                    "expires_at": expires_at,
+                    "scope": scope,
+                    "provider": provider or "",
                 }
         except Exception as e:
             logger.error(f"Error getting account token: {e}")
@@ -1032,7 +1268,17 @@ class ConfigDatabase:
     # Removed account_metadata methods
 
     # PKCE sessions
-    def store_pkce_session(self, pkce_id: str, service: str, account_id: int, code_verifier: str, code_challenge: str, redirect_uri: str, client_id: str, ttl_seconds: int = 600) -> bool:
+    def store_pkce_session(
+        self,
+        pkce_id: str,
+        service: str,
+        account_id: int,
+        code_verifier: str,
+        code_challenge: str,
+        redirect_uri: str,
+        client_id: str,
+        ttl_seconds: int = 600,
+    ) -> bool:
         try:
             now = int(time.time())
             execute_write_sql(
@@ -1041,24 +1287,44 @@ class ConfigDatabase:
                     INSERT OR REPLACE INTO pkce_sessions(pkce_id, service, account_id, code_verifier, code_challenge, redirect_uri, client_id, created_at, expires_at)
                     VALUES(?,?,?,?,?,?,?,?,?)
                 """,
-                (pkce_id, service, account_id, code_verifier, code_challenge, redirect_uri, client_id, now, now + ttl_seconds),
+                (
+                    pkce_id,
+                    service,
+                    account_id,
+                    code_verifier,
+                    code_challenge,
+                    redirect_uri,
+                    client_id,
+                    now,
+                    now + ttl_seconds,
+                ),
             )
             return True
         except Exception as e:
             logger.error(f"Error storing PKCE session: {e}")
             return False
 
-    def get_pkce_session(self, pkce_id: str) -> Optional[Dict[str, Any]]:
+    def get_pkce_session(self, pkce_id: str) -> dict[str, Any] | None:
         try:
-            import contextlib
             with self._get_connection() as conn:
                 c = conn.cursor()
-                c.execute("SELECT pkce_id, service, account_id, code_verifier, code_challenge, redirect_uri, client_id, created_at, expires_at FROM pkce_sessions WHERE pkce_id = ?", (pkce_id,))
+                c.execute(
+                    "SELECT pkce_id, service, account_id, code_verifier, code_challenge, redirect_uri, client_id, created_at, expires_at FROM pkce_sessions WHERE pkce_id = ?",
+                    (pkce_id,),
+                )
                 row = c.fetchone()
                 if not row:
                     return None
                 return {
-                    'pkce_id': row[0], 'service': row[1], 'account_id': row[2], 'code_verifier': row[3], 'code_challenge': row[4], 'redirect_uri': row[5], 'client_id': row[6], 'created_at': row[7], 'expires_at': row[8]
+                    "pkce_id": row[0],
+                    "service": row[1],
+                    "account_id": row[2],
+                    "code_verifier": row[3],
+                    "code_challenge": row[4],
+                    "redirect_uri": row[5],
+                    "client_id": row[6],
+                    "created_at": row[7],
+                    "expires_at": row[8],
                 }
         except Exception as e:
             logger.error(f"Error fetching PKCE session: {e}")
@@ -1066,8 +1332,12 @@ class ConfigDatabase:
 
     def delete_pkce_session(self, pkce_id: str) -> bool:
         try:
-            rowcount = execute_write_sql(str(self.database_path), "DELETE FROM pkce_sessions WHERE pkce_id = ?", (pkce_id,))
-            return (rowcount and rowcount > 0)
+            rowcount = execute_write_sql(
+                str(self.database_path),
+                "DELETE FROM pkce_sessions WHERE pkce_id = ?",
+                (pkce_id,),
+            )
+            return bool(rowcount and rowcount > 0)
         except Exception as e:
             logger.error(f"Error deleting PKCE session: {e}")
             return False
@@ -1075,12 +1345,16 @@ class ConfigDatabase:
     def cleanup_expired_pkce_sessions(self) -> None:
         try:
             now = int(time.time())
-            execute_write_sql(str(self.database_path), "DELETE FROM pkce_sessions WHERE expires_at < ?", (now,))
+            execute_write_sql(
+                str(self.database_path),
+                "DELETE FROM pkce_sessions WHERE expires_at < ?",
+                (now,),
+            )
         except Exception as e:
             logger.error(f"Error cleaning PKCE sessions: {e}")
 
     # Download Provider Priority
-    def get_download_provider_priority(self) -> List[str]:
+    def get_download_provider_priority(self) -> list[str]:
         """
         Get the user-defined download provider priority list.
         Returns list of provider names in priority order (highest first).
@@ -1088,10 +1362,13 @@ class ConfigDatabase:
         """
         try:
             import json
-            import contextlib
+
             with self._get_connection() as conn:
                 c = conn.cursor()
-                c.execute("SELECT config_value FROM service_config WHERE service_id IS NULL AND config_key = ?", ("download_provider_priority",))
+                c.execute(
+                    "SELECT config_value FROM service_config WHERE service_id IS NULL AND config_key = ?",
+                    ("download_provider_priority",),
+                )
                 row = c.fetchone()
                 if not row or not row[0]:
                     # Return default: try all active download providers in their natural order
@@ -1099,28 +1376,31 @@ class ConfigDatabase:
                 try:
                     return json.loads(row[0])
                 except (json.JSONDecodeError, TypeError):
-                    logger.warning("Invalid download_provider_priority format, returning default")
+                    logger.warning(
+                        "Invalid download_provider_priority format, returning default"
+                    )
                     return []
         except Exception as e:
             logger.error(f"Error getting download provider priority: {e}")
             return []
 
-    def set_download_provider_priority(self, provider_list: List[str]) -> bool:
+    def set_download_provider_priority(self, provider_list: list[str]) -> bool:
         """
         Set the user-defined download provider priority list.
-        
+
         Args:
             provider_list: List of provider names in priority order (highest first)
             Example: ["slskd", "yt_dlp", "torrent"]
-            
+
         Returns:
             bool: True if successful
         """
         try:
             import json
+
             # Store as JSON string in a global (service_id=NULL) setting
             json_value = json.dumps(provider_list)
-            
+
             # Use a special service_id=NULL for global settings
             execute_write_sql(
                 str(self.database_path),
@@ -1138,7 +1418,6 @@ class ConfigDatabase:
             logger.error(f"Error setting download provider priority: {e}")
             return False
 
-
     # ── Account Mapping helpers ─────────────────────────────────────────────
 
     def set_account_mapping(
@@ -1147,7 +1426,7 @@ class ConfigDatabase:
         account_id_2: int,
     ) -> bool:
         """Upsert a stateful mapping between two accounts.
-        
+
         Logic sorts the IDs to ensure source_account_id < mapped_account_id,
         preventing duplicate mappings in reverse order.
         """
@@ -1174,11 +1453,10 @@ class ConfigDatabase:
 
     def get_account_mappings(
         self,
-        account_id: Optional[int] = None,
-    ) -> List[Dict[str, Any]]:
+        account_id: int | None = None,
+    ) -> list[dict[str, Any]]:
         """Retrieve account mapping rows, optionally filtered by a specific account ID."""
         try:
-            import contextlib
             with self._get_connection() as conn:
                 c = conn.cursor()
                 query = "SELECT id, source_account_id, mapped_account_id, created_at, updated_at FROM account_mappings WHERE 1=1"
@@ -1186,16 +1464,16 @@ class ConfigDatabase:
                 if account_id:
                     query += " AND (source_account_id = ? OR mapped_account_id = ?)"
                     params.extend([account_id, account_id])
-                
+
                 c.execute(query, params)
                 rows = c.fetchall()
                 return [
                     {
-                        'id': r[0],
-                        'source_account_id': r[1],
-                        'mapped_account_id': r[2],
-                        'created_at': r[3],
-                        'updated_at': r[4],
+                        "id": r[0],
+                        "source_account_id": r[1],
+                        "mapped_account_id": r[2],
+                        "created_at": r[3],
+                        "updated_at": r[4],
                     }
                     for r in rows
                 ]
@@ -1234,10 +1512,14 @@ class ConfigDatabase:
             )
             logger.info(f"Purged all account mappings involving account {account_id}")
         except Exception as e:
-            logger.error(f"Error purging account mappings for account {account_id}: {e}")
+            logger.error(
+                f"Error purging account mappings for account {account_id}: {e}"
+            )
 
     # ── Plugin Snapshot Helpers ──────────────────────────────────────────
-    def create_plugin_snapshot(self, plugin_id: int, snapshot_data: str, ttl_hours: int = 24) -> bool:
+    def create_plugin_snapshot(
+        self, plugin_id: int, snapshot_data: str, ttl_hours: int = 24
+    ) -> bool:
         try:
             expires_at = int(time.time()) + (ttl_hours * 3600)
             execute_write_sql(
@@ -1257,33 +1539,37 @@ class ConfigDatabase:
             logger.error(f"Error creating plugin snapshot for {plugin_id}: {e}")
             return False
 
-    def get_plugin_snapshot(self, plugin_id: int) -> Optional[Dict[str, Any]]:
+    def get_plugin_snapshot(self, plugin_id: int) -> dict[str, Any] | None:
         try:
-            import contextlib
             import json
+
             with self._get_connection() as conn:
                 c = conn.cursor()
-                c.execute("SELECT snapshot_data, expires_at FROM plugin_snapshots WHERE plugin_id = ?", (plugin_id,))
+                c.execute(
+                    "SELECT snapshot_data, expires_at FROM plugin_snapshots WHERE plugin_id = ?",
+                    (plugin_id,),
+                )
                 row = c.fetchone()
                 if not row:
                     return None
-                
+
                 # Check expiry
                 if row[1] < int(time.time()):
                     self.delete_plugin_snapshot(plugin_id)
                     return None
 
-                return {
-                    'snapshot_data': json.loads(row[0]),
-                    'expires_at': row[1]
-                }
+                return {"snapshot_data": json.loads(row[0]), "expires_at": row[1]}
         except Exception as e:
             logger.error(f"Error getting plugin snapshot for {plugin_id}: {e}")
             return None
 
     def delete_plugin_snapshot(self, plugin_id: int) -> bool:
         try:
-            execute_write_sql(str(self.database_path), "DELETE FROM plugin_snapshots WHERE plugin_id = ?", (plugin_id,))
+            execute_write_sql(
+                str(self.database_path),
+                "DELETE FROM plugin_snapshots WHERE plugin_id = ?",
+                (plugin_id,),
+            )
             return True
         except Exception as e:
             logger.error(f"Error deleting plugin snapshot for {plugin_id}: {e}")
@@ -1291,7 +1577,11 @@ class ConfigDatabase:
 
     def cleanup_expired_snapshots(self) -> None:
         try:
-            execute_write_sql(str(self.database_path), "DELETE FROM plugin_snapshots WHERE expires_at < ?", (int(time.time()),))
+            execute_write_sql(
+                str(self.database_path),
+                "DELETE FROM plugin_snapshots WHERE expires_at < ?",
+                (int(time.time()),),
+            )
         except Exception as e:
             logger.error(f"Error cleaning expired plugin snapshots: {e}")
 
@@ -1314,8 +1604,8 @@ class ConfigDatabase:
                     return default
                 val = row[0]
                 if isinstance(val, str):
+                    import json
                     try:
-                        import json
                         return json.loads(val)
                     except (json.JSONDecodeError, ValueError):
                         return val
@@ -1329,6 +1619,7 @@ class ConfigDatabase:
         try:
             import json
             import time
+
             if isinstance(value, (dict, list, bool, int, float)):
                 val_str = json.dumps(value)
             elif value is None:
@@ -1336,7 +1627,7 @@ class ConfigDatabase:
             else:
                 val_str = str(value)
 
-            now_str = time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime())
+            now_str = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
             execute_write_sql(
                 str(self.database_path),
                 """
@@ -1351,10 +1642,11 @@ class ConfigDatabase:
             logger.error(f"Error setting system setting '{key}': {e}")
             return False
 
-    def get_all_system_settings(self) -> Dict[str, Any]:
+    def get_all_system_settings(self) -> dict[str, Any]:
         """Return all system_settings as a key-value dictionary with JSON deserialization."""
         try:
             import json
+
             result = {}
             with self._get_connection() as conn:
                 c = conn.cursor()
@@ -1402,11 +1694,12 @@ class ConfigDatabase:
     # Quality Profiles & Steps (Relational Storage)
     # =========================================================================
 
-    def get_quality_profiles(self) -> List[Dict[str, Any]]:
+    def get_quality_profiles(self) -> list[dict[str, Any]]:
         """Retrieve all quality profiles with reconstructed formats and step hierarchies."""
         try:
             import json
-            profiles_map: Dict[str, Dict[str, Any]] = {}
+
+            profiles_map: dict[str, dict[str, Any]] = {}
             with self._get_connection() as conn:
                 c = conn.cursor()
                 c.execute("SELECT id, name, prefer_max_quality FROM quality_profiles")
@@ -1423,7 +1716,9 @@ class ConfigDatabase:
                 if not profiles_map:
                     return []
 
-                c.execute("SELECT profile_id, priority, rules FROM quality_profile_steps ORDER BY priority ASC")
+                c.execute(
+                    "SELECT profile_id, priority, rules FROM quality_profile_steps ORDER BY priority ASC"
+                )
                 for row in c.fetchall():
                     pid, priority, rules_raw = str(row[0]), row[1], row[2]
                     if pid not in profiles_map:
@@ -1439,9 +1734,19 @@ class ConfigDatabase:
                             rules = rules_raw
 
                     # If rules contains advanced_filters metadata
-                    if isinstance(rules, dict) and "advanced_filters" in rules and len(rules) == 1:
-                        profiles_map[pid]["advanced_filters"] = rules["advanced_filters"]
-                    elif isinstance(rules, dict) and "formats" in rules and len(rules) == 1:
+                    if (
+                        isinstance(rules, dict)
+                        and "advanced_filters" in rules
+                        and len(rules) == 1
+                    ):
+                        profiles_map[pid]["advanced_filters"] = rules[
+                            "advanced_filters"
+                        ]
+                    elif (
+                        isinstance(rules, dict)
+                        and "formats" in rules
+                        and len(rules) == 1
+                    ):
                         profiles_map[pid]["formats"] = rules["formats"]
                     else:
                         profiles_map[pid]["formats"].append(rules)
@@ -1454,21 +1759,24 @@ class ConfigDatabase:
             logger.error(f"Error fetching quality profiles: {e}")
             return []
 
-    def get_quality_profile(self, profile_id: str) -> Optional[Dict[str, Any]]:
+    def get_quality_profile(self, profile_id: str) -> dict[str, Any] | None:
         """Retrieve a single quality profile by ID."""
         for p in self.get_quality_profiles():
             if str(p.get("id")) == str(profile_id):
                 return p
         return None
 
-    def set_quality_profile(self, profile: Dict[str, Any]) -> bool:
+    def set_quality_profile(self, profile: dict[str, Any]) -> bool:
         """Upsert a single quality profile and its step hierarchy."""
         return self.set_quality_profiles([profile], overwrite_all=False)
 
-    def set_quality_profiles(self, profiles: List[Dict[str, Any]], overwrite_all: bool = True) -> bool:
+    def set_quality_profiles(
+        self, profiles: list[dict[str, Any]], overwrite_all: bool = True
+    ) -> bool:
         """Persist quality profiles and steps relationally into quality_profiles and quality_profile_steps."""
         try:
             import json
+
             def _write_profiles(cursor):
                 if overwrite_all:
                     cursor.execute("DELETE FROM quality_profile_steps")
@@ -1482,8 +1790,13 @@ class ConfigDatabase:
                     prefer_max = 1 if p.get("prefer_max_quality") else 0
 
                     if not overwrite_all:
-                        cursor.execute("DELETE FROM quality_profile_steps WHERE profile_id = ?", (pid,))
-                        cursor.execute("DELETE FROM quality_profiles WHERE id = ?", (pid,))
+                        cursor.execute(
+                            "DELETE FROM quality_profile_steps WHERE profile_id = ?",
+                            (pid,),
+                        )
+                        cursor.execute(
+                            "DELETE FROM quality_profiles WHERE id = ?", (pid,)
+                        )
 
                     cursor.execute(
                         "INSERT INTO quality_profiles (id, name, prefer_max_quality) VALUES (?, ?, ?)",
@@ -1500,7 +1813,9 @@ class ConfigDatabase:
 
                     # Store advanced_filters if provided
                     if p.get("advanced_filters"):
-                        adv_rules = json.dumps({"advanced_filters": p["advanced_filters"]})
+                        adv_rules = json.dumps(
+                            {"advanced_filters": p["advanced_filters"]}
+                        )
                         cursor.execute(
                             "INSERT INTO quality_profile_steps (profile_id, priority, rules) VALUES (?, ?, ?)",
                             (pid, 9999, adv_rules),
@@ -1527,11 +1842,12 @@ class ConfigDatabase:
 
 
 import threading
-_config_db: Optional[ConfigDatabase] = None
+
+_config_db: ConfigDatabase | None = None
 _config_db_lock = threading.Lock()
 
-def get_config_database() -> ConfigDatabase:
-def get_config_database(db_path: Optional[Any] = None) -> ConfigDatabase:
+
+def get_config_database(db_path: Any | None = None) -> ConfigDatabase:
     global _config_db
     if db_path is not None:
         return ConfigDatabase(db_path=str(db_path))
@@ -1541,16 +1857,19 @@ def get_config_database(db_path: Optional[Any] = None) -> ConfigDatabase:
                 _config_db = ConfigDatabase()
     return _config_db
 
+
 def close_config_database() -> None:
     global _config_db
     if _config_db is not None:
         # No explicit dispose on sqlite3 Connection, but we can set to None
         _config_db = None
 
-from sqlalchemy import Column, String, Boolean, Integer
-from sqlalchemy.orm import declarative_base
+
+from sqlalchemy import Boolean, Column, Integer, String  # pyright: ignore[reportMissingImports]
+from sqlalchemy.orm import declarative_base  # pyright: ignore[reportMissingImports]
 
 ConfigBase = declarative_base()
+
 
 class ConfigKVS(ConfigBase):
     __tablename__ = "config_kvs"

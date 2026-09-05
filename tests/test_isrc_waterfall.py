@@ -1,11 +1,11 @@
-import pytest
 from unittest.mock import MagicMock, patch
-from pathlib import Path
+
 from core.db.echo_sync_track import EchosyncTrack
+from database.working_database import ReviewTask, get_working_database
 from services.isrc_lookup_service import dispatch_isrc_lookup
 from services.metadata_enhancer import RetroactiveEnhancer
-from database.working_database import ReviewTask, get_working_database
-from web.routes.metadata_review import lookup_review_queue_item_isrc, ISRCLookupRequest
+from web.routes.metadata_review import ISRCLookupRequest, lookup_review_queue_item_isrc
+
 
 def test_dispatch_isrc_lookup_waterfall_to_spotify():
     mb_provider = MagicMock()
@@ -21,12 +21,14 @@ def test_dispatch_isrc_lookup_waterfall_to_spotify():
         artist_name="The Weeknd",
         album_title="Starboy",
         release_year=2016,
-        isrc="USUM71607007"
+        isrc="USUM71607007",
     )
     spotify_track.identifiers = {"source": "EchoSync.spotify"}
     spotify_provider.search_by_isrc.return_value = spotify_track
 
-    with patch("core.nexus_framework.plugin_loader.PluginRegistry.get_plugins_with_capability") as mock_plugins:
+    with patch(
+        "core.nexus_framework.plugin_loader.PluginRegistry.get_plugins_with_capability"
+    ) as mock_plugins:
         mock_plugins.return_value = [mb_provider, spotify_provider]
         res = dispatch_isrc_lookup("USUM71607007")
 
@@ -34,6 +36,7 @@ def test_dispatch_isrc_lookup_waterfall_to_spotify():
         assert res.raw_title == "Starboy"
         assert res.artist_name == "The Weeknd"
         assert res.identifiers.get("source") == "EchoSync.spotify"
+
 
 def test_metadata_enhancer_identifies_via_isrc_waterfall(tmp_path):
     file_path = tmp_path / "track_with_isrc.mp3"
@@ -46,18 +49,23 @@ def test_metadata_enhancer_identifies_via_isrc_waterfall(tmp_path):
         artist_name="The Weeknd",
         album_title="After Hours",
         release_year=2020,
-        isrc="USUG11904206"
+        isrc="USUG11904206",
     )
     spotify_track.identifiers = {"source": "EchoSync.spotify"}
 
-    with patch("echosync_core.extract_metadata", return_value={"isrc": "USUG11904206"}), \
-         patch("services.isrc_lookup_service.dispatch_isrc_lookup", return_value=spotify_track):
-        
+    with (
+        patch("echosync_core.extract_metadata", return_value={"isrc": "USUG11904206"}),
+        patch(
+            "services.isrc_lookup_service.dispatch_isrc_lookup",
+            return_value=spotify_track,
+        ),
+    ):
         result_meta, confidence = enhancer.identify_file(file_path)
 
         assert result_meta is not None
         assert confidence == 0.92
-        assert result_meta.raw_title == "Blinding Lights"
+        assert result_meta['raw_title'] == "Blinding Lights"
+
 
 def test_review_queue_isrc_lookup_uses_waterfall(tmp_path):
     file_path = tmp_path / "song.mp3"
@@ -68,7 +76,7 @@ def test_review_queue_isrc_lookup_uses_waterfall(tmp_path):
         task = ReviewTask(
             file_path=str(file_path),
             status="pending",
-            track_data={"isrc": "USUG11904206"}
+            track_data={"isrc": "USUG11904206"},
         )
         session.add(task)
         session.flush()
@@ -79,11 +87,13 @@ def test_review_queue_isrc_lookup_uses_waterfall(tmp_path):
         artist_name="The Weeknd",
         album_title="After Hours",
         release_year=2020,
-        isrc="USUG11904206"
+        isrc="USUG11904206",
     )
     spotify_track.identifiers = {"source": "EchoSync.spotify"}
 
-    with patch("services.isrc_lookup_service.dispatch_isrc_lookup", return_value=spotify_track):
+    with patch(
+        "services.isrc_lookup_service.dispatch_isrc_lookup", return_value=spotify_track
+    ):
         req = ISRCLookupRequest(isrc="USUG11904206")
         res = lookup_review_queue_item_isrc(task_id, req)
 
@@ -95,6 +105,7 @@ def test_review_queue_isrc_lookup_uses_waterfall(tmp_path):
         assert res["metadata"]["title"] == "Blinding Lights"
         assert res["metadata"]["artist"] == "The Weeknd"
 
+
 def test_review_queue_isrc_lookup_no_match(tmp_path):
     file_path = tmp_path / "song_missing.mp3"
     file_path.write_bytes(b"fake data")
@@ -104,7 +115,7 @@ def test_review_queue_isrc_lookup_no_match(tmp_path):
         task = ReviewTask(
             file_path=str(file_path),
             status="pending",
-            track_data={"isrc": "USUG11904206"}
+            track_data={"isrc": "USUG11904206"},
         )
         session.add(task)
         session.flush()

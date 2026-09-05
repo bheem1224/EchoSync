@@ -1,20 +1,38 @@
 import urllib.parse
-from pathlib import Path
-from typing import Any, Dict, List, Optional, Generator
+from collections.abc import Generator
 from datetime import datetime
+from pathlib import Path
+from typing import Any
 
-from core.nexus_framework.plugin_SDK import PluginBase
-from core.nexus_framework.plugin_SDK import ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
-from core.enums import Capability
 from core.db.echo_sync_track import EchosyncTrack
+from core.nexus_framework.plugin_SDK import (
+    MetadataRichness,
+    PlaylistSupport,
+    PluginBase,
+    ProviderCapabilities,
+    SearchCapabilities,
+)
+
 SUPPORTED_AUDIO_EXTENSIONS = {
-    '.mp3', '.flac', '.ogg', '.m4a', '.aac', '.alac', '.ape',
-    '.wav', '.dsd', '.dsf', '.dff',
+    ".mp3",
+    ".flac",
+    ".ogg",
+    ".m4a",
+    ".aac",
+    ".alac",
+    ".ape",
+    ".wav",
+    ".dsd",
+    ".dsf",
+    ".dff",
 }
+
 
 def inspect_audio_file(path: Path):
     import echosync_core
+
     meta = echosync_core.extract_metadata(str(path))
+
     class AudioResult:
         def __init__(self, m):
             self.title = m.get("title") or path.stem
@@ -33,21 +51,25 @@ def inspect_audio_file(path: Path):
             self.bitrate_kbps = m.get("bitrate")
             self.sample_rate_hz = m.get("sample_rate")
             self.bit_depth = m.get("bit_depth")
-            self.file_format = m.get("codec") or path.suffix.lstrip('.')
+            self.file_format = m.get("codec") or path.suffix.lstrip(".")
             self.file_size_bytes = m.get("file_size_bytes")
+
     return AudioResult(meta)
+
+
 from core.tiered_logger import get_logger
 
 logger = get_logger("local_server_provider")
 
+
 class LocalServerProvider(PluginBase):
-    name = 'EchoSync.Local Server'
-    category = 'provider'
+    name = "EchoSync.Local Server"
+    category = "provider"
     supports_downloads = False
     enabled = True
 
     capabilities = ProviderCapabilities(
-        name='EchoSync.Local Server',
+        name="EchoSync.Local Server",
         supports_playlists=PlaylistSupport.NONE,
         search=SearchCapabilities(tracks=False),
         metadata=MetadataRichness.LOW,
@@ -63,7 +85,10 @@ class LocalServerProvider(PluginBase):
         library_dir_str = self.sdk.config.get("library_dir")
         if not library_dir_str:
             from core.settings import config_manager
-            library_dir_str = config_manager.get('storage.library_dir') or config_manager.get('library_dir')
+
+            library_dir_str = config_manager.get(
+                "storage.library_dir"
+            ) or config_manager.get("library_dir")
 
         if not library_dir_str:
             logger.warning("Library directory not configured globally or locally.")
@@ -74,14 +99,16 @@ class LocalServerProvider(PluginBase):
             logger.warning(f"Library directory does not exist: {library_dir}")
             return
 
-        def process_file(path: Path) -> Optional[EchosyncTrack]:
+        def process_file(path: Path) -> EchosyncTrack | None:
             try:
                 result = inspect_audio_file(path)
 
                 if result.artist_source != "tpe1":
                     logger.debug(
                         "Singer-First fallback: '%s' artist='%s' (source=%s)",
-                        path.name, result.artist, result.artist_source,
+                        path.name,
+                        result.artist,
+                        result.artist_source,
                     )
 
                 return self.create_echo_sync_track(
@@ -102,13 +129,17 @@ class LocalServerProvider(PluginBase):
                     bit_depth=result.bit_depth,
                     file_format=result.file_format,
                     file_size_bytes=result.file_size_bytes,
-                    added_at=datetime.fromtimestamp(path.stat().st_ctime) if path.exists() else None,
+                    added_at=datetime.fromtimestamp(path.stat().st_ctime)
+                    if path.exists()
+                    else None,
                     file_path=str(path),
                     source=self.name,
                     # No provider_id to prevent writing an external identifier
                 )
             except Exception as e:
-                logger.warning("Failed to process '%s', falling back to filename: %s", path.name, e)
+                logger.warning(
+                    "Failed to process '%s', falling back to filename: %s", path.name, e
+                )
                 try:
                     file_stat = path.stat()
                     file_size_bytes = file_stat.st_size
@@ -126,13 +157,13 @@ class LocalServerProvider(PluginBase):
                 )
 
         import concurrent.futures
-        
+
         def _iter_audio_files(root: Path) -> Generator[Path, None, None]:
             """Walk the directory tree, yielding audio files while tolerating
             per-directory PermissionError/OSError."""
             try:
                 for entry in root.iterdir():
-                    if entry.name == '.zfs':
+                    if entry.name == ".zfs":
                         logger.debug(f"Skipping ZFS directory: {entry}")
                         continue
                     try:
@@ -146,7 +177,10 @@ class LocalServerProvider(PluginBase):
 
                         if entry.is_dir():
                             yield from _iter_audio_files(entry)
-                        elif entry.is_file() and entry.suffix.lower() in SUPPORTED_AUDIO_EXTENSIONS:
+                        elif (
+                            entry.is_file()
+                            and entry.suffix.lower() in SUPPORTED_AUDIO_EXTENSIONS
+                        ):
                             yield entry
                     except PermissionError:
                         logger.warning(f"Permission denied, skipping: {entry}")
@@ -159,11 +193,15 @@ class LocalServerProvider(PluginBase):
 
         # Collect all valid files first using the safe generator
         files = list(_iter_audio_files(library_dir))
-        logger.info(f"Local crawler discovered {len(files)} audio files under {library_dir}")
-        
+        logger.info(
+            f"Local crawler discovered {len(files)} audio files under {library_dir}"
+        )
+
         # Process concurrently
         with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
-            future_to_path = {executor.submit(process_file, path): path for path in files}
+            future_to_path = {
+                executor.submit(process_file, path): path for path in files
+            }
             for future in concurrent.futures.as_completed(future_to_path):
                 path = future_to_path[future]
                 try:
@@ -179,28 +217,34 @@ class LocalServerProvider(PluginBase):
         All characters including '/' are percent-encoded so the value is
         unambiguous as a query parameter and safe through reverse proxies.
         """
-        encoded_path = urllib.parse.quote(track_id_or_path, safe='')
+        encoded_path = urllib.parse.quote(track_id_or_path, safe="")
         return f"/api/local_server/stream?path={encoded_path}"
 
     def authenticate(self, **kwargs) -> bool:
         return True
 
-    def search(self, query: str, type: str = "track", limit: int = 10, quality_profile: Optional[Dict[str, Any]] = None) -> List[EchosyncTrack]:
+    def search(
+        self,
+        query: str,
+        type: str = "track",
+        limit: int = 10,
+        quality_profile: dict[str, Any] | None = None,
+    ) -> list[EchosyncTrack]:
         return []
 
-    def get_track(self, track_id: str) -> Optional[EchosyncTrack]:
+    def get_track(self, track_id: str) -> EchosyncTrack | None:
         return None
 
-    def get_album(self, album_id: str) -> Optional[Dict[str, Any]]:
+    def get_album(self, album_id: str) -> dict[str, Any] | None:
         return None
 
-    def get_artist(self, artist_id: str) -> Optional[Dict[str, Any]]:
+    def get_artist(self, artist_id: str) -> dict[str, Any] | None:
         return None
 
-    def get_user_playlists(self, user_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    def get_user_playlists(self, user_id: str | None = None) -> list[dict[str, Any]]:
         return []
 
-    def get_playlist_tracks(self, playlist_id: str) -> List[EchosyncTrack]:
+    def get_playlist_tracks(self, playlist_id: str) -> list[EchosyncTrack]:
         return []
 
     def is_configured(self) -> bool:

@@ -5,10 +5,9 @@ Handles dynamic user-defined library path interpolation, filename token expansio
 filesystem character sanitization, version injection, and configuration resolution from config.db.
 """
 
-import os
 import re
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any
 
 DEFAULT_LIBRARY_ROOT = "/data/library"
 DEFAULT_RENAMING_PATTERN = "{Artist}/{Album}/{Track} - {Title}.{ext}"
@@ -34,20 +33,8 @@ def get_singles_pattern() -> str:
     """Query active singles path pattern preference."""
     try:
         from database.config_database import get_config_database
+
         db = get_config_database()
-        with db._get_connection() as conn:
-            c = conn.cursor()
-            c.execute("SELECT value FROM system_settings WHERE key = 'library_import.singles_pattern'")
-            row = c.fetchone()
-            if row and row[0]:
-                val = row[0]
-                if isinstance(val, str) and val.startswith('"') and val.endswith('"'):
-                    import json
-                    try:
-                        val = json.loads(val)
-                    except Exception:
-                        pass
-                return str(val)
         val = db.get_system_setting("library_import.singles_pattern")
         if val:
             return str(val)
@@ -56,6 +43,7 @@ def get_singles_pattern() -> str:
 
     try:
         from core.settings import config_manager
+
         val = config_manager.get("library_import.singles_pattern")
         if val:
             return str(val)
@@ -69,15 +57,11 @@ def get_prefer_canonical_studio_album() -> bool:
     """Query preference for realigning compilation tracks to canonical studio albums."""
     try:
         from database.config_database import get_config_database
+
         db = get_config_database()
-        with db._get_connection() as conn:
-            c = conn.cursor()
-            c.execute("SELECT value FROM system_settings WHERE key = 'metadata_enhancement.prefer_canonical_studio_album'")
-            row = c.fetchone()
-            if row and row[0]:
-                val = str(row[0]).strip().lower()
-                return val in ("1", "true", "yes", "on")
-        val = db.get_system_setting("metadata_enhancement.prefer_canonical_studio_album")
+        val = db.get_system_setting(
+            "metadata_enhancement.prefer_canonical_studio_album"
+        )
         if val is not None:
             if isinstance(val, bool):
                 return val
@@ -87,6 +71,7 @@ def get_prefer_canonical_studio_album() -> bool:
 
     try:
         from core.settings import config_manager
+
         val = config_manager.get("metadata_enhancement.prefer_canonical_studio_album")
         if val is not None:
             if isinstance(val, bool):
@@ -98,7 +83,7 @@ def get_prefer_canonical_studio_album() -> bool:
     return True
 
 
-def get_library_preferences() -> Tuple[str, str]:
+def get_library_preferences() -> tuple[str, str]:
     """
     Query active library root and renaming pattern preferences.
     Priority:
@@ -112,35 +97,14 @@ def get_library_preferences() -> Tuple[str, str]:
        - library_root: /data/library
        - renaming_pattern: {Artist}/{Album}/{Track} - {Title}.{ext}
     """
-    library_root: Optional[str] = None
-    renaming_pattern: Optional[str] = None
+    library_root: str | None = None
+    renaming_pattern: str | None = None
 
     # Step 1: Try reading from config.db (system_settings)
     try:
         from database.config_database import get_config_database
+
         db = get_config_database()
-        with db._get_connection() as conn:
-            c = conn.cursor()
-            c.execute("SELECT key, value FROM system_settings WHERE key IN ('storage_locations.library', 'library_import.renaming_pattern')")
-            rows = dict(c.fetchall())
-            if rows.get("storage_locations.library"):
-                val = rows["storage_locations.library"]
-                if isinstance(val, str) and val.startswith('"') and val.endswith('"'):
-                    import json
-                    try:
-                        val = json.loads(val)
-                    except Exception:
-                        pass
-                library_root = str(val)
-            if rows.get("library_import.renaming_pattern"):
-                val = rows["library_import.renaming_pattern"]
-                if isinstance(val, str) and val.startswith('"') and val.endswith('"'):
-                    import json
-                    try:
-                        val = json.loads(val)
-                    except Exception:
-                        pass
-                renaming_pattern = str(val)
         lib_val = db.get_system_setting("storage_locations.library")
         if lib_val:
             library_root = str(lib_val)
@@ -153,16 +117,15 @@ def get_library_preferences() -> Tuple[str, str]:
     # Step 2: Fallback to config_manager
     try:
         from core.settings import config_manager
+
         if not library_root:
-            library_root = (
-                config_manager.get("storage_locations.library")
-                or config_manager.get("storage.library_dir")
-            )
+            library_root = config_manager.get(
+                "storage_locations.library"
+            ) or config_manager.get("storage.library_dir")
         if not renaming_pattern:
-            renaming_pattern = (
-                config_manager.get("library_import.renaming_pattern")
-                or config_manager.get("metadata_enhancement.naming_template")
-            )
+            renaming_pattern = config_manager.get(
+                "library_import.renaming_pattern"
+            ) or config_manager.get("metadata_enhancement.naming_template")
     except Exception:
         pass
 
@@ -175,9 +138,14 @@ def get_library_preferences() -> Tuple[str, str]:
     return str(library_root), str(renaming_pattern)
 
 
-def extract_year_token(meta: Dict[str, Any]) -> str:
+def extract_year_token(meta: dict[str, Any]) -> str:
     """Extract 4-digit release year from metadata."""
-    raw_year = meta.get("year") or meta.get("release_year") or meta.get("date") or meta.get("release_date")
+    raw_year = (
+        meta.get("year")
+        or meta.get("release_year")
+        or meta.get("date")
+        or meta.get("release_date")
+    )
     if not raw_year:
         return ""
     m = re.search(r"\b(19\d\d|20\d\d)\b", str(raw_year))
@@ -187,7 +155,7 @@ def extract_year_token(meta: Dict[str, Any]) -> str:
     return s[:4] if len(s) >= 4 and s[:4].isdigit() else s
 
 
-def extract_track_token(meta: Dict[str, Any]) -> str:
+def extract_track_token(meta: dict[str, Any]) -> str:
     """Extract zero-padded track number, or empty string if absent."""
     raw_track = meta.get("track_number") or meta.get("track_no") or meta.get("track")
     if raw_track is None:
@@ -205,9 +173,9 @@ def extract_track_token(meta: Dict[str, Any]) -> str:
 def build_destination_path(
     base_library_path: str,
     pattern: str,
-    meta: Dict[str, Any],
+    meta: dict[str, Any],
     ext: str,
-    singles_pattern: Optional[str] = None
+    singles_pattern: str | None = None,
 ) -> Path:
     """
     Interpolate dynamic tokens into destination library path.
@@ -232,14 +200,15 @@ def build_destination_path(
     is_single = (
         meta.get("release_type") in ("single", "standalone")
         or bool(meta.get("is_single"))
-        or raw_album_lower in (
+        or raw_album_lower
+        in (
             "[standalone recordings]",
             "[non-album tracks]",
             "standalone recordings",
             "non-album tracks",
             "unknown album",
             "singles",
-            ""
+            "",
         )
     )
 
@@ -284,7 +253,7 @@ def build_destination_path(
         Track=track_num,
         Year=year,
         Format=ext_clean,
-        ext=ext_clean
+        ext=ext_clean,
     )
 
     segments = re.split(r"[\\/]+", rel_path_str.strip("\\/"))

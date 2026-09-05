@@ -1,7 +1,9 @@
-import pytest
-import asyncio
 from unittest.mock import MagicMock, patch
+
+import pytest
+
 from web.services.search_service import SearchAdapter
+
 
 @pytest.mark.asyncio
 async def test_federated_discovery_filtering():
@@ -9,7 +11,9 @@ async def test_federated_discovery_filtering():
     # Create mock providers
     spotify_provider = MagicMock()
     spotify_provider.name = "spotify"
-    spotify_provider.search.return_value = [{"title": "Track 1", "artist": "Artist 1", "identifiers": {"spotify_id": "123"}}]
+    spotify_provider.search.return_value = [
+        {"title": "Track 1", "artist": "Artist 1", "identifiers": {"spotify_id": "123"}}
+    ]
 
     tidal_provider = MagicMock()
     tidal_provider.name = "tidal"
@@ -20,10 +24,23 @@ async def test_federated_discovery_filtering():
     mock_caps.search.tracks = True
 
     # Setup mocks for PluginRegistry and capabilities
-    with patch("web.services.search_service.PluginRegistry.list_plugins", return_value=[123, 456]), \
-         patch("web.services.search_service.PluginRegistry.create_instance") as mock_create, \
-         patch("web.services.search_service.get_plugin_capabilities", return_value=mock_caps), \
-         patch("web.services.search_service.get_local_track_details", return_value=(False, None)):
+    with (
+        patch(
+            "web.services.search_service.PluginRegistry.list_plugins",
+            return_value=[123, 456],
+        ),
+        patch(
+            "web.services.search_service.PluginRegistry.create_instance"
+        ) as mock_create,
+        patch(
+            "web.services.search_service.get_plugin_capabilities",
+            return_value=mock_caps,
+        ),
+        patch(
+            "web.services.search_service.get_local_track_details",
+            return_value=(False, None),
+        ),
+    ):
 
         def side_effect(plugin_id, *args, **kwargs):
             if plugin_id == 123:
@@ -31,14 +48,14 @@ async def test_federated_discovery_filtering():
             elif plugin_id == 456:
                 return tidal_provider
             return None
-        
+
         mock_create.side_effect = side_effect
 
         adapter = SearchAdapter()
 
         # 1. Search with only "spotify" enabled
         results = await adapter.federated_discovery("test", enabled_plugins=["spotify"])
-        
+
         # Verify only spotify was searched
         spotify_provider.search.assert_called_once_with("test", "track", 20)
         tidal_provider.search.assert_not_called()
@@ -64,25 +81,42 @@ def test_aggregate_filtering_and_serialization():
     """Verify that SearchAdapter.aggregate supports plugin_names and search_types and serializes correctly."""
     spotify_provider = MagicMock()
     spotify_provider.name = "spotify"
-    spotify_provider.search.return_value = [{"title": "Spotify Track", "artist": "Artist S", "identifiers": {"spotify_id": "456"}}]
+    spotify_provider.search.return_value = [
+        {
+            "title": "Spotify Track",
+            "artist": "Artist S",
+            "identifiers": {"spotify_id": "456"},
+        }
+    ]
 
     # Mock capabilities
     mock_caps = MagicMock()
     mock_caps.search.tracks = True
     mock_caps.search.artists = False
 
-    with patch("web.services.search_service.PluginRegistry.list_plugins", return_value=[123]), \
-         patch("web.services.search_service.PluginRegistry.create_instance", return_value=spotify_provider), \
-         patch("web.services.search_service.get_plugin_capabilities", return_value=mock_caps), \
-         patch("web.services.search_service.get_local_track_details", return_value=(True, 789)):
-
+    with (
+        patch(
+            "web.services.search_service.PluginRegistry.list_plugins",
+            return_value=[123],
+        ),
+        patch(
+            "web.services.search_service.PluginRegistry.create_instance",
+            return_value=spotify_provider,
+        ),
+        patch(
+            "web.services.search_service.get_plugin_capabilities",
+            return_value=mock_caps,
+        ),
+        patch(
+            "web.services.search_service.get_local_track_details",
+            return_value=(True, 789),
+        ),
+    ):
         adapter = SearchAdapter()
 
         # Aggregate tracks
         results = adapter.aggregate(
-            query="test",
-            plugin_names=["spotify"],
-            search_types=["tracks"]
+            query="test", plugin_names=["spotify"], search_types=["tracks"]
         )
 
         spotify_provider.search.assert_called_once_with("test", type="track", limit=10)
@@ -100,25 +134,45 @@ def test_aggregate_stream_generatorexit():
     """Verify that aggregate_stream catches GeneratorExit and returns cleanly."""
     spotify_provider = MagicMock()
     spotify_provider.name = "spotify"
-    spotify_provider.search.return_value = [{"title": "Spotify Track", "artist": "Artist S", "identifiers": {"spotify_id": "456"}}]
+    spotify_provider.search.return_value = [
+        {
+            "title": "Spotify Track",
+            "artist": "Artist S",
+            "identifiers": {"spotify_id": "456"},
+        }
+    ]
 
     mock_caps = MagicMock()
     mock_caps.search.tracks = True
 
-    with patch("web.services.search_service.PluginRegistry.list_plugins", return_value=[123]), \
-         patch("web.services.search_service.PluginRegistry.create_instance", return_value=spotify_provider), \
-         patch("web.services.search_service.get_plugin_capabilities", return_value=mock_caps), \
-         patch("web.services.search_service.get_local_track_details", return_value=(False, None)):
-
+    with (
+        patch(
+            "web.services.search_service.PluginRegistry.list_plugins",
+            return_value=[123],
+        ),
+        patch(
+            "web.services.search_service.PluginRegistry.create_instance",
+            return_value=spotify_provider,
+        ),
+        patch(
+            "web.services.search_service.get_plugin_capabilities",
+            return_value=mock_caps,
+        ),
+        patch(
+            "web.services.search_service.get_local_track_details",
+            return_value=(False, None),
+        ),
+    ):
         adapter = SearchAdapter()
-        gen = adapter.aggregate_stream("test", plugin_names=["spotify"], search_types=["tracks"])
-        
+        gen = adapter.aggregate_stream(
+            "test", plugin_names=["spotify"], search_types=["tracks"]
+        )
+
         # Start the generator
         try:
             next(gen)
         except StopIteration:
             pass
-        
+
         # Close the generator prematurely, which should not raise RuntimeError or other errors
         gen.close()
-

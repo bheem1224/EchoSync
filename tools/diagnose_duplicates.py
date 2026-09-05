@@ -9,10 +9,10 @@ If no path is given it defaults to data/music_library.db.
 """
 
 import os
-import sys
 import sqlite3
-from pathlib import Path
+import sys
 from collections import defaultdict
+from pathlib import Path
 
 
 def main():
@@ -24,7 +24,7 @@ def main():
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
 
-    print(f"=== EchoSync Library Diagnostic ===")
+    print("=== EchoSync Library Diagnostic ===")
     print(f"Database: {os.path.abspath(db_path)}")
     print()
 
@@ -41,7 +41,7 @@ def main():
     cur.execute("SELECT COUNT(*) FROM artists")
     total_artists = cur.fetchone()[0]
 
-    print(f"[Counts]")
+    print("[Counts]")
     print(f"  Tracks:       {total_tracks}")
     print(f"  LocalMedia:   {total_media}")
     print(f"  Albums:       {total_albums}")
@@ -49,9 +49,11 @@ def main():
     print()
 
     # --- 2. Distinct file paths vs total ---
-    cur.execute("SELECT COUNT(DISTINCT file_path) FROM local_media WHERE file_path IS NOT NULL AND file_path != ''")
+    cur.execute(
+        "SELECT COUNT(DISTINCT file_path) FROM local_media WHERE file_path IS NOT NULL AND file_path != ''"
+    )
     distinct_paths = cur.fetchone()[0]
-    print(f"[File Path Analysis]")
+    print("[File Path Analysis]")
     print(f"  Total LocalMedia rows:    {total_media}")
     print(f"  Distinct file_path values: {distinct_paths}")
     print(f"  Duplicate path rows:       {total_media - distinct_paths}")
@@ -60,10 +62,12 @@ def main():
     # --- 3. Virtual vs real media ---
     cur.execute("SELECT COUNT(*) FROM local_media WHERE file_path LIKE 'virtual://%'")
     virtual_count = cur.fetchone()[0]
-    cur.execute("SELECT COUNT(*) FROM local_media WHERE file_path IS NULL OR file_path = ''")
+    cur.execute(
+        "SELECT COUNT(*) FROM local_media WHERE file_path IS NULL OR file_path = ''"
+    )
     null_count = cur.fetchone()[0]
     real_count = total_media - virtual_count - null_count
-    print(f"[Media Types]")
+    print("[Media Types]")
     print(f"  Real file paths:   {real_count}")
     print(f"  Virtual paths:     {virtual_count}")
     print(f"  NULL/empty paths:  {null_count}")
@@ -77,27 +81,33 @@ def main():
         HAVING cnt > 1
     """)
     multi_media_tracks = cur.fetchall()
-    print(f"[Tracks with Multiple LocalMedia Rows]")
+    print("[Tracks with Multiple LocalMedia Rows]")
     print(f"  Tracks with >1 media row: {len(multi_media_tracks)}")
     if multi_media_tracks:
         # Show top 10 worst offenders
         multi_media_tracks.sort(key=lambda x: x[1], reverse=True)
-        print(f"  Top offenders (track_id, media_count):")
+        print("  Top offenders (track_id, media_count):")
         for track_id, cnt in multi_media_tracks[:10]:
-            cur.execute("""
+            cur.execute(
+                """
                 SELECT t.title, a.name
                 FROM tracks t
                 JOIN artists a ON t.artist_id = a.id
                 WHERE t.id = ?
-            """, (track_id,))
+            """,
+                (track_id,),
+            )
             row = cur.fetchone()
             name = f"'{row[0]}' by '{row[1]}'" if row else f"track_id={track_id}"
             print(f"    {name}: {cnt} media rows")
 
             # Show the paths
-            cur.execute("SELECT file_path, file_size_bytes FROM local_media WHERE track_id = ?", (track_id,))
+            cur.execute(
+                "SELECT file_path, file_size_bytes FROM local_media WHERE track_id = ?",
+                (track_id,),
+            )
             for fp, sz in cur.fetchall():
-                sz_str = f"{sz / (1024*1024):.1f} MB" if sz else "NULL"
+                sz_str = f"{sz / (1024 * 1024):.1f} MB" if sz else "NULL"
                 print(f"      -> {fp}  ({sz_str})")
     print()
 
@@ -131,11 +141,13 @@ def main():
     def fmt_gb(b):
         return f"{b / (1024**3):.1f} GB"
 
-    print(f"[Storage Analysis]")
+    print("[Storage Analysis]")
     print(f"  Raw SUM(file_size_bytes):                {fmt_gb(total_storage_raw)}")
     print(f"  Excluding virtual paths:                 {fmt_gb(total_storage_real)}")
     print(f"  Deduplicated (distinct file_path only):  {fmt_gb(total_storage_deduped)}")
-    print(f"  Inflation from duplicates:               {fmt_gb(total_storage_raw - total_storage_deduped)}")
+    print(
+        f"  Inflation from duplicates:               {fmt_gb(total_storage_raw - total_storage_deduped)}"
+    )
     print()
 
     # --- 6. File count analysis ---
@@ -151,7 +163,7 @@ def main():
         )
     """)
     deduped_file_count = cur.fetchone()[0]
-    print(f"[File Count Analysis]")
+    print("[File Count Analysis]")
     print(f"  count_files() would report:  {total_media}")
     print(f"  Real, deduplicated files:    {deduped_file_count}")
     print(f"  Phantom file rows:           {total_media - deduped_file_count}")
@@ -173,7 +185,7 @@ def main():
         prefix = "/".join(parts) if parts else p
         prefix_counts[prefix] += 1
 
-    print(f"[Path Prefix Distribution (top 10)]")
+    print("[Path Prefix Distribution (top 10)]")
     for prefix, cnt in sorted(prefix_counts.items(), key=lambda x: -x[1])[:10]:
         print(f"  {prefix}: {cnt} files")
     print()
@@ -184,7 +196,7 @@ def main():
         WHERE NOT EXISTS (SELECT 1 FROM local_media lm WHERE lm.track_id = t.id)
     """)
     orphan_tracks = cur.fetchone()[0]
-    print(f"[Orphan Analysis]")
+    print("[Orphan Analysis]")
     print(f"  Tracks with zero LocalMedia rows: {orphan_tracks}")
 
     # Albums with no tracks
@@ -205,10 +217,14 @@ def main():
     print()
 
     # --- Summary ---
-    print(f"=== SUMMARY ===")
+    print("=== SUMMARY ===")
     print(f"Your UI shows {total_media} files using {fmt_gb(total_storage_raw)}.")
-    print(f"After deduplication, the real numbers are {deduped_file_count} files using {fmt_gb(total_storage_deduped)}.")
-    print(f"That's {total_media - deduped_file_count} phantom file rows inflating storage by {fmt_gb(total_storage_raw - total_storage_deduped)}.")
+    print(
+        f"After deduplication, the real numbers are {deduped_file_count} files using {fmt_gb(total_storage_deduped)}."
+    )
+    print(
+        f"That's {total_media - deduped_file_count} phantom file rows inflating storage by {fmt_gb(total_storage_raw - total_storage_deduped)}."
+    )
 
     conn.close()
 

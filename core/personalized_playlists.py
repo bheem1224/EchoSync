@@ -5,13 +5,13 @@ Personalized Playlists Service - Creates Spotify-quality personalized playlists
 from user's library and discovery pool with pluggable algorithms
 """
 
-from typing import List, Dict, Any, Optional, Tuple, Protocol
-from datetime import datetime, timedelta, timezone
-from collections import Counter
-from abc import ABC, abstractmethod
-from dataclasses import dataclass
-import random
 import json
+import random
+from abc import ABC, abstractmethod
+from collections import Counter
+from datetime import UTC, datetime
+from typing import Any
+
 from core.tiered_logger import get_logger
 
 logger = get_logger("personalized_playlists")
@@ -21,94 +21,92 @@ logger = get_logger("personalized_playlists")
 # ALGORITHM PLUGIN SYSTEM
 # ========================================
 
+
 class PlaylistAlgorithm(ABC):
     """
     Base class for playlist generation algorithms.
-    
+
     Algorithms can be provided by:
     - Core system (built-in)
     - Providers (via provider flags/tags)
     - External plugins
     """
-    
+
     @abstractmethod
     def generate(
-        self, 
-        library_tracks: List[Dict[str, Any]], 
-        discovery_pool: List[Dict[str, Any]],
+        self,
+        library_tracks: list[dict[str, Any]],
+        discovery_pool: list[dict[str, Any]],
         limit: int = 50,
-        **kwargs
-    ) -> List[Dict[str, Any]]:
+        **kwargs,
+    ) -> list[dict[str, Any]]:
         """
         Generate a playlist from available tracks.
-        
+
         Args:
             library_tracks: User's library tracks
             discovery_pool: Tracks from discovery pool
             limit: Maximum number of tracks to return
             **kwargs: Algorithm-specific parameters
-            
+
         Returns:
             List of track dictionaries in standard format
         """
-        pass
-    
+
     @property
     @abstractmethod
     def algorithm_id(self) -> str:
         """Unique identifier for this algorithm"""
-        pass
-    
+
     @property
     @abstractmethod
     def display_name(self) -> str:
         """Human-readable name for UI"""
-        pass
-    
+
     @property
     def description(self) -> str:
         """Description of what this algorithm does"""
         return ""
-    
+
     @property
     def requires_spotify(self) -> bool:
         """Whether this algorithm requires Spotify client"""
         return False
-    
+
     @property
-    def config_schema(self) -> Dict[str, Any]:
+    def config_schema(self) -> dict[str, Any]:
         """JSON schema for algorithm-specific configuration"""
         return {}
 
 
 class DefaultPlaylistAlgorithm(PlaylistAlgorithm):
     """Default algorithm - returns discovery pool as-is with optional shuffling"""
-    
+
     @property
     def algorithm_id(self) -> str:
         return "default"
-    
+
     @property
     def display_name(self) -> str:
         return "Default"
-    
+
     @property
     def description(self) -> str:
         return "Returns tracks from discovery pool with optional shuffling"
-    
+
     def generate(
-        self, 
-        library_tracks: List[Dict[str, Any]], 
-        discovery_pool: List[Dict[str, Any]],
+        self,
+        library_tracks: list[dict[str, Any]],
+        discovery_pool: list[dict[str, Any]],
         limit: int = 50,
-        **kwargs
-    ) -> List[Dict[str, Any]]:
+        **kwargs,
+    ) -> list[dict[str, Any]]:
         """Return discovery pool tracks, optionally shuffled"""
         tracks = discovery_pool.copy()
-        
-        if kwargs.get('shuffle', True):
+
+        if kwargs.get("shuffle", True):
             random.shuffle(tracks)
-        
+
         return tracks[:limit]
 
 
@@ -117,18 +115,38 @@ SEASONAL_CONFIG = {
     "halloween": {
         "name": "Halloween Hits",
         "description": "Spooky albums and tracks for Halloween",
-        "keywords": ["halloween", "spooky", "horror", "monster", "witch", "zombie", "ghost", "haunted", "scary"],
+        "keywords": [
+            "halloween",
+            "spooky",
+            "horror",
+            "monster",
+            "witch",
+            "zombie",
+            "ghost",
+            "haunted",
+            "scary",
+        ],
         "active_months": [10],  # October
         "playlist_size": 50,
-        "icon": "🎃"
+        "icon": "🎃",
     },
     "christmas": {
         "name": "Christmas Classics",
         "description": "Holiday music and Christmas favorites",
-        "keywords": ["christmas", "xmas", "holiday", "santa", "jingle", "winter wonderland", "sleigh", "noel", "carol"],
+        "keywords": [
+            "christmas",
+            "xmas",
+            "holiday",
+            "santa",
+            "jingle",
+            "winter wonderland",
+            "sleigh",
+            "noel",
+            "carol",
+        ],
         "active_months": [11, 12],  # November-December
         "playlist_size": 50,
-        "icon": "🎄"
+        "icon": "🎄",
     },
     "valentines": {
         "name": "Love Songs",
@@ -136,15 +154,23 @@ SEASONAL_CONFIG = {
         "keywords": ["love", "valentine", "romance", "heart", "romantic", "darling"],
         "active_months": [2],  # February
         "playlist_size": 50,
-        "icon": "❤️"
+        "icon": "❤️",
     },
     "summer": {
         "name": "Summer Vibes",
         "description": "Hot tracks for summer days",
-        "keywords": ["summer", "beach", "sun", "vacation", "tropical", "poolside", "sunshine"],
+        "keywords": [
+            "summer",
+            "beach",
+            "sun",
+            "vacation",
+            "tropical",
+            "poolside",
+            "sunshine",
+        ],
         "active_months": [6, 7, 8],  # June-August
         "playlist_size": 50,
-        "icon": "☀️"
+        "icon": "☀️",
     },
     "spring": {
         "name": "Spring Awakening",
@@ -152,7 +178,7 @@ SEASONAL_CONFIG = {
         "keywords": ["spring", "bloom", "fresh", "renewal", "garden", "flower"],
         "active_months": [3, 4, 5],  # March-May
         "playlist_size": 50,
-        "icon": "🌸"
+        "icon": "🌸",
     },
     "autumn": {
         "name": "Autumn Sounds",
@@ -160,99 +186,110 @@ SEASONAL_CONFIG = {
         "keywords": ["fall", "autumn", "harvest", "leaves", "cozy", "pumpkin"],
         "active_months": [9, 10, 11],  # September-November (overlaps with Halloween)
         "playlist_size": 50,
-        "icon": "🍂"
-    }
+        "icon": "🍂",
+    },
 }
 
 
 class SeasonalPlaylistAlgorithm(PlaylistAlgorithm):
     """Algorithm that generates seasonal/holiday-themed playlists"""
-    
+
     def __init__(self, database, spotify_client=None):
         self.database = database
         self.spotify_client = spotify_client
-    
+
     @property
     def algorithm_id(self) -> str:
         return "seasonal"
-    
+
     @property
     def display_name(self) -> str:
         return "Seasonal"
-    
+
     @property
     def description(self) -> str:
         return "Generates playlists based on current season or holiday"
-    
+
     @property
     def requires_spotify(self) -> bool:
         return True
-    
+
     @property
-    def config_schema(self) -> Dict[str, Any]:
+    def config_schema(self) -> dict[str, Any]:
         return {
             "season_key": {
                 "type": "string",
                 "enum": list(SEASONAL_CONFIG.keys()),
-                "description": "Specific season to generate (auto-detects if not specified)"
+                "description": "Specific season to generate (auto-detects if not specified)",
             }
         }
-    
-    def get_current_season(self) -> Optional[str]:
+
+    def get_current_season(self) -> str | None:
         """Detect current season based on current month"""
-        current_month = datetime.now(timezone.utc).month
-        
+        current_month = datetime.now(UTC).month
+
         # Check each season to find active ones
         active_seasons = []
         for season_key, config in SEASONAL_CONFIG.items():
-            if current_month in config['active_months']:
+            if current_month in config["active_months"]:
                 active_seasons.append(season_key)
-        
+
         if not active_seasons:
             return None
-        
+
         # Prioritize specific holidays over general seasons
-        priority_order = ['halloween', 'christmas', 'valentines', 'summer', 'spring', 'autumn']
+        priority_order = [
+            "halloween",
+            "christmas",
+            "valentines",
+            "summer",
+            "spring",
+            "autumn",
+        ]
         for priority_season in priority_order:
             if priority_season in active_seasons:
                 return priority_season
-        
+
         return active_seasons[0] if active_seasons else None
-    
+
     def generate(
-        self, 
-        library_tracks: List[Dict[str, Any]], 
-        discovery_pool: List[Dict[str, Any]],
+        self,
+        library_tracks: list[dict[str, Any]],
+        discovery_pool: list[dict[str, Any]],
         limit: int = 50,
-        **kwargs
-    ) -> List[Dict[str, Any]]:
+        **kwargs,
+    ) -> list[dict[str, Any]]:
         """Generate seasonal playlist"""
-        season_key = kwargs.get('season_key') or self.get_current_season()
-        
+        season_key = kwargs.get("season_key") or self.get_current_season()
+
         if not season_key:
             logger.warning("No active season detected")
             return []
-        
+
         config = SEASONAL_CONFIG.get(season_key)
         if not config:
             logger.error(f"Invalid season key: {season_key}")
             return []
-        
-        keywords = config['keywords']
-        
+
+        keywords = config["keywords"]
+
         # Search discovery pool for seasonal tracks
         matching_tracks = []
         for track in discovery_pool:
-            track_text = f"{track.get('track_name', '')} {track.get('album_name', '')}".lower()
+            track_text = (
+                f"{track.get('track_name', '')} {track.get('album_name', '')}".lower()
+            )
             if any(keyword in track_text for keyword in keywords):
                 matching_tracks.append(track)
-        
+
         # Search library tracks too
         for track in library_tracks:
-            track_text = f"{track.get('track_name', '')} {track.get('album_name', '')}".lower()
+            track_text = (
+                f"{track.get('track_name', '')} {track.get('album_name', '')}".lower()
+            )
             if any(keyword in track_text for keyword in keywords):
                 matching_tracks.append(track)
-        
+
         # Shuffle and limit
         random.shuffle(matching_tracks)
         return matching_tracks[:limit]
@@ -278,7 +315,9 @@ def is_track_in_media_server_playlist(
     Returns ``False`` immediately if no ExternalIdentifier is found (the track has
     never been synced to this plugin, so it cannot appear in any server playlist).
     """
-    from database.working_database import MediaServerPlaylistItem  # late import — avoids circular
+    from database.working_database import (
+        MediaServerPlaylistItem,  # late import — avoids circular
+    )
 
     plugin_item_id = music_db.get_external_identifier(plugin, track_db_id)
     if not plugin_item_id:
@@ -300,220 +339,422 @@ class PersonalizedPlaylistsService:
 
     # Genre consolidation mapping - maps specific Spotify genres to broad parent categories
     GENRE_MAPPING = {
-        'Electronic/Dance': [
-            'house', 'techno', 'trance', 'edm', 'electro', 'dubstep', 'drum and bass',
-            'breakbeat', 'jungle', 'dnb', 'bass', 'garage', 'uk garage', 'future bass',
-            'trap', 'hardstyle', 'hardcore', 'rave', 'dance', 'electronic', 'electronica',
-            'synth', 'downtempo', 'chillwave', 'vaporwave', 'synthwave', 'idm', 'glitch'
+        "Electronic/Dance": [
+            "house",
+            "techno",
+            "trance",
+            "edm",
+            "electro",
+            "dubstep",
+            "drum and bass",
+            "breakbeat",
+            "jungle",
+            "dnb",
+            "bass",
+            "garage",
+            "uk garage",
+            "future bass",
+            "trap",
+            "hardstyle",
+            "hardcore",
+            "rave",
+            "dance",
+            "electronic",
+            "electronica",
+            "synth",
+            "downtempo",
+            "chillwave",
+            "vaporwave",
+            "synthwave",
+            "idm",
+            "glitch",
         ],
-        'Hip Hop/Rap': [
-            'hip hop', 'rap', 'trap', 'drill', 'grime', 'boom bap', 'underground hip hop',
-            'conscious hip hop', 'gangsta rap', 'southern hip hop', 'east coast', 'west coast',
-            'crunk', 'hyphy', 'cloud rap', 'emo rap', 'mumble rap'
+        "Hip Hop/Rap": [
+            "hip hop",
+            "rap",
+            "trap",
+            "drill",
+            "grime",
+            "boom bap",
+            "underground hip hop",
+            "conscious hip hop",
+            "gangsta rap",
+            "southern hip hop",
+            "east coast",
+            "west coast",
+            "crunk",
+            "hyphy",
+            "cloud rap",
+            "emo rap",
+            "mumble rap",
         ],
-        'Rock': [
-            'rock', 'alternative rock', 'indie rock', 'garage rock', 'post-punk', 'punk',
-            'hard rock', 'psychedelic rock', 'progressive rock', 'art rock', 'glam rock',
-            'blues rock', 'southern rock', 'surf rock', 'rockabilly', 'grunge', 'shoegaze',
-            'noise rock', 'post-rock', 'math rock', 'emo', 'screamo'
+        "Rock": [
+            "rock",
+            "alternative rock",
+            "indie rock",
+            "garage rock",
+            "post-punk",
+            "punk",
+            "hard rock",
+            "psychedelic rock",
+            "progressive rock",
+            "art rock",
+            "glam rock",
+            "blues rock",
+            "southern rock",
+            "surf rock",
+            "rockabilly",
+            "grunge",
+            "shoegaze",
+            "noise rock",
+            "post-rock",
+            "math rock",
+            "emo",
+            "screamo",
         ],
-        'Pop': [
-            'pop', 'dance pop', 'electropop', 'synth pop', 'indie pop', 'chamber pop',
-            'art pop', 'baroque pop', 'dream pop', 'power pop', 'bubblegum pop', 'k-pop',
-            'j-pop', 'hyperpop', 'pop rock', 'teen pop'
+        "Pop": [
+            "pop",
+            "dance pop",
+            "electropop",
+            "synth pop",
+            "indie pop",
+            "chamber pop",
+            "art pop",
+            "baroque pop",
+            "dream pop",
+            "power pop",
+            "bubblegum pop",
+            "k-pop",
+            "j-pop",
+            "hyperpop",
+            "pop rock",
+            "teen pop",
         ],
-        'R&B/Soul': [
-            'r&b', 'soul', 'neo soul', 'contemporary r&b', 'alternative r&b', 'funk',
-            'disco', 'motown', 'northern soul', 'quiet storm', 'new jack swing'
+        "R&B/Soul": [
+            "r&b",
+            "soul",
+            "neo soul",
+            "contemporary r&b",
+            "alternative r&b",
+            "funk",
+            "disco",
+            "motown",
+            "northern soul",
+            "quiet storm",
+            "new jack swing",
         ],
-        'Jazz': [
-            'jazz', 'bebop', 'cool jazz', 'hard bop', 'modal jazz', 'free jazz',
-            'fusion', 'jazz fusion', 'smooth jazz', 'contemporary jazz', 'latin jazz',
-            'afro-cuban jazz', 'swing', 'big band', 'ragtime', 'dixieland'
+        "Jazz": [
+            "jazz",
+            "bebop",
+            "cool jazz",
+            "hard bop",
+            "modal jazz",
+            "free jazz",
+            "fusion",
+            "jazz fusion",
+            "smooth jazz",
+            "contemporary jazz",
+            "latin jazz",
+            "afro-cuban jazz",
+            "swing",
+            "big band",
+            "ragtime",
+            "dixieland",
         ],
-        'Classical': [
-            'classical', 'baroque', 'romantic', 'contemporary classical', 'minimalism',
-            'opera', 'orchestral', 'chamber music', 'choral', 'renaissance', 'medieval'
+        "Classical": [
+            "classical",
+            "baroque",
+            "romantic",
+            "contemporary classical",
+            "minimalism",
+            "opera",
+            "orchestral",
+            "chamber music",
+            "choral",
+            "renaissance",
+            "medieval",
         ],
-        'Metal': [
-            'metal', 'heavy metal', 'thrash metal', 'death metal', 'black metal',
-            'doom metal', 'power metal', 'progressive metal', 'metalcore', 'deathcore',
-            'djent', 'nu metal', 'industrial metal', 'symphonic metal', 'gothic metal'
+        "Metal": [
+            "metal",
+            "heavy metal",
+            "thrash metal",
+            "death metal",
+            "black metal",
+            "doom metal",
+            "power metal",
+            "progressive metal",
+            "metalcore",
+            "deathcore",
+            "djent",
+            "nu metal",
+            "industrial metal",
+            "symphonic metal",
+            "gothic metal",
         ],
-        'Country': [
-            'country', 'bluegrass', 'americana', 'outlaw country', 'country rock',
-            'alt-country', 'contemporary country', 'traditional country', 'honky tonk',
-            'western', 'nashville sound'
+        "Country": [
+            "country",
+            "bluegrass",
+            "americana",
+            "outlaw country",
+            "country rock",
+            "alt-country",
+            "contemporary country",
+            "traditional country",
+            "honky tonk",
+            "western",
+            "nashville sound",
         ],
-        'Folk/Indie': [
-            'folk', 'indie folk', 'folk rock', 'freak folk', 'anti-folk', 'singer-songwriter',
-            'acoustic', 'indie', 'lo-fi', 'bedroom pop', 'slowcore', 'sadcore'
+        "Folk/Indie": [
+            "folk",
+            "indie folk",
+            "folk rock",
+            "freak folk",
+            "anti-folk",
+            "singer-songwriter",
+            "acoustic",
+            "indie",
+            "lo-fi",
+            "bedroom pop",
+            "slowcore",
+            "sadcore",
         ],
-        'Latin': [
-            'latin', 'reggaeton', 'salsa', 'bachata', 'merengue', 'cumbia', 'banda',
-            'regional mexican', 'mariachi', 'ranchera', 'corrido', 'latin pop',
-            'latin trap', 'urbano latino', 'bossa nova', 'samba', 'tango'
+        "Latin": [
+            "latin",
+            "reggaeton",
+            "salsa",
+            "bachata",
+            "merengue",
+            "cumbia",
+            "banda",
+            "regional mexican",
+            "mariachi",
+            "ranchera",
+            "corrido",
+            "latin pop",
+            "latin trap",
+            "urbano latino",
+            "bossa nova",
+            "samba",
+            "tango",
         ],
-        'Reggae/Dancehall': [
-            'reggae', 'dancehall', 'dub', 'roots reggae', 'ska', 'rocksteady',
-            'lovers rock', 'reggae fusion'
+        "Reggae/Dancehall": [
+            "reggae",
+            "dancehall",
+            "dub",
+            "roots reggae",
+            "ska",
+            "rocksteady",
+            "lovers rock",
+            "reggae fusion",
         ],
-        'World': [
-            'afrobeat', 'afropop', 'african', 'world', 'worldbeat', 'ethnic',
-            'traditional', 'folk music', 'celtic', 'klezmer', 'flamenco', 'fado',
-            'indian classical', 'raga', 'qawwali', 'k-indie', 'j-indie'
+        "World": [
+            "afrobeat",
+            "afropop",
+            "african",
+            "world",
+            "worldbeat",
+            "ethnic",
+            "traditional",
+            "folk music",
+            "celtic",
+            "klezmer",
+            "flamenco",
+            "fado",
+            "indian classical",
+            "raga",
+            "qawwali",
+            "k-indie",
+            "j-indie",
         ],
-        'Alternative': [
-            'alternative', 'experimental', 'avant-garde', 'noise', 'ambient',
-            'industrial', 'new wave', 'no wave', 'gothic', 'darkwave', 'coldwave',
-            'witch house', 'trip hop', 'downtempo'
+        "Alternative": [
+            "alternative",
+            "experimental",
+            "avant-garde",
+            "noise",
+            "ambient",
+            "industrial",
+            "new wave",
+            "no wave",
+            "gothic",
+            "darkwave",
+            "coldwave",
+            "witch house",
+            "trip hop",
+            "downtempo",
         ],
-        'Blues': [
-            'blues', 'delta blues', 'chicago blues', 'electric blues', 'blues rock',
-            'rhythm and blues', 'soul blues', 'gospel blues'
+        "Blues": [
+            "blues",
+            "delta blues",
+            "chicago blues",
+            "electric blues",
+            "blues rock",
+            "rhythm and blues",
+            "soul blues",
+            "gospel blues",
         ],
-        'Funk/Disco': [
-            'funk', 'disco', 'p-funk', 'boogie', 'electro-funk', 'g-funk'
-        ]
+        "Funk/Disco": ["funk", "disco", "p-funk", "boogie", "electro-funk", "g-funk"],
     }
 
     def __init__(self, database, spotify_client=None):
         self.database = database
         self.spotify_client = spotify_client
-        
+
         # Algorithm registry
-        self._algorithms: Dict[str, PlaylistAlgorithm] = {}
+        self._algorithms: dict[str, PlaylistAlgorithm] = {}
         self._register_builtin_algorithms()
         self._register_provider_algorithms()
-        
+
         # Load selected algorithm from config
         self._current_algorithm_id = self._load_selected_algorithm()
-    
+
     def _register_builtin_algorithms(self):
         """Register built-in algorithms"""
         # Register default algorithm
         self.register_algorithm(DefaultPlaylistAlgorithm())
-        
+
         # Register seasonal algorithm if Spotify client available
         if self.spotify_client:
             self.register_algorithm(
                 SeasonalPlaylistAlgorithm(self.database, self.spotify_client)
             )
-    
+
     def _register_provider_algorithms(self):
         try:
             from core.nexus_framework.plugin_loader import PluginRegistry
-            
+
             for p_id, plugin_info in PluginRegistry.get_all().items():
-                plugin_cls = plugin_info.get('class')
-                if not plugin_cls: continue
-                caps = getattr(plugin_cls, 'capabilities', None)
-                
-                if getattr(caps, 'playlist_algorithms', None):
-                    provider_name = getattr(plugin_cls, 'name', '').lower()
-                    logger.info(f"Provider '{provider_name}' supports algorithms: {caps.playlist_algorithms}")
-                    
+                plugin_cls = plugin_info.get("class")
+                if not plugin_cls:
+                    continue
+                caps = getattr(plugin_cls, "capabilities", None)
+
+                if getattr(caps, "playlist_algorithms", None):
+                    provider_name = getattr(plugin_cls, "name", "").lower()
+                    logger.info(
+                        f"Provider '{provider_name}' supports algorithms: {caps.playlist_algorithms}"
+                    )
+
                     try:
                         module_name = f"plugins.{provider_name}.algorithms"
-                        provider_module = __import__(module_name, fromlist=[''])
-                        
+                        provider_module = __import__(module_name, fromlist=[""])
+
                         for attr_name in dir(provider_module):
                             attr = getattr(provider_module, attr_name)
-                            if (isinstance(attr, type) and 
-                                issubclass(attr, PlaylistAlgorithm) and 
-                                attr is not PlaylistAlgorithm):
-                                
+                            if (
+                                isinstance(attr, type)
+                                and issubclass(attr, PlaylistAlgorithm)
+                                and attr is not PlaylistAlgorithm
+                            ):
                                 try:
                                     import inspect
+
                                     sig = inspect.signature(attr.__init__)
                                     params = list(sig.parameters.keys())
-                                    
-                                    if 'self' in params:
-                                        params.remove('self')
-                                    
+
+                                    if "self" in params:
+                                        params.remove("self")
+
                                     kwargs = {}
-                                    if 'database' in params:
-                                        kwargs['database'] = self.database
-                                    if 'spotify_client' in params:
-                                        kwargs['spotify_client'] = self.spotify_client
-                                    
+                                    if "database" in params:
+                                        kwargs["database"] = self.database
+                                    if "spotify_client" in params:
+                                        kwargs["spotify_client"] = self.spotify_client
+
                                     algo_instance = attr(**kwargs) if kwargs else attr()
                                     self.register_algorithm(algo_instance)
                                 except Exception as e:
-                                    logger.warning(f"Error instantiating algorithm from {provider_name}: {e}")
-                    
+                                    logger.warning(
+                                        f"Error instantiating algorithm from {provider_name}: {e}"
+                                    )
+
                     except ImportError:
-                        logger.debug(f"No algorithms module found for provider: {provider_name}")
+                        logger.debug(
+                            f"No algorithms module found for provider: {provider_name}"
+                        )
                     except Exception as e:
-                        logger.warning(f"Error loading algorithms from provider {provider_name}: {e}")
-        
+                        logger.warning(
+                            f"Error loading algorithms from provider {provider_name}: {e}"
+                        )
+
         except Exception as e:
             logger.error(f"Error scanning provider capabilities for algorithms: {e}")
-    
+
     def register_algorithm(self, algorithm: PlaylistAlgorithm):
         """
         Register a playlist algorithm.
-        
+
         Can be called by:
         - Core system (built-in algorithms)
         - Providers (via provider initialization)
         - Plugins (via plugin system)
         """
         self._algorithms[algorithm.algorithm_id] = algorithm
-        logger.info(f"Registered playlist algorithm: {algorithm.display_name} ({algorithm.algorithm_id})")
-    
-    def get_available_algorithms(self) -> List[Dict[str, Any]]:
+        logger.info(
+            f"Registered playlist algorithm: {algorithm.display_name} ({algorithm.algorithm_id})"
+        )
+
+    def get_available_algorithms(self) -> list[dict[str, Any]]:
         """Get list of available algorithms for UI"""
         return [
             {
-                'id': algo.algorithm_id,
-                'name': algo.display_name,
-                'description': algo.description,
-                'requires_spotify': algo.requires_spotify,
-                'config_schema': algo.config_schema
+                "id": algo.algorithm_id,
+                "name": algo.display_name,
+                "description": algo.description,
+                "requires_spotify": algo.requires_spotify,
+                "config_schema": algo.config_schema,
             }
             for algo in self._algorithms.values()
         ]
-    
+
     def set_algorithm(self, algorithm_id: str):
         """Set the active algorithm and save to config"""
         if algorithm_id not in self._algorithms:
             raise ValueError(f"Unknown algorithm: {algorithm_id}")
-        
+
         self._current_algorithm_id = algorithm_id
         self._save_selected_algorithm(algorithm_id)
         logger.info(f"Set active playlist algorithm to: {algorithm_id}")
-    
+
     def _load_selected_algorithm(self) -> str:
         """Load selected algorithm from config.json"""
         try:
             from core.settings import config_manager
-            return config_manager.get('playlist_algorithm', 'default')
+
+            return config_manager.get("playlist_algorithm", "default")
         except Exception as e:
             logger.warning(f"Could not load playlist algorithm from config: {e}")
-            return 'default'
-    
+            return "default"
+
     def _save_selected_algorithm(self, algorithm_id: str):
         """Save selected algorithm to config.json"""
         try:
             from core.settings import config_manager
-            config_manager.set('playlist_algorithm', algorithm_id)
+
+            config_manager.set("playlist_algorithm", algorithm_id)
         except Exception as e:
             logger.error(f"Could not save playlist algorithm to config: {e}")
-    
+
     def generate_playlist(
-        self, 
-        playlist_type: str = 'discovery',
+        self,
+        playlist_type: str = "discovery",
         limit: int = 50,
-        algorithm_id: Optional[str] = None,
-        **kwargs
-    ) -> List[Dict[str, Any]]:
+        algorithm_id: str | None = None,
+        **kwargs,
+    ) -> list[dict[str, Any]]:
         """
         Generate a playlist using the selected or specified algorithm.
         """
         try:
             from core.hook_manager import hook_manager
-            plugin_tracks = hook_manager.apply_filters('GENERATE_DYNAMIC_PLAYLIST', None, playlist_type=playlist_type, limit=limit, algorithm_id=algorithm_id, **kwargs)
+
+            plugin_tracks = hook_manager.apply_filters(
+                "GENERATE_DYNAMIC_PLAYLIST",
+                None,
+                playlist_type=playlist_type,
+                limit=limit,
+                algorithm_id=algorithm_id,
+                **kwargs,
+            )
             if plugin_tracks is not None and isinstance(plugin_tracks, list):
                 logger.info("Plugin intercepted GENERATE_DYNAMIC_PLAYLIST")
                 return plugin_tracks
@@ -522,42 +763,49 @@ class PersonalizedPlaylistsService:
 
         # Use specified algorithm or fall back to current
         algo_id = algorithm_id or self._current_algorithm_id
-        
+
         if algo_id not in self._algorithms:
             logger.error(f"Algorithm not found: {algo_id}, falling back to default")
-            algo_id = 'default'
-        
+            algo_id = "default"
+
         algorithm = self._algorithms[algo_id]
-        
+
         # Check if algorithm requires Spotify
         if algorithm.requires_spotify and not self.spotify_client:
-            logger.error(f"Algorithm {algo_id} requires Spotify client but none available")
+            logger.error(
+                f"Algorithm {algo_id} requires Spotify client but none available"
+            )
             return []
-        
+
         # Get source tracks
         library_tracks = []  # TODO: Implement library track fetching
-        discovery_pool = self._get_discovery_pool_tracks(limit * 10)  # Get more for filtering
-        
+        discovery_pool = self._get_discovery_pool_tracks(
+            limit * 10
+        )  # Get more for filtering
+
         # Generate playlist
         try:
             tracks = algorithm.generate(
                 library_tracks=library_tracks,
                 discovery_pool=discovery_pool,
                 limit=limit,
-                **kwargs
+                **kwargs,
             )
             logger.info(f"Generated {len(tracks)} tracks using {algo_id} algorithm")
             return tracks
         except Exception as e:
             logger.error(f"Error generating playlist with {algo_id}: {e}")
             return []
-    
-    def _get_discovery_pool_tracks(self, limit: int = 500) -> List[Dict[str, Any]]:
+
+    def _get_discovery_pool_tracks(self, limit: int = 500) -> list[dict[str, Any]]:
         """Get tracks from discovery pool"""
         from sqlalchemy import text
+
         try:
             with self.database.session_scope() as session:
-                rows = session.execute(text("""
+                rows = (
+                    session.execute(
+                        text("""
                     SELECT
                         spotify_track_id,
                         track_name,
@@ -571,14 +819,21 @@ class PersonalizedPlaylistsService:
                     FROM discovery_pool
                     ORDER BY RANDOM()
                     LIMIT :limit
-                """), {"limit": limit}).mappings().all()
-                
+                """),
+                        {"limit": limit},
+                    )
+                    .mappings()
+                    .all()
+                )
+
                 tracks = []
                 for row in rows:
                     track_dict = dict(row)
-                    if track_dict.get('track_data_json'):
+                    if track_dict.get("track_data_json"):
                         try:
-                            track_dict['track_data_json'] = json.loads(track_dict['track_data_json'])
+                            track_dict["track_data_json"] = json.loads(
+                                track_dict["track_data_json"]
+                            )
                         except:
                             pass
                     tracks.append(track_dict)
@@ -595,18 +850,21 @@ class PersonalizedPlaylistsService:
         """
         spotify_genre_lower = spotify_genre.lower()
 
-        for parent_genre, keywords in PersonalizedPlaylistsService.GENRE_MAPPING.items():
+        for (
+            parent_genre,
+            keywords,
+        ) in PersonalizedPlaylistsService.GENRE_MAPPING.items():
             for keyword in keywords:
                 if keyword in spotify_genre_lower:
                     return parent_genre
 
-        return 'Other'
+        return "Other"
 
     # ========================================
     # LIBRARY-BASED PLAYLISTS
     # ========================================
 
-    def get_recently_added(self, limit: int = 50) -> List[Dict]:
+    def get_recently_added(self, limit: int = 50) -> list[dict]:
         """
         Get recently added tracks from library.
 
@@ -616,14 +874,16 @@ class PersonalizedPlaylistsService:
         Returns empty list if schema incompatible.
         """
         try:
-            logger.warning("Recently Added requires Spotify-linked library tracks - returning empty")
+            logger.warning(
+                "Recently Added requires Spotify-linked library tracks - returning empty"
+            )
             return []
 
         except Exception as e:
             logger.error(f"Error getting recently added tracks: {e}")
             return []
 
-    def get_top_tracks(self, limit: int = 50) -> List[Dict]:
+    def get_top_tracks(self, limit: int = 50) -> list[dict]:
         """
         Get user's all-time top tracks based on play count.
 
@@ -631,14 +891,16 @@ class PersonalizedPlaylistsService:
         Returns empty list if schema incompatible.
         """
         try:
-            logger.warning("Top Tracks requires Spotify-linked library tracks - returning empty")
+            logger.warning(
+                "Top Tracks requires Spotify-linked library tracks - returning empty"
+            )
             return []
 
         except Exception as e:
             logger.error(f"Error getting top tracks: {e}")
             return []
 
-    def get_forgotten_favorites(self, limit: int = 50) -> List[Dict]:
+    def get_forgotten_favorites(self, limit: int = 50) -> list[dict]:
         """
         Get tracks you loved but haven't played recently.
 
@@ -646,14 +908,16 @@ class PersonalizedPlaylistsService:
         Returns empty list if schema incompatible.
         """
         try:
-            logger.warning("Forgotten Favorites requires Spotify-linked library tracks - returning empty")
+            logger.warning(
+                "Forgotten Favorites requires Spotify-linked library tracks - returning empty"
+            )
             return []
 
         except Exception as e:
             logger.error(f"Error getting forgotten favorites: {e}")
             return []
 
-    def get_decade_playlist(self, decade: int, limit: int = 100) -> List[Dict]:
+    def get_decade_playlist(self, decade: int, limit: int = 100) -> list[dict]:
         """
         Get tracks from a specific decade from discovery pool with diversity filtering.
 
@@ -666,8 +930,11 @@ class PersonalizedPlaylistsService:
             end_year = decade + 9
 
             from sqlalchemy import text
+
             with self.database.session_scope() as session:
-                rows = session.execute(text("""
+                rows = (
+                    session.execute(
+                        text("""
                     SELECT
                         spotify_track_id,
                         track_name,
@@ -683,16 +950,28 @@ class PersonalizedPlaylistsService:
                       AND CAST(SUBSTR(release_date, 1, 4) AS INTEGER) BETWEEN :start_year AND :end_year
                     ORDER BY RANDOM()
                     LIMIT :limit
-                """), {"start_year": start_year, "end_year": end_year, "limit": limit * 10}).mappings().all()
+                """),
+                        {
+                            "start_year": start_year,
+                            "end_year": end_year,
+                            "limit": limit * 10,
+                        },
+                    )
+                    .mappings()
+                    .all()
+                )
 
                 all_tracks = []
                 for row in rows:
                     track_dict = dict(row)
                     # Parse track_data_json if available
-                    if track_dict.get('track_data_json'):
+                    if track_dict.get("track_data_json"):
                         try:
                             import json
-                            track_dict['track_data_json'] = json.loads(track_dict['track_data_json'])
+
+                            track_dict["track_data_json"] = json.loads(
+                                track_dict["track_data_json"]
+                            )
                         except:
                             pass
                     all_tracks.append(track_dict)
@@ -703,10 +982,11 @@ class PersonalizedPlaylistsService:
 
                 # Shuffle first for randomness
                 import random
+
                 random.shuffle(all_tracks)
 
                 # Count unique artists to determine diversity level
-                unique_artists = len(set(track['artist_name'] for track in all_tracks))
+                unique_artists = len(set(track["artist_name"] for track in all_tracks))
 
                 # Adaptive diversity limits based on artist variety
                 if unique_artists >= 20:
@@ -722,7 +1002,9 @@ class PersonalizedPlaylistsService:
                     max_per_album = 5
                     max_per_artist = 12
 
-                logger.info(f"{decade}s has {unique_artists} unique artists - using limits: {max_per_album} per album, {max_per_artist} per artist")
+                logger.info(
+                    f"{decade}s has {unique_artists} unique artists - using limits: {max_per_album} per album, {max_per_artist} per artist"
+                )
 
                 # Apply diversity constraints
                 tracks_by_album = {}
@@ -730,8 +1012,8 @@ class PersonalizedPlaylistsService:
                 diverse_tracks = []
 
                 for track in all_tracks:
-                    album = track['album_name']
-                    artist = track['artist_name']
+                    album = track["album_name"]
+                    artist = track["artist_name"]
 
                     # Count current tracks for this album/artist
                     album_count = tracks_by_album.get(album, 0)
@@ -745,14 +1027,16 @@ class PersonalizedPlaylistsService:
                         if len(diverse_tracks) >= limit:
                             break
 
-                logger.info(f"Found {len(diverse_tracks)} tracks from {decade}s in discovery pool (adaptive diversity)")
+                logger.info(
+                    f"Found {len(diverse_tracks)} tracks from {decade}s in discovery pool (adaptive diversity)"
+                )
                 return diverse_tracks[:limit]
 
         except Exception as e:
             logger.error(f"Error getting decade playlist for {decade}s: {e}")
             return []
 
-    def get_available_genres(self) -> List[Dict]:
+    def get_available_genres(self) -> list[dict]:
         """
         Get list of consolidated parent genres with track counts from discovery pool.
         Uses cached artist genres from database (populated during discovery scan).
@@ -760,15 +1044,24 @@ class PersonalizedPlaylistsService:
         """
         try:
             from sqlalchemy import text
+
             with self.database.session_scope() as session:
-                rows = session.execute(text("""
+                rows = (
+                    session.execute(
+                        text("""
                     SELECT artist_genres
                     FROM discovery_pool
                     WHERE artist_genres IS NOT NULL
-                """)).mappings().all()
+                """)
+                    )
+                    .mappings()
+                    .all()
+                )
 
                 if not rows:
-                    logger.warning("No genres found in discovery pool - genres may not be populated yet")
+                    logger.warning(
+                        "No genres found in discovery pool - genres may not be populated yet"
+                    )
                     return []
 
                 # Count tracks per PARENT genre (consolidated)
@@ -776,18 +1069,22 @@ class PersonalizedPlaylistsService:
 
                 for row in rows:
                     try:
-                        artist_genres_json = row['artist_genres']
+                        artist_genres_json = row["artist_genres"]
                         if artist_genres_json:
                             genres = json.loads(artist_genres_json)
                             # Map each Spotify genre to parent and count tracks
-                            mapped_parents = set()  # Use set to avoid double-counting per track
+                            mapped_parents = (
+                                set()
+                            )  # Use set to avoid double-counting per track
                             for genre in genres:
                                 parent_genre = self.get_parent_genre(genre)
                                 mapped_parents.add(parent_genre)
 
                             # Add this track to all parent genres
                             for parent_genre in mapped_parents:
-                                parent_genre_track_count[parent_genre] = parent_genre_track_count.get(parent_genre, 0) + 1
+                                parent_genre_track_count[parent_genre] = (
+                                    parent_genre_track_count.get(parent_genre, 0) + 1
+                                )
                     except Exception as e:
                         logger.debug(f"Error parsing genres JSON: {e}")
                         continue
@@ -795,20 +1092,22 @@ class PersonalizedPlaylistsService:
                 # Filter genres with at least 10 tracks and sort by count
                 # Exclude 'Other' category
                 available_genres = [
-                    {'name': genre, 'track_count': count}
+                    {"name": genre, "track_count": count}
                     for genre, count in parent_genre_track_count.items()
-                    if count >= 10 and genre != 'Other'
+                    if count >= 10 and genre != "Other"
                 ]
-                available_genres.sort(key=lambda x: x['track_count'], reverse=True)
+                available_genres.sort(key=lambda x: x["track_count"], reverse=True)
 
-                logger.info(f"Found {len(available_genres)} consolidated genres with 10+ tracks")
+                logger.info(
+                    f"Found {len(available_genres)} consolidated genres with 10+ tracks"
+                )
                 return available_genres[:20]  # Top 20 parent genres
 
         except Exception as e:
             logger.error(f"Error getting available genres: {e}")
             return []
 
-    def get_genre_playlist(self, genre: str, limit: int = 50) -> List[Dict]:
+    def get_genre_playlist(self, genre: str, limit: int = 50) -> list[dict]:
         """
         Get tracks from a specific genre with diversity filtering.
         Uses cached artist genres from database (populated during discovery scan).
@@ -816,8 +1115,11 @@ class PersonalizedPlaylistsService:
         """
         try:
             from sqlalchemy import text
+
             with self.database.session_scope() as session:
-                rows = session.execute(text("""
+                rows = (
+                    session.execute(
+                        text("""
                     SELECT
                         spotify_track_id,
                         track_name,
@@ -830,7 +1132,11 @@ class PersonalizedPlaylistsService:
                         track_data_json
                     FROM discovery_pool
                     WHERE artist_genres IS NOT NULL
-                """)).mappings().all()
+                """)
+                    )
+                    .mappings()
+                    .all()
+                )
 
                 # Determine if this is a parent genre or specific genre
                 is_parent_genre = genre in self.GENRE_MAPPING
@@ -839,18 +1145,22 @@ class PersonalizedPlaylistsService:
                 if is_parent_genre:
                     # Use all child genre keywords for matching
                     search_keywords = self.GENRE_MAPPING[genre]
-                    logger.info(f"Matching parent genre '{genre}' with {len(search_keywords)} child keywords")
+                    logger.info(
+                        f"Matching parent genre '{genre}' with {len(search_keywords)} child keywords"
+                    )
                 else:
                     # Use the genre name itself for partial matching
                     search_keywords = [genre.lower()]
-                    logger.info(f"Matching specific genre '{genre}' with partial matching")
+                    logger.info(
+                        f"Matching specific genre '{genre}' with partial matching"
+                    )
 
                 # Filter tracks that match the genre
                 matching_tracks = []
 
                 for row in rows:
                     try:
-                        artist_genres_json = row['artist_genres']
+                        artist_genres_json = row["artist_genres"]
                         if artist_genres_json:
                             genres = json.loads(artist_genres_json)
 
@@ -868,18 +1178,20 @@ class PersonalizedPlaylistsService:
                             if genre_match:
                                 # Convert row to dict (exclude artist_genres from output)
                                 track_dict = {
-                                    'spotify_track_id': row['spotify_track_id'],
-                                    'track_name': row['track_name'],
-                                    'artist_name': row['artist_name'],
-                                    'album_name': row['album_name'],
-                                    'album_cover_url': row['album_cover_url'],
-                                    'duration_ms': row['duration_ms'],
-                                    'popularity': row['popularity']
+                                    "spotify_track_id": row["spotify_track_id"],
+                                    "track_name": row["track_name"],
+                                    "artist_name": row["artist_name"],
+                                    "album_name": row["album_name"],
+                                    "album_cover_url": row["album_cover_url"],
+                                    "duration_ms": row["duration_ms"],
+                                    "popularity": row["popularity"],
                                 }
                                 # Parse track_data_json if available
-                                if row['track_data_json']:
+                                if row["track_data_json"]:
                                     try:
-                                        track_dict['track_data_json'] = json.loads(row['track_data_json'])
+                                        track_dict["track_data_json"] = json.loads(
+                                            row["track_data_json"]
+                                        )
                                     except:
                                         pass
                                 matching_tracks.append(track_dict)
@@ -895,13 +1207,17 @@ class PersonalizedPlaylistsService:
                 random.shuffle(matching_tracks)
 
                 # Limit to 10x for diversity filtering
-                all_tracks = matching_tracks[:limit * 10] if len(matching_tracks) > limit * 10 else matching_tracks
+                all_tracks = (
+                    matching_tracks[: limit * 10]
+                    if len(matching_tracks) > limit * 10
+                    else matching_tracks
+                )
 
                 if not all_tracks:
                     return []
 
                 # Apply adaptive diversity filtering (relaxed for genres)
-                unique_artists = len(set(track['artist_name'] for track in all_tracks))
+                unique_artists = len(set(track["artist_name"] for track in all_tracks))
 
                 if unique_artists >= 20:
                     max_per_album = 3
@@ -917,7 +1233,9 @@ class PersonalizedPlaylistsService:
                     max_per_album = 8
                     max_per_artist = 25
 
-                logger.info(f"Genre '{genre}' has {unique_artists} artists, {len(all_tracks)} total tracks - limits: {max_per_album}/album, {max_per_artist}/artist")
+                logger.info(
+                    f"Genre '{genre}' has {unique_artists} artists, {len(all_tracks)} total tracks - limits: {max_per_album}/album, {max_per_artist}/artist"
+                )
 
                 # Shuffle and apply diversity
                 random.shuffle(all_tracks)
@@ -926,8 +1244,8 @@ class PersonalizedPlaylistsService:
                 diverse_tracks = []
 
                 for track in all_tracks:
-                    album = track['album_name']
-                    artist = track['artist_name']
+                    album = track["album_name"]
+                    artist = track["artist_name"]
 
                     album_count = tracks_by_album.get(album, 0)
                     artist_count = tracks_by_artist.get(artist, 0)
@@ -951,14 +1269,15 @@ class PersonalizedPlaylistsService:
     # DISCOVERY POOL PLAYLISTS
     # ========================================
 
-    def get_popular_picks(self, limit: int = 50) -> List[Dict]:
+    def get_popular_picks(self, limit: int = 50) -> list[dict]:
         """Get high popularity tracks from discovery pool with diversity (max 2 tracks per album/artist)"""
         try:
             with self.database._get_connection() as conn:
                 cursor = conn.cursor()
 
                 # Get more tracks than needed to allow for filtering
-                cursor.execute("""
+                cursor.execute(
+                    """
                     SELECT
                         spotify_track_id,
                         track_name,
@@ -972,17 +1291,22 @@ class PersonalizedPlaylistsService:
                     WHERE popularity >= 60
                     ORDER BY popularity DESC, RANDOM()
                     LIMIT ?
-                """, (limit * 3,))  # Get 3x more for diversity filtering
+                """,
+                    (limit * 3,),
+                )  # Get 3x more for diversity filtering
 
                 rows = cursor.fetchall()
                 all_tracks = []
                 for row in rows:
                     track_dict = dict(row)
                     # Parse track_data_json if available
-                    if track_dict.get('track_data_json'):
+                    if track_dict.get("track_data_json"):
                         try:
                             import json
-                            track_dict['track_data_json'] = json.loads(track_dict['track_data_json'])
+
+                            track_dict["track_data_json"] = json.loads(
+                                track_dict["track_data_json"]
+                            )
                         except:
                             pass
                     all_tracks.append(track_dict)
@@ -993,8 +1317,8 @@ class PersonalizedPlaylistsService:
                 diverse_tracks = []
 
                 for track in all_tracks:
-                    album = track['album_name']
-                    artist = track['artist_name']
+                    album = track["album_name"]
+                    artist = track["artist_name"]
 
                     # Count current tracks for this album/artist
                     album_count = tracks_by_album.get(album, 0)
@@ -1009,20 +1333,23 @@ class PersonalizedPlaylistsService:
                         if len(diverse_tracks) >= limit:
                             break
 
-                logger.info(f"Popular Picks: Selected {len(diverse_tracks)} tracks with diversity")
+                logger.info(
+                    f"Popular Picks: Selected {len(diverse_tracks)} tracks with diversity"
+                )
                 return diverse_tracks[:limit]
 
         except Exception as e:
             logger.error(f"Error getting popular picks: {e}")
             return []
 
-    def get_hidden_gems(self, limit: int = 50) -> List[Dict]:
+    def get_hidden_gems(self, limit: int = 50) -> list[dict]:
         """Get low popularity (underground/indie) tracks from discovery pool"""
         try:
             with self.database._get_connection() as conn:
                 cursor = conn.cursor()
 
-                cursor.execute("""
+                cursor.execute(
+                    """
                     SELECT
                         spotify_track_id,
                         track_name,
@@ -1036,17 +1363,22 @@ class PersonalizedPlaylistsService:
                     WHERE popularity < 40
                     ORDER BY RANDOM()
                     LIMIT ?
-                """, (limit,))
+                """,
+                    (limit,),
+                )
 
                 rows = cursor.fetchall()
                 tracks = []
                 for row in rows:
                     track_dict = dict(row)
                     # Parse track_data_json if available
-                    if track_dict.get('track_data_json'):
+                    if track_dict.get("track_data_json"):
                         try:
                             import json
-                            track_dict['track_data_json'] = json.loads(track_dict['track_data_json'])
+
+                            track_dict["track_data_json"] = json.loads(
+                                track_dict["track_data_json"]
+                            )
                         except:
                             pass
                     tracks.append(track_dict)
@@ -1056,7 +1388,7 @@ class PersonalizedPlaylistsService:
             logger.error(f"Error getting hidden gems: {e}")
             return []
 
-    def get_discovery_shuffle(self, limit: int = 50) -> List[Dict]:
+    def get_discovery_shuffle(self, limit: int = 50) -> list[dict]:
         """
         Get random tracks from discovery pool - pure exploration.
 
@@ -1066,7 +1398,8 @@ class PersonalizedPlaylistsService:
             with self.database._get_connection() as conn:
                 cursor = conn.cursor()
 
-                cursor.execute("""
+                cursor.execute(
+                    """
                     SELECT
                         spotify_track_id,
                         track_name,
@@ -1079,17 +1412,22 @@ class PersonalizedPlaylistsService:
                     FROM discovery_pool
                     ORDER BY RANDOM()
                     LIMIT ?
-                """, (limit,))
+                """,
+                    (limit,),
+                )
 
                 rows = cursor.fetchall()
                 tracks = []
                 for row in rows:
                     track_dict = dict(row)
                     # Parse track_data_json if available
-                    if track_dict.get('track_data_json'):
+                    if track_dict.get("track_data_json"):
                         try:
                             import json
-                            track_dict['track_data_json'] = json.loads(track_dict['track_data_json'])
+
+                            track_dict["track_data_json"] = json.loads(
+                                track_dict["track_data_json"]
+                            )
                         except:
                             pass
                     tracks.append(track_dict)
@@ -1099,7 +1437,7 @@ class PersonalizedPlaylistsService:
             logger.error(f"Error getting discovery shuffle: {e}")
             return []
 
-    def get_familiar_favorites(self, limit: int = 50) -> List[Dict]:
+    def get_familiar_favorites(self, limit: int = 50) -> list[dict]:
         """
         Get tracks with medium play counts (3-15 plays) - your reliable go-tos.
 
@@ -1107,7 +1445,9 @@ class PersonalizedPlaylistsService:
         Returns empty list if schema incompatible.
         """
         try:
-            logger.warning("Familiar Favorites requires Spotify-linked library tracks - returning empty")
+            logger.warning(
+                "Familiar Favorites requires Spotify-linked library tracks - returning empty"
+            )
             return []
 
         except Exception as e:
@@ -1118,7 +1458,7 @@ class PersonalizedPlaylistsService:
     # DAILY MIX (HYBRID PLAYLISTS)
     # ========================================
 
-    def get_top_genres_from_library(self, limit: int = 5) -> List[Tuple[str, int]]:
+    def get_top_genres_from_library(self, limit: int = 5) -> list[tuple[str, int]]:
         """
         Get top genres from user's library by track count.
 
@@ -1131,9 +1471,9 @@ class PersonalizedPlaylistsService:
 
                 # Try to get genres from tracks or albums
                 cursor.execute("PRAGMA table_info(tracks)")
-                columns = [row['name'] for row in cursor.fetchall()]
+                columns = [row["name"] for row in cursor.fetchall()]
 
-                if 'genres' in columns:
+                if "genres" in columns:
                     # Get genres directly from tracks
                     cursor.execute("""
                         SELECT genres FROM tracks WHERE genres IS NOT NULL
@@ -1143,16 +1483,17 @@ class PersonalizedPlaylistsService:
                     # Parse genres (assuming JSON array or comma-separated)
                     all_genres = []
                     for row in rows:
-                        genres_str = row['genres']
+                        genres_str = row["genres"]
                         if genres_str:
                             # Try JSON parse first
                             try:
                                 import json
+
                                 genres = json.loads(genres_str)
                                 all_genres.extend(genres)
                             except:
                                 # Fallback to comma-separated
-                                genres = [g.strip() for g in genres_str.split(',')]
+                                genres = [g.strip() for g in genres_str.split(",")]
                                 all_genres.extend(genres)
 
                     # Count genres
@@ -1161,7 +1502,8 @@ class PersonalizedPlaylistsService:
                 else:
                     # Fallback: use artist names as "genres"
                     logger.warning("No genres column - using top artists as categories")
-                    cursor.execute("""
+                    cursor.execute(
+                        """
                         SELECT ar.name, COUNT(*) as count
                         FROM tracks t
                         LEFT JOIN artists ar ON t.artist_id = ar.id
@@ -1169,16 +1511,20 @@ class PersonalizedPlaylistsService:
                         GROUP BY ar.name
                         ORDER BY count DESC
                         LIMIT ?
-                    """, (limit,))
+                    """,
+                        (limit,),
+                    )
 
                     rows = cursor.fetchall()
-                    return [(row['name'], row['count']) for row in rows]
+                    return [(row["name"], row["count"]) for row in rows]
 
         except Exception as e:
             logger.error(f"Error getting top genres: {e}")
             return []
 
-    def create_daily_mix(self, genre_or_artist: str, mix_number: int = 1) -> Dict[str, Any]:
+    def create_daily_mix(
+        self, genre_or_artist: str, mix_number: int = 1
+    ) -> dict[str, Any]:
         """
         Create a Daily Mix playlist - hybrid of library + discovery pool.
 
@@ -1201,36 +1547,40 @@ class PersonalizedPlaylistsService:
             discovery_portion = mix_size - library_portion  # 25 tracks
 
             # Get tracks from library
-            library_tracks = self._get_library_tracks_by_category(genre_or_artist, library_portion)
+            library_tracks = self._get_library_tracks_by_category(
+                genre_or_artist, library_portion
+            )
 
             # Get tracks from discovery pool
-            discovery_tracks = self._get_discovery_tracks_by_category(genre_or_artist, discovery_portion)
+            discovery_tracks = self._get_discovery_tracks_by_category(
+                genre_or_artist, discovery_portion
+            )
 
             # Combine and shuffle
             all_tracks = library_tracks + discovery_tracks
             random.shuffle(all_tracks)
 
             return {
-                'mix_number': mix_number,
-                'name': f"Daily Mix {mix_number}",
-                'description': f"{genre_or_artist} mix",
-                'category': genre_or_artist,
-                'track_count': len(all_tracks),
-                'tracks': all_tracks
+                "mix_number": mix_number,
+                "name": f"Daily Mix {mix_number}",
+                "description": f"{genre_or_artist} mix",
+                "category": genre_or_artist,
+                "track_count": len(all_tracks),
+                "tracks": all_tracks,
             }
 
         except Exception as e:
             logger.error(f"Error creating daily mix: {e}")
             return {
-                'mix_number': mix_number,
-                'name': f"Daily Mix {mix_number}",
-                'description': 'Mix',
-                'category': genre_or_artist,
-                'track_count': 0,
-                'tracks': []
+                "mix_number": mix_number,
+                "name": f"Daily Mix {mix_number}",
+                "description": "Mix",
+                "category": genre_or_artist,
+                "track_count": 0,
+                "tracks": [],
             }
 
-    def _get_library_tracks_by_category(self, category: str, limit: int) -> List[Dict]:
+    def _get_library_tracks_by_category(self, category: str, limit: int) -> list[dict]:
         """
         Get tracks from library matching genre or artist
 
@@ -1238,20 +1588,25 @@ class PersonalizedPlaylistsService:
         Returns empty list if schema incompatible.
         """
         try:
-            logger.warning("Library tracks by category requires Spotify-linked library - returning empty")
+            logger.warning(
+                "Library tracks by category requires Spotify-linked library - returning empty"
+            )
             return []
 
         except Exception as e:
             logger.error(f"Error getting library tracks by category: {e}")
             return []
 
-    def _get_discovery_tracks_by_category(self, category: str, limit: int) -> List[Dict]:
+    def _get_discovery_tracks_by_category(
+        self, category: str, limit: int
+    ) -> list[dict]:
         """Get tracks from discovery pool matching genre or artist"""
         try:
             with self.database._get_connection() as conn:
                 cursor = conn.cursor()
 
-                cursor.execute("""
+                cursor.execute(
+                    """
                     SELECT
                         spotify_track_id,
                         track_name,
@@ -1265,20 +1620,25 @@ class PersonalizedPlaylistsService:
                     WHERE artist_name LIKE :category_pattern OR track_name LIKE :category_pattern
                     ORDER BY RANDOM()
                     LIMIT :limit
-                """, {
-                    'category_pattern': f'%{category}%',
-                    'limit': limit,
-                })
+                """,
+                    {
+                        "category_pattern": f"%{category}%",
+                        "limit": limit,
+                    },
+                )
 
                 rows = cursor.fetchall()
                 tracks = []
                 for row in rows:
                     track_dict = dict(row)
                     # Parse track_data_json if available
-                    if track_dict.get('track_data_json'):
+                    if track_dict.get("track_data_json"):
                         try:
                             import json
-                            track_dict['track_data_json'] = json.loads(track_dict['track_data_json'])
+
+                            track_dict["track_data_json"] = json.loads(
+                                track_dict["track_data_json"]
+                            )
                         except:
                             pass
                     tracks.append(track_dict)
@@ -1288,7 +1648,7 @@ class PersonalizedPlaylistsService:
             logger.error(f"Error getting discovery tracks by category: {e}")
             return []
 
-    def get_all_daily_mixes(self, max_mixes: int = 4) -> List[Dict]:
+    def get_all_daily_mixes(self, max_mixes: int = 4) -> list[dict]:
         """
         Generate multiple Daily Mix playlists based on top genres/artists.
 
@@ -1309,7 +1669,7 @@ class PersonalizedPlaylistsService:
             daily_mixes = []
             for i, (category, _count) in enumerate(top_categories, 1):
                 mix = self.create_daily_mix(category, mix_number=i)
-                if mix['track_count'] > 0:
+                if mix["track_count"] > 0:
                     daily_mixes.append(mix)
 
             logger.info(f"Created {len(daily_mixes)} Daily Mixes")
@@ -1323,7 +1683,9 @@ class PersonalizedPlaylistsService:
     # BUILD A PLAYLIST (CUSTOM GENERATOR)
     # ========================================
 
-    def build_custom_playlist(self, seed_artist_ids: List[str], playlist_size: int = 50) -> Dict[str, Any]:
+    def build_custom_playlist(
+        self, seed_artist_ids: list[str], playlist_size: int = 50
+    ) -> dict[str, Any]:
         """
         Build a custom playlist from seed artists.
 
@@ -1343,43 +1705,49 @@ class PersonalizedPlaylistsService:
         try:
             if not seed_artist_ids or len(seed_artist_ids) > 5:
                 logger.error(f"Invalid seed artists count: {len(seed_artist_ids)}")
-                return {'tracks': [], 'error': 'Must provide 1-5 seed artists'}
+                return {"tracks": [], "error": "Must provide 1-5 seed artists"}
 
             if not self.spotify_client or not self.spotify_client.is_authenticated():
                 logger.error("Spotify client not available")
-                return {'tracks': [], 'error': 'Spotify not authenticated'}
+                return {"tracks": [], "error": "Spotify not authenticated"}
 
-            logger.info(f"Building custom playlist from {len(seed_artist_ids)} seed artists")
+            logger.info(
+                f"Building custom playlist from {len(seed_artist_ids)} seed artists"
+            )
 
             # Step 1: Get similar artists for each seed from database
             all_similar_artists = []
-            seen_artist_ids = set(seed_artist_ids)  # Don't include seed artists themselves
+            seen_artist_ids = set(
+                seed_artist_ids
+            )  # Don't include seed artists themselves
 
             for seed_artist_id in seed_artist_ids:
                 try:
                     # Get similar artists from database (cached from MusicMap)
                     with self.database._get_connection() as conn:
                         cursor = conn.cursor()
-                        cursor.execute("""
+                        cursor.execute(
+                            """
                             SELECT similar_artist_spotify_id, similar_artist_name
                             FROM similar_artists
                             WHERE source_artist_id = ?
                             ORDER BY similarity_rank ASC
                             LIMIT 10
-                        """, (seed_artist_id,))
+                        """,
+                            (seed_artist_id,),
+                        )
 
                         rows = cursor.fetchall()
 
                         for row in rows:
-                            artist_id = row['similar_artist_spotify_id']
-                            artist_name = row['similar_artist_name']
+                            artist_id = row["similar_artist_spotify_id"]
+                            artist_name = row["similar_artist_name"]
 
                             if artist_id not in seen_artist_ids:
                                 # Create artist-like object
-                                all_similar_artists.append({
-                                    'id': artist_id,
-                                    'name': artist_name
-                                })
+                                all_similar_artists.append(
+                                    {"id": artist_id, "name": artist_name}
+                                )
                                 seen_artist_ids.add(artist_id)
 
                                 if len(all_similar_artists) >= 25:
@@ -1389,13 +1757,17 @@ class PersonalizedPlaylistsService:
                         break
 
                 except Exception as e:
-                    logger.warning(f"Error getting similar artists for {seed_artist_id}: {e}")
+                    logger.warning(
+                        f"Error getting similar artists for {seed_artist_id}: {e}"
+                    )
                     continue
 
-            logger.info(f"Found {len(all_similar_artists)} similar artists from database")
+            logger.info(
+                f"Found {len(all_similar_artists)} similar artists from database"
+            )
 
             if not all_similar_artists:
-                return {'tracks': [], 'error': 'No similar artists found'}
+                return {"tracks": [], "error": "No similar artists found"}
 
             # Limit to 25 similar artists
             similar_artists_to_use = all_similar_artists[:25]
@@ -1405,15 +1777,14 @@ class PersonalizedPlaylistsService:
             for artist in similar_artists_to_use:
                 try:
                     albums = self.spotify_client.get_artist_albums(
-                        artist['id'],
-                        album_type='album,single',
-                        limit=10
+                        artist["id"], album_type="album,single", limit=10
                     )
 
                     if albums:
                         all_albums.extend(albums)
 
                     import time
+
                     time.sleep(0.3)  # Rate limiting
 
                 except Exception as e:
@@ -1423,7 +1794,7 @@ class PersonalizedPlaylistsService:
             logger.info(f"Found {len(all_albums)} total albums")
 
             if not all_albums:
-                return {'tracks': [], 'error': 'No albums found'}
+                return {"tracks": [], "error": "No albums found"}
 
             # Step 3: Select 20 random albums
             random.shuffle(all_albums)
@@ -1437,31 +1808,45 @@ class PersonalizedPlaylistsService:
                 try:
                     album_data = self.spotify_client.get_album(album.id)
 
-                    if album_data and 'tracks' in album_data:
-                        tracks = album_data['tracks'].get('items', [])
+                    if album_data and "tracks" in album_data:
+                        tracks = album_data["tracks"].get("items", [])
 
                         for track in tracks:
-                            if track['id']:
+                            if track["id"]:
                                 # Format in discovery pool format (for rendering + modal compatibility)
-                                all_tracks.append({
-                                    'spotify_track_id': track['id'],
-                                    'track_name': track['name'],
-                                    'artist_name': ', '.join([a['name'] for a in track.get('artists', [])]),
-                                    'album_name': album_data.get('name', 'Unknown'),
-                                    'album_cover_url': album_data.get('images', [{}])[0].get('url') if album_data.get('images') else None,
-                                    'duration_ms': track.get('duration_ms', 0),
-                                    'popularity': album_data.get('popularity', 0),
-                                    # Also include Spotify format fields for modal
-                                    'id': track['id'],
-                                    'name': track['name'],
-                                    'artists': [a['name'] for a in track.get('artists', [])],
-                                    'album': {
-                                        'name': album_data.get('name', 'Unknown'),
-                                        'images': album_data.get('images', [])
+                                all_tracks.append(
+                                    {
+                                        "spotify_track_id": track["id"],
+                                        "track_name": track["name"],
+                                        "artist_name": ", ".join(
+                                            [
+                                                a["name"]
+                                                for a in track.get("artists", [])
+                                            ]
+                                        ),
+                                        "album_name": album_data.get("name", "Unknown"),
+                                        "album_cover_url": album_data.get(
+                                            "images", [{}]
+                                        )[0].get("url")
+                                        if album_data.get("images")
+                                        else None,
+                                        "duration_ms": track.get("duration_ms", 0),
+                                        "popularity": album_data.get("popularity", 0),
+                                        # Also include Spotify format fields for modal
+                                        "id": track["id"],
+                                        "name": track["name"],
+                                        "artists": [
+                                            a["name"] for a in track.get("artists", [])
+                                        ],
+                                        "album": {
+                                            "name": album_data.get("name", "Unknown"),
+                                            "images": album_data.get("images", []),
+                                        },
                                     }
-                                })
+                                )
 
                     import time
+
                     time.sleep(0.3)  # Rate limiting
 
                 except Exception as e:
@@ -1471,7 +1856,7 @@ class PersonalizedPlaylistsService:
             logger.info(f"Collected {len(all_tracks)} total tracks")
 
             if not all_tracks:
-                return {'tracks': [], 'error': 'No tracks found'}
+                return {"tracks": [], "error": "No tracks found"}
 
             # Shuffle and limit to playlist_size
             random.shuffle(all_tracks)
@@ -1480,30 +1865,34 @@ class PersonalizedPlaylistsService:
             logger.info(f"Built custom playlist with {len(final_tracks)} tracks")
 
             return {
-                'name': 'Custom Playlist',
-                'description': f'Built from {len(seed_artist_ids)} seed artists',
-                'track_count': len(final_tracks),
-                'tracks': final_tracks,
-                'metadata': {
-                    'total_tracks': len(final_tracks),
-                    'similar_artists_count': len(similar_artists_to_use),
-                    'albums_count': len(selected_albums)
-                }
+                "name": "Custom Playlist",
+                "description": f"Built from {len(seed_artist_ids)} seed artists",
+                "track_count": len(final_tracks),
+                "tracks": final_tracks,
+                "metadata": {
+                    "total_tracks": len(final_tracks),
+                    "similar_artists_count": len(similar_artists_to_use),
+                    "albums_count": len(selected_albums),
+                },
             }
 
         except Exception as e:
             logger.error(f"Error building custom playlist: {e}")
             import traceback
+
             traceback.print_exc()
-            return {'tracks': [], 'error': str(e)}
+            return {"tracks": [], "error": str(e)}
 
 
 # Singleton instance
 _personalized_playlists_instance = None
 
+
 def get_personalized_playlists_service(database, spotify_client=None):
     """Get the global personalized playlists service instance"""
     global _personalized_playlists_instance
     if _personalized_playlists_instance is None:
-        _personalized_playlists_instance = PersonalizedPlaylistsService(database, spotify_client)
+        _personalized_playlists_instance = PersonalizedPlaylistsService(
+            database, spotify_client
+        )
     return _personalized_playlists_instance

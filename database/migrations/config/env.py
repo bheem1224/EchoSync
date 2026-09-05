@@ -1,9 +1,6 @@
 from logging.config import fileConfig
 
-from sqlalchemy import MetaData
 from alembic import context
-import os
-import sqlite3
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
@@ -13,16 +10,22 @@ config = context.config
 # This line sets up loggers basically.
 # Guard: when invoked programmatically (e.g. run_auto_migrations), the caller
 # sets configure_logger=False to prevent Alembic wiping our tiered log setup.
-if config.config_file_name is not None and config.attributes.get('configure_logger', True):
+if config.config_file_name is not None and config.attributes.get(
+    "configure_logger", True
+):
     fileConfig(config.config_file_name)
 
 # Use the actual models for autogenerate detection
 from database.models import Base
+
 target_metadata = Base.metadata
 
-from core.settings import config_manager
 from sqlalchemy import create_engine
+
+from core.settings import config_manager
+
 engine = create_engine(f"sqlite:///{config_manager.database_path}")
+
 
 def run_migrations_offline() -> None:
     context.configure(
@@ -41,12 +44,12 @@ def run_migrations_online() -> None:
 
     with connectable.connect() as connection:
         context.configure(
-            connection=connection, target_metadata=target_metadata,
-            render_as_batch=True
+            connection=connection, target_metadata=target_metadata, render_as_batch=True
         )
 
         with context.begin_transaction():
             context.run_migrations()
+
 
 if context.is_offline_mode():
     run_migrations_offline()

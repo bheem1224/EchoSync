@@ -4,8 +4,8 @@ Prevents race conditions and collision loops between library synchronization,
 auto-importers, and download processing.
 """
 
-import threading
 import logging
+import threading
 from contextlib import contextmanager
 
 logger = logging.getLogger("core.system_lock")
@@ -20,13 +20,17 @@ def get_library_mutex() -> threading.RLock:
 
 
 @contextmanager
-def acquire_library_lock(task_name: str = "unknown", blocking: bool = True, timeout: float = -1):
+def acquire_library_lock(
+    task_name: str = "unknown", blocking: bool = True, timeout: float = -1
+):
     """
     Context manager to acquire the global library mutex with optional timeout and logging.
     """
     acquired = _LIBRARY_MUTEX.acquire(blocking=blocking, timeout=timeout)
     if not acquired:
-        logger.warning(f"Task '{task_name}' failed to acquire library synchronization lock.")
+        logger.warning(
+            f"Task '{task_name}' failed to acquire library synchronization lock."
+        )
         yield False
         return
 

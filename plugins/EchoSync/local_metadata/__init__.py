@@ -2,4 +2,4 @@ from .client import LocalMetadataProvider
 
 ProviderClass = LocalMetadataProvider
 
-__all__ = ['ProviderClass']
+__all__ = ["ProviderClass"]

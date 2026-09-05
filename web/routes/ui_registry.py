@@ -7,11 +7,13 @@ Endpoint:
     GET /api/ui/registry
 """
 
-from fastapi import APIRouter, Depends
-from web.auth import require_auth
-from core.tiered_logger import get_logger
 from contextlib import contextmanager
-from typing import Dict, List, Any
+from typing import Any
+
+from fastapi import APIRouter, Depends
+
+from core.tiered_logger import get_logger
+from web.auth import require_auth
 
 logger = get_logger("ui_registry")
 
@@ -21,6 +23,7 @@ router = APIRouter(prefix="/api/v1/system/ui-registry", tags=["UI Registry"])
 @contextmanager
 def config_db_connection():
     from database.config_database import get_config_database
+
     db = get_config_database()
     conn = db._open_connection()
     try:
@@ -29,7 +32,7 @@ def config_db_connection():
         conn.close()
 
 
-def _query_ui_registry() -> Dict[str, List[Dict[str, Any]]]:
+def _query_ui_registry() -> dict[str, list[dict[str, Any]]]:
     """Shared query logic — used by both the new and legacy endpoints.
 
     Performs a single indexed query against ``ui_components`` joined with
@@ -38,7 +41,7 @@ def _query_ui_registry() -> Dict[str, List[Dict[str, Any]]]:
 
     Returns a dict of ``{ component_type: [ {tag_name, entry, plugin_id}, ... ] }``.
     """
-    registry: Dict[str, List[Dict[str, Any]]] = {}
+    registry: dict[str, list[dict[str, Any]]] = {}
 
     try:
         with config_db_connection() as conn:
@@ -68,7 +71,11 @@ def _query_ui_registry() -> Dict[str, List[Dict[str, Any]]]:
                 is_core = bool(row["is_core"])
 
                 # If stored as relative path, reconstruct the absolute endpoint URL
-                if entry_path and not (entry_path.startswith("/") or entry_path.startswith("http://") or entry_path.startswith("https://")):
+                if entry_path and not (
+                    entry_path.startswith("/")
+                    or entry_path.startswith("http://")
+                    or entry_path.startswith("https://")
+                ):
                     ident = plugin_name.lower() if plugin_name else str(plugin_id)
                     entry = f"/api/v1/system/plugins/{ident}/{entry_path}"
                 else:
@@ -80,16 +87,20 @@ def _query_ui_registry() -> Dict[str, List[Dict[str, Any]]]:
                 if type_key not in registry:
                     registry[type_key] = []
 
-                registry[type_key].append({
-                    "tag_name": tag_name,
-                    "entry": entry,
-                    "plugin_id": plugin_id,
-                    "plugin_name": plugin_name,
-                    "is_core": is_core,
-                })
+                registry[type_key].append(
+                    {
+                        "tag_name": tag_name,
+                        "entry": entry,
+                        "plugin_id": plugin_id,
+                        "plugin_name": plugin_name,
+                        "is_core": is_core,
+                    }
+                )
 
     except Exception as exc:
-        logger.error(f"[UIRegistry] Failed to query ui_components: {exc}", exc_info=True)
+        logger.error(
+            f"[UIRegistry] Failed to query ui_components: {exc}", exc_info=True
+        )
 
     return registry
 

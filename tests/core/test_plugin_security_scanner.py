@@ -17,10 +17,10 @@ import pytest
 
 from core.nexus_framework.plugin_loader import PluginSecurityScanner
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _scan(source: str) -> list:
     """Parse *source* and return the list of (lineno, description) violations."""
@@ -40,6 +40,7 @@ def _has_violation(violations: list, fragment: str) -> bool:
 # BLOCK: imports that must raise violations
 # ===========================================================================
 
+
 class TestForbiddenImports:
     """Bare `import X` statements that must be caught."""
 
@@ -53,15 +54,15 @@ class TestForbiddenImports:
         assert violations, "Expected a violation for 'import subprocess'"
         assert _has_violation(violations, "subprocess")
 
-
     def test_blocks_config_db_string(self):
         violations = _scan('engine = create_engine("sqlite:////config/config.db")')
         assert _has_violation(violations, "config.db")
 
     def test_allows_import_sqlite3(self):
         violations = _scan("import sqlite3")
-        assert not violations, "Expected NO violation for 'import sqlite3' (now unblocked)"
-
+        assert not violations, (
+            "Expected NO violation for 'import sqlite3' (now unblocked)"
+        )
 
     def test_blocks_import_sys(self):
         violations = _scan("import sys")
@@ -106,7 +107,9 @@ class TestForbiddenFromImports:
 
     def test_blocks_from_importlib_import_import_module(self):
         violations = _scan("from importlib import import_module")
-        assert violations, "Expected a violation for 'from importlib import import_module'"
+        assert violations, (
+            "Expected a violation for 'from importlib import import_module'"
+        )
         assert _has_violation(violations, "importlib")
 
     def test_blocks_from_os_environ_import(self):
@@ -169,6 +172,7 @@ class TestForbiddenCallPatterns:
 # ALLOW: imports and code that must NOT produce false positives
 # ===========================================================================
 
+
 class TestAllowedImports:
     """Legitimate imports that the scanner must never flag."""
 
@@ -220,9 +224,10 @@ class TestAllowedInternalEchosyncImports:
         assert _scan("from core.settings import config_manager") == []
 
     def test_allows_from_core_matching_engine(self):
-        assert _scan(
-            "from core.matching_engine.echo_sync_track import EchosyncTrack"
-        ) == []
+        assert (
+            _scan("from core.matching_engine.echo_sync_track import EchosyncTrack")
+            == []
+        )
 
     def test_allows_multi_line_internal_plugin_skeleton(self):
         """
@@ -247,7 +252,9 @@ class TestAllowedInternalEchosyncImports:
 
             initialize_plugin()
         """
-        assert _scan(source) == [], "Legitimate plugin skeleton must not produce violations"
+        assert _scan(source) == [], (
+            "Legitimate plugin skeleton must not produce violations"
+        )
 
 
 class TestScannerIsolation:

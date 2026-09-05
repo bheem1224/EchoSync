@@ -1,7 +1,10 @@
 import os
 import sys
 from logging.config import fileConfig
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../")))
+
+sys.path.insert(
+    0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../"))
+)
 
 from alembic import context
 
@@ -15,12 +18,15 @@ config = context.config
 # This line sets up loggers basically.
 # Guard: when invoked programmatically (e.g. run_auto_migrations), the caller
 # sets configure_logger=False to prevent Alembic wiping our tiered log setup.
-if config.config_file_name is not None and config.attributes.get('configure_logger', True):
+if config.config_file_name is not None and config.attributes.get(
+    "configure_logger", True
+):
     fileConfig(config.config_file_name)
 
 # add your model's MetaData object here
 # for 'autogenerate' support
 target_metadata = Base.metadata
+
 
 def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode.
@@ -58,12 +64,12 @@ def run_migrations_online() -> None:
 
     with connectable.connect() as connection:
         context.configure(
-            connection=connection, target_metadata=target_metadata,
-            render_as_batch=True
+            connection=connection, target_metadata=target_metadata, render_as_batch=True
         )
 
         with context.begin_transaction():
             context.run_migrations()
+
 
 if context.is_offline_mode():
     run_migrations_offline()

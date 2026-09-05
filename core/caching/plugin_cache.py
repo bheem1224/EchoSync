@@ -9,29 +9,28 @@ This module provides:
 """
 
 import functools
-from concurrent.futures import ThreadPoolExecutor
+import hashlib
 import json
 import logging
 import threading
-from datetime import timedelta
-from typing import Any, Callable, Optional, TypeVar, cast
+from collections.abc import Callable
 from pathlib import Path
-import hashlib
+from typing import Any, TypeVar, cast
 
-from time_utils import utc_now
 from sqlalchemy import text
+
 import database.music_database
 
 logger = logging.getLogger(__name__)
 
 # Type variable for generic decorator
-F = TypeVar('F', bound=Callable[..., Any])
+F = TypeVar("F", bound=Callable[..., Any])
 
 
 class PluginCache:
     """Cache manager for plugin queries using database backend"""
 
-    def __init__(self, db_path: Optional[Path] = None):
+    def __init__(self, db_path: Path | None = None):
         """
         Initialize cache manager
 
@@ -52,19 +51,21 @@ class PluginCache:
         """Ensure the cache table exists."""
         try:
             with self.db.engine.connect() as conn:
-                conn.execute(text("""
+                conn.execute(
+                    text("""
                     CREATE TABLE IF NOT EXISTS parsed_tracks (
                         raw_string TEXT PRIMARY KEY,
                         parsed_json TEXT,
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         ttl_expires_at TIMESTAMP
                     )
-                """))
+                """)
+                )
                 conn.commit()
         except Exception as e:
             logger.error(f"Error ensuring cache table: {e}")
 
-    def get(self, key: str, ttl_seconds: int = 3600) -> Optional[Any]:
+    def get(self, key: str, ttl_seconds: int = 3600) -> Any | None:
         """
         Get value from cache if it exists and hasn't expired
 
@@ -125,7 +126,9 @@ class PluginCache:
             try:
                 import json
                 from datetime import timedelta
+
                 from sqlalchemy import text
+
                 from time_utils import utc_now
 
                 json_value = json.dumps(value, default=str)
@@ -138,23 +141,28 @@ class PluginCache:
                 """)
 
                 with self.db.engine.connect() as conn:
-                    conn.execute(query, {
-                        "key": key,
-                        "value": json_value,
-                        "expires": expires_at
-                    })
+                    conn.execute(
+                        query, {"key": key, "value": json_value, "expires": expires_at}
+                    )
                     conn.commit()
             except Exception as e:
                 import logging
+
                 logging.getLogger("plugin_cache").error(f"Error storing in cache: {e}")
 
         # OPTIMIZATION: Dispatch via job_queue to prevent thread exhaustion
         # and keep all threads managed by central job queue
-        from core.job_queue import job_queue
         import time
 
-        job_name = f"plugin_cache_writer_{hash(key)}_{int(time.time()*1000)}"
-        job_queue.register_job(name=job_name, func=_persist_cache, interval_seconds=None, tags=["system", "cache"])
+        from core.job_queue import job_queue
+
+        job_name = f"plugin_cache_writer_{hash(key)}_{int(time.time() * 1000)}"
+        job_queue.register_job(
+            name=job_name,
+            func=_persist_cache,
+            interval_seconds=None,
+            tags=["system", "cache"],
+        )
         job_queue.execute_job_now(job_name)
         return True
 
@@ -218,7 +226,7 @@ class PluginCache:
 
 
 # Global cache instance
-_cache_instance: Optional[PluginCache] = None
+_cache_instance: PluginCache | None = None
 _cache_lock = threading.Lock()
 
 

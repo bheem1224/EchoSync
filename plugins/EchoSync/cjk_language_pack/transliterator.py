@@ -18,7 +18,6 @@ dependency causes that block to be skipped silently and the partially-processed
 from __future__ import annotations
 
 import re
-from typing import Optional
 
 from core.tiered_logger import get_logger
 
@@ -27,13 +26,13 @@ logger = get_logger("cjk_language_pack.transliterator")
 # ── Unicode block patterns ─────────────────────────────────────────────────────
 
 _CJK_RE = re.compile(
-    r"[\u4e00-\u9fff"       # CJK Unified Ideographs
-    r"\u3400-\u4dbf"        # CJK Extension A
-    r"\uf900-\ufaff"        # CJK Compatibility Ideographs
-    r"\u3040-\u309f"        # Hiragana
-    r"\u30a0-\u30ff"        # Katakana
-    r"\uac00-\ud7af"        # Hangul Syllables
-    r"\u1100-\u11ff]"       # Hangul Jamo
+    r"[\u4e00-\u9fff"  # CJK Unified Ideographs
+    r"\u3400-\u4dbf"  # CJK Extension A
+    r"\uf900-\ufaff"  # CJK Compatibility Ideographs
+    r"\u3040-\u309f"  # Hiragana
+    r"\u30a0-\u30ff"  # Katakana
+    r"\uac00-\ud7af"  # Hangul Syllables
+    r"\u1100-\u11ff]"  # Hangul Jamo
 )
 
 # Chinese ideographs only (no kana/hangul)
@@ -105,8 +104,8 @@ class CJKTransliterator:
     """
 
     def __init__(self) -> None:
-        self._t2s: object | None = None   # opencc: Traditional → Simplified
-        self._s2t: object | None = None   # opencc: Simplified  → Traditional
+        self._t2s: object | None = None  # opencc: Traditional → Simplified
+        self._s2t: object | None = None  # opencc: Simplified  → Traditional
 
     # ── Public helpers ─────────────────────────────────────────────────────────
 
@@ -122,6 +121,7 @@ class CJKTransliterator:
             return text
         try:
             import opencc  # type: ignore
+
             if self._t2s is None:
                 self._t2s = opencc.OpenCC("t2s")
             return self._t2s.convert(text)
@@ -135,6 +135,7 @@ class CJKTransliterator:
             return text
         try:
             import opencc  # type: ignore
+
             if self._s2t is None:
                 self._s2t = opencc.OpenCC("s2t")
             return self._s2t.convert(text)
@@ -147,7 +148,8 @@ class CJKTransliterator:
         if not _CHINESE_RE.search(text):
             return text
         try:
-            from pypinyin import lazy_pinyin, Style  # type: ignore
+            from pypinyin import Style, lazy_pinyin  # type: ignore
+
             syllables = lazy_pinyin(text, style=Style.NORMAL)
             return " ".join(syllables)
         except Exception as exc:
@@ -160,6 +162,7 @@ class CJKTransliterator:
             return text
         try:
             import pykakasi  # type: ignore
+
             kks = pykakasi.kakasi()
             items = kks.convert(text)
             return " ".join(i["hepburn"] for i in items if i.get("hepburn"))
@@ -172,8 +175,9 @@ class CJKTransliterator:
         if not _KOREAN_RE.search(text):
             return text
         try:
-            from hangul_romanize import Transliter      # type: ignore
-            from hangul_romanize.rule import academic   # type: ignore
+            from hangul_romanize import Transliter  # type: ignore
+            from hangul_romanize.rule import academic  # type: ignore
+
             transliter = Transliter(academic)
 
             parts: list[str] = []
@@ -264,14 +268,13 @@ class CJKTransliterator:
             return seen
 
         # Chinese (zh): full script + Pinyin variants
-        simplified  = self.to_simplified(text)
+        simplified = self.to_simplified(text)
         traditional = self.to_traditional(text)
-        pinyin      = self.to_pinyin(simplified)
+        pinyin = self.to_pinyin(simplified)
         _add(simplified)
         _add(traditional)
         _add(pinyin)
         return seen
-
 
 
 # ── Module-level singleton ──────────────────────────────────────────────────────

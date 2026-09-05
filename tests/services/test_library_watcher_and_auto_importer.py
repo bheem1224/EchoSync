@@ -1,22 +1,18 @@
-import time
 import os
-from pathlib import Path
+import time
 from datetime import timedelta
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
-import pytest
-
+from database.music_database import Track, get_database
 from database.working_database import ReviewTask, get_working_database
-from database.music_database import get_database, Track, Artist
-from core.db.echo_sync_track import EchosyncTrack, EchosyncMedia
-from time_utils import utc_now
-from services.library_watcher import _AudioEventHandler, _process_new_file
 from services.auto_importer import AutoImportService
+from services.library_watcher import _AudioEventHandler, _process_new_file
+from time_utils import utc_now
 
 
 def test_library_watcher_ignores_filtered_paths():
     handler = _AudioEventHandler()
-    with patch.object(handler, '_fire') as mock_fire:
+    with patch.object(handler, "_fire") as mock_fire:
         handler._schedule("/music/downloads/poor_metadata/track.flac")
         handler._schedule("C:\\music\\downloads\\incomplete\\track.mp3")
         handler._schedule("/downloads/temp/song.tmp")
@@ -31,11 +27,19 @@ def test_library_watcher_upserts_with_track_repository(tmp_path, monkeypatch):
 
     monkeypatch.setattr(
         "services.library_watcher.echosync_core.extract_metadata",
-        lambda p: {"title": "Test Title", "artist": "Test Artist", "album": "Test Album", "duration_ms": 120000}
+        lambda p: {
+            "title": "Test Title",
+            "artist": "Test Artist",
+            "album": "Test Album",
+            "duration_ms": 120000,
+        },
     )
 
     published_events = []
-    monkeypatch.setattr("services.library_watcher.event_bus.publish", lambda ev: published_events.append(ev))
+    monkeypatch.setattr(
+        "services.library_watcher.event_bus.publish",
+        lambda ev: published_events.append(ev),
+    )
 
     _process_new_file(test_file)
 
@@ -87,7 +91,9 @@ def test_auto_importer_io_safety_lock_and_path_filter(tmp_path, monkeypatch):
     monkeypatch.setattr("core.settings.config_manager.get", mock_config)
 
     processed_batches = []
-    monkeypatch.setattr(service, "process_batch", lambda files: processed_batches.extend(files))
+    monkeypatch.setattr(
+        service, "process_batch", lambda files: processed_batches.extend(files)
+    )
 
     service.scan_and_process()
 
@@ -111,7 +117,7 @@ def test_auto_importer_retry_aged_review_tasks(tmp_path, monkeypatch):
             status="pending",
             updated_at=eight_days_ago,
             last_checked_at=eight_days_ago,
-            retry_count=0
+            retry_count=0,
         )
         session.add(task)
         session.commit()
@@ -121,13 +127,15 @@ def test_auto_importer_retry_aged_review_tasks(tmp_path, monkeypatch):
     monkeypatch.setattr(
         service.enhancer,
         "identify_file",
-        lambda p: ({"title": "Retried Title", "artist": "Retried Artist"}, 0.95)
+        lambda p: ({"title": "Retried Title", "artist": "Retried Artist"}, 0.95),
     )
 
     service._retry_aged_review_tasks()
 
     with work_db.session_scope() as session:
-        updated_task = session.query(ReviewTask).filter(ReviewTask.id == task_id).first()
+        updated_task = (
+            session.query(ReviewTask).filter(ReviewTask.id == task_id).first()
+        )
         assert updated_task is not None
         assert updated_task.retry_count == 1
         assert updated_task.confidence_score == 0.95

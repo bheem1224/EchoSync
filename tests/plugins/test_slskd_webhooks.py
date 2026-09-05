@@ -11,9 +11,9 @@ Verifies:
 7. Connection self-healing: SERVICE_DEGRADED triggers reconnect_server with backoff.
 """
 
-import asyncio
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -34,7 +34,9 @@ def webhook_client():
 def test_webhook_unqualified_alias_rejected(webhook_client):
     """Verifies that unqualified bare names like /api/v1/webhooks/slskd/... return HTTP 404."""
     # Bare unqualified 'slskd'
-    resp = webhook_client.post("/api/v1/webhooks/slskd/download_status", json={"event": "test"})
+    resp = webhook_client.post(
+        "/api/v1/webhooks/slskd/download_status", json={"event": "test"}
+    )
     assert resp.status_code == 404
     assert "bare unqualified names are not permitted" in resp.json().get("detail", "")
 
@@ -146,8 +148,6 @@ def test_webhook_cidr_filtering(webhook_client):
 
 def test_slskd_webhook_dispatches_verifying_state(webhook_client, mock_work_db):
     """Verifies that DownloadFileComplete transitions DownloadQueue to VERIFYING and emits DOWNLOAD_FILE_READY."""
-    import plugins.EchoSync.slskd.plugin as slskd_plugin
-    from services.download_manager import DownloadManager
 
     # 1. Create a mock downloading task in working.db
     task_id = 42
@@ -157,7 +157,10 @@ def test_slskd_webhook_dispatches_verifying_state(webhook_client, mock_work_db):
             active_candidate_id="soul_user|test_track.flac",
             plugin_id="EchoSync.slskd",
             status=DownloadStatus.DOWNLOADING.value,
-            echo_sync_track={"title": "test_track.flac", "file_path": "test_track.flac"},
+            echo_sync_track={
+                "title": "test_track.flac",
+                "file_path": "test_track.flac",
+            },
         )
         session.add(queue_item)
         session.commit()
@@ -173,7 +176,9 @@ def test_slskd_webhook_dispatches_verifying_state(webhook_client, mock_work_db):
     # Ensure registration secret for EchoSync.slskd
     ep = sdk.webhooks.get_endpoint("download_status", namespace="EchoSync.slskd")
     if not ep:
-        ep = sdk.webhooks.register_endpoint("download_status", namespace="EchoSync.slskd")
+        ep = sdk.webhooks.register_endpoint(
+            "download_status", namespace="EchoSync.slskd"
+        )
     secret = ep.get("secret")
 
     # Send DownloadFileComplete webhook payload
@@ -185,13 +190,22 @@ def test_slskd_webhook_dispatches_verifying_state(webhook_client, mock_work_db):
         "local_path": "/path/to/downloaded/test_track.flac",
     }
 
-    with patch("services.download_manager.get_working_database", return_value=mock_work_db):
+    from plugins.EchoSync.slskd.plugin import on_webhook_received
+    from core.plugins.sdk import _WEBHOOK_HANDLERS, compute_plugin_crc32
+    _WEBHOOK_HANDLERS.setdefault(compute_plugin_crc32("EchoSync.slskd"), []).append(on_webhook_received)
+    with patch(
+        "database.working_database.get_working_database", return_value=mock_work_db
+    ), patch(
+        "web.routes.webhooks.lookup_registered_endpoint", return_value={"secret": secret}
+    ):
         resp = webhook_client.post(
             f"/api/v1/webhooks/EchoSync.slskd/download_status?secret={secret}",
             json=payload,
         )
         assert resp.status_code == 200
 
+    import time
+    time.sleep(0.1)
     # Verify state transitioned to VERIFYING
     with mock_work_db.session_scope() as session:
         item = session.get(DownloadQueue, task_id)
@@ -211,22 +225,32 @@ async def test_slskd_transfer_cleanup():
     mock_provider = MagicMock()
     mock_provider.delete_transfer = AsyncMock(return_value=True)
 
-    with patch("plugins.EchoSync.slskd.plugin._get_slskd_provider", return_value=mock_provider):
+    with patch(
+        "plugins.EchoSync.slskd.plugin._get_slskd_provider", return_value=mock_provider
+    ):
         # Trigger completed event
-        await _on_download_completed_or_failed({
-            "event": "DOWNLOAD_COMPLETED",
-            "username": "test_user_alpha",
-            "transfer_id": "file_uuid_123",
-        })
-        mock_provider.delete_transfer.assert_awaited_with("test_user_alpha", "file_uuid_123")
+        await _on_download_completed_or_failed(
+            {
+                "event": "DOWNLOAD_COMPLETED",
+                "username": "test_user_alpha",
+                "transfer_id": "file_uuid_123",
+            }
+        )
+        mock_provider.delete_transfer.assert_awaited_with(
+            "test_user_alpha", "file_uuid_123"
+        )
 
         # Trigger failed event
-        await _on_download_completed_or_failed({
-            "event": "DOWNLOAD_FAILED",
-            "username": "test_user_beta",
-            "transfer_id": "file_uuid_456",
-        })
-        mock_provider.delete_transfer.assert_awaited_with("test_user_beta", "file_uuid_456")
+        await _on_download_completed_or_failed(
+            {
+                "event": "DOWNLOAD_FAILED",
+                "username": "test_user_beta",
+                "transfer_id": "file_uuid_456",
+            }
+        )
+        mock_provider.delete_transfer.assert_awaited_with(
+            "test_user_beta", "file_uuid_456"
+        )
 
 
 @pytest.mark.asyncio
@@ -237,11 +261,18 @@ async def test_slskd_auto_reconnect_on_degraded():
     mock_provider = MagicMock()
     mock_provider.reconnect_server = AsyncMock(return_value=True)
 
-    with patch("plugins.EchoSync.slskd.plugin._get_slskd_provider", return_value=mock_provider), \
-         patch("asyncio.sleep", AsyncMock()):
-        await _on_service_degraded({
-            "event": "SERVICE_DEGRADED",
-            "service": "EchoSync.slskd",
-            "reason": "Soulseek state degraded: disconnected",
-        })
+    with (
+        patch(
+            "plugins.EchoSync.slskd.plugin._get_slskd_provider",
+            return_value=mock_provider,
+        ),
+        patch("asyncio.sleep", AsyncMock()),
+    ):
+        await _on_service_degraded(
+            {
+                "event": "SERVICE_DEGRADED",
+                "service": "EchoSync.slskd",
+                "reason": "Soulseek state degraded: disconnected",
+            }
+        )
         mock_provider.reconnect_server.assert_awaited_once()

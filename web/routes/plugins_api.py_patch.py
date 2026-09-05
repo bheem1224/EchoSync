@@ -1,5 +1,3 @@
-import re
-
 with open("web/routes/plugins_api.py", "r") as f:
     content = f.read()
 

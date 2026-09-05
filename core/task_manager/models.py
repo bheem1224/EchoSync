@@ -1,6 +1,7 @@
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, Optional
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 
@@ -28,20 +29,20 @@ class ProcessCategory(str, Enum):
 class ProcessOwner(BaseModel):
     owner_id: str
     owner_type: OwnerType
-    pid: Optional[int] = None
-    thread_id: Optional[int] = None
+    pid: int | None = None
+    thread_id: int | None = None
     task_name: str
     started_at: datetime = Field(default_factory=datetime.now)
-    metadata: Dict[str, Any] = Field(default_factory=dict)
-    parent_id: Optional[str] = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    parent_id: str | None = None
     category: ProcessCategory = ProcessCategory.WORKER_THREAD
     is_killable: bool = True
     cpu_percent: float = 0.0
     memory_bytes: int = 0
-    wasm_instance_id: Optional[str] = None
+    wasm_instance_id: str | None = None
 
 
 class PluginStatus(BaseModel):
     state: PluginLifecycleState
-    message: Optional[str] = None
-    last_health_check: Optional[datetime] = None
+    message: str | None = None
+    last_health_check: datetime | None = None

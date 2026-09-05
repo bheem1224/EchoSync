@@ -7,21 +7,23 @@ Usage:
     DEV_MODE=true python run_api.py      # Run in Development mode (Debug logs, CORS, Debugger)
 """
 
-from dotenv import load_dotenv
-from pathlib import Path
 import os
+from pathlib import Path
+
+from dotenv import load_dotenv
 
 # Load .env file from project root explicitly so ECHOSYNC_* vars are available before config_manager
 load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env", override=True)
 
 # Determine development mode
-dev_mode = os.getenv('DEV_MODE', 'false').lower() in ('true', '1', 'yes')
+dev_mode = os.getenv("DEV_MODE", "false").lower() in ("true", "1", "yes")
 
 from core.settings import config_manager
 
 # Setup logging from config.json settings (loaded via config_manager)
 # DEV_MODE determines the log level override
 from core.tiered_logger import setup_logging
+
 logging_config = config_manager.get_logging_config()
 
 # Task 2: DEV_MODE=true -> Level DEBUG. DEV_MODE=false -> Level INFO (Production).
@@ -30,7 +32,6 @@ log_level = "DEBUG" if dev_mode else logging_config.get("level", "INFO")
 setup_logging(level=log_level, log_file=logging_config.get("path"))
 
 # Phase 0: Safe Mode Circuit Breaker
-import sys
 from core.tiered_logger import get_logger
 
 logger = get_logger("boot")
@@ -38,7 +39,9 @@ lock_file = config_manager.config_dir / "booting.lock"
 safe_mode = False
 
 if lock_file.exists():
-    logger.critical("FATAL LOOP DETECTED: 'booting.lock' found from a previous crashed startup.")
+    logger.critical(
+        "FATAL LOOP DETECTED: 'booting.lock' found from a previous crashed startup."
+    )
     logger.critical("Booting into SAFE MODE. All community plugins will be disabled.")
     safe_mode = True
 else:
@@ -52,26 +55,29 @@ else:
 # Alternatively, we could set an environment variable or directly configure the PluginLoader.
 # Setting it in environment is reliable.
 if safe_mode:
-    os.environ['ECHOSYNC_SAFE_MODE'] = '1'
+    os.environ["ECHOSYNC_SAFE_MODE"] = "1"
 
 
 # Run Phase 1 Database Migrations securely
 from core.db.migrations import run_migrations
+
 run_migrations()
 
 # Pillar 1: The Auto-Migrator
 from core.db.migrations import run_auto_migrations
+
 run_auto_migrations()
 
 # Run Phase 2: working.db column migrations (must run after working DB engine is initialised)
-from database.working_database import get_working_database
 from core.db.migrations import run_working_db_migrations
-run_working_db_migrations(get_working_database().engine)
+from database.working_database import get_working_database
 
-from web.api_app import create_app
+run_working_db_migrations(get_working_database().engine)
 
 # Ensure SSL certs exist and start OAuth sidecar
 from core.oauth.sidecar import start_oauth_sidecar
+from web.api_app import create_app
+
 start_oauth_sidecar()
 
 if __name__ == "__main__":
@@ -80,7 +86,7 @@ if __name__ == "__main__":
     else:
         print("[PROD] Production mode - Log Level: INFO")
 
-    print(f"[API] Starting HTTP backend on http://0.0.0.0:5000/api")
+    print("[API] Starting HTTP backend on http://0.0.0.0:5000/api")
 
     app = create_app()
 
@@ -93,15 +99,18 @@ if __name__ == "__main__":
         try:
             lock_file.unlink()
             if safe_mode:
-                logger.info("Safe Mode boot complete. Removed boot lock file — next boot will be normal.")
+                logger.info(
+                    "Safe Mode boot complete. Removed boot lock file — next boot will be normal."
+                )
             else:
                 logger.info("Boot successful. Removed boot lock file.")
         except Exception as e:
             logger.error(f"Failed to remove boot lock file: {e}")
 
     # Run in standard HTTP mode via Uvicorn
-    # We EXPLICITLY disable the reloader because the app dynamically writes to 
-    # the `plugins/` directory at runtime. If the reloader is on, installing a plugin 
+    # We EXPLICITLY disable the reloader because the app dynamically writes to
+    # the `plugins/` directory at runtime. If the reloader is on, installing a plugin
     # triggers a mid-request server restart, causing SQLite disk I/O errors and port conflicts.
     import uvicorn
+
     uvicorn.run(app, host="0.0.0.0", port=5000, reload=False)

@@ -12,14 +12,14 @@ SlskdCard.svelte calls:
   GET  ${apiBase}/settings/key
 """
 
-import logging
-from fastapi import APIRouter, Request, HTTPException
+import asyncio
+
+import aiohttp
+from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-from typing import Optional, Dict, Any
+
 from core.tiered_logger import get_logger
-import asyncio
-import aiohttp
 
 logger = get_logger("slskd_routes")
 
@@ -31,55 +31,67 @@ router = APIRouter()
 # Download-client proxies — SlskdCard needs these under its own apiBase
 # ---------------------------------------------------------------------------
 
+
 @router.get("/download-clients/active")
 def get_active_download_client():
     """Proxy: return the currently active download client."""
     try:
         from core.settings import config_manager
+
         active_name = config_manager.get_active_download_client() or "slskd"
-        is_active = (active_name.lower() == "slskd")
+        is_active = active_name.lower() == "slskd"
         return {
             "active": is_active,
             "active_client": active_name,
             "name": active_name,
-            "provider": active_name
+            "provider": active_name,
         }
     except Exception as e:
         logger.error(f"Failed to get active download client: {e}")
-        return {"active": False, "active_client": None, "error": "Failed to get active download client"}
+        return {
+            "active": False,
+            "active_client": None,
+            "error": "Failed to get active download client",
+        }
 
 
 class ActivateClientRequest(BaseModel):
-    provider: Optional[str] = None
-    client: Optional[str] = None
+    provider: str | None = None
+    client: str | None = None
+
 
 @router.post("/download-clients/activate")
-def activate_download_client(data: Optional[ActivateClientRequest] = None):
+def activate_download_client(data: ActivateClientRequest | None = None):
     """Proxy: activate this plugin as the active download client."""
     try:
         from core.settings import config_manager
+
         target = (data.provider or data.client or "slskd") if data else "slskd"
         config_manager.set_active_download_client(target)
         config_manager.save_settings(config_manager.get_settings())
         return {"success": True, "active_client": target}
     except Exception as e:
         logger.error(f"Failed to activate download client: {e}")
-        raise HTTPException(status_code=500, detail="Failed to activate download client")
+        raise HTTPException(
+            status_code=500, detail="Failed to activate download client"
+        )
 
 
 # ---------------------------------------------------------------------------
 # Soulseek / slskd settings
 # ---------------------------------------------------------------------------
 
+
 @router.get("/settings")
 def get_settings():
     """Get slskd configuration settings."""
     from core.nexus_framework.plugin_SDK import sdk
+
     try:
-        slskd_url = sdk.config.get('slskd_url', '')
-        server_name = sdk.config.get('server_name', '')
-        api_key = sdk.secrets.get('api_key') or ''
-        masked_api_key = '****' if api_key else ''
+        slskd_url = sdk.config.get("slskd_url", "")
+        server_name = sdk.config.get("server_name", "")
+        api_key = sdk.secrets.get("api_key") or ""
+        masked_api_key = "****" if api_key else ""
 
         return {
             "slskd_url": slskd_url,
@@ -94,14 +106,16 @@ def get_settings():
 
 
 class SettingsRequest(BaseModel):
-    slskd_url: Optional[str] = ""
-    api_key: Optional[str] = ""
-    server_name: Optional[str] = ""
+    slskd_url: str | None = ""
+    api_key: str | None = ""
+    server_name: str | None = ""
+
 
 @router.post("/settings")
 def save_settings(data: SettingsRequest):
     """Save slskd configuration settings."""
     from core.nexus_framework.plugin_SDK import sdk
+
     try:
         if not data.slskd_url:
             raise HTTPException(status_code=400, detail="Server URL is required")
@@ -110,10 +124,10 @@ def save_settings(data: SettingsRequest):
         api_key = data.api_key.strip() if data.api_key else ""
         server_name = data.server_name.strip() if data.server_name else ""
 
-        sdk.config.set('slskd_url', slskd_url)
-        sdk.config.set('server_name', server_name)
+        sdk.config.set("slskd_url", slskd_url)
+        sdk.config.set("server_name", server_name)
         if api_key:
-            sdk.secrets.set('api_key', api_key)
+            sdk.secrets.set("api_key", api_key)
 
         logger.info(f"Saved slskd settings: url={slskd_url}")
         return {"success": True}
@@ -125,17 +139,25 @@ def save_settings(data: SettingsRequest):
 
 
 class TestConnectionRequest(BaseModel):
-    slskd_url: Optional[str] = None
-    api_key: Optional[str] = None
+    slskd_url: str | None = None
+    api_key: str | None = None
+
 
 @router.post("/connection/test")
-def test_connection(data: Optional[TestConnectionRequest] = None):
+def test_connection(data: TestConnectionRequest | None = None):
     """Test connection to slskd server."""
     from core.nexus_framework.plugin_SDK import sdk
+
     try:
-        slskd_url = (data.slskd_url if data and data.slskd_url else None) or sdk.config.get('slskd_url', '')
-        slskd_url = slskd_url.rstrip('/') if slskd_url else ''
-        api_key = (data.api_key if data and data.api_key else None) or sdk.secrets.get('api_key') or ''
+        slskd_url = (
+            data.slskd_url if data and data.slskd_url else None
+        ) or sdk.config.get("slskd_url", "")
+        slskd_url = slskd_url.rstrip("/") if slskd_url else ""
+        api_key = (
+            (data.api_key if data and data.api_key else None)
+            or sdk.secrets.get("api_key")
+            or ""
+        )
 
         if not slskd_url:
             raise HTTPException(status_code=400, detail="slskd URL not configured")
@@ -152,13 +174,22 @@ def test_connection(data: Optional[TestConnectionRequest] = None):
                     ) as resp:
                         if resp.status == 200:
                             d = await resp.json()
-                            return {"success": True, "version": d.get("version", "unknown")}
+                            return {
+                                "success": True,
+                                "version": d.get("version", "unknown"),
+                            }
                         if resp.status == 401:
                             return {"success": False, "error": "Invalid API key"}
-                        return {"success": False, "error": f"Server returned {resp.status}"}
+                        return {
+                            "success": False,
+                            "error": f"Server returned {resp.status}",
+                        }
             except aiohttp.ClientConnectorError:
-                return {"success": False, "error": "Could not connect. Check URL and ensure slskd is running."}
-            except asyncio.TimeoutError:
+                return {
+                    "success": False,
+                    "error": "Could not connect. Check URL and ensure slskd is running.",
+                }
+            except TimeoutError:
                 return {"success": False, "error": "Connection timed out."}
             except Exception:
                 return {"success": False, "error": "Connection failed."}
@@ -184,8 +215,9 @@ def test_connection(data: Optional[TestConnectionRequest] = None):
 def get_api_key():
     """Return the raw API key (only used by UI show/hide toggle)."""
     from core.nexus_framework.plugin_SDK import sdk
+
     try:
-        api_key = sdk.secrets.get('api_key') or ''
+        api_key = sdk.secrets.get("api_key") or ""
         if not api_key:
             raise HTTPException(status_code=404, detail="API key not configured")
         return {"api_key": api_key}
@@ -200,10 +232,12 @@ def get_api_key():
 # Webhook info & test diagnostics
 # ---------------------------------------------------------------------------
 
+
 @router.get("/webhooks/info")
 def get_webhook_info():
     """Retrieve registered webhook endpoints and configuration for UI."""
     from core.plugins.sdk import sdk
+
     try:
         endpoint = sdk.webhooks.get_endpoint("download_status")
         if not endpoint:
@@ -221,7 +255,8 @@ def get_webhook_info():
 @router.post("/webhooks/test")
 async def test_webhook():
     """Simulate a test webhook ping to verify local ingress and dispatch."""
-    from core.plugins.sdk import sdk, compute_plugin_crc32, dispatch_webhook
+    from core.plugins.sdk import compute_plugin_crc32, dispatch_webhook, sdk
+
     try:
         endpoint = sdk.webhooks.get_endpoint("download_status")
         if not endpoint:

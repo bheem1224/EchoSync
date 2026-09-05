@@ -1,5 +1,5 @@
-import sqlite3
 import os
+import sqlite3
 from pathlib import Path
 
 # Try to find the config.db
@@ -15,11 +15,13 @@ if not db_path.exists():
     db_path = Path(r"c:\Users\bheem\VScode-Projects\SoulSync\config\config.db")
 
 if not db_path.exists():
-     print(f"DB not found at {db_path}")
+    print(f"DB not found at {db_path}")
 else:
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
-    cursor.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='services'")
+    cursor.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='services'"
+    )
     row = cursor.fetchone()
     if row:
         print(row[0])

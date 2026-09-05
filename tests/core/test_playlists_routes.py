@@ -1,12 +1,13 @@
 """Tests for Playlists API routes."""
 
-import pytest
-from unittest.mock import patch, MagicMock
-from fastapi.testclient import TestClient
-from fastapi import FastAPI
+from unittest.mock import patch
 
-from web.routes.playlists import router, api_v1_router, legacy_router
+import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
 from core.event_bus import event_bus
+from web.routes.playlists import api_v1_router, legacy_router, router
 
 
 @pytest.fixture
@@ -47,9 +48,19 @@ def test_plex_sync_client_resolution_failure():
     from web.routes.playlists import _sync_to_plex
 
     # When Plex plugin is not available or cannot connect, _run_sync should gracefully handle it
-    with patch('plugins.EchoSync.plex.client.PlexClient', side_effect=ImportError("No plex")):
-        with patch('core.nexus_framework.plugin_loader.PluginRegistry.get_plugin_class', return_value=None), \
-             patch('core.nexus_framework.plugin_loader.PluginRegistry.get_plugin', return_value=None):
+    with patch(
+        "plugins.EchoSync.plex.client.PlexClient", side_effect=ImportError("No plex")
+    ):
+        with (
+            patch(
+                "core.nexus_framework.plugin_loader.PluginRegistry.get_plugin_class",
+                return_value=None,
+            ),
+            patch(
+                "core.nexus_framework.plugin_loader.PluginRegistry.get_plugin",
+                return_value=None,
+            ),
+        ):
             result = _sync_to_plex(
                 payload={},
                 source="spotify",
@@ -57,7 +68,7 @@ def test_plex_sync_client_resolution_failure():
                 playlist_name="Test Playlist",
                 matches=[{"target_identifier": "12345"}],
                 download_missing=False,
-                sync_mode="direct"
+                sync_mode="direct",
             )
             assert result.get("accepted") is True
             job_name = result.get("job")

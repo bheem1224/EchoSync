@@ -1,18 +1,20 @@
+import random
+import string
+from pathlib import Path
+from unittest.mock import patch
 
 import pytest
-from unittest.mock import Mock, patch, MagicMock
-from pathlib import Path
-import asyncio
 
-from services.download_manager import DownloadManager
 from core.db.echo_sync_track import EchosyncTrack
-import string
-import random
+from services.download_manager import DownloadManager
+
 
 def gen_id():
     return "".join(random.choices(string.ascii_letters + string.digits, k=8))
-from database.music_database import Track, Artist, Album, MusicDatabase
-from database.working_database import DownloadQueue, ReviewTask, WorkingDatabase
+
+
+from database.music_database import Album, Artist, Track
+from database.working_database import DownloadQueue, ReviewTask
 
 
 class TestDownloadManagerLogic:
@@ -36,7 +38,7 @@ class TestDownloadManagerLogic:
                 title="Track A",
                 artist=artist,
                 album=album,
-                sync_id="/music/The Artist/Track A.mp3"
+                sync_id="/music/The Artist/Track A.mp3",
             )
             session.add(track)
             session.commit()
@@ -46,11 +48,14 @@ class TestDownloadManagerLogic:
             sync_id=gen_id(),
             raw_title="Track A",
             artist_name="The Artist",
-            album_title="Some Album"
+            album_title="Some Album",
         )
 
-        with patch('services.download_manager.get_database', return_value=mock_db):
-            with patch('services.download_manager.get_working_database', return_value=mock_work_db):
+        with patch("services.download_manager.get_database", return_value=mock_db):
+            with patch(
+                "services.download_manager.get_working_database",
+                return_value=mock_work_db,
+            ):
                 result_id = manager.queue_download(track_to_download)
                 # 3. Assert: Result should be 0 (skipped) and queue size 0
                 assert result_id == 0
@@ -65,7 +70,7 @@ class TestDownloadManagerLogic:
             sync_id=gen_id(),
             raw_title="Failed Track",
             artist_name="The Artist",
-            album_title="Some Album"
+            album_title="Some Album",
         )
 
         with mock_work_db.session_scope() as session:
@@ -78,8 +83,11 @@ class TestDownloadManagerLogic:
             session.commit()
             original_id = failed_entry.id
 
-        with patch('services.download_manager.get_database', return_value=mock_db):
-            with patch('services.download_manager.get_working_database', return_value=mock_work_db):
+        with patch("services.download_manager.get_database", return_value=mock_db):
+            with patch(
+                "services.download_manager.get_working_database",
+                return_value=mock_work_db,
+            ):
                 result_id = manager.queue_download(track_to_download)
                 assert result_id == original_id
 
@@ -100,7 +108,7 @@ class TestDownloadManagerLogic:
             sync_id=gen_id(),
             raw_title="Track B",
             artist_name="The Artist",
-            album_title="Some Album"
+            album_title="Some Album",
         )
 
         with mock_db.session_scope() as session:
@@ -115,7 +123,7 @@ class TestDownloadManagerLogic:
                 title="Track B",
                 artist=artist,
                 album=album,
-                sync_id="/music/The Artist/Track B.mp3"
+                sync_id="/music/The Artist/Track B.mp3",
             )
             session.add(track)
             session.commit()
@@ -125,14 +133,17 @@ class TestDownloadManagerLogic:
             download = DownloadQueue(
                 sync_id=track_obj.sync_id,
                 echo_sync_track=track_obj.to_dict(),
-                status="queued"
+                status="queued",
             )
             session.add(download)
             session.commit()
 
         # 2. Action: Run purge
-        with patch('services.download_manager.get_database', return_value=mock_db):
-            with patch('services.download_manager.get_working_database', return_value=mock_work_db):
+        with patch("services.download_manager.get_database", return_value=mock_db):
+            with patch(
+                "services.download_manager.get_working_database",
+                return_value=mock_work_db,
+            ):
                 manager._purge_existing_tracks_from_queue()
 
         # 3. Assert: Queue should be empty
@@ -151,7 +162,7 @@ class TestDownloadManagerLogic:
             sync_id=gen_id(),
             raw_title="Track C",
             artist_name="The Artist",
-            album_title="Some Album"
+            album_title="Some Album",
         )
 
         with mock_work_db.session_scope() as session:
@@ -159,20 +170,24 @@ class TestDownloadManagerLogic:
             download = DownloadQueue(
                 sync_id=track_obj.sync_id,
                 echo_sync_track=track_obj.to_dict(),
-                status="failed_max_retries"
+                status="failed_max_retries",
             )
             session.add(download)
             session.commit()
 
         # Attempt process
-        with patch('services.download_manager.get_database', return_value=mock_db):
-            with patch('services.download_manager.get_working_database', return_value=mock_work_db):
-                    await manager._process_queued_items()
+        with patch("services.download_manager.get_database", return_value=mock_db):
+            with patch(
+                "services.download_manager.get_working_database",
+                return_value=mock_work_db,
+            ):
+                await manager._process_queued_items()
 
         # Should still be failed_max_retries (not requeued or searching)
         with mock_work_db.session_scope() as session:
             dl = session.query(DownloadQueue).first()
             assert dl.status == "failed_max_retries"
+
 
 class TestAutoImportLogic:
     """Task 2 Verification: Memory Leak Fix"""
@@ -187,6 +202,7 @@ class TestAutoImportLogic:
         - unknown paths                        → NOT skipped (False)
         """
         from datetime import timedelta
+
         from services.auto_importer import AutoImportService
         from time_utils import utc_now
 
@@ -210,14 +226,16 @@ class TestAutoImportLogic:
                 created_at=old_timestamp,
             )
             # Directly set updated_at if the column exists on the model
-            if hasattr(old_task, 'updated_at'):
+            if hasattr(old_task, "updated_at"):
                 old_task.updated_at = old_timestamp
             session.add(old_task)
             session.commit()
 
-        with patch('services.auto_importer.get_working_database', return_value=mock_work_db):
-            with patch('services.auto_importer.RetroactiveEnhancer'):
-                with patch('services.auto_importer.config_manager') as mock_config:
+        with patch(
+            "services.auto_importer.get_working_database", return_value=mock_work_db
+        ):
+            with patch("services.auto_importer.RetroactiveEnhancer"):
+                with patch("services.auto_importer.config_manager") as mock_config:
                     mock_config.get_library_dir.return_value = Path("/tmp/lib")
                     # 'ignored' → always skip
                     assert service._is_path_ignored(ignored_path) is True

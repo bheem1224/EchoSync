@@ -1,5 +1,6 @@
+from unittest.mock import MagicMock
+
 import pytest
-from unittest.mock import MagicMock, patch
 
 from services.sync_service import PlaylistSyncService
 
@@ -14,17 +15,24 @@ class FakeSpotifyClient:
 
     def get_user_playlists(self):
         # return a playlist per account so we can see which client was hit
-        return [{'id': f"pl{self.account_id}", 'name': f"P{self.account_id}", 'track_count': 1}]
+        return [
+            {
+                "id": f"pl{self.account_id}",
+                "name": f"P{self.account_id}",
+                "track_count": 1,
+            }
+        ]
 
     def get_playlist_tracks(self, pid):
         # return dummy track with minimal attributes
         class T:
             def __init__(self, title):
                 self.title = title
-                self.artist_name = 'A'
-                self.album_title = 'B'
+                self.artist_name = "A"
+                self.album_title = "B"
                 self.duration = 100
                 self.identifiers = {}
+
         return [T(pid)]
 
 
@@ -32,21 +40,30 @@ class FakeSpotifyClient:
 def patch_spotify_client(monkeypatch):
     # intercept SpotifyClient constructor to return fake instance
     def factory(provider_name, account_id=None, **kwargs):
-        if provider_name in ('spotify', 'EchoSync.Spotify'):
+        if provider_name in ("spotify", "EchoSync.Spotify"):
             return FakeSpotifyClient(account_id=account_id)
         return MagicMock()
 
     # patch PluginRegistry.create_instance used by sync_service
-    monkeypatch.setattr('core.nexus_framework.plugin_loader.PluginRegistry.create_instance', factory)
+    monkeypatch.setattr(
+        "core.nexus_framework.plugin_loader.PluginRegistry.create_instance", factory
+    )
 
     # disable provider registry registration which isn't needed for these fakes
-    monkeypatch.setattr('core.nexus_framework.plugin_loader.PluginRegistry.register', lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        "core.nexus_framework.plugin_loader.PluginRegistry.register",
+        lambda *args, **kwargs: None,
+    )
 
     # also patch storage service to return two accounts
     fake_storage = MagicMock()
-    fake_storage.list_accounts.return_value = [{'id': 1}, {'id': 2}]
-    monkeypatch.setattr('services.storage_service.get_storage_service', lambda: fake_storage)
-    monkeypatch.setattr('core.file_handling.storage.get_storage_service', lambda: fake_storage)
+    fake_storage.list_accounts.return_value = [{"id": 1}, {"id": 2}]
+    monkeypatch.setattr(
+        "services.storage_service.get_storage_service", lambda: fake_storage
+    )
+    monkeypatch.setattr(
+        "core.file_handling.storage.get_storage_service", lambda: fake_storage
+    )
 
     yield
 
@@ -63,9 +80,9 @@ def test_multiple_spotify_clients_created():
 def test_get_source_playlist_respects_account_id(monkeypatch):
     service = PlaylistSyncService()
     # ask for playlist from account 2 explicitly
-    pl = service._get_source_playlist('P2', account_id=2)
+    pl = service._get_source_playlist("P2", account_id=2)
     assert pl is not None
-    assert '(P2' not in pl.name  # name should not be suffixed here
+    assert "(P2" not in pl.name  # name should not be suffixed here
     # ask without account_id should return first match across clients
-    pl_all = service._get_source_playlist('P1')
-    assert pl_all and pl_all.id == 'pl1'
+    pl_all = service._get_source_playlist("P1")
+    assert pl_all and pl_all.id == "pl1"

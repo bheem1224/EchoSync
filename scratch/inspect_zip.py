@@ -8,9 +8,9 @@ for p_dir in plugins_dir.iterdir():
     beta_zip = p_dir / "beta.zip"
     if beta_zip.exists():
         try:
-            with zipfile.ZipFile(beta_zip, 'r') as z:
+            with zipfile.ZipFile(beta_zip, "r") as z:
                 # read __init__.py
-                init_content = z.read("__init__.py").decode('utf-8', errors='ignore')
+                init_content = z.read("__init__.py").decode("utf-8", errors="ignore")
                 print(f"--- {p_dir.name} beta.zip __init__.py ---")
                 print(init_content.strip())
         except Exception as e:
@@ -21,8 +21,10 @@ for p_dir in plugins_dir.iterdir():
     if releases_dir.exists():
         for zip_file in releases_dir.glob("*.zip"):
             try:
-                with zipfile.ZipFile(zip_file, 'r') as z:
-                    init_content = z.read("__init__.py").decode('utf-8', errors='ignore')
+                with zipfile.ZipFile(zip_file, "r") as z:
+                    init_content = z.read("__init__.py").decode(
+                        "utf-8", errors="ignore"
+                    )
                     print(f"--- {p_dir.name} {zip_file.name} __init__.py ---")
                     print(init_content.strip())
             except Exception as e:

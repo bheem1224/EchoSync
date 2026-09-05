@@ -5,17 +5,18 @@ Provides safe, root-bounded directory pruning and bottom-up cleanup
 for library and downloads directory trees.
 """
 
-import os
 import logging
+import os
 from pathlib import Path
-from typing import Optional, Set
 
 logger = logging.getLogger("file_utils")
 
 _IGNORE_FILES = {".ds_store", "thumbs.db", ".directory", "desktop.ini"}
 
 
-def prune_empty_parent_directories(start_path: Path | str, stop_at_roots: Optional[Set[Path]] = None) -> int:
+def prune_empty_parent_directories(
+    start_path: Path | str, stop_at_roots: set[Path] | None = None
+) -> int:
     """
     Ascend upwards from start_path (or its parent if start_path is a file)
     and remove empty directories, ignoring and unlinking junk metadata artifacts

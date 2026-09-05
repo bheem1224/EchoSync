@@ -17,12 +17,11 @@ Base URL prefix: /api/external
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Query
-from sqlalchemy.orm import contains_eager
-from typing import Optional, List
 from pydantic import BaseModel, ConfigDict
+from sqlalchemy.orm import contains_eager
 
-from database.music_database import Album, Artist, Track, get_database
 from core.tiered_logger import get_logger
+from database.music_database import Album, Artist, Track, get_database
 
 logger = get_logger("local_metadata")
 
@@ -35,65 +34,72 @@ _MAX_PER_PAGE = 200
 # Schemas
 # ---------------------------------------------------------------------------
 
+
 class ExternalTrack(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int
-    title: Optional[str] = None
-    artist: Optional[str] = None
-    artist_id: Optional[int] = None
-    album: Optional[str] = None
-    album_id: Optional[int] = None
-    duration: Optional[int] = None
-    track_number: Optional[int] = None
-    disc_number: Optional[int] = None
-    bitrate: Optional[int] = None
-    file_format: Optional[str] = None
-    isrc: Optional[str] = None
-    musicbrainz_id: Optional[str] = None
+    title: str | None = None
+    artist: str | None = None
+    artist_id: int | None = None
+    album: str | None = None
+    album_id: int | None = None
+    duration: int | None = None
+    track_number: int | None = None
+    disc_number: int | None = None
+    bitrate: int | None = None
+    file_format: str | None = None
+    isrc: str | None = None
+    musicbrainz_id: str | None = None
     stream_url: str
+
 
 class ExternalTrackList(BaseModel):
     page: int
     per_page: int
     total: int
     total_pages: int
-    items: List[ExternalTrack]
+    items: list[ExternalTrack]
+
 
 class ExternalArtist(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int
-    name: Optional[str] = None
-    sort_name: Optional[str] = None
-    image_url: Optional[str] = None
+    name: str | None = None
+    sort_name: str | None = None
+    image_url: str | None = None
+
 
 class ExternalArtistList(BaseModel):
     page: int
     per_page: int
     total: int
     total_pages: int
-    items: List[ExternalArtist]
+    items: list[ExternalArtist]
+
 
 class ExternalAlbum(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int
-    title: Optional[str] = None
-    artist_id: Optional[int] = None
-    artist: Optional[str] = None
-    cover_image_url: Optional[str] = None
-    year: Optional[int] = None
-    album_type: Optional[str] = None
+    title: str | None = None
+    artist_id: int | None = None
+    artist: str | None = None
+    cover_image_url: str | None = None
+    year: int | None = None
+    album_type: str | None = None
+
 
 class ExternalAlbumList(BaseModel):
     page: int
     per_page: int
     total: int
     total_pages: int
-    items: List[ExternalAlbum]
+    items: list[ExternalAlbum]
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _track_to_dict(track: Track) -> dict:
     """Serialise a Track ORM row to the standard external-API payload.
@@ -104,21 +110,25 @@ def _track_to_dict(track: Track) -> dict:
     """
     first_media = track.media[0] if getattr(track, "media", None) else None
     return {
-        "id":             track.id,
-        "title":          track.title,
-        "artist":         track.artist.name if getattr(track, "artist", None) else None,
-        "artist_id":      track.artist_id,
-        "album":          track.album.title if getattr(track, "album", None) else None,
-        "album_id":       track.album_id,
-        "duration":       track.duration,           # milliseconds
-        "track_number":   track.track_number,
-        "disc_number":    track.disc_number,
-        "bitrate":        first_media.bitrate if first_media else getattr(track, "bitrate", None),
-        "file_format":    first_media.file_format if first_media else getattr(track, "file_format", None),
-        "isrc":           track.isrc,
+        "id": track.id,
+        "title": track.title,
+        "artist": track.artist.name if getattr(track, "artist", None) else None,
+        "artist_id": track.artist_id,
+        "album": track.album.title if getattr(track, "album", None) else None,
+        "album_id": track.album_id,
+        "duration": track.duration,  # milliseconds
+        "track_number": track.track_number,
+        "disc_number": track.disc_number,
+        "bitrate": first_media.bitrate
+        if first_media
+        else getattr(track, "bitrate", None),
+        "file_format": first_media.file_format
+        if first_media
+        else getattr(track, "file_format", None),
+        "isrc": track.isrc,
         "musicbrainz_id": track.musicbrainz_id,
         # CRITICAL: direct stream URL so external apps can play immediately
-        "stream_url":     f"/api/library/stream/{track.id}",
+        "stream_url": f"/api/library/stream/{track.id}",
     }
 
 
@@ -126,13 +136,14 @@ def _track_to_dict(track: Track) -> dict:
 # Tracks
 # ---------------------------------------------------------------------------
 
+
 @router.get("/library/tracks", response_model=ExternalTrackList)
 def list_tracks(
     page: int = Query(1, ge=1),
     per_page: int = Query(_DEFAULT_PER_PAGE, ge=1, le=_MAX_PER_PAGE),
-    artist_id: Optional[int] = None,
-    album_id: Optional[int] = None,
-    q: Optional[str] = None
+    artist_id: int | None = None,
+    album_id: int | None = None,
+    q: str | None = None,
 ):
     """Paginated list of tracks in the local library."""
     db = get_database()
@@ -162,14 +173,14 @@ def list_tracks(
         )
 
         total = query.count()
-        rows  = query.offset((page - 1) * per_page).limit(per_page).all()
+        rows = query.offset((page - 1) * per_page).limit(per_page).all()
 
         return {
-            "page":        page,
-            "per_page":    per_page,
-            "total":       total,
+            "page": page,
+            "per_page": per_page,
+            "total": total,
             "total_pages": max(1, (total + per_page - 1) // per_page),
-            "items":       [_track_to_dict(t) for t in rows],
+            "items": [_track_to_dict(t) for t in rows],
         }
 
 
@@ -201,11 +212,12 @@ def get_track(track_id: int):
 # Artists
 # ---------------------------------------------------------------------------
 
+
 @router.get("/library/artists", response_model=ExternalArtistList)
 def list_artists(
     page: int = Query(1, ge=1),
     per_page: int = Query(_DEFAULT_PER_PAGE, ge=1, le=_MAX_PER_PAGE),
-    q: Optional[str] = None
+    q: str | None = None,
 ):
     """Paginated list of artists in the local library."""
     db = get_database()
@@ -216,17 +228,17 @@ def list_artists(
         query = query.order_by(Artist.name)
 
         total = query.count()
-        rows  = query.offset((page - 1) * per_page).limit(per_page).all()
+        rows = query.offset((page - 1) * per_page).limit(per_page).all()
 
         return {
-            "page":        page,
-            "per_page":    per_page,
-            "total":       total,
+            "page": page,
+            "per_page": per_page,
+            "total": total,
             "total_pages": max(1, (total + per_page - 1) // per_page),
             "items": [
                 {
-                    "id":        a.id,
-                    "name":      a.name,
+                    "id": a.id,
+                    "name": a.name,
                     "sort_name": a.sort_name,
                     "image_url": a.image_url,
                 }
@@ -239,12 +251,13 @@ def list_artists(
 # Albums
 # ---------------------------------------------------------------------------
 
+
 @router.get("/library/albums", response_model=ExternalAlbumList)
 def list_albums(
     page: int = Query(1, ge=1),
     per_page: int = Query(_DEFAULT_PER_PAGE, ge=1, le=_MAX_PER_PAGE),
-    artist_id: Optional[int] = None,
-    q: Optional[str] = None
+    artist_id: int | None = None,
+    q: str | None = None,
 ):
     """Paginated list of albums in the local library."""
     db = get_database()
@@ -261,23 +274,45 @@ def list_albums(
         query = query.order_by(Artist.name, Album.title)
 
         total = query.count()
-        rows  = query.offset((page - 1) * per_page).limit(per_page).all()
+        rows = query.offset((page - 1) * per_page).limit(per_page).all()
 
         return {
-            "page":        page,
-            "per_page":    per_page,
-            "total":       total,
+            "page": page,
+            "per_page": per_page,
+            "total": total,
             "total_pages": max(1, (total + per_page - 1) // per_page),
             "items": [
                 {
-                    "id":              al.id,
-                    "title":           al.title,
-                    "artist_id":       al.artist_id,
-                    "artist":          al.artist.name if getattr(al, "artist", None) else None,
+                    "id": al.id,
+                    "title": al.title,
+                    "artist_id": al.artist_id,
+                    "artist": al.artist.name if getattr(al, "artist", None) else None,
                     "cover_image_url": al.cover_image_url,
-                    "year":            al.release_date.year if getattr(al, "release_date", None) else None,
-                    "album_type":      al.album_type,
+                    "year": al.release_date.year
+                    if getattr(al, "release_date", None)
+                    else None,
+                    "album_type": al.album_type,
                 }
                 for al in rows
             ],
         }
+
+
+library_router = APIRouter(prefix="/api/v1/system", tags=["System Library"])
+for _r in router.routes:
+    from fastapi.routing import APIRoute
+
+    if isinstance(_r, APIRoute):
+        _subpath = _r.path[len("/api/v1/system/local_metadata") :]
+        library_router.add_api_route(
+            _subpath,
+            _r.endpoint,
+            methods=_r.methods,
+            response_model=_r.response_model,
+            status_code=_r.status_code,
+            tags=_r.tags,
+            dependencies=_r.dependencies,
+            summary=_r.summary,
+            description=_r.description,
+            name=_r.name,
+        )

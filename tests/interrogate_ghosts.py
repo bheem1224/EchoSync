@@ -1,11 +1,12 @@
 import os
-import sys
 import sqlite3
+import sys
 from collections import defaultdict
+
 
 def main():
     db_path = r"\\KARNA\Docker\SoulSync\data\music_library.db"
-    
+
     if not os.path.exists(db_path):
         print(f"Error: Database not found at {db_path}", file=sys.stderr)
         # Try a fallback if run locally
@@ -46,10 +47,12 @@ def main():
     for path, _ in rows:
         if path:
             path_counts[path] += 1
-            
+
     duplicate_paths = {path: count for path, count in path_counts.items() if count > 1}
     total_duplicates = sum(count - 1 for count in duplicate_paths.values())
-    print(f"Duplicate file_path rows: {total_duplicates} (distinct paths duplicated: {len(duplicate_paths)})")
+    print(
+        f"Duplicate file_path rows: {total_duplicates} (distinct paths duplicated: {len(duplicate_paths)})"
+    )
 
     # 3. Extension Breakdown
     extension_counts = defaultdict(int)
@@ -62,29 +65,43 @@ def main():
                 if not ext:
                     ext = "[no_extension]"
             extension_counts[ext] += 1
-            
+
     print("\nExtension Breakdown:")
-    for ext, count in sorted(extension_counts.items(), key=lambda x: x[1], reverse=True):
+    for ext, count in sorted(
+        extension_counts.items(), key=lambda x: x[1], reverse=True
+    ):
         print(f"  {ext}: {count}")
 
     # Calculate sizes
     total_size = sum(sz for _, sz in rows if sz)
-    library_size = sum(sz for path, sz in rows if path and path.startswith("/data/library/") and sz)
-    ghost_size = sum(sz for path, sz in rows if path and path.startswith("/data/music/") and sz)
+    library_size = sum(
+        sz for path, sz in rows if path and path.startswith("/data/library/") and sz
+    )
+    ghost_size = sum(
+        sz for path, sz in rows if path and path.startswith("/data/music/") and sz
+    )
     other_size = total_size - library_size - ghost_size
 
-    print(f"\nSize Breakdown:")
-    print(f"  Total size in local_media:        {total_size / (1024**3):.2f} GB ({total_size} bytes)")
-    print(f"  Expected library size (/data/lib): {library_size / (1024**3):.2f} GB ({library_size} bytes)")
-    print(f"  Ghost paths size (/data/music):    {ghost_size / (1024**3):.2f} GB ({ghost_size} bytes)")
-    print(f"  Other paths size:                  {other_size / (1024**3):.2f} GB ({other_size} bytes)")
+    print("\nSize Breakdown:")
+    print(
+        f"  Total size in local_media:        {total_size / (1024**3):.2f} GB ({total_size} bytes)"
+    )
+    print(
+        f"  Expected library size (/data/lib): {library_size / (1024**3):.2f} GB ({library_size} bytes)"
+    )
+    print(
+        f"  Ghost paths size (/data/music):    {ghost_size / (1024**3):.2f} GB ({ghost_size} bytes)"
+    )
+    print(
+        f"  Other paths size:                  {other_size / (1024**3):.2f} GB ({other_size} bytes)"
+    )
 
     # 4. Path Anomaly Check
     # Expected folder is /data/library/
     expected_prefix = "/data/library/"
     anomalies = []
     null_zero_sizes = 0
-    
+
     for path, size in rows:
         if size is None or size == 0:
             null_zero_sizes += 1
@@ -92,13 +109,13 @@ def main():
         if not path:
             anomalies.append((path, size, "NULL/Empty path"))
             continue
-            
+
         if path.startswith("virtual://"):
             continue
-            
+
         is_anomaly = False
         reason = ""
-        
+
         # Check folder prefix
         if not path.startswith(expected_prefix):
             is_anomaly = True
@@ -107,7 +124,7 @@ def main():
         elif size is None or size == 0:
             is_anomaly = True
             reason = "Size is NULL or 0"
-            
+
         if is_anomaly:
             anomalies.append((path, size, reason))
 
@@ -115,10 +132,11 @@ def main():
     print(f"Path Anomalies Found: {len(anomalies)}")
     print("5 Examples of anomalous/weird/bloat paths:")
     for i, (path, size, reason) in enumerate(anomalies[:5]):
-        print(f"  Example {i+1}:")
+        print(f"  Example {i + 1}:")
         print(f"    Path:   {path}")
         print(f"    Size:   {size} bytes")
         print(f"    Reason: {reason}")
+
 
 if __name__ == "__main__":
     main()

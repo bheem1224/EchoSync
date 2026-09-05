@@ -1,17 +1,21 @@
 #!/usr/bin/env python3
-import sys
-import os
-import json
 import ast
+import json
+import os
+import sys
+
 
 def error(msg):
     print(f"\033[91m[FAIL]\033[0m {msg}")
 
+
 def success(msg):
     print(f"\033[92m[PASS]\033[0m {msg}")
 
+
 def warn(msg):
     print(f"\033[93m[WARN]\033[0m {msg}")
+
 
 class PluginASTVisitor(ast.NodeVisitor):
     def __init__(self, filepath, privileged):
@@ -21,21 +25,29 @@ class PluginASTVisitor(ast.NodeVisitor):
 
     def visit_Import(self, node):
         for alias in node.names:
-            if alias.name in ['os', 'sys', 'subprocess', 'ctypes', 'sqlite3']:
+            if alias.name in ["os", "sys", "subprocess", "ctypes", "sqlite3"]:
                 if self.privileged:
-                    warn(f"{self.filepath}:{node.lineno} - Privileged import '{alias.name}' detected.")
+                    warn(
+                        f"{self.filepath}:{node.lineno} - Privileged import '{alias.name}' detected."
+                    )
                 else:
-                    error(f"{self.filepath}:{node.lineno} - Sandbox Violation: Unauthorized import '{alias.name}'.")
+                    error(
+                        f"{self.filepath}:{node.lineno} - Sandbox Violation: Unauthorized import '{alias.name}'."
+                    )
                     self.failed = True
         self.generic_visit(node)
 
     def visit_ImportFrom(self, node):
         if node.module:
-            if node.module in ['os', 'sys', 'subprocess', 'ctypes', 'sqlite3']:
+            if node.module in ["os", "sys", "subprocess", "ctypes", "sqlite3"]:
                 if self.privileged:
-                    warn(f"{self.filepath}:{node.lineno} - Privileged import '{node.module}' detected.")
+                    warn(
+                        f"{self.filepath}:{node.lineno} - Privileged import '{node.module}' detected."
+                    )
                 else:
-                    error(f"{self.filepath}:{node.lineno} - Sandbox Violation: Unauthorized import '{node.module}'.")
+                    error(
+                        f"{self.filepath}:{node.lineno} - Sandbox Violation: Unauthorized import '{node.module}'."
+                    )
                     self.failed = True
         self.generic_visit(node)
 
@@ -43,19 +55,39 @@ class PluginASTVisitor(ast.NodeVisitor):
         if isinstance(node.func, ast.Attribute):
             if isinstance(node.func.value, ast.Name):
                 if node.func.value.id == "threading" and node.func.attr == "Thread":
-                    warn(f"{self.filepath}:{node.lineno} - Direct threading.Thread usage detected. Use native job_queue concurrency manager system.")
-                elif node.func.value.id == "multiprocessing" and node.func.attr == "Process":
-                    warn(f"{self.filepath}:{node.lineno} - Direct multiprocessing.Process usage detected. Use native job_queue concurrency manager system.")
-                elif node.func.value.id == "asyncio" and node.func.attr in ["get_event_loop", "new_event_loop", "run"]:
-                    warn(f"{self.filepath}:{node.lineno} - asyncio event loop capture detected. Use native job_queue concurrency manager system.")
+                    warn(
+                        f"{self.filepath}:{node.lineno} - Direct threading.Thread usage detected. Use native job_queue concurrency manager system."
+                    )
+                elif (
+                    node.func.value.id == "multiprocessing"
+                    and node.func.attr == "Process"
+                ):
+                    warn(
+                        f"{self.filepath}:{node.lineno} - Direct multiprocessing.Process usage detected. Use native job_queue concurrency manager system."
+                    )
+                elif node.func.value.id == "asyncio" and node.func.attr in [
+                    "get_event_loop",
+                    "new_event_loop",
+                    "run",
+                ]:
+                    warn(
+                        f"{self.filepath}:{node.lineno} - asyncio event loop capture detected. Use native job_queue concurrency manager system."
+                    )
 
             # String query mutations guard
             if node.func.attr in ["execute", "executescript", "executemany"]:
                 # Check if argument is a string literal (direct un-mapped string query)
-                if node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
-                     warn(f"{self.filepath}:{node.lineno} - Direct string database mutation detected. Interact with tables via native platform SDK data classes (self.kvs).")
+                if (
+                    node.args
+                    and isinstance(node.args[0], ast.Constant)
+                    and isinstance(node.args[0].value, str)
+                ):
+                    warn(
+                        f"{self.filepath}:{node.lineno} - Direct string database mutation detected. Interact with tables via native platform SDK data classes (self.kvs)."
+                    )
 
         self.generic_visit(node)
+
 
 def extract_targets(obj):
     targets = []
@@ -68,11 +100,12 @@ def extract_targets(obj):
     elif isinstance(obj, dict):
         for key, val in obj.items():
             if isinstance(val, str):
-                if val.endswith('.js') or val.endswith('.css') or val.endswith('.html'):
+                if val.endswith(".js") or val.endswith(".css") or val.endswith(".html"):
                     targets.append(val)
             elif isinstance(val, (list, dict)):
                 targets.extend(extract_targets(val))
     return targets
+
 
 def validate_plugin(directory):
     print(f"\n--- Validating Plugin: {directory} ---")
@@ -80,46 +113,50 @@ def validate_plugin(directory):
         error(f"Target path '{directory}' is not a directory.")
         return False
 
-    manifest_path = os.path.join(directory, 'manifest.json')
+    manifest_path = os.path.join(directory, "manifest.json")
     if not os.path.exists(manifest_path):
         error(f"Missing manifest.json in {directory}")
         return False
 
     try:
-        with open(manifest_path, 'r') as f:
+        with open(manifest_path, "r") as f:
             manifest = json.load(f)
     except Exception as e:
         error(f"Failed to parse manifest.json: {e}")
         return False
 
-    plugin_id = manifest.get('id')
-    version = manifest.get('version')
-    name = manifest.get('name')
-    author = manifest.get('author', 'Unknown')
-    privileged = manifest.get('privileged', False)
+    plugin_id = manifest.get("id")
+    version = manifest.get("version")
+    name = manifest.get("name")
+    author = manifest.get("author", "Unknown")
+    privileged = manifest.get("privileged", False)
 
     if not plugin_id or not version or not name:
-        error(f"manifest.json missing required keys (id, version, name)")
+        error("manifest.json missing required keys (id, version, name)")
         return False
 
-    expected_folder = plugin_id.split('.')[-1]
+    expected_folder = plugin_id.split(".")[-1]
     actual_folder = os.path.basename(os.path.normpath(directory))
 
     if actual_folder.lower() != expected_folder.lower():
-        error(f"Folder name mismatch. Expected '{expected_folder}' (case-insensitive) based on manifest ID, got '{actual_folder}'.")
+        error(
+            f"Folder name mismatch. Expected '{expected_folder}' (case-insensitive) based on manifest ID, got '{actual_folder}'."
+        )
         return False
 
     # Phase 1: Layout & Asset Checking
-    init_path = os.path.join(directory, '__init__.py')
+    init_path = os.path.join(directory, "__init__.py")
     if not os.path.exists(init_path):
-        warn(f"__init__.py is missing in '{directory}'. Ensure the plugin acts as a valid declarative Python package.")
+        warn(
+            f"__init__.py is missing in '{directory}'. Ensure the plugin acts as a valid declarative Python package."
+        )
     simulated_stable_path = f"/data/plugins/{author}/{name}/"
     # Beta channel simulated logic would append /beta but for existence we check locally.
 
-    ui_manifest_path = os.path.join(directory, 'ui_manifest.json')
+    ui_manifest_path = os.path.join(directory, "ui_manifest.json")
     if os.path.exists(ui_manifest_path):
         try:
-            with open(ui_manifest_path, 'r') as f:
+            with open(ui_manifest_path, "r") as f:
                 ui_manifest = json.load(f)
         except Exception as e:
             error(f"Failed to parse ui_manifest.json: {e}")
@@ -132,22 +169,24 @@ def validate_plugin(directory):
 
         # Deduplicate and check
         for target in set(all_targets):
-            parts = target.split('/')
+            parts = target.split("/")
             try:
                 # find the plugin name in the URL
                 idx = parts.index(expected_folder)
-                relative_path = os.path.join(*parts[idx+1:])
+                relative_path = os.path.join(*parts[idx + 1 :])
             except ValueError:
                 # If plugin name isn't directly in path, assume static/ is the root or just check relative
-                if 'static' in parts:
-                    idx = parts.index('static')
+                if "static" in parts:
+                    idx = parts.index("static")
                     relative_path = os.path.join(*parts[idx:])
                 else:
-                    relative_path = target.lstrip('/')
+                    relative_path = target.lstrip("/")
 
             target_path = os.path.join(directory, relative_path)
             if not os.path.isfile(target_path):
-                error(f"UI asset/component '{target}' -> physical path '{relative_path}' declared in ui_manifest.json not found at '{target_path}'.")
+                error(
+                    f"UI asset/component '{target}' -> physical path '{relative_path}' declared in ui_manifest.json not found at '{target_path}'."
+                )
                 return False
 
     # Phase 2 & 3: AST Security Sandbox Linter & Optimization Guard
@@ -160,38 +199,56 @@ def validate_plugin(directory):
     class ScopedPluginASTVisitor(PluginASTVisitor):
         def visit_ImportFrom(self, node):
             if node.module:
-                if node.module in ['os', 'sys', 'subprocess', 'ctypes', 'sqlite3']:
+                if node.module in ["os", "sys", "subprocess", "ctypes", "sqlite3"]:
                     if self.privileged:
-                        warn(f"{self.filepath}:{node.lineno} - Privileged import '{node.module}' detected.")
+                        warn(
+                            f"{self.filepath}:{node.lineno} - Privileged import '{node.module}' detected."
+                        )
                     else:
-                        error(f"{self.filepath}:{node.lineno} - Sandbox Violation: Unauthorized import '{node.module}'.")
+                        error(
+                            f"{self.filepath}:{node.lineno} - Sandbox Violation: Unauthorized import '{node.module}'."
+                        )
                         self.failed = True
 
                 # Check for absolute imports pointing to the root `plugins.` namespace.
-                if node.module.startswith("plugins.") and not node.module == "plugins.plugin_system":
-                    error(f"{self.filepath}:{node.lineno} - Absolute import from 'plugins.' namespace detected ('{node.module}'). Enforce intra-package relative dot-notation.")
+                if (
+                    node.module.startswith("plugins.")
+                    and not node.module == "plugins.plugin_system"
+                ):
+                    error(
+                        f"{self.filepath}:{node.lineno} - Absolute import from 'plugins.' namespace detected ('{node.module}'). Enforce intra-package relative dot-notation."
+                    )
                     self.failed = True
             self.generic_visit(node)
 
         def visit_Import(self, node):
             for alias in node.names:
-                if alias.name in ['os', 'sys', 'subprocess', 'ctypes', 'sqlite3']:
+                if alias.name in ["os", "sys", "subprocess", "ctypes", "sqlite3"]:
                     if self.privileged:
-                        warn(f"{self.filepath}:{node.lineno} - Privileged import '{alias.name}' detected.")
+                        warn(
+                            f"{self.filepath}:{node.lineno} - Privileged import '{alias.name}' detected."
+                        )
                     else:
-                        error(f"{self.filepath}:{node.lineno} - Sandbox Violation: Unauthorized import '{alias.name}'.")
+                        error(
+                            f"{self.filepath}:{node.lineno} - Sandbox Violation: Unauthorized import '{alias.name}'."
+                        )
                         self.failed = True
-                if alias.name.startswith("plugins.") and not alias.name == "plugins.plugin_system":
-                    error(f"{self.filepath}:{node.lineno} - Absolute import from 'plugins.' namespace detected ('{alias.name}'). Enforce intra-package relative dot-notation.")
+                if (
+                    alias.name.startswith("plugins.")
+                    and not alias.name == "plugins.plugin_system"
+                ):
+                    error(
+                        f"{self.filepath}:{node.lineno} - Absolute import from 'plugins.' namespace detected ('{alias.name}'). Enforce intra-package relative dot-notation."
+                    )
                     self.failed = True
             self.generic_visit(node)
 
     for root, _, files in os.walk(directory):
         for file in files:
-            if file.endswith('.py'):
+            if file.endswith(".py"):
                 filepath = os.path.join(root, file)
                 try:
-                    with open(filepath, 'r', encoding='utf-8') as f:
+                    with open(filepath, "r", encoding="utf-8") as f:
                         source = f.read()
                     tree = ast.parse(source, filename=filepath)
 
@@ -210,6 +267,7 @@ def validate_plugin(directory):
 
     success(f"Plugin '{directory}' validated successfully.")
     return True
+
 
 if __name__ == "__main__":
     if len(sys.argv) < 2 or sys.argv[1] in ["-h", "--help"]:

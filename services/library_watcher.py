@@ -43,29 +43,44 @@ Minimum file size guard (64 KB):
 
 import os
 import threading
+from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Optional, Generator, Set, Tuple
+from typing import Any
 
-from watchdog.events import FileSystemEventHandler, FileSystemEvent  # type: ignore[import-untyped]
+import echosync_core
+from watchdog.events import (  # type: ignore[import-untyped]
+    FileSystemEvent,
+    FileSystemEventHandler,
+)
 from watchdog.observers import Observer  # type: ignore[import-untyped]
 
+from core.db.echo_sync_track import EchosyncMedia, EchosyncTrack
 from core.event_bus import event_bus
-from core.db.echo_sync_track import EchosyncTrack, EchosyncMedia
 from core.settings import config_manager
 from core.tiered_logger import get_logger
 from database.music_database import get_database
-import echosync_core
 
 logger = get_logger("library_watcher")
 
 # Audio extensions that the watcher responds to.
 # Must stay in sync with LocalServerProvider.get_library_tracks() and
 # web/routes/local_server.py format sets.
-_AUDIO_EXTENSIONS: frozenset[str] = frozenset({
-    ".flac", ".mp3", ".ogg", ".m4a", ".aac", ".alac",
-    ".ape", ".wav", ".dsf", ".dff", ".wma",
-})
+_AUDIO_EXTENSIONS: frozenset[str] = frozenset(
+    {
+        ".flac",
+        ".mp3",
+        ".ogg",
+        ".m4a",
+        ".aac",
+        ".alac",
+        ".ape",
+        ".wav",
+        ".dsf",
+        ".dff",
+        ".wma",
+    }
+)
 
 # Minimum on-disk size before tag extraction is attempted.
 # Prevents reading half-written files created by download managers.
@@ -76,14 +91,16 @@ _MIN_FILE_BYTES: int = 64 * 1024  # 64 KB
 _DEBOUNCE_SECONDS: float = 1.5
 
 # ── In-Flight Transfer Lock Suppression Registry ──────────────────────────────
-_in_flight_transfers: Set[str] = set()
+_in_flight_transfers: set[str] = set()
 _transfer_lock = threading.Lock()
+
 
 def is_path_suppressed(path: str) -> bool:
     """Check if a path is currently registered as an in-flight transfer."""
     norm = str(Path(path).resolve()).lower()
     with _transfer_lock:
         return norm in _in_flight_transfers
+
 
 @contextmanager
 def suppress_path(path: str) -> Generator[None, None, None]:
@@ -97,9 +114,13 @@ def suppress_path(path: str) -> Generator[None, None, None]:
         with _transfer_lock:
             _in_flight_transfers.discard(norm)
 
-_TEMP_EXTENSIONS: Tuple[str, ...] = ('.tmp', '.part', '.crdownload')
 
-def _is_path_ignored(file_path: str, ignored_directories: Optional[Set[str]] = None) -> bool:
+_TEMP_EXTENSIONS: tuple[str, ...] = (".tmp", ".part", ".crdownload")
+
+
+def _is_path_ignored(
+    file_path: str, ignored_directories: set[str] | None = None
+) -> bool:
     """Check if a file path belongs to an ignored directory or temp pattern."""
     if ignored_directories is None:
         ignored_directories = {"poor_metadata", "incomplete"}
@@ -109,7 +130,9 @@ def _is_path_ignored(file_path: str, ignored_directories: Optional[Set[str]] = N
         if bool(parts_lower.intersection(ignored_directories)):
             return True
         name_lower = p.name.lower()
-        if name_lower.endswith(_TEMP_EXTENSIONS) or any(part.lower().endswith(_TEMP_EXTENSIONS) for part in p.parts):
+        if name_lower.endswith(_TEMP_EXTENSIONS) or any(
+            part.lower().endswith(_TEMP_EXTENSIONS) for part in p.parts
+        ):
             return True
     except Exception:
         pass
@@ -191,6 +214,7 @@ class _AudioEventHandler(FileSystemEventHandler):
 
 # ── File processing ────────────────────────────────────────────────────────────
 
+
 def _process_new_file(path: Path) -> None:
     """
     Extract tags, upsert the track into the database, and emit TRACK_IMPORTED.
@@ -218,13 +242,15 @@ def _process_new_file(path: Path) -> None:
         try:
             tags = echosync_core.extract_metadata(str(path))
         except Exception as tag_err:
-            logger.warning("Watcher: tag extraction failed for %s: %s", path.name, tag_err)
+            logger.warning(
+                "Watcher: tag extraction failed for %s: %s", path.name, tag_err
+            )
 
         title: str = tags.get("title") or path.stem
         artist_name: str = tags.get("artist") or "Unknown Artist"
-        isrc: Optional[str] = tags.get("isrc") or None
-        album_title: Optional[str] = tags.get("album") or None
-        duration_ms: Optional[int] = None
+        isrc: str | None = tags.get("isrc") or None
+        album_title: str | None = tags.get("album") or None
+        duration_ms: int | None = None
 
         raw_duration = tags.get("duration_ms")
         if raw_duration is None:
@@ -260,12 +286,15 @@ def _process_new_file(path: Path) -> None:
 
         try:
             from core.database.repositories.track_repo import TrackRepository
+
             db = get_database()
             with db.session_factory() as session:
                 repo = TrackRepository(session)
                 repo.bulk_upsert_tracks([track_obj])
                 session.commit()
-            logger.info("Watcher: DB upsert complete for '%s' by '%s'", title, artist_name)
+            logger.info(
+                "Watcher: DB upsert complete for '%s' by '%s'", title, artist_name
+            )
         except Exception as db_err:
             logger.error("Watcher: DB upsert failed for %s: %s", path.name, db_err)
 
@@ -303,6 +332,7 @@ def _process_new_file(path: Path) -> None:
 
 # ── Service class ──────────────────────────────────────────────────────────────
 
+
 class LibraryWatcherService:
     """
     Manages the watchdog Observer lifecycle.
@@ -316,7 +346,7 @@ class LibraryWatcherService:
 
     def __init__(self) -> None:
         self._observer: Any = None  # watchdog Observer — no PEP 484 stubs shipped
-        self._handler: Optional[_AudioEventHandler] = None
+        self._handler: _AudioEventHandler | None = None
         self._started = False
 
     def start(self) -> None:
@@ -328,10 +358,14 @@ class LibraryWatcherService:
         to boot cleanly even before a user has pointed it at a library.
         """
         if self._started:
-            logger.warning("LibraryWatcherService.start() called more than once — ignoring")
+            logger.warning(
+                "LibraryWatcherService.start() called more than once — ignoring"
+            )
             return
 
-        library_dir = config_manager.get('storage.library_dir') or config_manager.get('library_dir')
+        library_dir = config_manager.get("storage.library_dir") or config_manager.get(
+            "library_dir"
+        )
         if not library_dir:
             logger.warning(
                 "LibraryWatcherService: library directory is not configured — watcher disabled"
@@ -357,8 +391,13 @@ class LibraryWatcherService:
         self._observer.start()
         self._started = True
         try:
+            from core.task_manager.models import (
+                OwnerType,
+                ProcessCategory,
+                ProcessOwner,
+            )
             from core.task_manager.supervisor import supervisor
-            from core.task_manager.models import ProcessOwner, OwnerType, ProcessCategory
+
             self._reg_id = supervisor.register_process(
                 ProcessOwner(
                     owner_id="core.library_watcher",
@@ -366,7 +405,7 @@ class LibraryWatcherService:
                     task_name="Library File Watcher",
                     category=ProcessCategory.WORKER_THREAD,
                     is_killable=True,
-                    thread_id=getattr(self._observer, 'ident', None)
+                    thread_id=getattr(self._observer, "ident", None),
                 )
             )
         except Exception:
@@ -381,9 +420,10 @@ class LibraryWatcherService:
         if not self._started:
             return
 
-        if getattr(self, '_reg_id', None):
+        if getattr(self, "_reg_id", None):
             try:
                 from core.task_manager.supervisor import supervisor
+
                 supervisor.unregister_process(self._reg_id)
                 self._reg_id = None
             except Exception:
@@ -397,7 +437,9 @@ class LibraryWatcherService:
             try:
                 self._observer.join(timeout=5)
             except Exception as exc:
-                logger.warning("LibraryWatcherService: error joining observer thread: %s", exc)
+                logger.warning(
+                    "LibraryWatcherService: error joining observer thread: %s", exc
+                )
 
         self._started = False
         logger.info("LibraryWatcherService stopped")
@@ -405,7 +447,7 @@ class LibraryWatcherService:
 
 # ── Module-level singleton ─────────────────────────────────────────────────────
 
-_watcher_instance: Optional[LibraryWatcherService] = None
+_watcher_instance: LibraryWatcherService | None = None
 _watcher_lock = threading.Lock()
 
 

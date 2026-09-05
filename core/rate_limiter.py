@@ -1,11 +1,12 @@
-import urllib.parse
-import time
 import threading
-from typing import Callable, Optional
+import time
+import urllib.parse
+from collections.abc import Callable
 
 # Global dictionary to track last call times for the decorator
 _last_call = {}
 _last_call_lock = threading.Lock()
+
 
 def rate_limited(key: str, min_interval_sec: float) -> Callable:
     """
@@ -18,6 +19,7 @@ def rate_limited(key: str, min_interval_sec: float) -> Callable:
     Returns:
         A dictionary {"rate_limited": True} if limited, otherwise the function result.
     """
+
     def decorator(fn):
         def wrapper(*args, **kwargs):
             now = time.time()
@@ -27,12 +29,15 @@ def rate_limited(key: str, min_interval_sec: float) -> Callable:
                     return {"rate_limited": True}
                 _last_call[key] = now
             return fn(*args, **kwargs)
+
         return wrapper
+
     return decorator
 
 
 class TokenBucketRateLimiter:
     """A standard thread-safe token bucket rate limiter for API requests."""
+
     def __init__(self, capacity: int, refill_rate: float):
         self.capacity = capacity
         self.tokens = capacity
@@ -59,7 +64,9 @@ class TokenBucketRateLimiter:
             with self._lock:
                 now = time.time()
                 elapsed = now - self.last_refill
-                self.tokens = min(self.capacity, self.tokens + elapsed * self.refill_rate)
+                self.tokens = min(
+                    self.capacity, self.tokens + elapsed * self.refill_rate
+                )
                 self.last_refill = now
 
                 if self.tokens >= tokens:
@@ -76,13 +83,14 @@ class TokenBucketRateLimiter:
 
 class GlobalRateLimiter:
     """A singleton managing token bucket rate limiters by domain."""
+
     _instance = None
     _init_lock = threading.Lock()
 
     def __new__(cls):
         with cls._init_lock:
             if cls._instance is None:
-                cls._instance = super(GlobalRateLimiter, cls).__new__(cls)
+                cls._instance = super().__new__(cls)
                 cls._instance.domains = {}
                 cls._instance._domains_lock = threading.Lock()
         return cls._instance
@@ -106,7 +114,9 @@ class GlobalRateLimiter:
         with self._domains_lock:
             if domain not in self.domains:
                 # Capacity is set to 1.0 (burst size), refill_rate is rps
-                self.domains[domain] = TokenBucketRateLimiter(capacity=1.0, refill_rate=rps)
+                self.domains[domain] = TokenBucketRateLimiter(
+                    capacity=1.0, refill_rate=rps
+                )
             bucket = self.domains[domain]
 
         bucket.wait(1)

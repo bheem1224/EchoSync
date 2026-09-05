@@ -24,12 +24,12 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
-
+from core.nexus_framework.plugin_loader import ServiceRegistry
 
 # ---------------------------------------------------------------------------
 # Isolation fixture
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture(autouse=True)
 def _isolated_registry():
@@ -50,8 +50,10 @@ def _isolated_registry():
 # Helper factories
 # ---------------------------------------------------------------------------
 
+
 class _DummyEngine:
     """Minimal stand-in for a matching engine class."""
+
     def __init__(self, profile=None):
         self.profile = profile
 
@@ -61,6 +63,7 @@ class _DummyEngine:
 
 class _BrokenEngine:
     """Factory that always raises on __init__ — simulates a misconfigured plugin."""
+
     def __init__(self, *args, **kwargs):
         raise RuntimeError("BrokenEngine: deliberate init failure")
 
@@ -68,6 +71,7 @@ class _BrokenEngine:
 # ===========================================================================
 # 1. resolve() — no default registered
 # ===========================================================================
+
 
 class TestResolveNoDefault:
     def test_resolve_returns_none_when_no_default_registered(self):
@@ -98,6 +102,7 @@ class TestResolveNoDefault:
 # ===========================================================================
 # 2. Broken override — registry hands it back, caller handles init error
 # ===========================================================================
+
 
 class TestBrokenOverrideFallback:
     def test_registry_returns_broken_class_not_none(self):
@@ -145,6 +150,7 @@ class TestBrokenOverrideFallback:
 # ===========================================================================
 # 3. register_override() must not mutate _defaults
 # ===========================================================================
+
 
 class TestOverrideDoesNotCorruptDefaults:
     def test_register_override_does_not_corrupt_defaults(self):
@@ -209,6 +215,7 @@ class TestOverrideDoesNotCorruptDefaults:
 # 4. Thread-safety — lock sanity check (H3 regression)
 # ===========================================================================
 
+
 class TestServiceRegistryThreadSafety:
     """
     Smoke-test that concurrent register_default / resolve calls do not raise
@@ -237,10 +244,9 @@ class TestServiceRegistryThreadSafety:
             except Exception as exc:
                 errors.append(exc)
 
-        threads = (
-            [threading.Thread(target=_register) for _ in range(10)]
-            + [threading.Thread(target=_resolve) for _ in range(10)]
-        )
+        threads = [threading.Thread(target=_register) for _ in range(10)] + [
+            threading.Thread(target=_resolve) for _ in range(10)
+        ]
         for t in threads:
             t.start()
         for t in threads:
@@ -264,6 +270,7 @@ class TestServiceRegistryThreadSafety:
 # 5. resolve() with config override key
 # ===========================================================================
 
+
 class TestResolveConfigOverrideKey:
     def test_resolve_uses_config_override_when_present(self):
         """
@@ -277,6 +284,7 @@ class TestResolveConfigOverrideKey:
         ServiceRegistry.register_override(alias, _BrokenEngine)
 
         import core.settings as settings_mod
+
         original = settings_mod.config_manager
         mock_cm = MagicMock()
         mock_cm.get.return_value = alias
@@ -301,6 +309,7 @@ class TestResolveConfigOverrideKey:
         ServiceRegistry.register_default(name, _DummyEngine)
 
         import core.settings as settings_mod
+
         original = settings_mod.config_manager
         mock_cm = MagicMock()
         mock_cm.get.return_value = "unregistered_override_xyz"

@@ -5,51 +5,68 @@ Revises: 22ff0c33fcfc
 Create Date: 2026-07-02 14:00:00.000000
 
 """
-from typing import Sequence, Union
 
-from alembic import op
+from collections.abc import Sequence
+
 import sqlalchemy as sa
-
+from alembic import op
 
 # revision identifiers, used by Alembic.
-revision: str = 'fedcba654324'
-down_revision: Union[str, None] = '22ff0c33fcfc'
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+revision: str = "fedcba654324"
+down_revision: str | None = "22ff0c33fcfc"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
     connection = op.get_bind()
     # Check current columns in SQLite
-    inspect_res = connection.execute(sa.text("PRAGMA table_info(review_tasks)")).fetchall()
+    inspect_res = connection.execute(
+        sa.text("PRAGMA table_info(review_tasks)")
+    ).fetchall()
     existing_columns = [row[1] for row in inspect_res]
 
     # 1. Add new columns only if they do not exist
-    with op.batch_alter_table('review_tasks', schema=None) as batch_op:
-        if 'file_path' not in existing_columns:
-            batch_op.add_column(sa.Column('file_path', sa.String(), nullable=True))
-        if 'track_data' not in existing_columns:
-            batch_op.add_column(sa.Column('track_data', sa.JSON(), nullable=True))
+    with op.batch_alter_table("review_tasks", schema=None) as batch_op:
+        if "file_path" not in existing_columns:
+            batch_op.add_column(sa.Column("file_path", sa.String(), nullable=True))
+        if "track_data" not in existing_columns:
+            batch_op.add_column(sa.Column("track_data", sa.JSON(), nullable=True))
 
     # 2. Migrate existing data from media_id / detected_metadata if they exist
-    if 'media_id' in existing_columns or 'detected_metadata' in existing_columns:
-        tasks = connection.execute(sa.text("SELECT id, media_id, detected_metadata FROM review_tasks")).fetchall()
+    if "media_id" in existing_columns or "detected_metadata" in existing_columns:
+        tasks = connection.execute(
+            sa.text("SELECT id, media_id, detected_metadata FROM review_tasks")
+        ).fetchall()
         import json
+
         for task_id, media_id, detected_metadata_str in tasks:
             detected_metadata = {}
             if detected_metadata_str:
                 try:
-                    detected_metadata = json.loads(detected_metadata_str) if isinstance(detected_metadata_str, str) else detected_metadata_str
+                    detected_metadata = (
+                        json.loads(detected_metadata_str)
+                        if isinstance(detected_metadata_str, str)
+                        else detected_metadata_str
+                    )
                 except Exception:
                     pass
-            
+
             # Force None or falsy to empty dict
             detected = detected_metadata or {}
-            
-            title = detected.get("title") or detected.get("raw_title") or "Unknown Title"
-            artist = detected.get("artist") or detected.get("artist_name") or "Unknown Artist"
-            album = detected.get("album") or detected.get("album_title") or "Unknown Album"
-            
+
+            title = (
+                detected.get("title") or detected.get("raw_title") or "Unknown Title"
+            )
+            artist = (
+                detected.get("artist")
+                or detected.get("artist_name")
+                or "Unknown Artist"
+            )
+            album = (
+                detected.get("album") or detected.get("album_title") or "Unknown Album"
+            )
+
             track_dict = {
                 "sync_id": None,
                 "raw_title": title,
@@ -81,61 +98,76 @@ def upgrade() -> None:
                 "is_compilation": None,
                 "identifiers": {},
             }
-            
+
             connection.execute(
-                sa.text("UPDATE review_tasks SET file_path = COALESCE(file_path, :fp), track_data = COALESCE(track_data, :td) WHERE id = :id"),
-                {"fp": media_id, "td": json.dumps(track_dict), "id": task_id}
+                sa.text(
+                    "UPDATE review_tasks SET file_path = COALESCE(file_path, :fp), track_data = COALESCE(track_data, :td) WHERE id = :id"
+                ),
+                {"fp": media_id, "td": json.dumps(track_dict), "id": task_id},
             )
 
     # 3. Alter columns to be non-nullable, drop old columns, and manage indexes
-    with op.batch_alter_table('review_tasks', schema=None) as batch_op:
+    with op.batch_alter_table("review_tasks", schema=None) as batch_op:
         # Drop index on media_id if it exists
         try:
-            batch_op.drop_index('ix_review_tasks_media_id')
+            batch_op.drop_index("ix_review_tasks_media_id")
         except Exception:
             pass
-        
+
         # Make new columns non-nullable
-        batch_op.alter_column('file_path', nullable=False, existing_type=sa.String())
-        batch_op.alter_column('track_data', nullable=False, existing_type=sa.JSON())
-        
+        batch_op.alter_column("file_path", nullable=False, existing_type=sa.String())
+        batch_op.alter_column("track_data", nullable=False, existing_type=sa.JSON())
+
         # Create index on file_path if it doesn't exist
         try:
-            batch_op.create_index(batch_op.f('ix_review_tasks_file_path'), ['file_path'], unique=False)
+            batch_op.create_index(
+                batch_op.f("ix_review_tasks_file_path"), ["file_path"], unique=False
+            )
         except Exception:
             pass
-        
+
         # Drop old columns if they exist
-        if 'media_id' in existing_columns:
-            batch_op.drop_column('media_id')
-        if 'detected_metadata' in existing_columns:
-            batch_op.drop_column('detected_metadata')
+        if "media_id" in existing_columns:
+            batch_op.drop_column("media_id")
+        if "detected_metadata" in existing_columns:
+            batch_op.drop_column("detected_metadata")
 
 
 def downgrade() -> None:
     connection = op.get_bind()
-    inspect_res = connection.execute(sa.text("PRAGMA table_info(review_tasks)")).fetchall()
+    inspect_res = connection.execute(
+        sa.text("PRAGMA table_info(review_tasks)")
+    ).fetchall()
     existing_columns = [row[1] for row in inspect_res]
 
     # 1. Add old columns back as nullable
-    with op.batch_alter_table('review_tasks', schema=None) as batch_op:
-        if 'media_id' not in existing_columns:
-            batch_op.add_column(sa.Column('media_id', sa.String(), nullable=True))
-        if 'detected_metadata' not in existing_columns:
-            batch_op.add_column(sa.Column('detected_metadata', sa.JSON(), nullable=True))
+    with op.batch_alter_table("review_tasks", schema=None) as batch_op:
+        if "media_id" not in existing_columns:
+            batch_op.add_column(sa.Column("media_id", sa.String(), nullable=True))
+        if "detected_metadata" not in existing_columns:
+            batch_op.add_column(
+                sa.Column("detected_metadata", sa.JSON(), nullable=True)
+            )
 
     # 2. Restore media_id and detected_metadata from file_path and track_data
-    if 'file_path' in existing_columns or 'track_data' in existing_columns:
-        tasks = connection.execute(sa.text("SELECT id, file_path, track_data FROM review_tasks")).fetchall()
+    if "file_path" in existing_columns or "track_data" in existing_columns:
+        tasks = connection.execute(
+            sa.text("SELECT id, file_path, track_data FROM review_tasks")
+        ).fetchall()
         import json
+
         for task_id, file_path, track_data_str in tasks:
             track_data = {}
             if track_data_str:
                 try:
-                    track_data = json.loads(track_data_str) if isinstance(track_data_str, str) else track_data_str
+                    track_data = (
+                        json.loads(track_data_str)
+                        if isinstance(track_data_str, str)
+                        else track_data_str
+                    )
                 except Exception:
                     pass
-            
+
             # Map back to detected_metadata format
             detected_metadata = {
                 "title": track_data.get("title") or track_data.get("raw_title"),
@@ -150,24 +182,28 @@ def downgrade() -> None:
                 "mb_release_id": track_data.get("mb_release_id"),
                 "fingerprint": track_data.get("fingerprint"),
             }
-            
+
             connection.execute(
-                sa.text("UPDATE review_tasks SET media_id = COALESCE(media_id, :mid), detected_metadata = COALESCE(detected_metadata, :dm) WHERE id = :id"),
-                {"mid": file_path, "dm": json.dumps(detected_metadata), "id": task_id}
+                sa.text(
+                    "UPDATE review_tasks SET media_id = COALESCE(media_id, :mid), detected_metadata = COALESCE(detected_metadata, :dm) WHERE id = :id"
+                ),
+                {"mid": file_path, "dm": json.dumps(detected_metadata), "id": task_id},
             )
 
     # 3. Make media_id non-nullable, drop new columns, and recreate old indexes
-    with op.batch_alter_table('review_tasks', schema=None) as batch_op:
+    with op.batch_alter_table("review_tasks", schema=None) as batch_op:
         try:
-            batch_op.drop_index(batch_op.f('ix_review_tasks_file_path'))
+            batch_op.drop_index(batch_op.f("ix_review_tasks_file_path"))
         except Exception:
             pass
-        batch_op.alter_column('media_id', nullable=False, existing_type=sa.String())
+        batch_op.alter_column("media_id", nullable=False, existing_type=sa.String())
         try:
-            batch_op.create_index('ix_review_tasks_media_id', ['media_id'], unique=False)
+            batch_op.create_index(
+                "ix_review_tasks_media_id", ["media_id"], unique=False
+            )
         except Exception:
             pass
-        if 'file_path' in existing_columns:
-            batch_op.drop_column('file_path')
-        if 'track_data' in existing_columns:
-            batch_op.drop_column('track_data')
+        if "file_path" in existing_columns:
+            batch_op.drop_column("file_path")
+        if "track_data" in existing_columns:
+            batch_op.drop_column("track_data")

@@ -3,14 +3,16 @@ Refactored Job Queue / Task Manager Scaffold with Collision Avoidance and FFI Ca
 Supports TaskCategory enums (GENERAL, CRITICAL, DATABASE_WRITE_HEAVY) and TaskState tracking.
 Prevents concurrent execution of multiple DATABASE_WRITE_HEAVY tasks to avoid DB lock amplification.
 """
-from enum import Enum
+
 import heapq
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, Optional, List
+from enum import Enum
+from typing import Any
+
 from core.tiered_logger import get_logger
-from core.settings import config_manager
 
 logger = get_logger("job_queue")
 
@@ -37,41 +39,46 @@ class ScheduledJob:
     sort_index: int = field(init=False, repr=False)
     name: str = field(compare=False)
     func: Callable[[], Any] = field(compare=False)
-    interval_seconds: Optional[float] = field(default=None, compare=False)
+    interval_seconds: float | None = field(default=None, compare=False)
     enabled: bool = field(default=True, compare=False)
     category: TaskCategory = field(default=TaskCategory.GENERAL, compare=False)
     state: TaskState = field(default=TaskState.IDLE, compare=False)
-    cancel_token: Optional[Any] = field(default=None, compare=False)
+    cancel_token: Any | None = field(default=None, compare=False)
     max_retries: int = field(default=0, compare=False)
     backoff_base: float = field(default=5.0, compare=False)
     backoff_factor: float = field(default=2.0, compare=False)
     current_retries: int = field(default=0, compare=False)
-    last_error: Optional[str] = field(default=None, compare=False)
-    last_error_time: Optional[float] = field(default=None, compare=False)
+    last_error: str | None = field(default=None, compare=False)
+    last_error_time: float | None = field(default=None, compare=False)
     total_failures: int = field(default=0, compare=False)
     total_successes: int = field(default=0, compare=False)
-    last_started: Optional[float] = field(default=None, compare=False)
-    last_finished: Optional[float] = field(default=None, compare=False)
-    last_success: Optional[float] = field(default=None, compare=False)
+    last_started: float | None = field(default=None, compare=False)
+    last_finished: float | None = field(default=None, compare=False)
+    last_success: float | None = field(default=None, compare=False)
     running: bool = field(default=False, compare=False)
-    tags: List[str] = field(default_factory=list, compare=False)
-    plugin: Optional[str] = field(default=None, compare=False)
-    manual_next_run: Optional[float] = field(default=None, compare=False)
-    params: Optional[Dict[str, Any]] = field(default=None, compare=False)
+    tags: list[str] = field(default_factory=list, compare=False)
+    plugin: str | None = field(default=None, compare=False)
+    manual_next_run: float | None = field(default=None, compare=False)
+    params: dict[str, Any] | None = field(default=None, compare=False)
 
     def __post_init__(self):
         self.sort_index = id(self)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         import time as _time
+
         now = _time.time()
         duration_s = None
         if self.running and self.last_started:
             duration_s = round(now - self.last_started, 1)
         return {
             "name": self.name,
-            "category": self.category.value if isinstance(self.category, TaskCategory) else str(self.category),
-            "state": self.state.value if isinstance(self.state, TaskState) else str(self.state),
+            "category": self.category.value
+            if isinstance(self.category, TaskCategory)
+            else str(self.category),
+            "state": self.state.value
+            if isinstance(self.state, TaskState)
+            else str(self.state),
             "enabled": self.enabled,
             "running": self.running,
             "next_run": self.next_run,
@@ -88,38 +95,40 @@ class ScheduledJob:
         }
 
 
-
 class JobQueue:
     RESTART_PENDING = False
 
     def __init__(self, worker_count: int = 2, poll_interval: float = 0.5):
         self._lock = threading.RLock()
-        self._jobs: Dict[str, ScheduledJob] = {}
-        self._heap: List[ScheduledJob] = []
+        self._jobs: dict[str, ScheduledJob] = {}
+        self._heap: list[ScheduledJob] = []
         self._running = False
-        self._thread: Optional[threading.Thread] = None
+        self._thread: threading.Thread | None = None
         self._core_workers = threading.BoundedSemaphore(2)
         self._general_workers = threading.BoundedSemaphore(worker_count)
         self._poll_interval = poll_interval
-        self._is_running: Dict[str, bool] = {}
-        self._active_threads: Dict[str, threading.Thread] = {}
-        self._active_processes: Dict[str, Any] = {}
+        self._is_running: dict[str, bool] = {}
+        self._active_threads: dict[str, threading.Thread] = {}
+        self._active_processes: dict[str, Any] = {}
 
     def _release_worker_resources(self):
         try:
             from database.working_database import working_session_registry
+
             working_session_registry.remove()
         except Exception as e:
             logger.error(f"Failed to remove working session registry: {e}")
 
         try:
             from database.music_database import music_session_registry
+
             music_session_registry.remove()
         except Exception as e:
             logger.error(f"Failed to remove music session registry: {e}")
 
         try:
             from core.task_manager.supervisor import release_system_memory
+
             release_system_memory()
         except Exception as e:
             logger.debug(f"Failed to trim system memory: {e}")
@@ -143,7 +152,9 @@ class JobQueue:
                 if is_run and name_pattern in job_name:
                     return True
             for job in self._jobs.values():
-                if (job.running or job.state == TaskState.RUNNING) and name_pattern in job.name:
+                if (
+                    job.running or job.state == TaskState.RUNNING
+                ) and name_pattern in job.name:
                     return True
             return False
 
@@ -157,6 +168,7 @@ class JobQueue:
         with self._lock:
             if job.plugin:
                 from core.task_manager.plugin_state import plugin_state_manager
+
                 if not plugin_state_manager.can_accept_work(job.plugin):
                     if job.state != TaskState.PENDING_BLOCKED:
                         status = plugin_state_manager.get_state(job.plugin)
@@ -180,7 +192,9 @@ class JobQueue:
                     job.next_run = time.time() + 5.0
                     return False
             elif "auto_import" in job.name:
-                if self.is_job_running("library_sync") or self.is_job_running("database_update"):
+                if self.is_job_running("library_sync") or self.is_job_running(
+                    "database_update"
+                ):
                     job.state = TaskState.PENDING_BLOCKED
                     job.next_run = time.time() + 5.0
                     return False
@@ -201,7 +215,9 @@ class JobQueue:
             if job.cancel_token and hasattr(job.cancel_token, "cancel"):
                 try:
                     job.cancel_token.cancel()
-                    logger.info(f"Triggered cross-FFI cancellation token for job: {name}")
+                    logger.info(
+                        f"Triggered cross-FFI cancellation token for job: {name}"
+                    )
                 except Exception as e:
                     logger.error(f"Error signaling cancel_token for {name}: {e}")
 
@@ -218,7 +234,7 @@ class JobQueue:
         with self._lock:
             if name not in self._jobs:
                 return False
-            
+
             self.cancel_job(name)
             self._remove_from_heap(name)
             self._jobs.pop(name, None)
@@ -261,17 +277,17 @@ class JobQueue:
         self,
         name: str,
         func: Callable[[], Any],
-        interval_seconds: Optional[float] = None,
+        interval_seconds: float | None = None,
         start_after: float = 0.0,
         enabled: bool = True,
         category: TaskCategory = TaskCategory.GENERAL,
-        cancel_token: Optional[Any] = None,
+        cancel_token: Any | None = None,
         max_retries: int = 0,
         backoff_base: float = 5.0,
         backoff_factor: float = 2.0,
-        tags: Optional[List[str]] = None,
-        plugin: Optional[str] = None,
-        params: Optional[Dict[str, Any]] = None,
+        tags: list[str] | None = None,
+        plugin: str | None = None,
+        params: dict[str, Any] | None = None,
     ) -> None:
         _MAX_RETRIES_CAP = 10
         max_retries = max(0, min(max_retries, _MAX_RETRIES_CAP))
@@ -306,7 +322,7 @@ class JobQueue:
             heapq.heappush(self._heap, job)
             logger.info(f"Registered job: {name} [Category: {category}]")
 
-    def execute_job_now(self, name: str, params: Optional[Dict[str, Any]] = None) -> bool:
+    def execute_job_now(self, name: str, params: dict[str, Any] | None = None) -> bool:
         with self._lock:
             job = self._jobs.get(name)
             if not job:
@@ -317,7 +333,9 @@ class JobQueue:
                 return False
 
             if not self.can_execute(job):
-                logger.warning(f"Job {name} blocked due to collision avoidance (DATABASE_WRITE_HEAVY task running)")
+                logger.warning(
+                    f"Job {name} blocked due to collision avoidance (DATABASE_WRITE_HEAVY task running)"
+                )
                 return False
 
             job.manual_next_run = time.time()
@@ -329,7 +347,9 @@ class JobQueue:
             heapq.heappush(self._heap, job)
             return True
 
-    def trigger_job_by_name(self, name: str, params: Optional[Dict[str, Any]] = None) -> bool:
+    def trigger_job_by_name(
+        self, name: str, params: dict[str, Any] | None = None
+    ) -> bool:
         """Trigger a job immediately by name or known aliases."""
         alias_map = {
             "download_queue_runner": "download_manager",
@@ -340,7 +360,7 @@ class JobQueue:
             res = self.execute_job_now(name, params=params)
         return res
 
-    def get_queue_state(self) -> Dict[str, Any]:
+    def get_queue_state(self) -> dict[str, Any]:
         """
         Return serializable representation of full queue state for SSE telemetry.
         """
@@ -366,8 +386,8 @@ class JobQueue:
                     "total": len(self._jobs),
                     "running": len(running),
                     "pending": len(pending),
-                    "blocked": len(blocked)
-                }
+                    "blocked": len(blocked),
+                },
             }
 
     def _run_loop(self):
@@ -390,7 +410,9 @@ class JobQueue:
                             heapq.heappush(self._heap, job)
 
             for job in to_run:
-                thread = threading.Thread(target=self._execute_wrapper, args=(job,), daemon=True)
+                thread = threading.Thread(
+                    target=self._execute_wrapper, args=(job,), daemon=True
+                )
                 with self._lock:
                     self._active_threads[job.name] = thread
                 thread.start()
@@ -401,9 +423,9 @@ class JobQueue:
         reg_id = None
         cancel_event = threading.Event()
         try:
-            import os
+            from core.task_manager.models import OwnerType, ProcessOwner
             from core.task_manager.supervisor import supervisor
-            from core.task_manager.models import ProcessOwner, OwnerType
+
             owner_id = job.plugin if job.plugin else "core.system_job"
             owner_type = OwnerType.PLUGIN if job.plugin else OwnerType.SYSTEM_JOB
             owner = ProcessOwner(
@@ -411,7 +433,7 @@ class JobQueue:
                 owner_type=owner_type,
                 pid=None,
                 thread_id=threading.get_ident(),
-                task_name=job.name
+                task_name=job.name,
             )
             reg_id = supervisor.register_process(owner, cancellation_event=cancel_event)
         except Exception:
@@ -433,6 +455,7 @@ class JobQueue:
             if reg_id:
                 try:
                     from core.task_manager.supervisor import supervisor
+
                     supervisor.unregister_process(reg_id)
                 except Exception:
                     pass
@@ -452,13 +475,15 @@ class JobQueue:
         """Cancel all jobs associated with a specific plugin."""
         count = 0
         with self._lock:
-            names_to_cancel = [name for name, job in self._jobs.items() if job.plugin == plugin_id]
+            names_to_cancel = [
+                name for name, job in self._jobs.items() if job.plugin == plugin_id
+            ]
             for name in names_to_cancel:
                 if self.cancel_job(name):
                     count += 1
         return count
 
-    def list_jobs(self) -> List[Dict[str, Any]]:
+    def list_jobs(self) -> list[dict[str, Any]]:
         """Return a list of all registered jobs as dictionaries."""
         with self._lock:
             return [job.to_dict() for job in self._jobs.values()]
@@ -468,12 +493,12 @@ job_queue = JobQueue()
 task_queue = job_queue
 
 
-def list_jobs() -> List[Dict[str, Any]]:
+def list_jobs() -> list[dict[str, Any]]:
     """Top-level helper function to return all registered jobs as dictionaries."""
     return job_queue.list_jobs()
 
 
-def trigger_job_by_name(name: str, params: Optional[Dict[str, Any]] = None) -> bool:
+def trigger_job_by_name(name: str, params: dict[str, Any] | None = None) -> bool:
     """Top-level helper function to trigger a job immediately by name."""
     return job_queue.trigger_job_by_name(name, params=params)
 
@@ -501,16 +526,16 @@ def stop_job_queue(timeout: float = 5.0) -> None:
 def register_job(
     name: str,
     func: Callable[[], Any],
-    interval_seconds: Optional[float] = None,
+    interval_seconds: float | None = None,
     start_after: float = 0.0,
     enabled: bool = True,
     category: TaskCategory = TaskCategory.GENERAL,
-    cancel_token: Optional[Any] = None,
+    cancel_token: Any | None = None,
     max_retries: int = 0,
     backoff_base: float = 5.0,
     backoff_factor: float = 2.0,
-    tags: Optional[List[str]] = None,
-    plugin: Optional[str] = None,
+    tags: list[str] | None = None,
+    plugin: str | None = None,
 ) -> None:
     """Top-level helper function to register a job on the global job_queue."""
     job_queue.register_job(

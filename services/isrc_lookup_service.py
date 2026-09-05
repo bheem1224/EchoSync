@@ -11,10 +11,11 @@ so that the highest-quality source is tried first.
 Security note: ``isrc_code`` is validated against the strict ISRC regex before
 being used in any lookup, preventing injection into query strings.
 """
+
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from core.caching.plugin_cache import plugin_cache
 from core.db.echo_sync_track import EchosyncTrack
@@ -31,7 +32,7 @@ logger = get_logger("isrc_lookup")
 _ISRC_RE = re.compile(r"^[A-Z]{2}[A-Z0-9]{3}[0-9]{7}$")
 
 
-def _normalise_isrc(raw: str) -> Optional[str]:
+def _normalise_isrc(raw: str) -> str | None:
     """Return the canonical 12-character ISRC (no hyphens) or None if invalid."""
     code = raw.strip().upper().replace("-", "")
     if _ISRC_RE.match(code):
@@ -41,23 +42,65 @@ def _normalise_isrc(raw: str) -> Optional[str]:
 
 # ─── Result normalisation ────────────────────────────────────────────────────
 
-def _track_to_dict(track: EchosyncTrack, source: str) -> Dict[str, Any]:
-    """Convert a EchosyncTrack to a serialisable result dict."""
+
+def _track_to_dict(track: Any, source: str) -> dict[str, Any]:
+    """Convert an EchosyncTrack or dict to a serialisable result dict."""
+    title = (
+        getattr(track, "raw_title", None)
+        or getattr(track, "title", None)
+        or (track.get("raw_title") if isinstance(track, dict) else None)
+        or (track.get("title") if isinstance(track, dict) else None)
+    )
+    artist = (
+        getattr(track, "artist_name", None)
+        or getattr(track, "artist", None)
+        or (track.get("artist_name") if isinstance(track, dict) else None)
+        or (track.get("artist") if isinstance(track, dict) else None)
+    )
+    album = (
+        getattr(track, "album_title", None)
+        or getattr(track, "album", None)
+        or (track.get("album_title") if isinstance(track, dict) else None)
+        or (track.get("album") if isinstance(track, dict) else None)
+    )
+    isrc_val = getattr(track, "isrc", None) or (
+        track.get("isrc") if isinstance(track, dict) else None
+    )
+    mbid = getattr(track, "musicbrainz_id", None) or (
+        track.get("musicbrainz_recording_id")
+        or track.get("musicbrainz_id")
+        or track.get("mbid")
+        if isinstance(track, dict)
+        else None
+    )
+    duration = getattr(track, "duration", None) or (
+        track.get("duration_ms") or track.get("duration")
+        if isinstance(track, dict)
+        else None
+    )
+    year = getattr(track, "release_year", None) or (
+        track.get("release_year") or track.get("year")
+        if isinstance(track, dict)
+        else None
+    )
+
     return {
         "source": source,
-        "isrc": track.isrc,
-        "title": track.raw_title,
-        "artist": track.artist_name,
-        "album": track.album_title,
-        "musicbrainz_recording_id": track.musicbrainz_id,
-        "duration_ms": track.duration,
-        "release_year": track.release_year,
+        "isrc": isrc_val,
+        "title": title,
+        "raw_title": title,
+        "artist": artist,
+        "album": album,
+        "musicbrainz_recording_id": mbid,
+        "duration_ms": duration,
+        "release_year": year,
     }
 
 
 # ─── Provider-agnostic ISRC dispatcher ───────────────────────────────────────
 
-def dispatch_isrc_lookup(isrc: str) -> Optional[EchosyncTrack]:
+
+def dispatch_isrc_lookup(isrc: str) -> EchosyncTrack | None:
     """Dispatch ISRC lookup across all capable providers (MusicBrainz -> Spotify -> etc.)
     returning an EchosyncTrack if found, or None.
     """
@@ -65,11 +108,13 @@ def dispatch_isrc_lookup(isrc: str) -> Optional[EchosyncTrack]:
     if not canonical:
         return None
 
-    from core.nexus_framework.plugin_loader import PluginRegistry
     from core.enums import Capability
+    from core.nexus_framework.plugin_loader import PluginRegistry
 
     candidates = PluginRegistry.get_plugins_with_capability(Capability.FETCH_METADATA)
-    isrc_providers = [p for p in candidates if getattr(p, "supports_isrc_lookup", False)]
+    isrc_providers = [
+        p for p in candidates if getattr(p, "supports_isrc_lookup", False)
+    ]
     for p in PluginRegistry.get_plugins_with_capability(Capability.FETCH_BY_ISRC):
         if p not in isrc_providers:
             isrc_providers.append(p)
@@ -109,8 +154,10 @@ def dispatch_isrc_lookup(isrc: str) -> Optional[EchosyncTrack]:
                     release_year=track.get("release_year") or track.get("year"),
                     duration=track.get("duration_ms") or track.get("duration"),
                     isrc=canonical,
-                    musicbrainz_id=track.get("musicbrainz_recording_id") or track.get("musicbrainz_id") or track.get("mbid"),
-                    identifiers={"source": provider_name}
+                    musicbrainz_id=track.get("musicbrainz_recording_id")
+                    or track.get("musicbrainz_id")
+                    or track.get("mbid"),
+                    identifiers={"source": provider_name},
                 )
                 return track_obj
 
@@ -119,20 +166,22 @@ def dispatch_isrc_lookup(isrc: str) -> Optional[EchosyncTrack]:
 
 def _dispatch_isrc_via_providers(
     isrc: str,
-) -> Tuple[Optional[Dict[str, Any]], List[str]]:
+) -> tuple[dict[str, Any] | None, list[str]]:
     """Iterate registered providers that support ISRC lookup, return first hit.
 
     Providers are sorted by their declared MetadataRichness (highest first) so
     the best-quality source wins.  The ``tried`` list records every provider
     that was attempted regardless of outcome.
     """
-    from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
     from core.enums import Capability
+    from core.nexus_framework.plugin_loader import PluginRegistry
 
-    tried: List[str] = []
+    tried: list[str] = []
 
     candidates = PluginRegistry.get_plugins_with_capability(Capability.FETCH_METADATA)
-    isrc_providers = [p for p in candidates if getattr(p, "supports_isrc_lookup", False)]
+    isrc_providers = [
+        p for p in candidates if getattr(p, "supports_isrc_lookup", False)
+    ]
     for p in PluginRegistry.get_plugins_with_capability(Capability.FETCH_BY_ISRC):
         if p not in isrc_providers:
             isrc_providers.append(p)
@@ -161,13 +210,31 @@ def _dispatch_isrc_via_providers(
             track = None
         if track is not None:
             if not isinstance(track, EchosyncTrack):
-                logger.warning(
-                    "ISRC provider %s returned unexpected type %s (expected EchosyncTrack) "
-                    "— skipping to next provider.",
-                    provider_name,
-                    type(track).__name__,
-                )
-                continue
+                if isinstance(track, dict):
+                    track = EchosyncTrack(
+                        raw_title=track.get("raw_title") or track.get("title") or "",
+                        artist_name=track.get("artist")
+                        or track.get("artist_name")
+                        or "",
+                        album_title=track.get("album")
+                        or track.get("album_title")
+                        or "",
+                        release_year=track.get("release_year") or track.get("year"),
+                        duration=track.get("duration_ms") or track.get("duration"),
+                        isrc=isrc,
+                        musicbrainz_id=track.get("musicbrainz_recording_id")
+                        or track.get("musicbrainz_id")
+                        or track.get("mbid"),
+                        identifiers={"source": provider_name},
+                    )
+                else:
+                    logger.warning(
+                        "ISRC provider %s returned unexpected type %s (expected EchosyncTrack) "
+                        "— skipping to next provider.",
+                        provider_name,
+                        type(track).__name__,
+                    )
+                    continue
             return _track_to_dict(track, provider_name), tried
 
     return None, tried
@@ -175,8 +242,9 @@ def _dispatch_isrc_via_providers(
 
 # ─── Public entrypoint ────────────────────────────────────────────────────────
 
+
 @plugin_cache(ttl_seconds=2592000)
-def fetch_metadata_by_isrc(isrc_code: str) -> Dict[str, Any]:
+def fetch_metadata_by_isrc(isrc_code: str) -> dict[str, Any]:
     """
     Resolve track metadata for *isrc_code* via the provider-agnostic waterfall.
 

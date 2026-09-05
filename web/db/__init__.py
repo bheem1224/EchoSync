@@ -8,12 +8,12 @@ core database implementations. This design provides:
 - Single point of adaptation
 """
 
-from web.db.music_database import MusicDatabaseWrapper, get_music_database
 from web.db.config_db import ConfigDatabaseWrapper, get_config_database
+from web.db.music_database import MusicDatabaseWrapper, get_music_database
 
 __all__ = [
-    'MusicDatabaseWrapper',
-    'ConfigDatabaseWrapper',
-    'get_music_database',
-    'get_config_database',
+    "ConfigDatabaseWrapper",
+    "MusicDatabaseWrapper",
+    "get_config_database",
+    "get_music_database",
 ]

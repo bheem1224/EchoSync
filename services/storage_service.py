@@ -3,8 +3,7 @@ Storage Service module migrated to services/storage_service.py.
 Exposes StorageService and get_storage_service() for internal configuration database access.
 """
 
-from typing import Any, Dict, Iterable, List, Optional
-import warnings
+from typing import Any
 
 from core.settings import config_manager
 
@@ -21,7 +20,7 @@ class StorageService:
 
     # ----- service configuration ------------------------------------------------
 
-    def get_service_config(self, service_name: str, key: str) -> Optional[str]:
+    def get_service_config(self, service_name: str, key: str) -> str | None:
         creds = config_manager.get_service_credentials(service_name) or {}
         return creds.get(key)
 
@@ -30,7 +29,9 @@ class StorageService:
     ) -> bool:
         try:
             return config_manager.set_service_credentials(
-                service_name, {key: value}, sensitive_keys=[key] if is_sensitive else None
+                service_name,
+                {key: value},
+                sensitive_keys=[key] if is_sensitive else None,
             )
         except Exception as e:
             print(f"[ERROR] set_service_config failed: {e}")
@@ -39,14 +40,14 @@ class StorageService:
     def ensure_service(
         self,
         service_name: str,
-        service_type: Optional[str] = None,
-        description: Optional[str] = None,
+        service_type: str | None = None,
+        description: str | None = None,
     ) -> bool:
         return config_manager.set_service_credentials(service_name, {})
 
     # ----- account management ---------------------------------------------------
 
-    def list_accounts(self, service_name: Optional[str] = None) -> List[Dict[str, Any]]:
+    def list_accounts(self, service_name: str | None = None) -> list[dict[str, Any]]:
         """Return account lists for a given service."""
         from database.config_database import get_config_database
 
@@ -58,26 +59,33 @@ class StorageService:
         self,
         service_name: str,
         account_name: str,
-        display_name: Optional[str] = None,
-        user_id: Optional[str] = None,
-    ) -> Optional[int]:
+        display_name: str | None = None,
+        user_id: str | None = None,
+    ) -> int | None:
         from database.config_database import get_config_database
+
         db = get_config_database()
         service_id = db.get_or_create_service_id(service_name)
-        return db.ensure_account(service_id, account_name=account_name, display_name=display_name, user_id=user_id)
+        return db.ensure_account(
+            service_id,
+            account_name=account_name,
+            display_name=display_name,
+            user_id=user_id,
+        )
 
     def upsert_account(
         self,
         service_name: str,
-        account_name: Optional[str] = None,
-        display_name: Optional[str] = None,
-        user_id: Optional[str] = None,
-        account_email: Optional[str] = None,
-        is_active: Optional[bool] = None,
-        is_authenticated: Optional[bool] = None,
-        account_id: Optional[int] = None,
-    ) -> Optional[int]:
+        account_name: str | None = None,
+        display_name: str | None = None,
+        user_id: str | None = None,
+        account_email: str | None = None,
+        is_active: bool | None = None,
+        is_authenticated: bool | None = None,
+        account_id: int | None = None,
+    ) -> int | None:
         from database.config_database import get_config_database
+
         db = get_config_database()
         service_id = db.get_or_create_service_id(service_name)
         return db.upsert_account(
@@ -93,16 +101,19 @@ class StorageService:
 
     def toggle_account_active(self, account_id: int, active: bool) -> bool:
         from database.config_database import get_config_database
+
         db = get_config_database()
         return db.toggle_account_active(account_id, active)
 
     def delete_account(self, account_id: int) -> bool:
         from database.config_database import get_config_database
+
         db = get_config_database()
         return db.delete_account(account_id)
 
     def update_account_name(self, account_id: int, new_name: str) -> bool:
         from database.config_database import get_config_database
+
         db = get_config_database()
         return db.update_account_name(account_id, new_name)
 
@@ -112,15 +123,18 @@ class StorageService:
         self,
         account_id: int,
         access_token: str,
-        refresh_token: Optional[str] = None,
-        token_type: str = 'Bearer',
-        expires_at: Optional[float] = None,
-        scope: Optional[str] = None,
+        refresh_token: str | None = None,
+        token_type: str = "Bearer",
+        expires_at: float | None = None,
+        scope: str | None = None,
     ) -> bool:
         try:
             from database.config_database import get_config_database
+
             db = get_config_database()
-            return db.save_account_token(account_id, access_token, refresh_token, token_type, expires_at, scope)
+            return db.save_account_token(
+                account_id, access_token, refresh_token, token_type, expires_at, scope
+            )
         except Exception as e:
             print(f"[ERROR] save_account_token failed: {e}")
             return False
@@ -128,21 +142,24 @@ class StorageService:
     def mark_account_authenticated(self, account_id: int) -> bool:
         try:
             from database.config_database import get_config_database
+
             db = get_config_database()
             return db.mark_account_authenticated(account_id)
         except Exception as e:
             print(f"[ERROR] mark_account_authenticated failed: {e}")
             return False
 
-    def get_account_token(self, account_id: int) -> Optional[dict]:
+    def get_account_token(self, account_id: int) -> dict | None:
         try:
             from database.config_database import get_config_database
+
             db = get_config_database()
             token = db.get_account_token(account_id)
             if not token:
                 return None
 
             import inspect
+
             frame = inspect.currentframe()
             try:
                 caller_module = inspect.getmodule(frame.f_back)
@@ -159,16 +176,18 @@ class StorageService:
                     service_name = db.get_service_name(row[0])
 
             if service_name and not caller_name.startswith("core."):
-                caller_plugin_part = caller_name[8:] if caller_name.startswith("plugins.") else caller_name
+                caller_plugin_part = caller_name.removeprefix("plugins.")
                 owner_lower = service_name.lower()
                 caller_lower = caller_plugin_part.lower()
 
-                if not (caller_lower.startswith(owner_lower) or
-                        caller_lower.endswith(f".{owner_lower}") or
-                        owner_lower.endswith(f".{caller_lower}")):
-                    token['access_token'] = 'REDACTED'
-                    if 'refresh_token' in token and token['refresh_token']:
-                        token['refresh_token'] = 'REDACTED'
+                if not (
+                    caller_lower.startswith(owner_lower)
+                    or caller_lower.endswith(f".{owner_lower}")
+                    or owner_lower.endswith(f".{caller_lower}")
+                ):
+                    token["access_token"] = "REDACTED"
+                    if token.get("refresh_token"):
+                        token["refresh_token"] = "REDACTED"
 
             return token
         except Exception as e:
@@ -177,9 +196,10 @@ class StorageService:
 
     # ----- per-account configs --------------------------------------------------
 
-    def get_account_config(self, account_id: int, key: str) -> Optional[str]:
+    def get_account_config(self, account_id: int, key: str) -> str | None:
         try:
             from database.config_database import get_config_database
+
             db = get_config_database()
             return db.get_account_config(account_id, key)
         except Exception as e:
@@ -191,8 +211,11 @@ class StorageService:
     ) -> bool:
         try:
             from database.config_database import get_config_database
+
             db = get_config_database()
-            return db.set_account_config(account_id, key, value, is_sensitive=is_sensitive)
+            return db.set_account_config(
+                account_id, key, value, is_sensitive=is_sensitive
+            )
         except Exception as e:
             print(f"[ERROR] set_account_config failed: {e}")
             return False
@@ -200,6 +223,7 @@ class StorageService:
     def delete_account_config(self, account_id: int, key: str) -> bool:
         try:
             from database.config_database import get_config_database
+
             db = get_config_database()
             return db.delete_account_config(account_id, key)
         except Exception as e:
@@ -221,15 +245,26 @@ class StorageService:
     ) -> bool:
         try:
             from database.config_database import get_config_database
+
             db = get_config_database()
-            return db.store_pkce_session(pkce_id, service, account_id, code_verifier, code_challenge, redirect_uri, client_id, ttl_seconds)
+            return db.store_pkce_session(
+                pkce_id,
+                service,
+                account_id,
+                code_verifier,
+                code_challenge,
+                redirect_uri,
+                client_id,
+                ttl_seconds,
+            )
         except Exception as e:
             print(f"[ERROR] store_pkce_session failed: {e}")
             return False
 
-    def get_pkce_session(self, pkce_id: str) -> Optional[Dict[str, Any]]:
+    def get_pkce_session(self, pkce_id: str) -> dict[str, Any] | None:
         try:
             from database.config_database import get_config_database
+
             db = get_config_database()
             return db.get_pkce_session(pkce_id)
         except Exception as e:
@@ -239,6 +274,7 @@ class StorageService:
     def delete_pkce_session(self, pkce_id: str) -> bool:
         try:
             from database.config_database import get_config_database
+
             db = get_config_database()
             return db.delete_pkce_session(pkce_id)
         except Exception as e:
@@ -248,6 +284,7 @@ class StorageService:
     def cleanup_expired_pkce_sessions(self) -> None:
         try:
             from database.config_database import get_config_database
+
             db = get_config_database()
             db.cleanup_expired_pkce_sessions()
         except Exception:
@@ -257,14 +294,16 @@ class StorageService:
 
     def get_working_database(self):
         from database.working_database import get_working_database
+
         return get_working_database()
 
     def get_music_database(self):
         from database.music_database import get_database
+
         return get_database()
 
 
-_storage_instance: Optional[StorageService] = None
+_storage_instance: StorageService | None = None
 
 
 def get_storage_service() -> StorageService:

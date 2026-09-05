@@ -2,6 +2,7 @@
 Job Registry convenience module for EchoSync.
 Exposes standard system maintenance and lifecycle jobs for background scheduling and triggering.
 """
+
 from core.jobs.decouple_media_job import (
     DecoupleMediaJob,
     register_decouple_media_job,

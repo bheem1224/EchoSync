@@ -1,17 +1,12 @@
-import os
-import sys
-import subprocess
-import pytest
-from unittest.mock import patch, MagicMock, ANY
+from unittest.mock import ANY, MagicMock, patch
 
 from core.task_manager import (
+    CoreBinaryRunner,
     OwnerType,
     PluginLifecycleState,
     ProcessOwner,
-    PluginStatus,
-    supervisor,
     plugin_state_manager,
-    CoreBinaryRunner,
+    supervisor,
 )
 
 
@@ -22,7 +17,7 @@ def test_supervisor_register_and_unregister():
         owner_type=OwnerType.PLUGIN,
         pid=1234,
         task_name="media_scan",
-        metadata={"target": "library_1"}
+        metadata={"target": "library_1"},
     )
 
     reg_id = supervisor.register_process(owner)
@@ -50,13 +45,13 @@ def test_supervisor_terminate_owner_processes():
         owner_id="plugin.spotify",
         owner_type=OwnerType.PLUGIN,
         pid=9999,
-        task_name="sync_loop"
+        task_name="sync_loop",
     )
     owner2 = ProcessOwner(
         owner_id="plugin.spotify",
         owner_type=OwnerType.PLUGIN,
         pid=9998,
-        task_name="download_worker"
+        task_name="download_worker",
     )
 
     reg1 = supervisor.register_process(owner1)
@@ -83,7 +78,9 @@ def test_plugin_state_manager_transitions_and_gating():
     assert not plugin_state_manager.can_accept_work(plugin_id)
 
     # INITIALIZING state
-    plugin_state_manager.set_state(plugin_id, PluginLifecycleState.INITIALIZING, "Loading dependencies")
+    plugin_state_manager.set_state(
+        plugin_id, PluginLifecycleState.INITIALIZING, "Loading dependencies"
+    )
     status = plugin_state_manager.get_state(plugin_id)
     assert status.state == PluginLifecycleState.INITIALIZING
     assert status.message == "Loading dependencies"
@@ -91,19 +88,25 @@ def test_plugin_state_manager_transitions_and_gating():
     assert not plugin_state_manager.can_accept_work(plugin_id)
 
     # READY state -> can_accept_work is True
-    plugin_state_manager.set_state(plugin_id, PluginLifecycleState.READY, "Service operational")
+    plugin_state_manager.set_state(
+        plugin_id, PluginLifecycleState.READY, "Service operational"
+    )
     status = plugin_state_manager.get_state(plugin_id)
     assert status.state == PluginLifecycleState.READY
     assert plugin_state_manager.can_accept_work(plugin_id)
 
     # DEGRADED state -> can_accept_work is True
-    plugin_state_manager.set_state(plugin_id, PluginLifecycleState.DEGRADED, "Rate limit reached")
+    plugin_state_manager.set_state(
+        plugin_id, PluginLifecycleState.DEGRADED, "Rate limit reached"
+    )
     status = plugin_state_manager.get_state(plugin_id)
     assert status.state == PluginLifecycleState.DEGRADED
     assert plugin_state_manager.can_accept_work(plugin_id)
 
     # ERROR state -> can_accept_work is False
-    plugin_state_manager.set_state(plugin_id, PluginLifecycleState.ERROR, "Database connection lost")
+    plugin_state_manager.set_state(
+        plugin_id, PluginLifecycleState.ERROR, "Database connection lost"
+    )
     status = plugin_state_manager.get_state(plugin_id)
     assert status.state == PluginLifecycleState.ERROR
     assert not plugin_state_manager.can_accept_work(plugin_id)
@@ -127,7 +130,9 @@ def test_binary_runner_process_registration():
 
         mock_process.wait.side_effect = check_supervisor_during_wait
 
-        code, out, err = CoreBinaryRunner.run_binary(["echo", "hello"], owner_id="core.binary_runner")
+        code, out, err = CoreBinaryRunner.run_binary(
+            ["echo", "hello"], owner_id="core.binary_runner"
+        )
         assert code == 0
 
     # After completion, process should be unregistered

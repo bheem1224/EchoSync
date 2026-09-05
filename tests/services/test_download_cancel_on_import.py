@@ -18,16 +18,16 @@ Coverage:
   • Multiple matching downloads        → all are cancelled
 """
 
-import pytest
 from unittest.mock import patch
 
-from time_utils import utc_now
-from database.working_database import DownloadQueue
-from core.db.echo_sync_track import EchosyncTrack
-from services.download_manager import DownloadManager
+import pytest
 
+from database.working_database import DownloadQueue
+from services.download_manager import DownloadManager
+from time_utils import utc_now
 
 # ── Fixtures ───────────────────────────────────────────────────────────────────
+
 
 @pytest.fixture()
 def manager(mock_db, mock_work_db):
@@ -41,9 +41,12 @@ def manager(mock_db, mock_work_db):
     """
     DownloadManager._instance = None
 
-    with patch("services.download_manager.get_database", return_value=mock_db), \
-         patch("services.download_manager.get_working_database",
-               return_value=mock_work_db):
+    with (
+        patch("services.download_manager.get_database", return_value=mock_db),
+        patch(
+            "services.download_manager.get_working_database", return_value=mock_work_db
+        ),
+    ):
         mgr = DownloadManager.get_instance()
 
     # Guarantee correct db references even if the singleton was already live.
@@ -52,10 +55,11 @@ def manager(mock_db, mock_work_db):
 
     yield mgr
 
-    DownloadManager._instance = None   # tear-down: clean slate for next test
+    DownloadManager._instance = None  # tear-down: clean slate for next test
 
 
 # ── Helper ─────────────────────────────────────────────────────────────────────
+
 
 def _insert_download(work_db, isrc: str, status: str = "queued") -> int:
     """Insert a single DownloadQueue row and return its primary-key id.
@@ -100,8 +104,8 @@ def _make_imported_payload(isrc: str) -> dict:
 
 # ── Core cancellation logic ────────────────────────────────────────────────────
 
-class TestTrackImportedCancelsQueue:
 
+class TestTrackImportedCancelsQueue:
     def test_queued_download_is_cancelled_on_isrc_match(self, manager, mock_work_db):
         """
         A download in 'queued' state whose ISRC matches the imported track
@@ -130,7 +134,9 @@ class TestTrackImportedCancelsQueue:
             dl = session.get(DownloadQueue, dl_id)
             assert dl is None, "DownloadQueue should be hard deleted"
 
-    def test_downloading_download_is_cancelled_on_isrc_match(self, manager, mock_work_db):
+    def test_downloading_download_is_cancelled_on_isrc_match(
+        self, manager, mock_work_db
+    ):
         """
         A download in 'downloading' state (file transfer has begun) must be
         cancelled when TRACK_IMPORTED confirms the file is already present.
@@ -155,9 +161,7 @@ class TestTrackImportedCancelsQueue:
 
         with mock_work_db.session_scope() as session:
             dl = session.get(DownloadQueue, dl_id)
-            assert dl.status == "queued"    # fully unchanged
-
-
+            assert dl.status == "queued"  # fully unchanged
 
     def test_already_cancelled_download_is_not_reprocessed(self, manager, mock_work_db):
         """
@@ -172,13 +176,13 @@ class TestTrackImportedCancelsQueue:
 
         with mock_work_db.session_scope() as session:
             dl = session.get(DownloadQueue, dl_id)
-            assert dl.status == "cancelled"    # already there — unchanged
+            assert dl.status == "cancelled"  # already there — unchanged
 
 
 # ── Multiple simultaneous matching downloads ───────────────────────────────────
 
-class TestBatchCancellation:
 
+class TestBatchCancellation:
     def test_all_active_matching_downloads_are_cancelled(self, manager, mock_work_db):
         """
         When several downloads (in different active states) share the same ISRC,
@@ -196,40 +200,46 @@ class TestBatchCancellation:
         with mock_work_db.session_scope() as session:
             for dl_id in ids:
                 dl = session.get(DownloadQueue, dl_id)
-                assert dl is None, f"DownloadQueue {dl_id} was expected to be hard deleted"
+                assert dl is None, (
+                    f"DownloadQueue {dl_id} was expected to be hard deleted"
+                )
 
-    def test_unrelated_downloads_survive_batch_cancellation(self, manager, mock_work_db):
+    def test_unrelated_downloads_survive_batch_cancellation(
+        self, manager, mock_work_db
+    ):
         """
         When multiple downloads with different ISRCs are present, only the
         matching ones must be cancelled; the rest must survive untouched.
         """
         target_isrc = "USRC11111111"
-        other_isrc  = "USRC22222222"
+        other_isrc = "USRC22222222"
 
         target_id = _insert_download(mock_work_db, target_isrc, status="queued")
-        other_id  = _insert_download(mock_work_db, other_isrc,  status="queued")
+        other_id = _insert_download(mock_work_db, other_isrc, status="queued")
 
         manager._on_track_imported(_make_imported_payload(target_isrc))
 
         with mock_work_db.session_scope() as session:
             target_dl = session.get(DownloadQueue, target_id)
-            other_dl  = session.get(DownloadQueue, other_id)
+            other_dl = session.get(DownloadQueue, other_id)
 
             assert target_dl is None, "DownloadQueue should be hard deleted"
             assert other_dl is not None
-            assert other_dl.status == "queued"     # unaffected
+            assert other_dl.status == "queued"  # unaffected
 
 
 # ── Graceful handling of malformed / empty payloads ───────────────────────────
 
-class TestMalformedPayloadHandling:
 
+class TestMalformedPayloadHandling:
     def test_empty_payload_does_not_raise(self, manager):
         """An event payload with no 'track' key must be silently swallowed."""
         try:
             manager._on_track_imported({})
         except Exception as exc:
-            pytest.fail(f"_on_track_imported raised unexpectedly on empty payload: {exc}")
+            pytest.fail(
+                f"_on_track_imported raised unexpectedly on empty payload: {exc}"
+            )
 
     def test_none_track_data_does_not_raise(self, manager):
         """Explicit None value for 'track' must be silently swallowed."""
@@ -251,13 +261,15 @@ class TestMalformedPayloadHandling:
 
         # Fire an import event with no ISRC — only artist+title available,
         # and the names don't match the queued download's names either.
-        manager._on_track_imported({
-            "track": {
-                "title": "Completely Different Song",
-                "artist_name": "Different Artist",
-                # no 'isrc' key
+        manager._on_track_imported(
+            {
+                "track": {
+                    "title": "Completely Different Song",
+                    "artist_name": "Different Artist",
+                    # no 'isrc' key
+                }
             }
-        })
+        )
 
         with mock_work_db.session_scope() as session:
             dl = session.get(DownloadQueue, dl_id)

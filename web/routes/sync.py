@@ -1,9 +1,11 @@
 from fastapi import APIRouter
-from core.tiered_logger import get_logger
-from core.nexus_framework.plugin_loader import get_plugin_capabilities
-from core.nexus_framework.plugin_SDK import PlaylistSupport
 
-from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
+from core.nexus_framework.plugin_loader import (
+    PluginRegistry,
+    get_plugin_capabilities,
+)
+from core.nexus_framework.plugin_SDK import PlaylistSupport
+from core.tiered_logger import get_logger
 
 logger = get_logger("sync_route")
 router = APIRouter(prefix="/api/v1/core/sync", tags=["Sync"])
@@ -13,14 +15,15 @@ def _serialize_provider(provider_name):
     """Serialize a provider with capabilities for sync planning."""
     try:
         from core.nexus_framework.plugin_loader import PluginRegistry
+
         caps = get_plugin_capabilities(provider_name)
-        
+
         display_name = str(caps.name).title()
         if isinstance(provider_name, int):
             plugin_class = PluginRegistry.get_plugin_class(provider_name)
             if plugin_class:
-                display_name = plugin_class.name.split('.')[-1].title()
-                
+                display_name = plugin_class.name.split(".")[-1].title()
+
         return {
             "name": provider_name,
             "display_name": display_name,
@@ -28,7 +31,8 @@ def _serialize_provider(provider_name):
             "metadata_richness": caps.metadata.name,
             "supports_streaming": caps.supports_streaming,
             "supports_library_scan": caps.supports_library_scan,
-            "supports_playlist_write": caps.supports_playlists == PlaylistSupport.READ_WRITE,
+            "supports_playlist_write": caps.supports_playlists
+            == PlaylistSupport.READ_WRITE,
             "supports_cover_art": caps.supports_cover_art,
         }
     except KeyError:
@@ -58,7 +62,10 @@ def build_sync_options():
             data = _serialize_provider(provider_name)
 
             # Playlist Provider (Source or Target)
-            if caps.supports_playlists in (PlaylistSupport.READ, PlaylistSupport.READ_WRITE):
+            if caps.supports_playlists in (
+                PlaylistSupport.READ,
+                PlaylistSupport.READ_WRITE,
+            ):
                 sources.append(data)
 
             if caps.supports_playlists == PlaylistSupport.READ_WRITE:
@@ -98,7 +105,10 @@ def build_sync_status():
             if not PluginRegistry.is_plugin_disabled(name):
                 try:
                     caps = get_plugin_capabilities(name)
-                    if caps.supports_playlists in (PlaylistSupport.READ, PlaylistSupport.READ_WRITE):
+                    if caps.supports_playlists in (
+                        PlaylistSupport.READ,
+                        PlaylistSupport.READ_WRITE,
+                    ):
                         active_sync_providers += 1
                 except:
                     pass
@@ -122,12 +132,27 @@ def build_sync_status():
 
 
 def _clean_mocks(val):
-    if type(val).__name__ in ('MagicMock', 'Mock', 'NonCallableMagicMock', 'NonCallableMock'):
+    if type(val).__name__ in (
+        "MagicMock",
+        "Mock",
+        "NonCallableMagicMock",
+        "NonCallableMock",
+    ):
         return None
     if isinstance(val, dict):
-        return {k: _clean_mocks(v) for k, v in val.items() if type(v).__name__ not in ('MagicMock', 'Mock', 'NonCallableMagicMock', 'NonCallableMock')}
+        return {
+            k: _clean_mocks(v)
+            for k, v in val.items()
+            if type(v).__name__
+            not in ("MagicMock", "Mock", "NonCallableMagicMock", "NonCallableMock")
+        }
     if isinstance(val, list):
-        return [_clean_mocks(item) for item in val if type(item).__name__ not in ('MagicMock', 'Mock', 'NonCallableMagicMock', 'NonCallableMock')]
+        return [
+            _clean_mocks(item)
+            for item in val
+            if type(item).__name__
+            not in ("MagicMock", "Mock", "NonCallableMagicMock", "NonCallableMock")
+        ]
     return val
 
 

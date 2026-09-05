@@ -1,6 +1,6 @@
 import threading
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 
 class EventBus:
@@ -12,9 +12,10 @@ class EventBus:
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        self._events: Dict[str, List[Dict[str, Any]]] = {}
-        self._subscribers: Dict[str, List] = {}
+        self._events: dict[str, list[dict[str, Any]]] = {}
+        self._subscribers: dict[str, list] = {}
         import queue
+
         self._queue = queue.Queue()
         self._dispatcher = threading.Thread(target=self._dispatcher_loop, daemon=True)
         self._dispatcher.start()
@@ -22,6 +23,7 @@ class EventBus:
     def _dispatcher_loop(self):
         import inspect
         import logging
+
         while True:
             try:
                 event_name, payload, serialized, specific, universal = self._queue.get()
@@ -29,27 +31,38 @@ class EventBus:
                 for handler in specific:
                     try:
                         sig = inspect.signature(handler)
-                        if '_serialized' in sig.parameters or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
+                        if "_serialized" in sig.parameters or any(
+                            p.kind == inspect.Parameter.VAR_KEYWORD
+                            for p in sig.parameters.values()
+                        ):
                             handler(payload, _serialized=serialized)
                         else:
                             handler(payload)
                     except Exception as e:
-                        logging.getLogger("event_bus").error(f"Error in event handler for {event_name}: {e}", exc_info=True)
+                        logging.getLogger("event_bus").error(
+                            f"Error in event handler for {event_name}: {e}",
+                            exc_info=True,
+                        )
 
                 for handler in universal:
                     try:
                         sig = inspect.signature(handler)
-                        if '_serialized' in sig.parameters or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
+                        if "_serialized" in sig.parameters or any(
+                            p.kind == inspect.Parameter.VAR_KEYWORD
+                            for p in sig.parameters.values()
+                        ):
                             handler(payload, _serialized=serialized)
                         else:
                             handler(payload)
                     except Exception as e:
-                        logging.getLogger("event_bus").error(f"Error in universal event handler: {e}", exc_info=True)
+                        logging.getLogger("event_bus").error(
+                            f"Error in universal event handler: {e}", exc_info=True
+                        )
 
             except Exception as e:
-                logging.getLogger("event_bus").error(f"Fatal error in event dispatcher loop: {e}", exc_info=True)
-
-
+                logging.getLogger("event_bus").error(
+                    f"Fatal error in event dispatcher loop: {e}", exc_info=True
+                )
 
     def subscribe(self, event_name_or_handler, handler=None):
         if handler is None:
@@ -82,6 +95,7 @@ class EventBus:
     def publish_lightweight(self, payload: dict):
         import inspect
         import zlib
+
         frame = inspect.currentframe()
         try:
             caller_module = inspect.getmodule(frame.f_back)
@@ -103,31 +117,35 @@ class EventBus:
         # --- Passport Enforcement ---
         import inspect
         import zlib
-        caller_mod = inspect.currentframe().f_back.f_globals.get('__name__', 'unknown')
-        if caller_mod.startswith('core.'):
+
+        caller_mod = inspect.currentframe().f_back.f_globals.get("__name__", "unknown")
+        if caller_mod.startswith("core."):
             origin_passport = 0
             origin_name = "core"
         else:
-            origin_name = caller_mod.split('.')[-1] if '.' in caller_mod else caller_mod
-            origin_passport = zlib.crc32(origin_name.encode('utf-8'))
-            
-        payload['_origin'] = origin_name
-        payload['_passport'] = origin_passport
+            origin_name = caller_mod.split(".")[-1] if "." in caller_mod else caller_mod
+            origin_passport = zlib.crc32(origin_name.encode("utf-8"))
+
+        payload["_origin"] = origin_name
+        payload["_passport"] = origin_passport
         # ----------------------------
 
         # OPTIMIZATION: Serialize JSON once for all network subscribers to prevent
         # duplicate CPU work during fan-out broadcasts.
         # Pass serialized string via kwargs to avoid payload mutation.
         import json
+
         try:
             serialized = json.dumps(payload, default=str)
         except Exception:
             serialized = "{}"
 
-
         # Push to background dispatcher queue to avoid blocking publisher thread
         import copy
-        self._queue.put((event_name, copy.deepcopy(payload), serialized, specific, universal))
+
+        self._queue.put(
+            (event_name, copy.deepcopy(payload), serialized, specific, universal)
+        )
 
     def publish(self, *args, **kwargs):
         # Handle Phase-2 target API: publish(payload_dict)
@@ -145,18 +163,16 @@ class EventBus:
             data = args[2] if len(args) > 2 else kwargs.get("data", {})
 
             # Send to lightweight subscribers too just in case
-            self.publish_lightweight({
-                "event": event_type,
-                "channel": channel,
-                "data": data
-            })
+            self.publish_lightweight(
+                {"event": event_type, "channel": channel, "data": data}
+            )
 
             # Legacy logic
             payload = data or {}
             with self._lock:
                 bucket = self._events.setdefault(channel, [])
                 event_id = len(bucket)
-                envelope: Dict[str, Any] = {
+                envelope: dict[str, Any] = {
                     "id": event_id,
                     "ts": time.time(),
                     "type": event_type,
@@ -166,11 +182,14 @@ class EventBus:
                 return envelope
 
         # Fallback if someone uses kwargs?
-        if 'channel' in kwargs and 'event_type' in kwargs:
-            return self.publish(kwargs['channel'], kwargs['event_type'], kwargs.get('data', {}))
+        if "channel" in kwargs and "event_type" in kwargs:
+            return self.publish(
+                kwargs["channel"], kwargs["event_type"], kwargs.get("data", {})
+            )
 
-
-    def get_events(self, channel: str, since_id: Optional[int] = None) -> List[Dict[str, Any]]:
+    def get_events(
+        self, channel: str, since_id: int | None = None
+    ) -> list[dict[str, Any]]:
         """Return events for a channel optionally after a given event id."""
         with self._lock:
             bucket = self._events.get(channel, [])

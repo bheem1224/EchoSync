@@ -1,25 +1,27 @@
-from flask import Blueprint, abort, request, current_app
-from typing import List, Dict
-from web.auth import require_auth
+from flask import Blueprint
+
 from core.tiered_logger import get_logger
+from web.auth import require_auth
 
 logger = get_logger("plugin_router")
+
 
 class PluginProxyRouter:
     """
     Dynamic Proxy Router for Zero-Downtime Hot Reloading.
-    
-    Sitting at /api/plugins/{plugin_id}/*, it dynamically routes traffic 
+
+    Sitting at /api/plugins/{plugin_id}/*, it dynamically routes traffic
     to whatever blueprint is currently registered in memory for that ID.
     """
-    _routers: Dict[int, Blueprint] = {}
+
+    _routers: dict[int, Blueprint] = {}
 
     @classmethod
     def mount_router(cls, plugin_id: int, router: Blueprint):
         """Register (or overwrite) a plugin's router in the proxy registry."""
         prefix = f"/api/plugins/{plugin_id}"
         router.url_prefix = prefix
-        
+
         # Enforce internal authentication on all routes within the blueprint
         @router.before_request
         @require_auth
@@ -30,8 +32,9 @@ class PluginProxyRouter:
         logger.debug(f"Mounted/Updated dynamic router for {plugin_id} at {prefix}")
 
     @classmethod
-    def get_all_routers(cls) -> List[Blueprint]:
+    def get_all_routers(cls) -> list[Blueprint]:
         return list(cls._routers.values())
+
 
 # Legacy alias for backward compatibility
 PluginRouterRegistry = PluginProxyRouter

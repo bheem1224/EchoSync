@@ -20,20 +20,19 @@ Exit codes
 
 from __future__ import annotations
 
+import argparse
 import ast
 import os
 import sys
-import argparse
 from pathlib import Path
-from typing import List, NamedTuple
-
+from typing import NamedTuple
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Configuration
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Directories to scan (relative to the project root)
-SCAN_DIRS: List[str] = ["core", "plugins", "services", "web"]
+SCAN_DIRS: list[str] = ["core", "plugins", "services", "web"]
 
 # Rogue libraries that must NOT be imported directly outside the whitelist
 ROGUE_LIBS: frozenset[str] = frozenset({"mutagen", "tinytag", "taglib"})
@@ -47,21 +46,23 @@ WHITELIST: frozenset[str] = frozenset()
 # Data structures
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 class Violation(NamedTuple):
-    file: str          # Relative path from project root
+    file: str  # Relative path from project root
     line: int
     col: int
-    statement: str     # The offending import statement text
-    library: str       # Which rogue library
+    statement: str  # The offending import statement text
+    library: str  # Which rogue library
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # AST walker
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _find_rogue_imports(source: str, rel_path: str) -> List[Violation]:
+
+def _find_rogue_imports(source: str, rel_path: str) -> list[Violation]:
     """Parse *source* with AST and return all rogue import statements."""
-    violations: List[Violation] = []
+    violations: list[Violation] = []
 
     try:
         tree = ast.parse(source, filename=rel_path)
@@ -101,9 +102,10 @@ def _find_rogue_imports(source: str, rel_path: str) -> List[Violation]:
 # Scanner
 # ─────────────────────────────────────────────────────────────────────────────
 
-def scan(project_root: Path) -> List[Violation]:
+
+def scan(project_root: Path) -> list[Violation]:
     """Walk SCAN_DIRS and collect all violations."""
-    all_violations: List[Violation] = []
+    all_violations: list[Violation] = []
 
     for scan_dir in SCAN_DIRS:
         target = project_root / scan_dir
@@ -149,9 +151,9 @@ _REFACTOR_HINT = """\
 """
 
 
-def report(violations: List[Violation], fix_hints: bool = False) -> None:
+def report(violations: list[Violation], fix_hints: bool = False) -> None:
     if not violations:
-        print(f"\n[OK]  No rogue tag-reader imports found. Codebase is clean.\n")
+        print("\n[OK]  No rogue tag-reader imports found. Codebase is clean.\n")
         return
 
     print(f"\n[FAIL]  Found {len(violations)} rogue import(s):\n")
@@ -176,21 +178,23 @@ def report(violations: List[Violation], fix_hints: bool = False) -> None:
 # Entry-point
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="AST linter: flag rogue mutagen/tinytag/taglib imports."
     )
     parser.add_argument(
-        "--strict", action="store_true",
-        help="Exit with code 1 if any violations are found."
+        "--strict",
+        action="store_true",
+        help="Exit with code 1 if any violations are found.",
     )
     parser.add_argument(
-        "--fix", action="store_true",
-        help="Print refactor hints alongside violations."
+        "--fix", action="store_true", help="Print refactor hints alongside violations."
     )
     parser.add_argument(
-        "--root", default=None,
-        help="Project root directory (default: parent of this script's directory)."
+        "--root",
+        default=None,
+        help="Project root directory (default: parent of this script's directory).",
     )
     args = parser.parse_args()
 

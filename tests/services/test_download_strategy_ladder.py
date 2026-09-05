@@ -3,16 +3,17 @@ Unit and integration tests for search strategy ladder, provider capability dispa
 and multi-tier quality pre-filtering.
 """
 
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock
 
 from core.db.echo_sync_track import EchosyncTrack
 from core.enums import Capability
-from core.matching_engine.text_utils import split_artist_collaborators, sanitize_query_for_wire
+from core.matching_engine.text_utils import (
+    sanitize_query_for_wire,
+    split_artist_collaborators,
+)
 from plugins.EchoSync.slskd.client import SlskdProvider, _is_raw_file_eligible
 from services.download_manager import (
     DownloadManager,
-    SearchStrategyIntent,
     _provider_supports_capability,
 )
 
@@ -25,11 +26,15 @@ class TestArtistDecompositionAndSanitization:
         assert primary == "W&W"
         assert collabs == ["AXMO", "Sonja"]
 
-        primary, collabs = split_artist_collaborators("Armin van Buuren & Brennan Heart ft. Andreas Moe")
+        primary, collabs = split_artist_collaborators(
+            "Armin van Buuren & Brennan Heart ft. Andreas Moe"
+        )
         assert primary == "Armin van Buuren"
         assert collabs == ["Brennan Heart", "Andreas Moe"]
 
-        primary, collabs = split_artist_collaborators("Calvin Harris with Ellie Goulding")
+        primary, collabs = split_artist_collaborators(
+            "Calvin Harris with Ellie Goulding"
+        )
         assert primary == "Calvin Harris"
         assert collabs == ["Ellie Goulding"]
 
@@ -44,8 +49,14 @@ class TestArtistDecompositionAndSanitization:
     def test_sanitize_query_for_wire(self):
         assert sanitize_query_for_wire("W&W") == "W W"
         assert sanitize_query_for_wire("AC/DC") == "AC DC"
-        assert sanitize_query_for_wire("Song (Original Mix) [2024]") == "Song Original Mix 2024"
-        assert sanitize_query_for_wire("Artist & Collaborator / Remix!") == "Artist Collaborator Remix"
+        assert (
+            sanitize_query_for_wire("Song (Original Mix) [2024]")
+            == "Song Original Mix 2024"
+        )
+        assert (
+            sanitize_query_for_wire("Artist & Collaborator / Remix!")
+            == "Artist Collaborator Remix"
+        )
 
 
 class TestSearchStrategyLadder:
@@ -61,7 +72,9 @@ class TestSearchStrategyLadder:
             isrc="USUM71703881",
         )
 
-        strategies = manager._generate_search_strategies(track, base_duration_tolerance_ms=5000)
+        strategies = manager._generate_search_strategies(
+            track, base_duration_tolerance_ms=5000
+        )
 
         # 1. ISRC Lookup
         assert strategies[0].name == "isrc"
@@ -96,7 +109,9 @@ class TestSearchStrategyLadder:
         assert "rave love" in album_strat.wire_query.lower()
 
         # 7. Title + Strict Duration Window (Universal)
-        duration_strat = next(s for s in strategies if s.name == "title+strict-duration")
+        duration_strat = next(
+            s for s in strategies if s.name == "title+strict-duration"
+        )
         assert duration_strat.required_capability is None
         assert duration_strat.duration_tolerance_ms == 2500  # 50% of 5000ms
 
@@ -113,19 +128,29 @@ class TestCapabilityDispatching:
         basic_provider.supports_pre_filtering = False
         basic_provider.supports_isrc = False
 
-        assert not _provider_supports_capability(basic_provider, Capability.CLIENT_PREFILTER)
-        assert not _provider_supports_capability(basic_provider, Capability.FETCH_BY_ISRC)
+        assert not _provider_supports_capability(
+            basic_provider, Capability.CLIENT_PREFILTER
+        )
+        assert not _provider_supports_capability(
+            basic_provider, Capability.FETCH_BY_ISRC
+        )
         assert _provider_supports_capability(basic_provider, None)
 
         # Provider WITH pre-filtering
         prefilter_provider = MagicMock()
         prefilter_provider.name = "SlskdMock"
         prefilter_provider.capabilities = MagicMock()
-        prefilter_provider.capabilities.to_enum_list.return_value = [Capability.CLIENT_PREFILTER]
+        prefilter_provider.capabilities.to_enum_list.return_value = [
+            Capability.CLIENT_PREFILTER
+        ]
         prefilter_provider.supports_pre_filtering = True
 
-        assert _provider_supports_capability(prefilter_provider, Capability.CLIENT_PREFILTER)
-        assert not _provider_supports_capability(prefilter_provider, Capability.FETCH_BY_ISRC)
+        assert _provider_supports_capability(
+            prefilter_provider, Capability.CLIENT_PREFILTER
+        )
+        assert not _provider_supports_capability(
+            prefilter_provider, Capability.FETCH_BY_ISRC
+        )
 
 
 class TestZeroAllocationStreamPreFiltering:
@@ -134,20 +159,22 @@ class TestZeroAllocationStreamPreFiltering:
     def test_is_raw_file_eligible_drops_locked_and_duration_outliers(self):
         # Locked file
         locked_file = {"filename": "track.flac", "isLocked": True, "length": 180}
-        assert not _is_raw_file_eligible(locked_file, basic_filters={"target_duration_ms": 180000})
+        assert not _is_raw_file_eligible(
+            locked_file, basic_filters={"target_duration_ms": 180000}
+        )
 
         # Duration outlier (> 5000ms tolerance)
         outlier_file = {"filename": "track.flac", "isLocked": False, "length": 250}
         assert not _is_raw_file_eligible(
             outlier_file,
-            basic_filters={"target_duration_ms": 180000, "duration_tolerance_ms": 5000}
+            basic_filters={"target_duration_ms": 180000, "duration_tolerance_ms": 5000},
         )
 
         # Valid duration match
         valid_file = {"filename": "track.flac", "isLocked": False, "length": 182}
         assert _is_raw_file_eligible(
             valid_file,
-            basic_filters={"target_duration_ms": 180000, "duration_tolerance_ms": 5000}
+            basic_filters={"target_duration_ms": 180000, "duration_tolerance_ms": 5000},
         )
 
     def test_is_raw_file_eligible_multi_tier_quality_profile(self):
@@ -164,7 +191,7 @@ class TestZeroAllocationStreamPreFiltering:
             "advanced_filters": {
                 "fake_flac_min_bytes_per_second": 70000,
                 "fake_flac_min_kbps": 500,
-            }
+            },
         }
 
         # 1. Undersized FLAC (< 15MB)
@@ -241,13 +268,17 @@ class TestZeroAllocationStreamPreFiltering:
             "advanced_filters": {
                 "fake_flac_min_bytes_per_second": 70000,
                 "fake_flac_min_kbps": 500,
-            }
+            },
         }
 
         results = provider._process_search_responses(
             responses_data,
             quality_profile=quality_profile,
-            basic_filters={"allowed_extensions": ["flac"], "target_duration_ms": 180000, "duration_tolerance_ms": 5000}
+            basic_filters={
+                "allowed_extensions": ["flac"],
+                "target_duration_ms": 180000,
+                "duration_tolerance_ms": 5000,
+            },
         )
 
         assert len(results) == 1
@@ -260,7 +291,9 @@ class TestRawScorePreservation:
     """Verify candidate evaluation uses pure raw matching engine scores without artificial strategy weighting."""
 
     def test_raw_score_preservation_across_strategies(self):
-        from core.matching_engine.matching_engine import WeightedMatchingEngine, MatchResult
+        from core.matching_engine.matching_engine import (
+            WeightedMatchingEngine,
+        )
         from core.matching_engine.scoring_profile import PROFILE_DOWNLOAD_SEARCH
 
         # Target track and Candidate track
@@ -284,7 +317,13 @@ class TestRawScorePreservation:
         # Ensure raw score is high and completely unaltered by discovery strategies
         assert raw_score >= 90.0
         # No artificial multipliers downgrade candidate scores
-        for strat in ["isrc", "strict_metadata", "fuzzy_artist_title", "loose_title_duration", "title+strict-duration"]:
+        for strat in [
+            "isrc",
+            "strict_metadata",
+            "fuzzy_artist_title",
+            "loose_title_duration",
+            "title+strict-duration",
+        ]:
             candidate.identifiers["discovery_strategy"] = strat
             # Candidate score evaluated directly from matching engine remains raw
             evaluated_score = engine.calculate_match(target, candidate).confidence_score

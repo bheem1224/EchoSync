@@ -1,11 +1,11 @@
 import time
-import pytest
-from core.task_manager.task_queue import job_queue
-from core.task_manager.system_jobs import register_all_system_jobs
-from core.jobs.decouple_media_job import register_decouple_media_job, DecoupleMediaJob
-from database.music_database import get_database, Base, Artist, Track, LocalMedia
-from database import _canonicalize_path
+
+from core.jobs.decouple_media_job import DecoupleMediaJob, register_decouple_media_job
 from core.task_manager.supervisor import supervisor
+from core.task_manager.system_jobs import register_all_system_jobs
+from core.task_manager.task_queue import job_queue
+from database import _canonicalize_path
+from database.music_database import Artist, Base, LocalMedia, Track, get_database
 
 
 def test_decouple_media_job_registration_and_dormancy():
@@ -15,7 +15,9 @@ def test_decouple_media_job_registration_and_dormancy():
 
     with job_queue._lock:
         job = job_queue._jobs.get("system.decouple_collapsed_media")
-        assert job is not None, "Job system.decouple_collapsed_media must be registered in job_queue"
+        assert job is not None, (
+            "Job system.decouple_collapsed_media must be registered in job_queue"
+        )
         assert job.interval_seconds == 86400 * 1000
         # Ensure job start time is scheduled far in the future (> 900 days away, not immediate)
         now = time.time()
@@ -62,13 +64,16 @@ def test_decouple_media_job_execution():
         m2 = LocalMedia(
             media_id="med_0002",
             track_id=9819,
-            file_path=_canonicalize_path("/music/Capital Cities/Safe and Sound (Remix).flac"),
+            file_path=_canonicalize_path(
+                "/music/Capital Cities/Safe and Sound (Remix).flac"
+            ),
             file_format="FLAC",
         )
         session.add_all([m1, m2])
 
     # Execute job
     progress_updates = []
+
     def on_progress(cur, tot, status):
         progress_updates.append((cur, tot, status))
 

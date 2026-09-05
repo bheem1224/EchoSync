@@ -12,9 +12,9 @@ suggestion engine.  Stars 1.5-5 are free for users to express how much they like
 a track without triggering any lifecycle action.
 """
 
-from typing import Dict, Any
+from typing import Any
 
-from database.working_database import get_working_database, UserRating
+from database.working_database import UserRating, get_working_database
 
 
 def stars_to_ten_point(stars: float) -> int:
@@ -23,16 +23,20 @@ def stars_to_ten_point(stars: float) -> int:
     return int(round(bounded * 2.0))
 
 
-def calculate_consensus(sync_id: str) -> Dict[str, Any]:
+def calculate_consensus(sync_id: str) -> dict[str, Any]:
     """Calculate lifecycle action for a track based on mapped consensus rating."""
     base_sync_id = sync_id
 
     db = get_working_database()
     with db.session_scope() as session:
-        ratings_records = session.query(UserRating).filter(UserRating.sync_id == base_sync_id).all()
+        ratings_records = (
+            session.query(UserRating).filter(UserRating.sync_id == base_sync_id).all()
+        )
 
-        valid_records = [record for record in ratings_records if record.rating is not None]
-        
+        valid_records = [
+            record for record in ratings_records if record.rating is not None
+        ]
+
         if not valid_records:
             return {"status": "KEEP", "action": "KEEP", "sync_id": base_sync_id}
 

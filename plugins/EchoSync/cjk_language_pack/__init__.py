@@ -45,9 +45,9 @@ from typing import Any, List
 from core.hook_manager import hook_manager
 from core.tiered_logger import get_logger
 
+from .noise_filter import get_noise_filter
 from .transliterator import get_transliterator
 from .vgmdb_proxy import get_proxy
-from .noise_filter import get_noise_filter
 
 logger = get_logger("plugin.cjk")
 
@@ -59,18 +59,18 @@ _CJK_RE = re.compile(
 # All CJK paired brackets: capture content between each pair.
 # Groups: 《》 「」 『』 〈〉 【】 （） 《》
 _CJK_BRACKET_RE = re.compile(
-    r'\u300a([^\u300b]*)\u300b'   # 《》 double-angle / title mark
-    r'|\u300c([^\u300d]*)\u300d'  # 「」 corner brackets
-    r'|\u300e([^\u300f]*)\u300f'  # 『』 white corner brackets
-    r'|\u3008([^\u3009]*)\u3009'  # 〈〉 angle brackets
-    r'|\u3010([^\u3011]*)\u3011'  # 【】 lenticular brackets
-    r'|\uff08([^\uff09]*)\uff09'  # （） full-width parentheses
+    r"\u300a([^\u300b]*)\u300b"  # 《》 double-angle / title mark
+    r"|\u300c([^\u300d]*)\u300d"  # 「」 corner brackets
+    r"|\u300e([^\u300f]*)\u300f"  # 『』 white corner brackets
+    r"|\u3008([^\u3009]*)\u3009"  # 〈〉 angle brackets
+    r"|\u3010([^\u3011]*)\u3011"  # 【】 lenticular brackets
+    r"|\uff08([^\uff09]*)\uff09"  # （） full-width parentheses
 )
 
 # ASCII bracket pairs: capture content from [bracket] or (parens) labels such
 # as "[Jiang Cheng] Hen Bie" or "Hold On (Wang Zhe Rong Yao version)".
 # Used to extract romanised drama/series context from purely-Latin titles.
-_ASCII_BRACKET_RE = re.compile(r'\[([^\]]+)\]|\(([^)]+)\)')
+_ASCII_BRACKET_RE = re.compile(r"\[([^\]]+)\]|\(([^)]+)\)")
 
 # OST keyword anchor — used in the fallback drama-extraction path.
 # When a title lacks 《》 guillemets, Echosync looks for these keywords inside
@@ -80,20 +80,20 @@ _ASCII_BRACKET_RE = re.compile(r'\[([^\]]+)\]|\(([^)]+)\)')
 #   (点燃我温暖你 插曲)         → drama = '点燃我温暖你' (keyword: 插曲)
 #   （莲花楼 片尾曲）           → drama = '莲花楼'
 _OST_KEYWORD_RE = re.compile(
-    r'(?:'
-    r'主题曲|主題曲'
-    r'|插曲'
-    r'|片头曲|片頭曲'
-    r'|片尾曲'
-    r'|推广曲'
-    r'|人物曲'
-    r'|同行曲'
-    r'|时光曲|時光曲'
-    r'|吟唱版'          # variant lyric / chant version marker
-    r'|原声版'          # original-sound version marker
-    r'|剧情版'          # drama-cut version marker
-    r'|原声带|原聲帶'
-    r')',
+    r"(?:"
+    r"主题曲|主題曲"
+    r"|插曲"
+    r"|片头曲|片頭曲"
+    r"|片尾曲"
+    r"|推广曲"
+    r"|人物曲"
+    r"|同行曲"
+    r"|时光曲|時光曲"
+    r"|吟唱版"  # variant lyric / chant version marker
+    r"|原声版"  # original-sound version marker
+    r"|剧情版"  # drama-cut version marker
+    r"|原声带|原聲帶"
+    r")",
     re.UNICODE,
 )
 
@@ -119,7 +119,8 @@ def _safe_getattr(obj: Any, attr: str, default: Any = None) -> Any:
 
 # ── Hook 0: register_metadata_requirements ────────────────────────────────────
 
-def _on_register_metadata_requirements(requirements: List[str]) -> List[str]:
+
+def _on_register_metadata_requirements(requirements: list[str]) -> list[str]:
     """Register the metadata_status key that this plugin writes to metadata_status upon enrichment.
 
     ``cjk_restored`` is set to True on CJK tracks and False on non-CJK tracks so the
@@ -131,6 +132,7 @@ def _on_register_metadata_requirements(requirements: List[str]) -> List[str]:
 
 
 # ── Hook 1: pre_provider_search (Expand) ──────────────────────────────────────
+
 
 def _expand_query(query: str, artist_name: str = "", title: str = "") -> list[str]:
     """
@@ -147,33 +149,33 @@ def _expand_query(query: str, artist_name: str = "", title: str = "") -> list[st
 
     # Prefer explicit per-field kwargs over parsing the combined query string.
     if artist_name and title:
-        cjk_artist    = artist_name
-        cjk_title     = title
-        latin_artist  = tr.flatten_to_romaji(artist_name)
-        latin_title   = tr.flatten_to_romaji(title)
+        cjk_artist = artist_name
+        cjk_title = title
+        latin_artist = tr.flatten_to_romaji(artist_name)
+        latin_title = tr.flatten_to_romaji(title)
     elif " - " in query:
         raw_artist, raw_title = query.split(" - ", 1)
-        cjk_artist    = raw_artist.strip()
-        cjk_title     = raw_title.strip()
-        latin_artist  = tr.flatten_to_romaji(cjk_artist)
-        latin_title   = tr.flatten_to_romaji(cjk_title)
+        cjk_artist = raw_artist.strip()
+        cjk_title = raw_title.strip()
+        latin_artist = tr.flatten_to_romaji(cjk_artist)
+        latin_title = tr.flatten_to_romaji(cjk_title)
     else:
-        cjk_artist    = ""
-        cjk_title     = query
-        latin_artist  = ""
-        latin_title   = tr.flatten_to_romaji(query)
+        cjk_artist = ""
+        cjk_title = query
+        latin_artist = ""
+        latin_title = tr.flatten_to_romaji(query)
 
     # ------------------------------------------------------------------
     # 1. VGMdb series look-up — use Latin forms for better API match quality
     # ------------------------------------------------------------------
-    proxy        = get_proxy()
-    series_hits  = proxy.lookup_series(
+    proxy = get_proxy()
+    series_hits = proxy.lookup_series(
         (latin_artist or cjk_artist).strip(),
-        (latin_title  or cjk_title).strip(),
+        (latin_title or cjk_title).strip(),
     )
 
     result: list[str] = []
-    seen:   set[str]  = set()
+    seen: set[str] = set()
 
     def _add(candidate: str) -> None:
         s = candidate.strip()
@@ -184,7 +186,7 @@ def _expand_query(query: str, artist_name: str = "", title: str = "") -> list[st
     # Priority 1 (a/b/c): VGMdb series queries — highest hit-rate on slskd P2P.
     # Covers files tagged by show/game name rather than by artist name.
     for hit in series_hits:
-        native  = hit.get("native", "")
+        native = hit.get("native", "")
         english = hit.get("english", "")
         # (a) "<native series> OST" — e.g. "葬送のフリーレン OST"
         if native:
@@ -209,11 +211,16 @@ def _expand_query(query: str, artist_name: str = "", title: str = "") -> list[st
     # Priority 4 & 5: Simplified / Traditional Chinese script variants
     # (only emitted for Chinese; detect_language guards are inside script_variants)
     from .transliterator import detect_language
+
     lang = detect_language(cjk_title or query)
     if lang == "zh":
         if cjk_artist:
-            _add(f"{tr.to_simplified(cjk_artist)} {tr.to_simplified(cjk_title)}".strip())
-            _add(f"{tr.to_traditional(cjk_artist)} {tr.to_traditional(cjk_title)}".strip())
+            _add(
+                f"{tr.to_simplified(cjk_artist)} {tr.to_simplified(cjk_title)}".strip()
+            )
+            _add(
+                f"{tr.to_traditional(cjk_artist)} {tr.to_traditional(cjk_title)}".strip()
+            )
         else:
             _add(tr.to_simplified(cjk_title))
             _add(tr.to_traditional(cjk_title))
@@ -239,7 +246,9 @@ def _on_pre_provider_search(
       parsing the combined query string.
     """
     # ── Album+title pruning for CJK queries ──────────────────────────────
-    _probe = query if isinstance(query, str) else " ".join(str(q) for q in (query or []))
+    _probe = (
+        query if isinstance(query, str) else " ".join(str(q) for q in (query or []))
+    )
     if strategy_name == "album+title" and _has_cjk(_probe):
         logger.debug(
             "Pruning album+title strategy for CJK query %r "
@@ -273,14 +282,20 @@ def _on_pre_provider_search(
 
 # ── Hook 2: pre_normalize_text (Score / Reduce) ────────────────────────────────
 
+
 def _is_ingestion_or_sync() -> bool:
     """Return True if the current call stack is within database_update, bulk_import, or PlexClient syncing."""
     try:
         import traceback
+
         stack = traceback.extract_stack()
         for frame in reversed(stack):
             filename = frame.filename.replace("\\", "/")
-            if "bulk_operations" in filename or "database_update_worker" in filename or "plex/client" in filename:
+            if (
+                "bulk_operations" in filename
+                or "database_update_worker" in filename
+                or "plex/client" in filename
+            ):
                 return True
     except Exception:
         pass
@@ -350,6 +365,7 @@ def _on_pre_normalize_text(text: str) -> str:
 
 # ── Hook 3: post_metadata_enrichment (Restore) ────────────────────────────────
 
+
 def _build_track_alias_entries(track_obj: Any) -> list[dict]:
     """
     Return a list of alias dicts for every script variant of the track title.
@@ -378,16 +394,18 @@ def _build_track_alias_entries(track_obj: Any) -> list[dict]:
     def _add(name: str, locale: str, script: str, primary: bool) -> None:
         if name and name not in seen and name != title:
             seen.add(name)
-            entries.append({
-                "name": name,
-                "locale": locale,
-                "script": script,
-                "is_primary_for_locale": primary,
-            })
+            entries.append(
+                {
+                    "name": name,
+                    "locale": locale,
+                    "script": script,
+                    "is_primary_for_locale": primary,
+                }
+            )
 
-    _add(tr.to_simplified(title),  "zh", "Hans", False)
+    _add(tr.to_simplified(title), "zh", "Hans", False)
     _add(tr.to_traditional(title), "zh", "Hant", False)
-    _add(tr.flatten_to_romaji(title), "en", "Latn", True)   # Pinyin/Romaji
+    _add(tr.flatten_to_romaji(title), "en", "Latn", True)  # Pinyin/Romaji
     return entries
 
 
@@ -403,14 +421,16 @@ def _build_artist_alias_entries(artist_name: str) -> list[dict]:
     def _add(name: str, locale: str, script: str, primary: bool) -> None:
         if name and name not in seen and name != artist_name:
             seen.add(name)
-            entries.append({
-                "name": name,
-                "locale": locale,
-                "script": script,
-                "is_primary_for_locale": primary,
-            })
+            entries.append(
+                {
+                    "name": name,
+                    "locale": locale,
+                    "script": script,
+                    "is_primary_for_locale": primary,
+                }
+            )
 
-    _add(tr.to_simplified(artist_name),  "zh", "Hans", False)
+    _add(tr.to_simplified(artist_name), "zh", "Hans", False)
     _add(tr.to_traditional(artist_name), "zh", "Hant", False)
     _add(tr.flatten_to_romaji(artist_name), "en", "Latn", True)
     return entries
@@ -427,8 +447,8 @@ def _persist_track_aliases(track_obj: Any, alias_entries: list[dict]) -> None:
     if not alias_entries:
         return
     try:
-        from sqlalchemy.orm import object_session
         from sqlalchemy import inspect as sa_inspect
+        from sqlalchemy.orm import object_session
 
         session = object_session(track_obj)
         if session is None:
@@ -445,7 +465,8 @@ def _persist_track_aliases(track_obj: Any, alias_entries: list[dict]) -> None:
         TrackAlias = rel.mapper.class_
 
         from core.settings import config_manager as _cm
-        _dev_mode = str(_cm.get('DEV_MODE') or 'false').lower() in ('true', '1', 'yes')
+
+        _dev_mode = str(_cm.get("DEV_MODE") or "false").lower() in ("true", "1", "yes")
 
         # Dev mode: clear existing aliases so they are rebuilt from fresh data,
         # bypassing the "skip if already present" deduplication guard.
@@ -478,7 +499,9 @@ def _persist_track_aliases(track_obj: Any, alias_entries: list[dict]) -> None:
                     name=name,
                     locale=entry.get("locale"),
                     script=entry.get("script"),
-                    is_primary_for_locale=bool(entry.get("is_primary_for_locale", False)),
+                    is_primary_for_locale=bool(
+                        entry.get("is_primary_for_locale", False)
+                    ),
                 )
             )
             added += 1
@@ -486,12 +509,14 @@ def _persist_track_aliases(track_obj: Any, alias_entries: list[dict]) -> None:
         if added:
             logger.debug(
                 "Queued %d TrackAlias row(s) for Track ID %s (commit deferred to caller).",
-                added, track_obj.id,
+                added,
+                track_obj.id,
             )
     except Exception as exc:
         logger.warning(
             "TrackAlias persistence failed for Track ID %s: %s",
-            _safe_getattr(track_obj, "id", "?"), exc,
+            _safe_getattr(track_obj, "id", "?"),
+            exc,
         )
 
 
@@ -506,8 +531,8 @@ def _persist_artist_aliases(track_obj: Any, alias_entries: list[dict]) -> None:
     if not alias_entries:
         return
     try:
-        from sqlalchemy.orm import object_session
         from sqlalchemy import inspect as sa_inspect
+        from sqlalchemy.orm import object_session
 
         session = object_session(track_obj)
         if session is None:
@@ -523,7 +548,8 @@ def _persist_artist_aliases(track_obj: Any, alias_entries: list[dict]) -> None:
         ArtistAlias = rel.mapper.class_
 
         from core.settings import config_manager as _cm
-        _dev_mode = str(_cm.get('DEV_MODE') or 'false').lower() in ('true', '1', 'yes')
+
+        _dev_mode = str(_cm.get("DEV_MODE") or "false").lower() in ("true", "1", "yes")
 
         # Dev mode: clear existing aliases so they are rebuilt from fresh data,
         # bypassing the "skip if already present" deduplication guard.
@@ -555,7 +581,9 @@ def _persist_artist_aliases(track_obj: Any, alias_entries: list[dict]) -> None:
                     name=name,
                     locale=entry.get("locale"),
                     script=entry.get("script"),
-                    is_primary_for_locale=bool(entry.get("is_primary_for_locale", False)),
+                    is_primary_for_locale=bool(
+                        entry.get("is_primary_for_locale", False)
+                    ),
                 )
             )
             added += 1
@@ -563,16 +591,19 @@ def _persist_artist_aliases(track_obj: Any, alias_entries: list[dict]) -> None:
         if added:
             logger.debug(
                 "Queued %d ArtistAlias row(s) for Artist ID %s (commit deferred to caller).",
-                added, artist_obj.id,
+                added,
+                artist_obj.id,
             )
     except Exception as exc:
         logger.warning(
             "ArtistAlias persistence failed for Track ID %s: %s",
-            _safe_getattr(track_obj, "id", "?"), exc,
+            _safe_getattr(track_obj, "id", "?"),
+            exc,
         )
 
 
 # ── Hook 4: pre_normalize_title (drama/series context extraction) ─────────────
+
 
 def _on_pre_normalize_title(raw_title: str, **kwargs: Any) -> str:
     """
@@ -586,7 +617,7 @@ def _on_pre_normalize_title(raw_title: str, **kwargs: Any) -> str:
 
     The title string is returned **unchanged** — this hook is purely additive.
     """
-    plugin_context = kwargs.get('plugin_context')
+    plugin_context = kwargs.get("plugin_context")
     if plugin_context is None:
         return raw_title
     if not isinstance(raw_title, str):
@@ -608,7 +639,7 @@ def _on_pre_normalize_title(raw_title: str, **kwargs: Any) -> str:
             guillemet_content = match.group(1)  # group 1 = 《》 content
 
         if guillemet_content and guillemet_content.strip():
-            plugin_context['cjk_drama'] = guillemet_content.strip()
+            plugin_context["cjk_drama"] = guillemet_content.strip()
             return raw_title
 
         # Priority 2 (fallback): no 《》 guillemets — scan （）or () brackets for
@@ -619,19 +650,21 @@ def _on_pre_normalize_title(raw_title: str, **kwargs: Any) -> str:
         # the keyword is the whole bracket content, e.g. '电视剧《苍兰诀》片头曲'
         # is already covered by priority 1, but '（苍兰诀 插曲附词版）' is not.
         for bracket_re, open_ch, close_ch in (
-            (re.compile(r'（([^）]*)）'), '（', '）'),   # full-width parens
-            (re.compile(r'\(([^)]*)\)'), '(', ')'),       # ASCII parens
+            (re.compile(r"（([^）]*)）"), "（", "）"),  # full-width parens
+            (re.compile(r"\(([^)]*)\)"), "(", ")"),  # ASCII parens
         ):
             for bracket_match in bracket_re.finditer(raw_title):
                 inner = bracket_match.group(1)
                 kw_match = _OST_KEYWORD_RE.search(inner)
                 if kw_match:
                     # Text before the keyword is the drama/series name.
-                    candidate_drama = inner[:kw_match.start()].strip()
+                    candidate_drama = inner[: kw_match.start()].strip()
                     # Strip common separators left after splitting.
-                    candidate_drama = re.sub(r'^[\s\-–—·,，、]+|[\s\-–—·,，、]+$', '', candidate_drama)
+                    candidate_drama = re.sub(
+                        r"^[\s\-–—·,，、]+|[\s\-–—·,，、]+$", "", candidate_drama
+                    )
                     if candidate_drama and _has_cjk(candidate_drama):
-                        plugin_context['cjk_drama'] = candidate_drama
+                        plugin_context["cjk_drama"] = candidate_drama
                         return raw_title
 
         # Priority 3: any other CJK bracket type (【】 「」 etc.) — original behaviour.
@@ -639,7 +672,7 @@ def _on_pre_normalize_title(raw_title: str, **kwargs: Any) -> str:
         if match:
             drama = next((g for g in match.groups() if g is not None), None)
             if drama and drama.strip():
-                plugin_context['cjk_drama'] = drama.strip()
+                plugin_context["cjk_drama"] = drama.strip()
                 return raw_title
 
     # ── ASCII bracket extraction ([bracket] / (parens)) ────────────────────
@@ -654,15 +687,18 @@ def _on_pre_normalize_title(raw_title: str, **kwargs: Any) -> str:
     match = _ASCII_BRACKET_RE.search(raw_title)
     if match:
         drama = next((g for g in match.groups() if g is not None), None)
-        if drama and drama.strip() and (
-            _has_cjk(drama) or _OST_KEYWORD_RE.search(drama)
+        if (
+            drama
+            and drama.strip()
+            and (_has_cjk(drama) or _OST_KEYWORD_RE.search(drama))
         ):
-            plugin_context['cjk_drama'] = drama.strip()
+            plugin_context["cjk_drama"] = drama.strip()
 
     return raw_title
 
 
 # ── Hook 5: scoring_modifier (drama-context score boost) ─────────────────────
+
 
 def _on_scoring_modifier(modifier: Any, **kwargs: Any) -> Any:
     """
@@ -683,17 +719,17 @@ def _on_scoring_modifier(modifier: Any, **kwargs: Any) -> Any:
     absent from either track or when the similarity is below the threshold, so
     the calling engine always receives a well-typed dict regardless of outcome.
     """
-    source = kwargs.get('source')
-    candidate = kwargs.get('candidate')
+    source = kwargs.get("source")
+    candidate = kwargs.get("candidate")
 
     if source is None or candidate is None:
         return {"boost": 0, "duration_override": 0}
 
     local_drama: str = (
-        _safe_getattr(source, 'plugin_context', {}).get('cjk_drama', '') or ''
+        _safe_getattr(source, "plugin_context", {}).get("cjk_drama", "") or ""
     )
     remote_drama: str = (
-        _safe_getattr(candidate, 'plugin_context', {}).get('cjk_drama', '') or ''
+        _safe_getattr(candidate, "plugin_context", {}).get("cjk_drama", "") or ""
     )
 
     if not local_drama or not remote_drama:
@@ -705,37 +741,51 @@ def _on_scoring_modifier(modifier: Any, **kwargs: Any) -> Any:
     # Step 1: Traditional → Simplified (so 點燃我 == 点燃我)
     try:
         _t = get_transliterator()
-        local_drama  = _t.to_simplified(local_drama)
+        local_drama = _t.to_simplified(local_drama)
         remote_drama = _t.to_simplified(remote_drama)
     except Exception:
         pass
     # Step 2: strip everything that isn't a letter / Han character / digit so
     # full-width commas, spaces, hyphens, etc. are ignored entirely.
     # '点燃我，温暖你' → '点燃我温暖你'   '点燃我, 温暖你' → '点燃我温暖你'
-    _strip_punct = lambda s: re.sub(r'[^\w]', '', s, flags=re.UNICODE)
-    local_cmp  = _strip_punct(local_drama)
+    _strip_punct = lambda s: re.sub(r"[^\w]", "", s, flags=re.UNICODE)
+    local_cmp = _strip_punct(local_drama)
     remote_cmp = _strip_punct(remote_drama)
 
     from difflib import SequenceMatcher
+
     ratio = SequenceMatcher(None, local_cmp, remote_cmp).ratio()
 
     if ratio >= 0.90:
         logger.debug(
             "scoring_modifier: drama match %r ≈ %r (normalised: %r vs %r, ratio=%.2f) "
             "→ force_artist_score_to_100=True, boost=+15, duration_override=15000ms",
-            local_drama, remote_drama, local_cmp, remote_cmp, ratio,
+            local_drama,
+            remote_drama,
+            local_cmp,
+            remote_cmp,
+            ratio,
         )
-        return {"boost": 15.0, "force_artist_score_to_100": True, "duration_override": 15000}
+        return {
+            "boost": 15.0,
+            "force_artist_score_to_100": True,
+            "duration_override": 15000,
+        }
 
     logger.debug(
         "scoring_modifier: drama context present but ratio %.2f < 0.90 "
         "(%r vs %r, normalised: %r vs %r) — no boost applied",
-        ratio, local_drama, remote_drama, local_cmp, remote_cmp,
+        ratio,
+        local_drama,
+        remote_drama,
+        local_cmp,
+        remote_cmp,
     )
     return {"boost": 0, "duration_override": 0}
 
 
 # ── Hook 6: search_expansion (local-DB query expansion) ─────────────────────
+
 
 def _on_search_expansion(terms: Any, **kwargs: Any) -> list[str]:
     """
@@ -756,14 +806,14 @@ def _on_search_expansion(terms: Any, **kwargs: Any) -> list[str]:
     zero overhead for standard Latin / English libraries.
     """
     result: list[str] = list(terms) if isinstance(terms, list) else []
-    title: str = kwargs.get('title', '') or ''
-    artist: str = kwargs.get('artist', '') or ''
+    title: str = kwargs.get("title", "") or ""
+    artist: str = kwargs.get("artist", "") or ""
 
     tr = get_transliterator()
     seen = {t.lower() for t in result}
 
     def _add(s: str) -> None:
-        s = (s or '').strip()
+        s = (s or "").strip()
         if s and s.lower() not in seen:
             seen.add(s.lower())
             result.append(s)
@@ -801,7 +851,8 @@ def _on_search_expansion(terms: Any, **kwargs: Any) -> list[str]:
     if added:
         logger.debug(
             "search_expansion: added %d alternative term(s) for %r",
-            added, title or artist,
+            added,
+            title or artist,
         )
     return result
 
@@ -834,12 +885,15 @@ def _on_post_metadata_enrichment(track_obj: Any) -> Any:
     artist_name = ""
     try:
         artist_obj = _safe_getattr(track_obj, "artist", None)
-        artist_name = (_safe_getattr(artist_obj, "name", "") or "") if artist_obj else ""
+        artist_name = (
+            (_safe_getattr(artist_obj, "name", "") or "") if artist_obj else ""
+        )
     except Exception as _exc:
         logger.debug(
             "CJK plugin: could not load artist for Track ID %s (%s) — "
             "CJK detection falls back to title-only.",
-            _safe_getattr(track_obj, "id", "?"), _exc,
+            _safe_getattr(track_obj, "id", "?"),
+            _exc,
         )
 
     status = dict(track_obj.metadata_status or {})
@@ -871,16 +925,19 @@ def _on_post_metadata_enrichment(track_obj: Any) -> Any:
 
 # ── Plugin Initialization ──────────────────────────────────────────────────────
 
+
 def initialize_plugin() -> None:
     """Wire all hooks into the system. Called automatically on first import."""
     logger.info("CJK Language Pack: initializing hooks...")
-    hook_manager.add_filter("register_metadata_requirements", _on_register_metadata_requirements)
-    hook_manager.add_filter("pre_provider_search",            _on_pre_provider_search)
-    hook_manager.add_filter("pre_normalize_text",             _on_pre_normalize_text)
-    hook_manager.add_filter("pre_normalize_title",            _on_pre_normalize_title)
-    hook_manager.add_filter("scoring_modifier",               _on_scoring_modifier)
-    hook_manager.add_filter("search_expansion",               _on_search_expansion)
-    hook_manager.add_filter("post_metadata_enrichment",       _on_post_metadata_enrichment)
+    hook_manager.add_filter(
+        "register_metadata_requirements", _on_register_metadata_requirements
+    )
+    hook_manager.add_filter("pre_provider_search", _on_pre_provider_search)
+    hook_manager.add_filter("pre_normalize_text", _on_pre_normalize_text)
+    hook_manager.add_filter("pre_normalize_title", _on_pre_normalize_title)
+    hook_manager.add_filter("scoring_modifier", _on_scoring_modifier)
+    hook_manager.add_filter("search_expansion", _on_search_expansion)
+    hook_manager.add_filter("post_metadata_enrichment", _on_post_metadata_enrichment)
     logger.info(
         "CJK Language Pack: registered hooks "
         "(register_metadata_requirements / pre_provider_search / "
@@ -893,8 +950,8 @@ initialize_plugin()
 
 
 # ── Registry Override (WeightedMatchingEngine subclass) ───────────────────────
-from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
 from core.matching_engine.matching_engine import WeightedMatchingEngine
+from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
 
 
 class CJKMatchingEngine(WeightedMatchingEngine):

@@ -1,47 +1,73 @@
+from unittest.mock import MagicMock, patch
 
 import pytest
-from unittest.mock import MagicMock, patch
-from plugins.EchoSync.plex.client import PlexClient
+
 from core.user_history import UserTrackInteraction
+from plugins.EchoSync.plex.client import PlexClient
+
 
 @pytest.fixture
 def plex_client():
     # Patch the facades so they don't hit the DB or fail stack inspection during init
-    with patch('core.nexus_framework.plugin_SDK._AccountsSDKFacade.get_all', return_value=[]), \
-         patch('core.nexus_framework.plugin_SDK._AccountsSDKFacade.get_token', return_value=None), \
-         patch('core.nexus_framework.plugin_SDK._ConfigFacade.get', return_value=None):
+    with (
+        patch(
+            "core.nexus_framework.plugin_SDK._AccountsSDKFacade.get_all",
+            return_value=[],
+        ),
+        patch(
+            "core.nexus_framework.plugin_SDK._AccountsSDKFacade.get_token",
+            return_value=None,
+        ),
+        patch("core.nexus_framework.plugin_SDK._ConfigFacade.get", return_value=None),
+    ):
         client = PlexClient()
         return client
 
+
 def test_initialization(plex_client):
-    assert plex_client.name == 'EchoSync.plex'
+    assert plex_client.name == "EchoSync.plex"
     assert plex_client.supports_downloads is False
     assert plex_client.server is None
     assert plex_client.music_library is None
+
 
 def test_is_configured_false(plex_client):
     plex_client.account_id = None
     assert plex_client.is_configured() is False
 
+
 def test_is_configured_true(plex_client):
     plex_client.account_id = 1
-    with patch('core.nexus_framework.plugin_SDK._AccountsSDKFacade.get_token') as mock_get_token, \
-         patch('core.nexus_framework.plugin_SDK._ConfigFacade.get') as mock_config_get:
-        
-        mock_get_token.return_value = {'access_token': 'abc'}
-        mock_config_get.side_effect = lambda k, **kwargs: 'http://plex' if k in ['base_url', 'server_url'] else None
+    with (
+        patch(
+            "core.nexus_framework.plugin_SDK._AccountsSDKFacade.get_token"
+        ) as mock_get_token,
+        patch("core.nexus_framework.plugin_SDK._ConfigFacade.get") as mock_config_get,
+    ):
+        mock_get_token.return_value = {"access_token": "abc"}
+        mock_config_get.side_effect = lambda k, **kwargs: (
+            "http://plex" if k in ["base_url", "server_url"] else None
+        )
 
         assert plex_client.is_configured() is True
 
+
 def test_auto_detect_prefers_token_backed_account(monkeypatch):
-    with patch('core.nexus_framework.plugin_SDK._AccountsSDKFacade.get_all') as mock_get_all, \
-         patch('core.nexus_framework.plugin_SDK._AccountsSDKFacade.get_token') as mock_get_token:
-        
+    with (
+        patch(
+            "core.nexus_framework.plugin_SDK._AccountsSDKFacade.get_all"
+        ) as mock_get_all,
+        patch(
+            "core.nexus_framework.plugin_SDK._AccountsSDKFacade.get_token"
+        ) as mock_get_token,
+    ):
         mock_get_all.return_value = [
-            {'id': 11, 'display_name': 'Managed User'},
-            {'id': 22, 'display_name': 'Admin User'},
+            {"id": 11, "display_name": "Managed User"},
+            {"id": 22, "display_name": "Admin User"},
         ]
-        mock_get_token.side_effect = lambda account_id: None if account_id == 11 else {'access_token': 'token'}
+        mock_get_token.side_effect = lambda account_id: (
+            None if account_id == 11 else {"access_token": "token"}
+        )
 
         client = PlexClient()
         assert client.account_id == 22
@@ -52,18 +78,18 @@ def test_import_managed_users_upserts_admin_and_managed(monkeypatch):
     client.ensure_connection = lambda: True
 
     managed_user = MagicMock()
-    managed_user.id = 'managed-1'
+    managed_user.id = "managed-1"
     managed_user.uuid = None
-    managed_user.username = 'kiddo'
-    managed_user.title = 'Kiddo'
-    managed_user.email = 'kiddo@example.com'
+    managed_user.username = "kiddo"
+    managed_user.title = "Kiddo"
+    managed_user.email = "kiddo@example.com"
 
     myplex_account = MagicMock()
-    myplex_account.uuid = 'admin-uuid'
+    myplex_account.uuid = "admin-uuid"
     myplex_account.id = 123
-    myplex_account.username = 'admin'
-    myplex_account.title = 'Admin'
-    myplex_account.email = 'admin@example.com'
+    myplex_account.username = "admin"
+    myplex_account.title = "Admin"
+    myplex_account.email = "admin@example.com"
     myplex_account.users.return_value = [managed_user]
 
     server = MagicMock()
@@ -73,21 +99,21 @@ def test_import_managed_users_upserts_admin_and_managed(monkeypatch):
     client.accounts = MagicMock()
     client.accounts.upsert_account.side_effect = [7, 8]
     client.accounts.get_all.return_value = [
-        {'id': 7, 'display_name': 'admin', 'user_id': 'admin-uuid'},
-        {'id': 8, 'display_name': 'Kiddo', 'user_id': 'managed-1'},
+        {"id": 7, "display_name": "admin", "user_id": "admin-uuid"},
+        {"id": 8, "display_name": "Kiddo", "user_id": "managed-1"},
     ]
 
     accounts = client.import_managed_users()
 
-    assert [account['id'] for account in accounts] == [7, 8]
+    assert [account["id"] for account in accounts] == [7, 8]
     assert client.accounts.upsert_account.call_count == 2
     admin_call = client.accounts.upsert_account.call_args_list[0].kwargs
     managed_call = client.accounts.upsert_account.call_args_list[1].kwargs
-    assert admin_call['account_id'] == 7
-    assert admin_call['user_id'] == 'admin-uuid'
-    assert managed_call['user_id'] == 'managed-1'
-    assert managed_call['is_authenticated'] is False
-    assert managed_call['is_active'] is True
+    assert admin_call["account_id"] == 7
+    assert admin_call["user_id"] == "admin-uuid"
+    assert managed_call["user_id"] == "managed-1"
+    assert managed_call["is_authenticated"] is False
+    assert managed_call["is_active"] is True
 
 
 def test_add_tracks_to_managed_playlist_uses_exact_target_user_id(monkeypatch):
@@ -96,38 +122,38 @@ def test_add_tracks_to_managed_playlist_uses_exact_target_user_id(monkeypatch):
     client.music_library = MagicMock()
 
     matched_user = MagicMock()
-    matched_user.id = 'managed-1'
+    matched_user.id = "managed-1"
     matched_user.uuid = None
-    matched_user.username = 'kiddo'
-    matched_user.title = 'Kiddo'
+    matched_user.username = "kiddo"
+    matched_user.title = "Kiddo"
 
     other_user = MagicMock()
-    other_user.id = 'managed-2'
+    other_user.id = "managed-2"
     other_user.uuid = None
-    other_user.username = 'other'
-    other_user.title = 'Other'
+    other_user.username = "other"
+    other_user.title = "Other"
 
     server = MagicMock()
     server.myPlexAccount.return_value.users.return_value = [matched_user, other_user]
     target_server = MagicMock()
-    target_server.fetchItem.return_value = MagicMock(ratingKey='100')
+    target_server.fetchItem.return_value = MagicMock(ratingKey="100")
     server.switchUser.return_value = target_server
     client.server = server
     client._find_managed_playlist = lambda *args, **kwargs: None
 
     created_playlist = MagicMock()
-    created_playlist.items.return_value = [MagicMock(ratingKey='100')]
+    created_playlist.items.return_value = [MagicMock(ratingKey="100")]
 
-    with patch('plexapi.playlist.Playlist.create', return_value=created_playlist):
+    with patch("plexapi.playlist.Playlist.create", return_value=created_playlist):
         ok = client.add_tracks_to_managed_playlist(
-            'Road Trip',
-            ['100'],
-            source_account_name='Something Else',
-            target_user_id='managed-1',
+            "Road Trip",
+            ["100"],
+            source_account_name="Something Else",
+            target_user_id="managed-1",
         )
 
     assert ok is True
-    server.switchUser.assert_called_once_with('kiddo')
+    server.switchUser.assert_called_once_with("kiddo")
 
 
 def test_add_tracks_to_managed_playlist_falls_back_to_source_account_name(monkeypatch):
@@ -137,35 +163,37 @@ def test_add_tracks_to_managed_playlist_falls_back_to_source_account_name(monkey
 
     matched_user = MagicMock()
     matched_user.id = None
-    matched_user.uuid = 'plex-uuid-22'
-    matched_user.username = 'simi'
-    matched_user.title = 'Simi'
+    matched_user.uuid = "plex-uuid-22"
+    matched_user.username = "simi"
+    matched_user.title = "Simi"
     matched_user.email = None
 
     server = MagicMock()
     server.myPlexAccount.return_value.users.return_value = [matched_user]
     target_server = MagicMock()
-    target_server.fetchItem.return_value = MagicMock(ratingKey='100')
+    target_server.fetchItem.return_value = MagicMock(ratingKey="100")
     server.switchUser.return_value = target_server
     client.server = server
     client._find_managed_playlist = lambda *args, **kwargs: None
 
     created_playlist = MagicMock()
-    created_playlist.items.return_value = [MagicMock(ratingKey='100')]
+    created_playlist.items.return_value = [MagicMock(ratingKey="100")]
 
-    with patch('plexapi.playlist.Playlist.create', return_value=created_playlist):
+    with patch("plexapi.playlist.Playlist.create", return_value=created_playlist):
         ok = client.add_tracks_to_managed_playlist(
-            'Road Trip',
-            ['100'],
-            source_account_name='Simi',
-            target_user_id='managed-id-that-does-not-match-runtime-shape',
+            "Road Trip",
+            ["100"],
+            source_account_name="Simi",
+            target_user_id="managed-id-that-does-not-match-runtime-shape",
         )
 
     assert ok is True
-    server.switchUser.assert_called_once_with('simi')
+    server.switchUser.assert_called_once_with("simi")
 
 
-def test_add_tracks_to_managed_playlist_falls_back_via_substring_account_name(monkeypatch):
+def test_add_tracks_to_managed_playlist_falls_back_via_substring_account_name(
+    monkeypatch,
+):
     """'Simi's Spotify' should resolve to Plex managed user 'Simi' via substring match."""
     client = PlexClient(account_id=7)
     client.ensure_connection = lambda: True
@@ -173,26 +201,26 @@ def test_add_tracks_to_managed_playlist_falls_back_via_substring_account_name(mo
 
     matched_user = MagicMock()
     matched_user.id = None
-    matched_user.uuid = 'plex-uuid-33'
-    matched_user.username = 'simi'
-    matched_user.title = 'Simi'
+    matched_user.uuid = "plex-uuid-33"
+    matched_user.username = "simi"
+    matched_user.title = "Simi"
     matched_user.email = None
 
     server = MagicMock()
     server.myPlexAccount.return_value.users.return_value = [matched_user]
     target_server = MagicMock()
-    target_server.fetchItem.return_value = MagicMock(ratingKey='200')
+    target_server.fetchItem.return_value = MagicMock(ratingKey="200")
     server.switchUser.return_value = target_server
     client.server = server
     client._find_managed_playlist = lambda *args, **kwargs: None
 
     created_playlist = MagicMock()
-    created_playlist.items.return_value = [MagicMock(ratingKey='200')]
+    created_playlist.items.return_value = [MagicMock(ratingKey="200")]
 
-    with patch('plexapi.playlist.Playlist.create', return_value=created_playlist):
+    with patch("plexapi.playlist.Playlist.create", return_value=created_playlist):
         ok = client.add_tracks_to_managed_playlist(
-            'Chill Vibes',
-            ['200'],
+            "Chill Vibes",
+            ["200"],
             # target_user_id is None — simulates the providers.py gap before the fix
             source_account_name="Simi's Spotify",
             target_user_id=None,
@@ -200,7 +228,7 @@ def test_add_tracks_to_managed_playlist_falls_back_via_substring_account_name(mo
 
     assert ok is True
     # Must have switched to the matched user, not stayed on admin
-    server.switchUser.assert_called_once_with('simi')
+    server.switchUser.assert_called_once_with("simi")
 
 
 def test_add_tracks_to_managed_playlist_quarantine_aborts_on_unresolved_user():
@@ -210,19 +238,21 @@ def test_add_tracks_to_managed_playlist_quarantine_aborts_on_unresolved_user():
     client.music_library = MagicMock()
 
     myplex_account = MagicMock()
-    myplex_account.uuid = 'admin-uuid'
+    myplex_account.uuid = "admin-uuid"
     myplex_account.id = 123
-    myplex_account.username = 'admin'
+    myplex_account.username = "admin"
     myplex_account.users.return_value = []  # No managed users
 
     server = MagicMock()
     server.myPlexAccount.return_value = myplex_account
     client.server = server
 
-    with pytest.raises(RuntimeError, match="Could not safely resolve Plex managed user"):
+    with pytest.raises(
+        RuntimeError, match="Could not safely resolve Plex managed user"
+    ):
         client.add_tracks_to_managed_playlist(
-            'Quarantined Playlist',
-            ['300'],
+            "Quarantined Playlist",
+            ["300"],
             source_account_name="Unknown Account",
             target_user_id="nonexistent-id",
         )
@@ -235,26 +265,28 @@ def test_add_tracks_to_managed_playlist_token_boundary_prevents_false_positive()
     client.music_library = MagicMock()
 
     dan_user = MagicMock()
-    dan_user.id = 'dan-id'
+    dan_user.id = "dan-id"
     dan_user.uuid = None
-    dan_user.username = 'dan'
-    dan_user.title = 'Dan'
+    dan_user.username = "dan"
+    dan_user.title = "Dan"
     dan_user.email = None
 
     myplex_account = MagicMock()
-    myplex_account.uuid = 'admin-uuid'
+    myplex_account.uuid = "admin-uuid"
     myplex_account.id = 123
-    myplex_account.username = 'admin'
+    myplex_account.username = "admin"
     myplex_account.users.return_value = [dan_user]
 
     server = MagicMock()
     server.myPlexAccount.return_value = myplex_account
     client.server = server
 
-    with pytest.raises(RuntimeError, match="Could not safely resolve Plex managed user"):
+    with pytest.raises(
+        RuntimeError, match="Could not safely resolve Plex managed user"
+    ):
         client.add_tracks_to_managed_playlist(
-            'Jordan Mix',
-            ['400'],
+            "Jordan Mix",
+            ["400"],
             source_account_name="Jordan's Spotify",
             target_user_id=None,
         )
@@ -268,12 +300,12 @@ def test_fetch_user_history_switches_to_managed_user_context(monkeypatch):
     managed_user = MagicMock()
     managed_user.id = 42  # numeric Plex account ID — int() cast must succeed
     managed_user.uuid = None
-    managed_user.title = 'Kiddo'
+    managed_user.title = "Kiddo"
 
     myplex_account = MagicMock()
-    myplex_account.uuid = 'admin-uuid'
+    myplex_account.uuid = "admin-uuid"
     myplex_account.id = 123
-    myplex_account.username = 'admin'
+    myplex_account.username = "admin"
     myplex_account.users.return_value = [managed_user]
 
     target_server = MagicMock()
@@ -286,25 +318,25 @@ def test_fetch_user_history_switches_to_managed_user_context(monkeypatch):
 
     client._find_music_library_for_server = lambda _: MagicMock()
     client._track_to_interaction = lambda _: UserTrackInteraction(
-        plugin_item_id='1',
-        artist_name='Artist',
-        track_title='Song',
+        plugin_item_id="1",
+        artist_name="Artist",
+        track_title="Song",
         play_count=3,
     )
 
     client.accounts = MagicMock()
     client.accounts.get_all.return_value = [
-        {'id': 8, 'display_name': 'Kiddo', 'user_id': '42'}  # matches managed_user.id
+        {"id": 8, "display_name": "Kiddo", "user_id": "42"}  # matches managed_user.id
     ]
 
     # Add type track so the interaction is included
     mock_history_item = MagicMock()
-    mock_history_item.type = 'track'
+    mock_history_item.type = "track"
     target_server.history.return_value = [mock_history_item]
     interactions = client.fetch_user_history(account_id=8, limit=10)
 
     assert len(interactions) == 1
-    server.switchUser.assert_called_once_with('Kiddo')
+    server.switchUser.assert_called_once_with("Kiddo")
     target_server.history.assert_called_once_with(maxresults=10, accountID=42)
 
 
@@ -313,15 +345,17 @@ def test_track_to_interaction_extracts_user_rating_and_play_count():
 
     # Avoid coupling this test to full conversion internals.
     converted = MagicMock()
-    converted.artist_name = 'Artist'
-    converted.title = 'Song'
-    converted.identifiers = {'plex': '100'}
+    converted.artist_name = "Artist"
+    converted.title = "Song"
+    converted.identifiers = {"plex": "100"}
     client._convert_track_to_echosync = lambda _: converted
 
     plex_track = MagicMock()
-    plex_track.ratingKey = '100'
+    plex_track.ratingKey = "100"
     plex_track.viewCount = 11
-    plex_track.userRating = 8.0  # Plex wire-format (1–10); display stars = wire / 2 = 4.0
+    plex_track.userRating = (
+        8.0  # Plex wire-format (1–10); display stars = wire / 2 = 4.0
+    )
     plex_track.lastViewedAt = None
 
     interaction = client._track_to_interaction(plex_track)
@@ -335,13 +369,13 @@ def test_track_to_interaction_treats_zero_rating_as_unrated():
     client = PlexClient(account_id=7)
 
     converted = MagicMock()
-    converted.artist_name = 'Artist'
-    converted.title = 'Song'
-    converted.identifiers = {'plex': '100'}
+    converted.artist_name = "Artist"
+    converted.title = "Song"
+    converted.identifiers = {"plex": "100"}
     client._convert_track_to_echosync = lambda _: converted
 
     plex_track = MagicMock()
-    plex_track.ratingKey = '100'
+    plex_track.ratingKey = "100"
     plex_track.viewCount = 1
     plex_track.userRating = 0
     plex_track.lastViewedAt = None
@@ -356,16 +390,16 @@ def test_enrich_interactions_with_user_ratings_fetches_missing_only():
     client = PlexClient(account_id=7)
 
     missing_rating = UserTrackInteraction(
-        plugin_item_id='100',
-        artist_name='Artist A',
-        track_title='Song A',
+        plugin_item_id="100",
+        artist_name="Artist A",
+        track_title="Song A",
         play_count=1,
         rating=None,
     )
     existing_rating = UserTrackInteraction(
-        plugin_item_id='200',
-        artist_name='Artist B',
-        track_title='Song B',
+        plugin_item_id="200",
+        artist_name="Artist B",
+        track_title="Song B",
         play_count=2,
         rating=7.0,
     )
@@ -392,17 +426,17 @@ def test_fetch_user_history_enriches_ratings_from_metadata(monkeypatch):
     managed_user = MagicMock()
     managed_user.id = 42  # numeric Plex account ID
     managed_user.uuid = None
-    managed_user.title = 'Kiddo'
+    managed_user.title = "Kiddo"
 
     myplex_account = MagicMock()
-    myplex_account.uuid = 'admin-uuid'
+    myplex_account.uuid = "admin-uuid"
     myplex_account.id = 123
-    myplex_account.username = 'admin'
+    myplex_account.username = "admin"
     myplex_account.users.return_value = [managed_user]
 
     target_server = MagicMock()
     history_item = MagicMock()
-    history_item.type = 'track'
+    history_item.type = "track"
     target_server.history.return_value = [history_item]
 
     rated_metadata = MagicMock()
@@ -416,16 +450,16 @@ def test_fetch_user_history_enriches_ratings_from_metadata(monkeypatch):
 
     client._find_music_library_for_server = lambda _: MagicMock()
     client._track_to_interaction = lambda _: UserTrackInteraction(
-        plugin_item_id='123',
-        artist_name='Artist',
-        track_title='Song',
+        plugin_item_id="123",
+        artist_name="Artist",
+        track_title="Song",
         play_count=1,
         rating=None,
     )
 
     client.accounts = MagicMock()
     client.accounts.get_all.return_value = [
-        {'id': 8, 'display_name': 'Kiddo', 'user_id': '42'}  # matches managed_user.id
+        {"id": 8, "display_name": "Kiddo", "user_id": "42"}  # matches managed_user.id
     ]
 
     interactions = client.fetch_user_history(account_id=8, limit=10)
@@ -436,8 +470,9 @@ def test_fetch_user_history_enriches_ratings_from_metadata(monkeypatch):
 
 
 def test_trigger_sync_preserves_managed_user_fields():
-    from web.routes.playlists import trigger_sync, PlaylistSyncSchema
     from unittest.mock import patch
+
+    from web.routes.playlists import PlaylistSyncSchema, trigger_sync
 
     schema = PlaylistSyncSchema(
         source="spotify",
@@ -445,18 +480,21 @@ def test_trigger_sync_preserves_managed_user_fields():
         playlist_name="Simi Favorites",
         source_account_name="Simi",
         target_user_id="managed-simi-id",
-        matches=[{"target_identifier": "100"}]
+        matches=[{"target_identifier": "100"}],
     )
 
-    with patch('core.nexus_framework.plugin_loader.get_plugin_capabilities') as mock_caps:
+    with patch(
+        "core.nexus_framework.plugin_loader.get_plugin_capabilities"
+    ) as mock_caps:
         from core.nexus_framework.plugin_SDK import PlaylistSupport
+
         cap_mock = MagicMock()
         cap_mock.supports_playlists = PlaylistSupport.READ_WRITE
         cap_mock.supports_streaming = True
         cap_mock.supports_library_scan = True
         mock_caps.return_value = cap_mock
 
-        with patch('web.routes.playlists._sync_to_plex') as mock_sync_plex:
+        with patch("web.routes.playlists._sync_to_plex") as mock_sync_plex:
             mock_sync_plex.return_value = {"accepted": True, "job": "sync:plex:123"}
             res = trigger_sync(schema)
 

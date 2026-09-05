@@ -1,5 +1,7 @@
 import unittest
+
 from core.utils import PathMapper
+
 
 class TestPathMapper(unittest.TestCase):
     def test_basic_mapping(self):
@@ -10,20 +12,31 @@ class TestPathMapper(unittest.TestCase):
         self.assertEqual(mapper.map_to_local("/data/media"), "/mnt/user/media")
 
         # Prefix match
-        self.assertEqual(mapper.map_to_local("/data/media/movies/film.mkv"), "/mnt/user/media/movies/film.mkv")
+        self.assertEqual(
+            mapper.map_to_local("/data/media/movies/film.mkv"),
+            "/mnt/user/media/movies/film.mkv",
+        )
 
         # No match
-        self.assertEqual(mapper.map_to_local("/other/path/file.txt"), "/other/path/file.txt")
+        self.assertEqual(
+            mapper.map_to_local("/other/path/file.txt"), "/other/path/file.txt"
+        )
 
     def test_windows_paths(self):
         mappings = [{"remote": "C:\\Media", "local": "/mnt/media"}]
         mapper = PathMapper(mappings)
 
         # Note: Input paths are normalized to forward slashes in output
-        self.assertEqual(mapper.map_to_local("C:\\Media\\Movies\\Film.mkv"), "/mnt/media/Movies/Film.mkv")
+        self.assertEqual(
+            mapper.map_to_local("C:\\Media\\Movies\\Film.mkv"),
+            "/mnt/media/Movies/Film.mkv",
+        )
 
         # Mixed separators
-        self.assertEqual(mapper.map_to_local("C:/Media\\Movies/Film.mkv"), "/mnt/media/Movies/Film.mkv")
+        self.assertEqual(
+            mapper.map_to_local("C:/Media\\Movies/Film.mkv"),
+            "/mnt/media/Movies/Film.mkv",
+        )
 
     def test_root_mapping(self):
         mappings = [{"remote": "/", "local": "/host_mnt"}]
@@ -55,15 +68,19 @@ class TestPathMapper(unittest.TestCase):
         # Order matters: first match wins
         mappings = [
             {"remote": "/data/music", "local": "/mnt/music"},
-            {"remote": "/data", "local": "/mnt/data"}
+            {"remote": "/data", "local": "/mnt/data"},
         ]
         mapper = PathMapper(mappings)
 
         # Should match specific music mapping first
-        self.assertEqual(mapper.map_to_local("/data/music/song.mp3"), "/mnt/music/song.mp3")
+        self.assertEqual(
+            mapper.map_to_local("/data/music/song.mp3"), "/mnt/music/song.mp3"
+        )
 
         # Should match general data mapping
-        self.assertEqual(mapper.map_to_local("/data/other/file.txt"), "/mnt/data/other/file.txt")
+        self.assertEqual(
+            mapper.map_to_local("/data/other/file.txt"), "/mnt/data/other/file.txt"
+        )
 
     def test_case_sensitivity(self):
         # Currently implementation is case-sensitive (standard for Linux)
@@ -73,5 +90,6 @@ class TestPathMapper(unittest.TestCase):
         self.assertEqual(mapper.map_to_local("/data/file.txt"), "/data/file.txt")
         self.assertEqual(mapper.map_to_local("/Data/file.txt"), "/mnt/data/file.txt")
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     unittest.main()

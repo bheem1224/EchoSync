@@ -11,64 +11,62 @@ Main components:
 
 
 # ── Late Imports to break circular dependencies ──
-# We move these to the bottom so that core.settings (and others) can import 
-# from the core package without triggering a full load of the matching engine 
+# We move these to the bottom so that core.settings (and others) can import
+# from the core package without triggering a full load of the matching engine
 # before config_manager is instantiated.
 
+from .caching import (
+    PluginCache,
+    cleanup_expired_cache,
+    clear_cache,
+    get_cache,
+    plugin_cache,
+)
 from .db.echo_sync_track import (
-    EchosyncTrack,
     EchosyncMedia,
+    EchosyncTrack,
     QualityTag,
 )
 from .matching_engine import (
-    TrackParser,
-    ParseConfig,
-    WeightedMatchingEngine,
+    PROFILE_DOWNLOAD_SEARCH,
+    PROFILE_EXACT_SYNC,
+    PROFILE_LIBRARY_IMPORT,
+    FingerprintMatcher,
     MatchResult,
+    ParseConfig,
+    ProfileFactory,
+    ProfileType,
     ScoringProfile,
     ScoringWeights,
-    ProfileType,
-    ProfileFactory,
-    PROFILE_EXACT_SYNC,
-    PROFILE_DOWNLOAD_SEARCH,
-    PROFILE_LIBRARY_IMPORT,
-)
-from .caching import (
-    plugin_cache,
-    PluginCache,
-    get_cache,
-    clear_cache,
-    cleanup_expired_cache,
-)
-from .matching_engine import (
-    FingerprintMatcher,
+    TrackParser,
+    WeightedMatchingEngine,
 )
 
 __all__ = [
     # Data models
-    'EchosyncTrack',
-    'EchosyncMedia',
-    'QualityTag',
+    "EchosyncTrack",
+    "EchosyncMedia",
+    "QualityTag",
     # Parsing
-    'TrackParser',
-    'ParseConfig',
+    "TrackParser",
+    "ParseConfig",
     # Matching engine
-    'WeightedMatchingEngine',
-    'MatchResult',
+    "WeightedMatchingEngine",
+    "MatchResult",
     # Scoring profiles
-    'ScoringProfile',
-    'ScoringWeights',
-    'ProfileType',
-    'ProfileFactory',
-    'PROFILE_EXACT_SYNC',
-    'PROFILE_DOWNLOAD_SEARCH',
-    'PROFILE_LIBRARY_IMPORT',
+    "ScoringProfile",
+    "ScoringWeights",
+    "ProfileType",
+    "ProfileFactory",
+    "PROFILE_EXACT_SYNC",
+    "PROFILE_DOWNLOAD_SEARCH",
+    "PROFILE_LIBRARY_IMPORT",
     # Caching
-    'plugin_cache',
-    'PluginCache',
-    'get_cache',
-    'clear_cache',
-    'cleanup_expired_cache',
+    "plugin_cache",
+    "PluginCache",
+    "get_cache",
+    "clear_cache",
+    "cleanup_expired_cache",
     # Fingerprinting
-    'FingerprintMatcher',
+    "FingerprintMatcher",
 ]

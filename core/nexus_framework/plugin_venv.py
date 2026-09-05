@@ -1,17 +1,18 @@
 import os
 import sys
 import venv
-import subprocess
 from pathlib import Path
-from typing import List, Set
+
 from core.tiered_logger import get_logger
 
 logger = get_logger("plugin_venv")
 
+
 def get_venv_path(plugins_dir: Path) -> Path:
     return plugins_dir / "venv"
 
-def setup_plugin_venv(plugins_dir: Path, requirements: Set[str]):
+
+def setup_plugin_venv(plugins_dir: Path, requirements: set[str]):
     """
     Ensures a virtual environment exists for plugins and installs required packages.
     """
@@ -32,7 +33,7 @@ def setup_plugin_venv(plugins_dir: Path, requirements: Set[str]):
         logger.info(f"Installing/verifying {len(requirements)} plugin dependencies...")
 
         # Determine paths based on OS
-        if os.name == 'nt':
+        if os.name == "nt":
             pip_executable = venv_path / "Scripts" / "pip.exe"
             site_packages = venv_path / "Lib" / "site-packages"
         else:
@@ -42,45 +43,61 @@ def setup_plugin_venv(plugins_dir: Path, requirements: Set[str]):
             site_packages = venv_path / "lib" / python_version / "site-packages"
 
         if not pip_executable.exists():
-            logger.critical(f"Pip executable not found in virtual environment: {pip_executable}")
+            logger.critical(
+                f"Pip executable not found in virtual environment: {pip_executable}"
+            )
             raise RuntimeError("Corrupted virtual environment")
 
         def _install_deps():
             try:
                 from core.task_manager.binary_runner import CoreBinaryRunner
                 from core.task_manager.models import OwnerType
+
                 cmd = [str(pip_executable), "install", *list(requirements)]
                 ret_code, stdout_out, stderr_out = CoreBinaryRunner.run_binary(
                     cmd_list=cmd,
                     timeout=300.0,
                     owner_id="plugin_venv.installer",
-                    owner_type=OwnerType.PLUGIN
+                    owner_type=OwnerType.PLUGIN,
                 )
 
                 if ret_code != 0:
-                    logger.error(f"Failed to install some plugin dependencies. Pip output:\n{stderr_out}")
+                    logger.error(
+                        f"Failed to install some plugin dependencies. Pip output:\n{stderr_out}"
+                    )
                 else:
                     logger.debug("Plugin dependencies verified successfully.")
 
             except Exception as e:
-                logger.error(f"Error executing pip install for plugin dependencies: {e}")
+                logger.error(
+                    f"Error executing pip install for plugin dependencies: {e}"
+                )
+
+        import time
 
         from core.job_queue import job_queue
-        import time
-        job_name = f"plugin_venv_installer_{int(time.time()*1000)}"
-        job_queue.register_job(name=job_name, func=_install_deps, interval_seconds=None, tags=["system", "plugin"])
+
+        job_name = f"plugin_venv_installer_{int(time.time() * 1000)}"
+        job_queue.register_job(
+            name=job_name,
+            func=_install_deps,
+            interval_seconds=None,
+            tags=["system", "plugin"],
+        )
         job_queue.execute_job_now(job_name)
-        logger.info("Plugin dependency installation started in background via job queue.")
+        logger.info(
+            "Plugin dependency installation started in background via job queue."
+        )
 
     else:
         logger.debug("No plugin dependencies to install.")
 
     # 3. Add venv site-packages to sys.path dynamically
-    if os.name == 'nt':
-         site_packages = venv_path / "Lib" / "site-packages"
+    if os.name == "nt":
+        site_packages = venv_path / "Lib" / "site-packages"
     else:
-         python_version = f"python{sys.version_info.major}.{sys.version_info.minor}"
-         site_packages = venv_path / "lib" / python_version / "site-packages"
+        python_version = f"python{sys.version_info.major}.{sys.version_info.minor}"
+        site_packages = venv_path / "lib" / python_version / "site-packages"
 
     site_packages_str = str(site_packages.resolve())
     if site_packages_str not in sys.path:

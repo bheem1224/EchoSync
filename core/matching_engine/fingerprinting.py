@@ -11,7 +11,6 @@ Fingerprints are useful for:
 """
 
 import logging
-from typing import Optional, Tuple
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -20,10 +19,20 @@ logger = logging.getLogger(__name__)
 class FingerprintGenerator:
     """Generate Chromaprint fingerprints from audio files"""
 
-    SUPPORTED_FORMATS = frozenset({
-        '.mp3', '.flac', '.m4a', '.aac', '.ogg', '.opus',
-        '.wma', '.wav', '.alac', '.ape'
-    })
+    SUPPORTED_FORMATS = frozenset(
+        {
+            ".mp3",
+            ".flac",
+            ".m4a",
+            ".aac",
+            ".ogg",
+            ".opus",
+            ".wma",
+            ".wav",
+            ".alac",
+            ".ape",
+        }
+    )
 
     @staticmethod
     def can_fingerprint(file_path: str) -> bool:
@@ -32,10 +41,11 @@ class FingerprintGenerator:
         return path.suffix.lower() in FingerprintGenerator.SUPPORTED_FORMATS
 
     @staticmethod
-    def _get_channel_count(file_path: str) -> Optional[int]:
+    def _get_channel_count(file_path: str) -> int | None:
         """Return the channel count for an audio file using echosync_core Rust metadata extractor, or None on failure."""
         try:
             import echosync_core
+
             meta = echosync_core.extract_metadata(file_path)
             return meta.get("channels")
         except Exception as e:
@@ -43,7 +53,7 @@ class FingerprintGenerator:
             return None
 
     @staticmethod
-    def generate(file_path: str) -> Optional[str]:
+    def generate(file_path: str) -> str | None:
         """
         Generate Chromaprint fingerprint from audio file
 
@@ -54,8 +64,9 @@ class FingerprintGenerator:
             Chromaprint fingerprint string, or None if generation fails
         """
         try:
-            import acoustid
             import os
+
+            import acoustid
         except ImportError:
             logger.warning(
                 "pyacoustid not installed. Fingerprinting unavailable. "
@@ -68,15 +79,20 @@ class FingerprintGenerator:
         if not path_obj.exists() or not path_obj.is_file():
             try:
                 from core.utils import PathMapper
+
                 mapped = PathMapper.to_local(file_path)
                 if mapped and Path(mapped).exists() and Path(mapped).is_file():
                     file_path = mapped
                     path_obj = Path(file_path)
                 else:
-                    logger.debug(f"Cannot fingerprint {file_path}: file does not exist on disk")
+                    logger.debug(
+                        f"Cannot fingerprint {file_path}: file does not exist on disk"
+                    )
                     return None
             except Exception:
-                logger.debug(f"Cannot fingerprint {file_path}: file does not exist on disk")
+                logger.debug(
+                    f"Cannot fingerprint {file_path}: file does not exist on disk"
+                )
                 return None
 
         if not FingerprintGenerator.can_fingerprint(file_path):
@@ -88,19 +104,23 @@ class FingerprintGenerator:
             logger.warning(
                 "Skipping AcoustID fingerprinting for multi-channel audio "
                 "(>2 channels) to prevent C-library segfaults: %s (%d ch)",
-                file_path, channels,
+                file_path,
+                channels,
             )
             return None
 
         # First try native Rust DSP engine (echosync_core)
         try:
             import echosync_core
+
             if hasattr(echosync_core, "fingerprint_audio"):
                 fp, _ = echosync_core.fingerprint_audio(file_path, trim_silence=True)
                 if fp:
                     return fp
         except Exception as e:
-            logger.debug(f"Native Rust fingerprinting fallback to pyacoustid for {file_path}: {e}")
+            logger.debug(
+                f"Native Rust fingerprinting fallback to pyacoustid for {file_path}: {e}"
+            )
 
         try:
             # Generate fingerprint using Chromaprint
@@ -109,19 +129,23 @@ class FingerprintGenerator:
 
             if isinstance(fingerprint, bytes):
                 fingerprint = fingerprint.decode("utf-8", errors="ignore")
-            
+
             if not fingerprint:
                 logger.warning(f"Empty fingerprint generated for {file_path}")
                 return None
-            
-            logger.debug(f"Generated fingerprint for {file_path}: length={len(fingerprint)}, duration={duration}s")
+
+            logger.debug(
+                f"Generated fingerprint for {file_path}: length={len(fingerprint)}, duration={duration}s"
+            )
             return fingerprint
-            
+
         except FileNotFoundError as e:
             # Check whether it was the audio file or fpcalc executable that was missing
             target = getattr(e, "filename", None) or str(e)
             if target and "fpcalc" not in str(target).lower():
-                logger.debug(f"Audio file not found during fingerprinting ({file_path}): {e}")
+                logger.debug(
+                    f"Audio file not found during fingerprinting ({file_path}): {e}"
+                )
             else:
                 logger.error(
                     f"fpcalc command not found. Install Chromaprint and add fpcalc to PATH, "
@@ -133,7 +157,7 @@ class FingerprintGenerator:
             return None
 
     @staticmethod
-    def generate_with_duration(file_path: str) -> Tuple[Optional[str], Optional[int]]:
+    def generate_with_duration(file_path: str) -> tuple[str | None, int | None]:
         """Generate a Chromaprint fingerprint and return it together with the
         fpcalc-computed duration (in whole seconds).
 
@@ -158,15 +182,20 @@ class FingerprintGenerator:
         if not path_obj.exists() or not path_obj.is_file():
             try:
                 from core.utils import PathMapper
+
                 mapped = PathMapper.to_local(file_path)
                 if mapped and Path(mapped).exists() and Path(mapped).is_file():
                     file_path = mapped
                     path_obj = Path(file_path)
                 else:
-                    logger.debug(f"Cannot fingerprint {file_path}: file does not exist on disk")
+                    logger.debug(
+                        f"Cannot fingerprint {file_path}: file does not exist on disk"
+                    )
                     return None, None
             except Exception:
-                logger.debug(f"Cannot fingerprint {file_path}: file does not exist on disk")
+                logger.debug(
+                    f"Cannot fingerprint {file_path}: file does not exist on disk"
+                )
                 return None, None
 
         if not FingerprintGenerator.can_fingerprint(file_path):
@@ -178,19 +207,23 @@ class FingerprintGenerator:
             logger.warning(
                 "Skipping AcoustID fingerprinting for multi-channel audio "
                 "(>2 channels) to prevent C-library segfaults: %s (%d ch)",
-                file_path, channels,
+                file_path,
+                channels,
             )
             return None, None
 
         # First try native Rust DSP engine (echosync_core)
         try:
             import echosync_core
+
             if hasattr(echosync_core, "fingerprint_audio"):
                 fp, dur = echosync_core.fingerprint_audio(file_path, trim_silence=True)
                 if fp:
                     return fp, int(round(dur)) if dur is not None else None
         except Exception as e:
-            logger.debug(f"Native Rust fingerprinting fallback to pyacoustid for {file_path}: {e}")
+            logger.debug(
+                f"Native Rust fingerprinting fallback to pyacoustid for {file_path}: {e}"
+            )
 
         try:
             raw_duration, fingerprint = acoustid.fingerprint_file(file_path)
@@ -201,7 +234,9 @@ class FingerprintGenerator:
             if not fingerprint:
                 logger.warning(f"Empty fingerprint generated for {file_path}")
                 return None, None
-            duration_sec = int(round(float(raw_duration))) if raw_duration is not None else None
+            duration_sec = (
+                int(round(float(raw_duration))) if raw_duration is not None else None
+            )
             logger.debug(
                 f"Generated fingerprint for {file_path}: "
                 f"length={len(fingerprint)}, duration={duration_sec}s"
@@ -210,7 +245,9 @@ class FingerprintGenerator:
         except FileNotFoundError as e:
             target = getattr(e, "filename", None) or str(e)
             if target and "fpcalc" not in str(target).lower():
-                logger.debug(f"Audio file not found during fingerprinting ({file_path}): {e}")
+                logger.debug(
+                    f"Audio file not found during fingerprinting ({file_path}): {e}"
+                )
             else:
                 logger.error(
                     f"fpcalc command not found. Install Chromaprint and add fpcalc to PATH, "
@@ -231,9 +268,7 @@ class FingerprintMatcher:
 
     @staticmethod
     def fingerprints_match(
-        fp1: Optional[str],
-        fp2: Optional[str],
-        confidence_threshold: float = MIN_CONFIDENCE
+        fp1: str | None, fp2: str | None, confidence_threshold: float = MIN_CONFIDENCE
     ) -> bool:
         """
         Compare two Chromaprint fingerprints
@@ -264,7 +299,7 @@ class FingerprintMatcher:
             return False
 
     @staticmethod
-    def get_confidence_score(fp1: Optional[str], fp2: Optional[str]) -> float:
+    def get_confidence_score(fp1: str | None, fp2: str | None) -> float:
         """
         Get confidence score for fingerprint match (0-1)
 
@@ -307,9 +342,12 @@ class FingerprintCache:
     def _ensure_table_exists(self):
         """Ensure fingerprint cache table exists in database"""
         try:
-            import sqlite3
             import contextlib
-            with contextlib.closing(sqlite3.connect(self.db_path, timeout=30.0)) as conn:
+            import sqlite3
+
+            with contextlib.closing(
+                sqlite3.connect(self.db_path, timeout=30.0)
+            ) as conn:
                 conn.execute("PRAGMA busy_timeout = 5000")
                 conn.execute("PRAGMA journal_mode = WAL")
                 conn.execute("""
@@ -324,7 +362,7 @@ class FingerprintCache:
         except Exception as e:
             logger.warning(f"Failed to create fingerprint cache table: {e}")
 
-    def get(self, file_path: str, file_hash: Optional[str] = None) -> Optional[str]:
+    def get(self, file_path: str, file_hash: str | None = None) -> str | None:
         """
         Get cached fingerprint
 
@@ -336,9 +374,12 @@ class FingerprintCache:
             Cached fingerprint, or None if not cached or invalid
         """
         try:
-            import sqlite3
             import contextlib
-            with contextlib.closing(sqlite3.connect(self.db_path, timeout=30.0)) as conn:
+            import sqlite3
+
+            with contextlib.closing(
+                sqlite3.connect(self.db_path, timeout=30.0)
+            ) as conn:
                 conn.execute("PRAGMA busy_timeout = 5000")
                 conn.execute("PRAGMA journal_mode = WAL")
                 cursor = conn.cursor()
@@ -346,12 +387,12 @@ class FingerprintCache:
                 if file_hash:
                     cursor.execute(
                         "SELECT fingerprint FROM fingerprint_cache WHERE file_path = ? AND file_hash = ?",
-                        (str(file_path), file_hash)
+                        (str(file_path), file_hash),
                     )
                 else:
                     cursor.execute(
                         "SELECT fingerprint FROM fingerprint_cache WHERE file_path = ?",
-                        (str(file_path),)
+                        (str(file_path),),
                     )
 
                 result = cursor.fetchone()
@@ -360,7 +401,7 @@ class FingerprintCache:
             logger.debug(f"Failed to retrieve cached fingerprint: {e}")
             return None
 
-    def set(self, file_path: str, fingerprint: str, file_hash: Optional[str] = None):
+    def set(self, file_path: str, fingerprint: str, file_hash: str | None = None):
         """
         Cache a fingerprint
 
@@ -370,9 +411,12 @@ class FingerprintCache:
             file_hash: Optional file hash for validation
         """
         try:
-            import sqlite3
             import contextlib
-            with contextlib.closing(sqlite3.connect(self.db_path, timeout=30.0)) as conn:
+            import sqlite3
+
+            with contextlib.closing(
+                sqlite3.connect(self.db_path, timeout=30.0)
+            ) as conn:
                 conn.execute("PRAGMA busy_timeout = 5000")
                 conn.execute("PRAGMA journal_mode = WAL")
                 conn.execute(
@@ -380,7 +424,7 @@ class FingerprintCache:
                     INSERT OR REPLACE INTO fingerprint_cache (file_path, fingerprint, file_hash)
                     VALUES (?, ?, ?)
                     """,
-                    (str(file_path), fingerprint, file_hash or "")
+                    (str(file_path), fingerprint, file_hash or ""),
                 )
                 conn.commit()
         except Exception as e:
@@ -394,9 +438,12 @@ class FingerprintCache:
             days: Age threshold in days
         """
         try:
-            import sqlite3
             import contextlib
-            with contextlib.closing(sqlite3.connect(self.db_path, timeout=30.0)) as conn:
+            import sqlite3
+
+            with contextlib.closing(
+                sqlite3.connect(self.db_path, timeout=30.0)
+            ) as conn:
                 conn.execute("PRAGMA busy_timeout = 5000")
                 conn.execute("PRAGMA journal_mode = WAL")
                 conn.execute(
@@ -404,7 +451,7 @@ class FingerprintCache:
                     DELETE FROM fingerprint_cache
                     WHERE datetime(cached_at) < datetime('now', ? || ' days')
                     """,
-                    (f'-{days}',)
+                    (f"-{days}",),
                 )
                 conn.commit()
         except Exception as e:

@@ -13,10 +13,10 @@ need to import this module, but the tests may reference it.
 """
 
 import asyncio
-import logging
-from typing import Any, Iterable
+from collections.abc import Iterable
+from typing import Any
 
-from core.tiered_logger import setup_logging, get_logger
+from core.tiered_logger import get_logger, setup_logging
 from services.download_manager import get_download_manager
 from services.library_watcher import get_library_watcher
 
@@ -52,7 +52,7 @@ async def start_services() -> None:
     active_clients = []
 
     # Initialize Sync Services
-    sync_services = PluginRegistry.get_active_services_by_type('sync')
+    sync_services = PluginRegistry.get_active_services_by_type("sync")
     for service_ns in sync_services:
         try:
             client = PluginRegistry.create_instance(service_ns)
@@ -62,7 +62,7 @@ async def start_services() -> None:
             logger.error(f"Failed to start sync plugin {service_ns}: {e}")
 
     # Initialize Media Server Services
-    media_services = PluginRegistry.get_active_services_by_type('media_server')
+    media_services = PluginRegistry.get_active_services_by_type("media_server")
     for service_ns in media_services:
         try:
             client = PluginRegistry.create_instance(service_ns)
@@ -72,7 +72,7 @@ async def start_services() -> None:
             logger.error(f"Failed to start media server plugin {service_ns}: {e}")
 
     # Initialize Downloader Services
-    download_services = PluginRegistry.get_active_services_by_type('download')
+    download_services = PluginRegistry.get_active_services_by_type("download")
     for service_ns in download_services:
         try:
             client = PluginRegistry.create_instance(service_ns)
@@ -82,7 +82,7 @@ async def start_services() -> None:
             logger.error(f"Failed to start download plugin {service_ns}: {e}")
 
     # Initialize other active services
-    metadata_services = PluginRegistry.get_active_services_by_type('metadata')
+    metadata_services = PluginRegistry.get_active_services_by_type("metadata")
     for service_ns in metadata_services:
         try:
             client = PluginRegistry.create_instance(service_ns)
@@ -95,8 +95,9 @@ async def start_services() -> None:
 
     # Start Download Manager only if explicitly enabled (default: off)
     from services.storage_service import get_storage_service
+
     storage = get_storage_service()
-    downloads_cfg = storage.get_service_config('system', 'downloads') or {}
+    downloads_cfg = storage.get_service_config("system", "downloads") or {}
     auto_start_downloads = downloads_cfg.get("auto_start", False)
 
     download_manager = get_download_manager()
@@ -104,7 +105,9 @@ async def start_services() -> None:
         await download_manager.start_background_task()
         logger.info("Download Manager auto-start enabled")
     else:
-        logger.info("Download Manager auto-start is disabled (downloads will not run on startup)")
+        logger.info(
+            "Download Manager auto-start is disabled (downloads will not run on startup)"
+        )
 
     # Start real-time library file watcher
     library_watcher = get_library_watcher()
@@ -112,6 +115,7 @@ async def start_services() -> None:
 
     # Start auto-importer service and real-time download directory watcher
     from services.auto_importer import get_auto_importer
+
     auto_importer = get_auto_importer()
 
     # Keep services alive indefinitely
@@ -135,8 +139,9 @@ async def start_services() -> None:
 async def backend_main() -> None:
     """Standalone entry point if someone wants to run services outside of Flask."""
     from services.storage_service import get_storage_service
+
     storage = get_storage_service()
-    logging_config = storage.get_service_config('system', 'logging') or {}
+    logging_config = storage.get_service_config("system", "logging") or {}
     log_file = logging_config.get("path", "logs/backend.log")
     setup_logging(level=logging_config.get("level", "INFO"), log_file=log_file)
 

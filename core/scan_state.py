@@ -1,6 +1,7 @@
 import threading
-from typing import Dict, Any, Optional
 import time
+from typing import Any
+
 
 class ScanStateManager:
     _instance = None
@@ -9,7 +10,7 @@ class ScanStateManager:
     def __new__(cls):
         with cls._lock:
             if cls._instance is None:
-                cls._instance = super(ScanStateManager, cls).__new__(cls)
+                cls._instance = super().__new__(cls)
                 cls._instance._init_state()
             return cls._instance
 
@@ -60,7 +61,7 @@ class ScanStateManager:
             self.status = "failed"
             self.error_message = message
 
-    def get_state_payload(self) -> Dict[str, Any]:
+    def get_state_payload(self) -> dict[str, Any]:
         with self.state_lock:
             if self.status == "scanning":
                 return {
@@ -68,21 +69,19 @@ class ScanStateManager:
                     "tracks_processed": self.tracks_processed,
                     "batch_size": self.batch_size,
                     "errors_encountered": self.errors_encountered,
-                    "current_phase": self.current_phase
+                    "current_phase": self.current_phase,
                 }
             elif self.status == "complete":
                 return {
                     "status": "complete",
                     "total_tracks": self.total_tracks,
                     "total_errors": self.errors_encountered,
-                    "elapsed_time_ms": self.elapsed_time_ms
+                    "elapsed_time_ms": self.elapsed_time_ms,
                 }
             elif self.status == "failed":
-                return {
-                    "status": "failed",
-                    "error_message": self.error_message
-                }
+                return {"status": "failed", "error_message": self.error_message}
             else:
                 return {"status": "idle"}
+
 
 scan_state_manager = ScanStateManager()

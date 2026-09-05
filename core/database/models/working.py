@@ -1,12 +1,13 @@
 """Operational state and download queue models for working.db."""
+
 from __future__ import annotations
 
 import enum
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from datetime import datetime
+from typing import Any
 
-from sqlalchemy import Column, Integer, String, DateTime, JSON, TypeDecorator
-from sqlalchemy.orm import DeclarativeBase, validates, synonym
+from sqlalchemy import JSON, Column, Integer, String, TypeDecorator
+from sqlalchemy.orm import DeclarativeBase, synonym, validates
 
 from time_utils import UTCDateTime, utc_now
 
@@ -20,7 +21,8 @@ Base = WorkingBase
 
 class StatusStr(str):
     """Case-insensitive string representation for download status."""
-    def __eq__(self, other: Any) -> bool:
+
+    def __eq__(self, other: object) -> bool:
         if isinstance(other, (str, DownloadStatus)):
             val = other.value if isinstance(other, DownloadStatus) else str(other)
             return self.upper() == val.upper()
@@ -39,7 +41,7 @@ class DownloadStatus(str, enum.Enum):
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
 
-    def __eq__(self, other: Any) -> bool:
+    def __eq__(self, other: object) -> bool:
         if isinstance(other, (str, DownloadStatus)):
             val = other.value if isinstance(other, DownloadStatus) else str(other)
             return self.value.upper() == val.upper()
@@ -51,17 +53,18 @@ class DownloadStatus(str, enum.Enum):
 
 class DownloadStatusType(TypeDecorator):
     """SQLAlchemy TypeDecorator for DownloadStatus."""
+
     impl = String(32)
     cache_ok = True
 
-    def process_bind_param(self, value: Any, dialect: Any) -> Optional[str]:
+    def process_bind_param(self, value: Any, dialect: Any) -> str | None:
         if value is None:
             return None
         if isinstance(value, DownloadStatus):
             return value.value
         return str(value).upper()
 
-    def process_result_value(self, value: Any, dialect: Any) -> Optional[StatusStr]:
+    def process_result_value(self, value: Any, dialect: Any) -> StatusStr | None:
         if value is None:
             return None
         return StatusStr(str(value).upper())
@@ -76,24 +79,30 @@ class DownloadIntent(str, enum.Enum):
 
 class DownloadQueue(WorkingBase):
     """Model for tracking download state in working.db (Central Control)."""
+
     __tablename__ = "download_queue"
 
     id: int = Column(Integer, primary_key=True, autoincrement=True)
-    sync_id: Optional[str] = Column(String(64), nullable=True, index=True)
-    intent: str = Column(String(32), nullable=False, default=DownloadIntent.MANUAL_OMNI.value)
-    status: str = Column(DownloadStatusType(), nullable=False, default=DownloadStatus.QUEUED.value, index=True)
-    active_candidate_id: Optional[str] = Column(String(128), nullable=True)
+    sync_id: str | None = Column(String(64), nullable=True, index=True)
+    intent: str = Column(
+        String(32), nullable=False, default=DownloadIntent.MANUAL_OMNI.value
+    )
+    status: str = Column(
+        DownloadStatusType(),
+        nullable=False,
+        default=DownloadStatus.QUEUED.value,
+        index=True,
+    )
+    active_candidate_id: str | None = Column(String(128), nullable=True)
     candidate_stack: list = Column(JSON, nullable=False, default=list)
     blacklisted_candidates: list = Column(JSON, nullable=False, default=list)
     retry_count: int = Column(Integer, nullable=False, default=0)
-    error_reason: Optional[str] = Column(String(255), nullable=True)
-    echo_sync_track: Optional[dict] = Column(JSON, nullable=True)
-    plugin_id: Optional[str] = Column(String(128), nullable=True, index=True)
+    error_reason: str | None = Column(String(255), nullable=True)
+    echo_sync_track: dict | None = Column(JSON, nullable=True)
+    plugin_id: str | None = Column(String(128), nullable=True, index=True)
     provider_id = synonym("plugin_id")
 
-    created_at: datetime = Column(
-        UTCDateTime(), nullable=False, default=utc_now
-    )
+    created_at: datetime = Column(UTCDateTime(), nullable=False, default=utc_now)
     updated_at: datetime = Column(
         UTCDateTime(), nullable=False, default=utc_now, onupdate=utc_now
     )
@@ -142,7 +151,9 @@ class DownloadQueue(WorkingBase):
         """
         if self.active_candidate_id:
             blacklist = list(self.blacklisted_candidates or [])
-            blacklist.append({"candidate_id": self.active_candidate_id, "reason": reason})
+            blacklist.append(
+                {"candidate_id": self.active_candidate_id, "reason": reason}
+            )
             self.blacklisted_candidates = blacklist
 
         stack = list(self.candidate_stack or [])
@@ -151,7 +162,9 @@ class DownloadQueue(WorkingBase):
             next_candidate = stack.pop(0)
             self.candidate_stack = stack
             self.active_candidate_id = (
-                next_candidate.get("id") if isinstance(next_candidate, dict) else str(next_candidate)
+                next_candidate.get("id")
+                if isinstance(next_candidate, dict)
+                else str(next_candidate)
             )
             self.retry_count = retries + 1
             self.status = DownloadStatus.RETRYING.value
@@ -173,7 +186,7 @@ class DownloadQueue(WorkingBase):
 
 __all__ = [
     "Base",
-    "DownloadStatus",
     "DownloadIntent",
     "DownloadQueue",
+    "DownloadStatus",
 ]

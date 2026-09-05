@@ -7,12 +7,15 @@ HealthCheckRegistry, and other core components.
 """
 
 import logging
-import traceback
 import time
-from typing import Callable, Optional, Any
-from core.tiered_logger import tiered_logger, get_logger
+import traceback
+from collections.abc import Callable
+from typing import Any
+
+from core.tiered_logger import get_logger, tiered_logger
 
 logger = get_logger(__name__)
+
 
 class ErrorHandler:
     """
@@ -25,9 +28,9 @@ class ErrorHandler:
         retries: int = 0,
         backoff_base: float = 1.0,
         backoff_factor: float = 2.0,
-        on_failure: Optional[Callable[[Exception], None]] = None,
-        log_tier: str = "normal"  # Specify the logging tier
-    ) -> Optional[Any]:
+        on_failure: Callable[[Exception], None] | None = None,
+        log_tier: str = "normal",  # Specify the logging tier
+    ) -> Any | None:
         """
         Execute a function with retry and backoff logic.
 
@@ -48,17 +51,27 @@ class ErrorHandler:
                 return func()
             except Exception as e:
                 # Use tiered logger for specific tier request, or standard logger
-                tiered_logger.log(log_tier, logging.ERROR, f"Error in function {func.__name__}: {e}")
+                tiered_logger.log(
+                    log_tier, logging.ERROR, f"Error in function {func.__name__}: {e}"
+                )
                 tiered_logger.log(log_tier, logging.DEBUG, traceback.format_exc())
 
                 if attempt == retries:
-                    tiered_logger.log(log_tier, logging.ERROR, f"All retries failed for function {func.__name__}")
+                    tiered_logger.log(
+                        log_tier,
+                        logging.ERROR,
+                        f"All retries failed for function {func.__name__}",
+                    )
                     if on_failure:
                         on_failure(e)
                     return None
 
-                backoff_time = backoff_base * (backoff_factor ** attempt)
-                tiered_logger.log(log_tier, logging.INFO, f"Retrying {func.__name__} in {backoff_time:.2f} seconds...")
+                backoff_time = backoff_base * (backoff_factor**attempt)
+                tiered_logger.log(
+                    log_tier,
+                    logging.INFO,
+                    f"Retrying {func.__name__} in {backoff_time:.2f} seconds...",
+                )
                 time.sleep(backoff_time)
                 attempt += 1
 
@@ -86,6 +99,7 @@ class ErrorHandler:
         """
         logger.warning(message or str(exception))
         logger.debug(traceback.format_exc())
+
 
 # Global instance for convenience
 error_handler = ErrorHandler()

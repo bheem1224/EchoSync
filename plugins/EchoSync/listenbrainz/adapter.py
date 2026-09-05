@@ -7,24 +7,24 @@ recording entries, and enriches with MusicBrainz recording IDs.
 Adapters NEVER own data; all operations go through MusicDatabase.
 """
 
-from typing import List
-from core.tiered_logger import get_logger
 from core.db.echo_sync_track import EchosyncTrack as Track
-from core.nexus_framework.plugin_SDK import sdk
+from core.tiered_logger import get_logger
+
 # (removed get_music_database import)
 
 logger = get_logger("listenbrainz_adapter")
 
+
 # ListenBrainzAdapter class deprecated - use convert_listenbrainz_track_to_echosync instead
 class ListenBrainzAdapter:
     def __init__(self, listenbrainz_client=None):
-        
-        db = None # deprecated
+
+        db = None  # deprecated
         # Use MUSICBRAINZ provider type for recording references
         super().__init__(db=db, provider_type="musicbrainz")
         self.lb = listenbrainz_client
 
-    def get_provides_fields(self) -> List[str]:
+    def get_provides_fields(self) -> list[str]:
         return [
             "title",
             "artists",
@@ -33,7 +33,7 @@ class ListenBrainzAdapter:
             "musicbrainz_recording_id",
         ]
 
-    def get_consumes_fields(self) -> List[str]:
+    def get_consumes_fields(self) -> list[str]:
         # Playlist ingestion does not require prior fields
         return []
 
@@ -43,9 +43,9 @@ class ListenBrainzAdapter:
         except Exception:
             return False
 
-    def ingest_playlist(self, playlist_mbid: str) -> List[Track]:
+    def ingest_playlist(self, playlist_mbid: str) -> list[Track]:
         """Create Track stubs from a ListenBrainz playlist by MBID."""
-        created: List[Track] = []
+        created: list[Track] = []
         if not self.lb:
             logger.warning("ListenBrainz client not provided; cannot ingest playlist")
             return created
@@ -80,16 +80,31 @@ class ListenBrainzAdapter:
                     created.append(created_track)
             except Exception as e:
                 logger.debug(f"Skipping entry due to error: {e}")
-        logger.info(f"Ingested {len(created)} tracks from ListenBrainz playlist {playlist_mbid}")
+        logger.info(
+            f"Ingested {len(created)} tracks from ListenBrainz playlist {playlist_mbid}"
+        )
         return created
+
 
 # Register adapter in plugin system (declaration only; instance created by services)
 try:
-    from plugins.plugin_system import PluginType, PluginScope, PluginDeclaration, register_plugin
+    from plugins.plugin_system import (
+        PluginDeclaration,
+        PluginScope,
+        PluginType,
+        register_plugin,
+    )
+
     decl = PluginDeclaration(
         name="listenbrainz_adapter",
         plugin_type=PluginType.PLAYLIST_PROVIDER,
-        provides_fields=["title", "artists", "album", "duration_ms", "musicbrainz_recording_id"],
+        provides_fields=[
+            "title",
+            "artists",
+            "album",
+            "duration_ms",
+            "musicbrainz_recording_id",
+        ],
         consumes_fields=[],
         requires_auth=False,
         supports_streaming=False,

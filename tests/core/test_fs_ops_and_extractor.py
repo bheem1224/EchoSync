@@ -1,8 +1,6 @@
-import pytest
-import os
-from pathlib import Path
 import echosync_core
-from core.io_gatekeeper import Gatekeeper, SecurityViolationError
+
+from core.io_gatekeeper import Gatekeeper
 
 
 def test_native_file_operations(tmp_path):

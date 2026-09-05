@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
-import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from core.db.echo_sync_track import EchosyncTrack
-from core.matching_engine.matching_engine import WeightedMatchingEngine, sanitize_title_for_comparison
+from core.matching_engine.matching_engine import WeightedMatchingEngine
 from core.matching_engine.scoring_profile import ExactSyncProfile
-from database.music_database import Base, Artist, Album, Track, LocalMedia
-from services.playlists_api import get_library_candidates, normalize_title_for_search, normalize_artist_for_search
+from database.music_database import Album, Artist, Base, LocalMedia, Track
+from services.playlists_api import get_library_candidates
 from web.routes.playlists import _cmp_titles
 
 
@@ -147,9 +146,20 @@ def test_remix_subtype_equivalence_and_families():
     # Generic 'Remix' vs specific remix names
     assert evaluate_version_compatibility("Remix", "Seeb Remix")[0] is True
     assert evaluate_version_compatibility("Remix", "dotEXE remix")[0] is True
-    assert evaluate_version_compatibility("Remix", "Mellen Gi & Tommee Profitt Remix")[0] is True
-    assert evaluate_version_compatibility("Mellen Gi Remix", "Mellen Gi & Tommee Profitt Remix")[0] is True
-    assert evaluate_version_compatibility("Mellen Gi Remix", "Tommee Profitt Remix")[0] is False
+    assert (
+        evaluate_version_compatibility("Remix", "Mellen Gi & Tommee Profitt Remix")[0]
+        is True
+    )
+    assert (
+        evaluate_version_compatibility(
+            "Mellen Gi Remix", "Mellen Gi & Tommee Profitt Remix"
+        )[0]
+        is True
+    )
+    assert (
+        evaluate_version_compatibility("Mellen Gi Remix", "Tommee Profitt Remix")[0]
+        is False
+    )
 
     # Piano Version vs Piano
     assert evaluate_version_compatibility("Piano Version", "Piano")[0] is True
@@ -183,13 +193,19 @@ def test_tier2_title_sanitization_remix_inputs():
 
 def test_subtitle_descriptor_failsafe_tokens():
     # Descriptors like Sea Shanty, UEFA EURO 2024 Song, Soundtrack, From "...", etc.
-    score_shanty = _cmp_titles("Wellerman", "Wellerman - Sea Shanty", context_score=0.95)
+    score_shanty = _cmp_titles(
+        "Wellerman", "Wellerman - Sea Shanty", context_score=0.95
+    )
     assert score_shanty >= 0.90
 
-    score_euro = _cmp_titles("Fire", "Fire - Official UEFA EURO 2024 Song", context_score=0.95)
+    score_euro = _cmp_titles(
+        "Fire", "Fire - Official UEFA EURO 2024 Song", context_score=0.95
+    )
     assert score_euro >= 0.90
 
-    score_soundtrack = _cmp_titles("Theme", "Theme (Original Soundtrack Version)", context_score=0.95)
+    score_soundtrack = _cmp_titles(
+        "Theme", "Theme (Original Soundtrack Version)", context_score=0.95
+    )
     assert score_soundtrack >= 0.90
 
     # Part indicators & edit descriptors
@@ -202,7 +218,11 @@ def test_subtitle_descriptor_failsafe_tokens():
     score_vol1 = _cmp_titles("Title", "Title Vol 1", context_score=0.95)
     assert score_vol1 >= 0.90
 
-    score_gabry = _cmp_titles("Blue (Da Ba Dee)", "Blue (Da Ba Dee) - Gabry Ponte Ice Pop Radio Edit", context_score=0.95)
+    score_gabry = _cmp_titles(
+        "Blue (Da Ba Dee)",
+        "Blue (Da Ba Dee) - Gabry Ponte Ice Pop Radio Edit",
+        context_score=0.95,
+    )
     assert score_gabry >= 0.90
 
 
@@ -313,7 +333,9 @@ def test_multi_token_artist_expansion_tier1_candidates():
     assert res_mama[0].media_files[0].file_format == "flac"
 
     # Query with ampersand collaborator
-    res_heaven = get_library_candidates(session, "Heaven Is A Place On Earth", "W&W & AXMO")
+    res_heaven = get_library_candidates(
+        session, "Heaven Is A Place On Earth", "W&W & AXMO"
+    )
     assert len(res_heaven) == 1
     assert res_heaven[0].id == heaven_track.id
     assert len(res_heaven[0].media_files) == 1
@@ -324,8 +346,15 @@ def test_promotional_event_title_sanitization():
     from core.matching_engine.text_utils import normalize_title
 
     assert normalize_title("Fire - Official UEFA EURO 2024 Song") == "fire"
-    assert normalize_title("Colors - Coca-Cola® Anthem, 2018 FIFA World CupTM") == "colors"
-    assert normalize_title("Live It Up - Official Song 2018 FIFA World Cup (feat. Will Smith)") == "live it up"
+    assert (
+        normalize_title("Colors - Coca-Cola® Anthem, 2018 FIFA World CupTM") == "colors"
+    )
+    assert (
+        normalize_title(
+            "Live It Up - Official Song 2018 FIFA World Cup (feat. Will Smith)"
+        )
+        == "live it up"
+    )
     assert normalize_title("Theme - From the series Yellowstone") == "theme"
 
 
@@ -339,27 +368,39 @@ def test_edition_penalty_hierarchy_and_context_policies():
 
     # ── 1. Deluxe Edition fallback ──
     # Primary tiers (download & sync): Rejected
-    compat_dl, _, _ = evaluate_version_compatibility(None, "Deluxe Edition", context="download", duration_delta_ms=2000)
+    compat_dl, _, _ = evaluate_version_compatibility(
+        None, "Deluxe Edition", context="download", duration_delta_ms=2000
+    )
     assert compat_dl is False
 
-    compat_sync, _, _ = evaluate_version_compatibility(None, "Deluxe Edition", context="sync", duration_delta_ms=2000)
+    compat_sync, _, _ = evaluate_version_compatibility(
+        None, "Deluxe Edition", context="sync", duration_delta_ms=2000
+    )
     assert compat_sync is False
 
     # Tier 3 fallback: Allowed with 1.0 penalty if delta <= 10000ms
-    compat_t3, pen_t3, _ = evaluate_version_compatibility(None, "Deluxe Edition", context="tier3_fallback", duration_delta_ms=2000)
+    compat_t3, pen_t3, _ = evaluate_version_compatibility(
+        None, "Deluxe Edition", context="tier3_fallback", duration_delta_ms=2000
+    )
     assert compat_t3 is True
     assert pen_t3 == 1.0
 
     # Duration delta > 10,000ms in Tier 3: Rejected
-    compat_t3_long, _, _ = evaluate_version_compatibility(None, "Deluxe Edition", context="tier3_fallback", duration_delta_ms=12000)
+    compat_t3_long, _, _ = evaluate_version_compatibility(
+        None, "Deluxe Edition", context="tier3_fallback", duration_delta_ms=12000
+    )
     assert compat_t3_long is False
 
     # ── 2. Remastered rejection ──
     # Download and Sync contexts: Strictly REJECTED when original requested
-    compat_dl_remaster, _, _ = evaluate_version_compatibility(None, "Remastered", context="download", duration_delta_ms=500)
+    compat_dl_remaster, _, _ = evaluate_version_compatibility(
+        None, "Remastered", context="download", duration_delta_ms=500
+    )
     assert compat_dl_remaster is False
 
-    compat_sync_remaster, _, _ = evaluate_version_compatibility(None, "Remastered", context="sync", duration_delta_ms=1500)
+    compat_sync_remaster, _, _ = evaluate_version_compatibility(
+        None, "Remastered", context="sync", duration_delta_ms=1500
+    )
     assert compat_sync_remaster is False
 
 
@@ -394,7 +435,9 @@ def test_matching_engine_context_scoped_scoring():
     assert res_dl_deluxe.passed_version_check is False
     assert res_dl_deluxe.confidence_score == 0.0
 
-    res_dl_remaster = engine.calculate_match(source_orig, cand_remaster, context="download")
+    res_dl_remaster = engine.calculate_match(
+        source_orig, cand_remaster, context="download"
+    )
     assert res_dl_remaster.passed_version_check is False
     assert res_dl_remaster.confidence_score == 0.0
 
@@ -402,12 +445,16 @@ def test_matching_engine_context_scoped_scoring():
     assert res_sync_deluxe.passed_version_check is False
     assert res_sync_deluxe.confidence_score == 0.0
 
-    res_sync_remaster = engine.calculate_match(source_orig, cand_remaster, context="sync")
+    res_sync_remaster = engine.calculate_match(
+        source_orig, cand_remaster, context="sync"
+    )
     assert res_sync_remaster.passed_version_check is False
     assert res_sync_remaster.confidence_score == 0.0
 
     # In Tier 3 fallback mode: Deluxe passes with 1.0 penalty
-    res_t3_deluxe = engine.calculate_match(source_orig, cand_deluxe, context="tier3_fallback")
+    res_t3_deluxe = engine.calculate_match(
+        source_orig, cand_deluxe, context="tier3_fallback"
+    )
     assert res_t3_deluxe.passed_version_check is True
     assert res_t3_deluxe.edition_penalty_applied == 1.0
 

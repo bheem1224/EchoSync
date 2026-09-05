@@ -13,47 +13,45 @@ music library metadata from Plex. It includes:
 
 Usage:
     from database import get_database
-    
+
     db = get_database()
     stats = db.get_statistics()
 """
 
+from .engine import ensure_writer, execute_write, execute_write_sql
 from .music_database import (
-    MusicDatabase,
-    Base,
-    Artist,
     Album,
-    Track,
-    ExternalIdentifier,
+    Artist,
     AudioFingerprint,
+    Base,
+    ExternalIdentifier,
+    MusicDatabase,
+    Track,
+    close_database,
     get_database,
-    close_database
 )
 
-from .engine import (
-    execute_write,
-    execute_write_sql,
-    ensure_writer
-)
 
 def _canonicalize_path(p: str) -> str:
     import os
+
     return os.path.normpath(os.path.abspath(str(p)))
 
+
 __all__ = [
-    'MusicDatabase',
-    'Base',
-    'Artist',
-    'Album',
-    'Track',
-    'ExternalIdentifier',
-    'AudioFingerprint',
-    'get_database',
-    'close_database',
-    'execute_write',
-    'execute_write_sql',
-    'ensure_writer',
-    '_canonicalize_path',
+    "Album",
+    "Artist",
+    "AudioFingerprint",
+    "Base",
+    "ExternalIdentifier",
+    "MusicDatabase",
+    "Track",
+    "_canonicalize_path",
+    "close_database",
+    "ensure_writer",
+    "execute_write",
+    "execute_write_sql",
+    "get_database",
 ]
 
-__version__ = '1.0.0'
+__version__ = "1.0.0"

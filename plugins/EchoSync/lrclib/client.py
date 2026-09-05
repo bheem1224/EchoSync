@@ -1,10 +1,16 @@
 #!/usr/bin/env python3
 
 from pathlib import Path
-from core.tiered_logger import get_logger
-from core.nexus_framework.plugin_SDK import ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
+from typing import Any
 
-from typing import Any, Optional
+from core.nexus_framework.plugin_SDK import (
+    MetadataRichness,
+    PlaylistSupport,
+    ProviderCapabilities,
+    SearchCapabilities,
+)
+from core.tiered_logger import get_logger
+
 
 def _safe_getattr(obj: Any, attr: str, default: Any = None) -> Any:
     """AST-compliant alternative to getattr()."""
@@ -14,6 +20,7 @@ def _safe_getattr(obj: Any, attr: str, default: Any = None) -> Any:
         except AttributeError:
             return default
     return default
+
 
 logger = get_logger("lrclib_client")
 
@@ -26,16 +33,20 @@ except Exception:
 
 from core.nexus_framework.plugin_SDK import PluginBase
 
+
 class LRCLibClient(PluginBase):
     """
     LRClib API client for fetching synchronized lyrics.
     Creates .lrc sidecar files during post-processing.
     """
+
     name = "EchoSync.lrclib"
     capabilities = ProviderCapabilities(
-        name='EchoSync.lrclib',
+        name="EchoSync.lrclib",
         supports_playlists=PlaylistSupport.NONE,
-        search=SearchCapabilities(tracks=False, artists=False, albums=False, playlists=False),
+        search=SearchCapabilities(
+            tracks=False, artists=False, albums=False, playlists=False
+        ),
         metadata=MetadataRichness.LOW,
         supports_cover_art=False,
         supports_lyrics=True,
@@ -65,7 +76,7 @@ class LRCLibClient(PluginBase):
     def get_artist(self, artist_id: str) -> Any:
         return None
 
-    def get_user_playlists(self, user_id: Optional[str] = None) -> list:
+    def get_user_playlists(self, user_id: str | None = None) -> list:
         return []
 
     def get_playlist_tracks(self, playlist_id: str) -> list:
@@ -92,8 +103,14 @@ class LRCLibClient(PluginBase):
             logger.error(f"Error initializing LRClib API: {e}")
             self.api = None
 
-    def create_lrc_file(self, audio_file_path: str, track_name: str, artist_name: str,
-                       album_name: str = None, duration_seconds: int = None) -> bool:
+    def create_lrc_file(
+        self,
+        audio_file_path: str,
+        track_name: str,
+        artist_name: str,
+        album_name: str = None,
+        duration_seconds: int = None,
+    ) -> bool:
         """
         Create .lrc sidecar file for the given audio file.
 
@@ -114,7 +131,7 @@ class LRCLibClient(PluginBase):
         try:
             # Generate LRC file path (same name as audio file, .lrc extension)
             audio_path = Path(audio_file_path)
-            lrc_path = audio_path.with_suffix('.lrc')
+            lrc_path = audio_path.with_suffix(".lrc")
 
             # Skip if LRC file already exists
             if lrc_path.exists():
@@ -133,7 +150,7 @@ class LRCLibClient(PluginBase):
                     track_name=track_name,
                     artist_name=artist_name,
                     album_name=album_name,
-                    duration=duration_seconds
+                    duration=duration_seconds,
                 )
                 if lyrics_data:
                     logger.debug("get_lyrics returned a result")
@@ -145,12 +162,13 @@ class LRCLibClient(PluginBase):
                 try:
                     logger.debug(f"Trying search: {track_name} by {artist_name}")
                     search_results = self.api.search_lyrics(
-                        track_name=track_name,
-                        artist_name=artist_name
+                        track_name=track_name, artist_name=artist_name
                     )
                     if search_results:
                         lyrics_data = search_results[0]  # Take first result
-                        logger.debug(f"Search found {len(search_results)} results, using first")
+                        logger.debug(
+                            f"Search found {len(search_results)} results, using first"
+                        )
                 except Exception as e:
                     logger.debug(f"Search fallback failed: {e}")
 
@@ -160,19 +178,31 @@ class LRCLibClient(PluginBase):
                 return False
 
             # Prefer synced lyrics, fallback to plain text
-            lrc_content = _safe_getattr(lyrics_data, 'synced_lyrics', None) or _safe_getattr(lyrics_data, 'plain_lyrics', None)
+            lrc_content = _safe_getattr(
+                lyrics_data, "synced_lyrics", None
+            ) or _safe_getattr(lyrics_data, "plain_lyrics", None)
 
-            logger.debug(f"Synced lyrics available: {bool(_safe_getattr(lyrics_data, 'synced_lyrics', None))}")
-            logger.debug(f"Plain lyrics available: {bool(_safe_getattr(lyrics_data, 'plain_lyrics', None))}")
+            logger.debug(
+                f"Synced lyrics available: {bool(_safe_getattr(lyrics_data, 'synced_lyrics', None))}"
+            )
+            logger.debug(
+                f"Plain lyrics available: {bool(_safe_getattr(lyrics_data, 'plain_lyrics', None))}"
+            )
 
             if not lrc_content:
-                logger.debug(f"No usable lyrics content for: {artist_name} - {track_name}")
+                logger.debug(
+                    f"No usable lyrics content for: {artist_name} - {track_name}"
+                )
                 return False
 
             # Write LRC file
-            lrc_path.write_bytes(lrc_content.encode('utf-8'))
+            lrc_path.write_bytes(lrc_content.encode("utf-8"))
 
-            lyrics_type = "synced" if _safe_getattr(lyrics_data, 'synced_lyrics', None) else "plain"
+            lyrics_type = (
+                "synced"
+                if _safe_getattr(lyrics_data, "synced_lyrics", None)
+                else "plain"
+            )
             logger.info(f"✅ Created {lyrics_type} LRC file: {lrc_path.name}")
             return True
 

@@ -65,9 +65,7 @@ import re
 # removing all bracketed content (which would destroy legitimate album info).
 
 # Full-width bracket strip — 【...】 and 「...」 and 『...』
-_FW_BRACKET_RE = re.compile(
-    r"[【「『〈《]([^】」』〉》]*?)[】」』〉》]"
-)
+_FW_BRACKET_RE = re.compile(r"[【「『〈《]([^】」』〉》]*?)[】」』〉》]")
 
 # ---------------------------------------------------------------------------
 # OST Block "Black Hole" — strips the entire descriptive metadata block
@@ -104,11 +102,11 @@ _OST_BLOCK_MEDIA = (
 
 _OST_BLOCK_SONG = (
     r"(?:"
-    r"[\u4e00-\u9fff]{1,5}曲"   # any 1–5 CJK chars ending in 曲 —
-                                 # catches 主题曲, 插曲, 片头曲, 片尾曲, 人物曲,
-                                 #         推广曲, 同行曲, 时光曲, 勇气曲, etc.
-    r"|原声带|原聲帶"             # Soundtrack (no 曲 ending)
-    r"|大碟"                     # Album marker (no 曲 ending)
+    r"[\u4e00-\u9fff]{1,5}曲"  # any 1–5 CJK chars ending in 曲 —
+    # catches 主题曲, 插曲, 片头曲, 片尾曲, 人物曲,
+    #         推广曲, 同行曲, 时光曲, 勇气曲, etc.
+    r"|原声带|原聲帶"  # Soundtrack (no 曲 ending)
+    r"|大碟"  # Album marker (no 曲 ending)
     r")"
 )
 
@@ -116,15 +114,15 @@ _OST_BLOCK_SONG = (
 # middle (lazy), song-role word, optional trailing bracket/separator.
 _OST_BLOCK_RE = re.compile(
     r"(?:"
-    r"[\s\-–—～·]"             # optional lead separator (space, dash, middle dot)
-    r"|[（(【「]"               # …or an opening bracket
+    r"[\s\-–—～·]"  # optional lead separator (space, dash, middle dot)
+    r"|[（(【「]"  # …or an opening bracket
     r")*"
     + _OST_BLOCK_MEDIA
-    + r"(?:[^。！？\n]*?)"      # freeform middle — lazy, won't cross sentence boundary
+    + r"(?:[^。！？\n]*?)"  # freeform middle — lazy, won't cross sentence boundary
     + _OST_BLOCK_SONG
     + r"(?:"
-    r"[）)】」]"                # optional closing bracket
-    r"|[\s\-–—～·]"             # …or a trailing separator
+    r"[）)】」]"  # optional closing bracket
+    r"|[\s\-–—～·]"  # …or a trailing separator
     r")*",
     re.UNICODE,
 )
@@ -132,32 +130,32 @@ _OST_BLOCK_RE = re.compile(
 # Japanese structural noise — standalone terms (word-boundary aware for mixed strings)
 _JAPANESE_NOISE_RE = re.compile(
     r"(?:"
-    r"オリジナルサウンドトラック"   # "Original Soundtrack"
-    r"|サントラ"                   # "Santora" (abbrev.)
-    r"|主題歌"                     # Theme song
-    r"|挿入歌"                     # Insert song
-    r"|エンディングテーマ"           # Ending theme
-    r"|オープニングテーマ"           # Opening theme
+    r"オリジナルサウンドトラック"  # "Original Soundtrack"
+    r"|サントラ"  # "Santora" (abbrev.)
+    r"|主題歌"  # Theme song
+    r"|挿入歌"  # Insert song
+    r"|エンディングテーマ"  # Ending theme
+    r"|オープニングテーマ"  # Opening theme
     r")"
 )
 
 # Chinese structural noise
 _CHINESE_NOISE_RE = re.compile(
     r"(?:"
-    r"原声带"                      # Original Soundtrack (Mandarin)
-    r"|原声"                       # Abbreviated form
-    r"|主题曲"                     # Theme song
-    r"|片头曲"                     # Opening theme
-    r"|片尾曲"                     # Ending theme
-    r"|插曲"                       # Insert song
+    r"原声带"  # Original Soundtrack (Mandarin)
+    r"|原声"  # Abbreviated form
+    r"|主题曲"  # Theme song
+    r"|片头曲"  # Opening theme
+    r"|片尾曲"  # Ending theme
+    r"|插曲"  # Insert song
     r")"
 )
 
 # Korean structural noise
 _KOREAN_NOISE_RE = re.compile(
     r"(?:"
-    r"오에스티"                    # OST (phonetic)
-    r"|사운드트랙"                  # Soundtrack
+    r"오에스티"  # OST (phonetic)
+    r"|사운드트랙"  # Soundtrack
     r")"
 )
 
@@ -165,7 +163,7 @@ _KOREAN_NOISE_RE = re.compile(
 _FW_LATIN_NOISE_RE = re.compile(
     r"(?:"
     r"[ｆＦ][ｅＥ][ａＡ][ｔＴ]\.?"  # ｆｅａｔ / Ｆｅａｔ / ＦＥＡＴ (optional full-width period)
-    r"|[ＯｏＯ][ＳｓＳ][ＴｔＴ]"      # ＯＳＴ etc.
+    r"|[ＯｏＯ][ＳｓＳ][ＴｔＴ]"  # ＯＳＴ etc.
     r")"
 )
 
@@ -211,17 +209,18 @@ _EMPTY_PARENS_RE = re.compile(r"[(\[（]\s*[)\]）]")
 # because `[Jiang Cheng] Hen Bie` is pure ASCII yet still needs stripping.
 _LEADING_BRACKET_RE = re.compile(
     r"^(?:"
-    r"\[.*?\]"          # ASCII square brackets  [ ... ]
-    r"|【.*?】"           # CJK corner brackets   【 ... 】
-    r"|（.*?）"           # Full-width parens      （ ... ）
-    r")\s*"              # consume any trailing whitespace (including zero for CJK)
-    r"(?=\S)",           # lookahead: something must follow — prevents stripping lone [Tag]
+    r"\[.*?\]"  # ASCII square brackets  [ ... ]
+    r"|【.*?】"  # CJK corner brackets   【 ... 】
+    r"|（.*?）"  # Full-width parens      （ ... ）
+    r")\s*"  # consume any trailing whitespace (including zero for CJK)
+    r"(?=\S)",  # lookahead: something must follow — prevents stripping lone [Tag]
     re.UNICODE,
 )
 
 # ---------------------------------------------------------------------------
 # Public class
 # ---------------------------------------------------------------------------
+
 
 class NoiseFilter:
     """
@@ -243,7 +242,7 @@ class NoiseFilter:
     # Fast CJK / full-width Latin tripwire
     _TRIPWIRE = re.compile(
         r"[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af"  # CJK/kana/hangul
-        r"\uff01-\uff60\uffe0-\uffe6]"               # Full-width forms
+        r"\uff01-\uff60\uffe0-\uffe6]"  # Full-width forms
     )
 
     def has_cjk_or_fullwidth(self, text: str) -> bool:
@@ -342,14 +341,14 @@ class NoiseFilter:
         if not isinstance(text, str) or not self.has_cjk_or_fullwidth(text):
             return text
 
-        text = self.strip_ost_block(text)        # ← NEW: black-hole pass first
+        text = self.strip_ost_block(text)  # ← NEW: black-hole pass first
         text = self.strip_fullwidth_brackets(text)
         text = self.strip_fullwidth_latin_noise(text)
         text = self.strip_japanese_noise(text)
         text = self.strip_chinese_noise(text)
         text = self.strip_korean_noise(text)
         text = self.strip_japanese_and_separator(text)
-        text = _EMPTY_PARENS_RE.sub("", text)   # remove empty () left after noise strip
+        text = _EMPTY_PARENS_RE.sub("", text)  # remove empty () left after noise strip
         text = _SPACE_RE.sub(" ", text).strip()
 
         return text

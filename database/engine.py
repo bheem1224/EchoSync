@@ -1,9 +1,10 @@
+import logging
+import queue
 import sqlite3
 import threading
-import queue
 import time
-import logging
-from typing import Callable, Any, Optional
+from collections.abc import Callable
+from typing import Any
 
 _engine_logger = logging.getLogger("database.engine")
 
@@ -21,13 +22,15 @@ def _is_fatal_connection_error(exc: Exception) -> bool:
 class _DBWriter:
     def __init__(self, db_path: str):
         self.db_path = db_path
-        self._tasks: "queue.Queue[tuple]" = queue.Queue(maxsize=1000)
+        self._tasks: queue.Queue[tuple] = queue.Queue(maxsize=1000)
         self._stop = threading.Event()
         self._thread = self._make_thread()
         self._thread.start()
 
     def _make_thread(self) -> threading.Thread:
-        t = threading.Thread(target=self._run, daemon=True, name=f"DBWriter:{self.db_path}")
+        t = threading.Thread(
+            target=self._run, daemon=True, name=f"DBWriter:{self.db_path}"
+        )
         return t
 
     def _get_connection(self) -> sqlite3.Connection:
@@ -61,7 +64,7 @@ class _DBWriter:
                     return
                 except Exception as exc:
                     retries += 1
-                    wait = min(2 ** retries, 30)
+                    wait = min(2**retries, 30)
                     _engine_logger.warning(
                         f"[DBWriter] Cannot open {self.db_path}, retrying in {wait}s: {exc}"
                     )
@@ -110,9 +113,14 @@ class _DBWriter:
             self._thread = self._make_thread()
             self._thread.start()
 
-    def enqueue(self, fn: Callable[[sqlite3.Cursor], Any], wait: bool = True, timeout: Optional[float] = None):
+    def enqueue(
+        self,
+        fn: Callable[[sqlite3.Cursor], Any],
+        wait: bool = True,
+        timeout: float | None = None,
+    ):
         self._ensure_alive()
-        result_q: Optional[queue.Queue] = queue.Queue() if wait else None
+        result_q: queue.Queue | None = queue.Queue() if wait else None
         try:
             self._tasks.put((fn, result_q), timeout=2.0)
         except queue.Full:
@@ -123,7 +131,7 @@ class _DBWriter:
             if wait:
                 raise TimeoutError("Database writer queue is full. Task dropped.")
             return None
-            
+
         if not wait:
             return None
         try:
@@ -135,7 +143,7 @@ class _DBWriter:
             pass
 
     def stop(self):
-        self._tasks.join()          # drain all pending writes before stopping
+        self._tasks.join()  # drain all pending writes before stopping
         self._stop.set()
         self._thread.join(timeout=5.0)
 
@@ -157,12 +165,19 @@ def db_PATH_normalize(p: str) -> str:
     return str(p)
 
 
-def execute_write(db_path: str, fn: Callable[[sqlite3.Cursor], Any], wait: bool = True, timeout: Optional[float] = None):
+def execute_write(
+    db_path: str,
+    fn: Callable[[sqlite3.Cursor], Any],
+    wait: bool = True,
+    timeout: float | None = None,
+):
     writer = ensure_writer(db_path)
     return writer.enqueue(fn, wait=wait, timeout=timeout)
 
 
-def execute_write_sql(db_path: str, sql: str, params: tuple = (), return_lastrowid: bool = False):
+def execute_write_sql(
+    db_path: str, sql: str, params: tuple = (), return_lastrowid: bool = False
+):
     def _task(cursor):
         cursor.execute(sql, params)
         if return_lastrowid:

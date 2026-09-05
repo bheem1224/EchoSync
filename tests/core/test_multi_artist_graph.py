@@ -2,9 +2,9 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from database.music_database import Base, Artist, Album, Track, TrackArtist, LocalMedia
-from core.db.echo_sync_track import EchosyncTrack, EchosyncMedia
 from core.database.repositories.track_repo import TrackRepository
+from core.db.echo_sync_track import EchosyncMedia, EchosyncTrack
+from database.music_database import Artist, Base, Track, TrackArtist
 from services.playlists_api import get_library_candidates
 
 

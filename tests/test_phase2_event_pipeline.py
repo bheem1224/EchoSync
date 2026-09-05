@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import inspect
 import time
+from collections.abc import Callable
 from importlib import import_module
-from typing import Any, Callable
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -40,11 +41,13 @@ def _new_event_bus_instance():
     pytest.skip("Event bus module does not expose EventBus or event_bus")
 
 
-def _subscribe_lightweight(bus: Any, event_name: str, handler: Callable[[dict], None]) -> None:
+def _subscribe_lightweight(
+    bus: Any, event_name: str, handler: Callable[[dict], None]
+) -> None:
     if not hasattr(bus, "subscribe"):
         pytest.skip("Event bus does not expose subscribe()")
 
-    subscribe = getattr(bus, "subscribe")
+    subscribe = bus.subscribe
     try:
         subscribe(event_name, handler)
         return
@@ -64,7 +67,7 @@ def _publish_lightweight(bus: Any, payload: dict) -> None:
     if not hasattr(bus, "publish"):
         raise AssertionError("Event bus does not expose publish()")
 
-    publish = getattr(bus, "publish")
+    publish = bus.publish
 
     # Phase-2 target API: publish(payload_dict)
     try:
@@ -97,10 +100,17 @@ def _extract_payload_from_publish_call(mock_publish: MagicMock) -> dict:
     args, kwargs = mock_publish.call_args
 
     for value in list(args) + list(kwargs.values()):
-        if isinstance(value, dict) and "event" in value and "sync_id" in value and "data" in value:
+        if (
+            isinstance(value, dict)
+            and "event" in value
+            and "sync_id" in value
+            and "data" in value
+        ):
             return value
 
-    raise AssertionError("Could not find lightweight event payload in publish() arguments")
+    raise AssertionError(
+        "Could not find lightweight event payload in publish() arguments"
+    )
 
 
 def test_event_bus_payload_schema():
@@ -163,7 +173,12 @@ def test_sync_lightweight_batch_diffing(monkeypatch: pytest.MonkeyPatch):
     # Inject common attribute names used by different implementations.
     for attr_name in ("music_db", "library_db", "db", "music_database"):
         setattr(service, attr_name, mock_db)
-    for attr_name in ("provider", "provider_client", "active_provider", "source_provider"):
+    for attr_name in (
+        "provider",
+        "provider_client",
+        "active_provider",
+        "source_provider",
+    ):
         setattr(service, attr_name, mock_provider)
 
     # Execute method under test.
@@ -178,7 +193,9 @@ def test_sync_lightweight_batch_diffing(monkeypatch: pytest.MonkeyPatch):
         + mock_provider.fetch_by_sync_ids.call_count
         + mock_provider.fetch_tracks.call_count
     )
-    assert fetch_calls == 1, "Provider fetch should run exactly once for missing sync_ids"
+    assert fetch_calls == 1, (
+        "Provider fetch should run exactly once for missing sync_ids"
+    )
 
     called_args = []
     for method in (
@@ -245,7 +262,11 @@ def test_state_listener_writes_to_db():
     bus = _new_event_bus_instance()
 
     # In-memory working database schema used by this test only.
-    engine = create_engine("sqlite:///file:test_state_listener_db?mode=memory&cache=shared", connect_args={'uri': True}, future=True)
+    engine = create_engine(
+        "sqlite:///file:test_state_listener_db?mode=memory&cache=shared",
+        connect_args={"uri": True},
+        future=True,
+    )
     _keep_alive = engine.connect()
     WorkingBase.metadata.create_all(engine)
     Session = sessionmaker(bind=engine, expire_on_commit=False, future=True)
@@ -284,7 +305,11 @@ def test_state_listener_writes_to_db():
     time.sleep(0.2)
 
     with Session() as session:
-        row = session.query(UserRating).filter_by(sync_id="ss:track:mbid:123", account_id=1).one_or_none()
+        row = (
+            session.query(UserRating)
+            .filter_by(sync_id="ss:track:mbid:123", account_id=1)
+            .one_or_none()
+        )
         assert row is not None
         assert row.rating == 8.0
 

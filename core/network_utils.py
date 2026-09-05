@@ -1,5 +1,6 @@
 import socket
 
+
 def get_lan_ip():
     """Returns the local network IP address of the current machine."""
     try:
@@ -13,11 +14,13 @@ def get_lan_ip():
     except Exception:
         return "127.0.0.1"
 
+
 def get_main_app_port():
     """Returns the port the main app is running on. Default is 5000."""
     try:
         from core.settings import config_manager
-        app_config = config_manager.get_config('app_config') or {}
-        return int(app_config.get('port', 5000))
+
+        app_config = config_manager.get_config("app_config") or {}
+        return int(app_config.get("port", 5000))
     except Exception:
         return 5000

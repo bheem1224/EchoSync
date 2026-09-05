@@ -1,15 +1,16 @@
 """Repository for DownloadQueue operational state and lifecycle transitions in working.db."""
+
 from __future__ import annotations
 
 import logging
+from collections.abc import Generator
 from contextlib import contextmanager
-from datetime import datetime, timezone
-from typing import Any, Dict, Generator, List, Optional, Union
+from typing import Any
 
-from sqlalchemy import select, update
+from sqlalchemy import update
 from sqlalchemy.orm import Session
 
-from core.database.models.working import DownloadQueue, DownloadStatus, DownloadIntent
+from core.database.models.working import DownloadIntent, DownloadQueue, DownloadStatus
 from database.working_database import get_working_database
 from time_utils import utc_now
 
@@ -23,7 +24,9 @@ class DownloadRepository:
     to avoid worker collisions.
     """
 
-    def __init__(self, session: Optional[Session] = None, work_db: Optional[Any] = None) -> None:
+    def __init__(
+        self, session: Session | None = None, work_db: Any | None = None
+    ) -> None:
         self.session = session
         self.work_db = work_db
 
@@ -40,13 +43,13 @@ class DownloadRepository:
 
     def create_queue_item(
         self,
-        sync_id: Optional[str] = None,
-        intent: Union[str, DownloadIntent] = DownloadIntent.MANUAL_OMNI,
-        echo_sync_track: Optional[Dict[str, Any]] = None,
-        candidate_stack: Optional[List[Dict[str, Any]]] = None,
-        active_candidate_id: Optional[str] = None,
-        plugin_id: Optional[str] = None,
-        status: Union[str, DownloadStatus] = DownloadStatus.QUEUED,
+        sync_id: str | None = None,
+        intent: str | DownloadIntent = DownloadIntent.MANUAL_OMNI,
+        echo_sync_track: dict[str, Any] | None = None,
+        candidate_stack: list[dict[str, Any]] | None = None,
+        active_candidate_id: str | None = None,
+        plugin_id: str | None = None,
+        status: str | DownloadStatus = DownloadStatus.QUEUED,
     ) -> DownloadQueue:
         """Create and persist a new DownloadQueue item."""
         intent_val = intent.value if isinstance(intent, DownloadIntent) else str(intent)
@@ -70,23 +73,30 @@ class DownloadRepository:
             session.refresh(item)
             return item
 
-    def get_by_id(self, item_id: int) -> Optional[DownloadQueue]:
+    def get_by_id(self, item_id: int) -> DownloadQueue | None:
         """Fetch a DownloadQueue item by primary key."""
         with self._get_session() as session:
             return session.get(DownloadQueue, item_id)
 
-    def get_by_sync_id(self, sync_id: str) -> List[DownloadQueue]:
+    def get_by_sync_id(self, sync_id: str) -> list[DownloadQueue]:
         """Fetch DownloadQueue items associated with a canonical NanoID sync_id."""
         with self._get_session() as session:
-            return session.query(DownloadQueue).filter(DownloadQueue.sync_id == sync_id).all()
+            return (
+                session.query(DownloadQueue)
+                .filter(DownloadQueue.sync_id == sync_id)
+                .all()
+            )
 
-    def get_actionable_queue(self, limit: int = 30) -> List[DownloadQueue]:
+    def get_actionable_queue(self, limit: int = 30) -> list[DownloadQueue]:
         """Fetch actionable items ready for search/dispatch (QUEUED or RETRYING).
 
         Strictly excludes tasks in DOWNLOADING, VERIFYING, COMPLETED, and FAILED
         to prevent concurrent worker collisions.
         """
-        actionable_statuses = [DownloadStatus.QUEUED.value, DownloadStatus.RETRYING.value]
+        actionable_statuses = [
+            DownloadStatus.QUEUED.value,
+            DownloadStatus.RETRYING.value,
+        ]
         excluded_statuses = [
             DownloadStatus.DOWNLOADING.value,
             DownloadStatus.VERIFYING.value,
@@ -106,9 +116,12 @@ class DownloadRepository:
                 .all()
             )
 
-    def get_active_downloads(self) -> List[DownloadQueue]:
+    def get_active_downloads(self) -> list[DownloadQueue]:
         """Fetch items currently in DOWNLOADING or VERIFYING state."""
-        active_statuses = [DownloadStatus.DOWNLOADING.value, DownloadStatus.VERIFYING.value]
+        active_statuses = [
+            DownloadStatus.DOWNLOADING.value,
+            DownloadStatus.VERIFYING.value,
+        ]
         with self._get_session() as session:
             return (
                 session.query(DownloadQueue)
@@ -120,8 +133,8 @@ class DownloadRepository:
     def atomic_transition(
         self,
         item_id: int,
-        from_statuses: List[Union[str, DownloadStatus]],
-        to_status: Union[str, DownloadStatus],
+        from_statuses: list[str | DownloadStatus],
+        to_status: str | DownloadStatus,
         **updates: Any,
     ) -> bool:
         """Perform an atomic conditional status transition.
@@ -129,11 +142,16 @@ class DownloadRepository:
         Returns True if row was matched and transitioned, False otherwise.
         """
         from_vals = [
-            s.value if isinstance(s, DownloadStatus) else str(s).upper() for s in from_statuses
+            s.value if isinstance(s, DownloadStatus) else str(s).upper()
+            for s in from_statuses
         ]
-        to_val = to_status.value if isinstance(to_status, DownloadStatus) else str(to_status).upper()
+        to_val = (
+            to_status.value
+            if isinstance(to_status, DownloadStatus)
+            else str(to_status).upper()
+        )
 
-        update_values: Dict[str, Any] = {"status": to_val, "updated_at": utc_now()}
+        update_values: dict[str, Any] = {"status": to_val, "updated_at": utc_now()}
         update_values.update(updates)
 
         with self._get_session() as session:
@@ -158,11 +176,11 @@ class DownloadRepository:
         self,
         item_id: int,
         active_candidate_id: str,
-        candidate_stack: Optional[List[Dict[str, Any]]] = None,
-        plugin_id: Optional[str] = None,
+        candidate_stack: list[dict[str, Any]] | None = None,
+        plugin_id: str | None = None,
     ) -> bool:
         """Transition item from SEARCHING (or RETRYING) to DOWNLOADING."""
-        updates: Dict[str, Any] = {"active_candidate_id": active_candidate_id}
+        updates: dict[str, Any] = {"active_candidate_id": active_candidate_id}
         if candidate_stack is not None:
             updates["candidate_stack"] = candidate_stack
         if plugin_id is not None:
@@ -170,7 +188,11 @@ class DownloadRepository:
 
         return self.atomic_transition(
             item_id=item_id,
-            from_statuses=[DownloadStatus.SEARCHING, DownloadStatus.RETRYING, DownloadStatus.QUEUED],
+            from_statuses=[
+                DownloadStatus.SEARCHING,
+                DownloadStatus.RETRYING,
+                DownloadStatus.QUEUED,
+            ],
             to_status=DownloadStatus.DOWNLOADING,
             **updates,
         )
@@ -200,7 +222,9 @@ class DownloadRepository:
         with self._get_session() as session:
             item = session.get(DownloadQueue, item_id)
             if not item:
-                logger.warning(f"DownloadQueue item {item_id} not found for candidate rotation")
+                logger.warning(
+                    f"DownloadQueue item {item_id} not found for candidate rotation"
+                )
                 return False
 
             rotated = item.rotate_candidate(reason)

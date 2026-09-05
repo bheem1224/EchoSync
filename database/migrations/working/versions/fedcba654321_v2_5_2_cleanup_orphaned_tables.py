@@ -1,13 +1,9 @@
-from typing import Sequence, Union
-
 from alembic import op
-import sqlalchemy as sa
 from sqlalchemy.engine import reflection
 
-
 # revision identifiers, used by Alembic.
-revision: str = 'fedcba654321'
-down_revision: str = '0560a1c7fa89'
+revision: str = "fedcba654321"
+down_revision: str = "0560a1c7fa89"
 branch_labels = None
 depends_on = None
 
@@ -20,7 +16,7 @@ def upgrade() -> None:
     tables = inspector.get_table_names()
 
     for table in tables:
-        if table.startswith('prv_') or table.startswith('cache_'):
+        if table.startswith("prv_") or table.startswith("cache_"):
             op.drop_table(table)
 
 

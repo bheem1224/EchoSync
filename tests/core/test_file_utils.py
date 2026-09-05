@@ -3,10 +3,10 @@ Unit tests for directory pruning utilities (core/utils/file_utils.py).
 """
 
 from pathlib import Path
+
 from core.utils.file_utils import (
-    prune_empty_parent_directories,
     prune_empty_directories_tree,
-    _IGNORE_FILES,
+    prune_empty_parent_directories,
 )
 
 
@@ -85,8 +85,12 @@ def test_prune_never_deletes_root_boundary(tmp_path: Path):
     downloads_root.mkdir(parents=True)
 
     # Calling directly on the root directory with itself in stop_at_roots
-    pruned_lib = prune_empty_parent_directories(library_root, stop_at_roots={library_root, downloads_root})
-    pruned_dl = prune_empty_parent_directories(downloads_root, stop_at_roots={library_root, downloads_root})
+    pruned_lib = prune_empty_parent_directories(
+        library_root, stop_at_roots={library_root, downloads_root}
+    )
+    pruned_dl = prune_empty_parent_directories(
+        downloads_root, stop_at_roots={library_root, downloads_root}
+    )
 
     assert pruned_lib == 0
     assert pruned_dl == 0

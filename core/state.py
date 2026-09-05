@@ -1,8 +1,10 @@
 import threading
 import time
 
+
 class SystemState:
     """Thread-safe global application state manager."""
+
     def __init__(self):
         self._start_time = time.time()
         self._restart_pending = False
@@ -24,6 +26,7 @@ class SystemState:
     def restart_pending(self, value: bool):
         with self._lock:
             self._restart_pending = value
+
 
 # Global singleton
 system_state = SystemState()

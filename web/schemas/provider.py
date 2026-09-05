@@ -1,14 +1,16 @@
 from dataclasses import dataclass, field
-from typing import List, Dict
+
 
 @dataclass
 class ProviderSchema:
     name: str
-    capabilities: List[str] = field(default_factory=list)
-    scopes: List[str] = field(default_factory=list)  # library, sync, search, download, utility
+    capabilities: list[str] = field(default_factory=list)
+    scopes: list[str] = field(
+        default_factory=list
+    )  # library, sync, search, download, utility
     priority: int = 0
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> dict:
         return {
             "name": self.name,
             "capabilities": self.capabilities,

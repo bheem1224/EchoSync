@@ -167,7 +167,7 @@ When searching a provider, the download manager invokes `pre_provider_search` ho
 
 ```python
 query_or_queries = hook_manager.apply_filters(
-    'pre_provider_search',
+    "pre_provider_search",
     query,
     strategy_name=strategy_name,
     artist_name=target_track.artist_name,
@@ -214,7 +214,7 @@ Uses `PROFILE_DOWNLOAD_SEARCH`:
 
 **Usage:**
 ```python
-required_keys = hook_manager.apply_filters('register_metadata_requirements', [])
+required_keys = hook_manager.apply_filters("register_metadata_requirements", [])
 ```
 
 **Called:** Once per enhancement batch to determine which tracks need plugin enrichment
@@ -235,7 +235,7 @@ required_keys = hook_manager.apply_filters('register_metadata_requirements', [])
 **Usage:**
 ```python
 flag_modified(track, "metadata_status")
-track = hook_manager.apply_filters('post_metadata_enrichment', track)
+track = hook_manager.apply_filters("post_metadata_enrichment", track)
 session.commit()
 ```
 
@@ -261,7 +261,7 @@ session.commit()
 
 **Usage:**
 ```python
-query = hook_manager.apply_filters('pre_normalize_text', raw_query)
+query = hook_manager.apply_filters("pre_normalize_text", raw_query)
 ```
 
 **Example:** CJK plugin converts "望天涯" → ["望天涯", "wang tian ya"] for dual-script search
@@ -277,10 +277,10 @@ query = hook_manager.apply_filters('pre_normalize_text', raw_query)
 
 **Input:** Query string + context
 ```python
-query,
-strategy_name=strategy_name,
-artist_name=target_track.artist_name,
-title=target_track.title,
+(query,)
+strategy_name = (strategy_name,)
+artist_name = (target_track.artist_name,)
+title = (target_track.title,)
 ```
 
 **Return:** String or list of strings (deduplication automatic)
@@ -288,11 +288,11 @@ title=target_track.title,
 **Usage:**
 ```python
 query_or_queries = hook_manager.apply_filters(
-    'pre_provider_search',
+    "pre_provider_search",
     query,
     strategy_name=strategy_name,
-    artist_name=getattr(target_track, 'artist_name', ""),
-    title=getattr(target_track, 'title', ""),
+    artist_name=getattr(target_track, "artist_name", ""),
+    title=getattr(target_track, "title", ""),
 )
 queries = query_or_queries if isinstance(query_or_queries, list) else [query_or_queries]
 ```
@@ -341,7 +341,9 @@ The CJK Language Pack skips the `album+title` strategy for CJK queries because P
 
 ```python
 def _on_pre_provider_search(query, strategy_name="", **kwargs):
-    _probe = query if isinstance(query, str) else " ".join(str(q) for q in (query or []))
+    _probe = (
+        query if isinstance(query, str) else " ".join(str(q) for q in (query or []))
+    )
 
     # Skip album+title for CJK to avoid wasting HTTP requests
     if strategy_name == "album+title" and _has_cjk(_probe):
@@ -361,7 +363,9 @@ def _on_pre_provider_search(query, strategy_name="", **kwargs):
 
 #### Skip based on metadata characteristics
 ```python
-def _on_pre_provider_search(query, strategy_name="", artist_name="", title="", **context):
+def _on_pre_provider_search(
+    query, strategy_name="", artist_name="", title="", **context
+):
     # Skip strategies that don't apply to this metadata
     if strategy_name == "album+title" and not album_has_value:
         return []
@@ -373,11 +377,11 @@ def _on_pre_provider_search(query, strategy_name="", artist_name="", title="", *
 #### Skip based on provider capabilities
 ```python
 def _on_pre_provider_search(query, **context):
-    provider = context.get('provider')  # If available in context
-    strategy = context.get('strategy_name')
+    provider = context.get("provider")  # If available in context
+    strategy = context.get("strategy_name")
 
     # Skip strategies not supported by this provider
-    if provider == 'slskd' and strategy == 'title+strict-duration':
+    if provider == "slskd" and strategy == "title+strict-duration":
         return []  # Slskd doesn't support strict filters
 
     return query
@@ -520,22 +524,26 @@ See the "Download Strategy Skip Hooks" section above for detailed examples and t
 1. In your plugin's `setup()` function, register your requirement key:
 ```python
 def _on_register_metadata_requirements(keys: list) -> list:
-    return keys + ['my_custom_metadata']
+    return keys + ["my_custom_metadata"]
 
-hook_manager.add_filter('register_metadata_requirements', _on_register_metadata_requirements)
+
+hook_manager.add_filter(
+    "register_metadata_requirements", _on_register_metadata_requirements
+)
 ```
 
 2. In `post_metadata_enrichment`, check and populate your key:
 ```python
 def _on_post_metadata_enrichment(track):
     status = track.metadata_status or {}
-    if status.get('my_custom_metadata') is None:
+    if status.get("my_custom_metadata") is None:
         # ... fetch/compute metadata ...
-        status['my_custom_metadata'] = result
+        status["my_custom_metadata"] = result
         track.metadata_status = status
     return track
 
-hook_manager.add_filter('post_metadata_enrichment', _on_post_metadata_enrichment)
+
+hook_manager.add_filter("post_metadata_enrichment", _on_post_metadata_enrichment)
 ```
 
 3. MetadataEnhancerService will automatically re-select tracks until your key is populated.
@@ -548,12 +556,13 @@ In your plugin, expand search queries for downloads:
 def _on_pre_provider_search(query: str, **context) -> list:
     # context = { strategy_name, artist_name, title }
     variants = [query]
-    if context.get('artist_name'):
+    if context.get("artist_name"):
         # Add variants...
         variants.append(f"{context['artist_name']} {context['title']}")
     return variants
 
-hook_manager.add_filter('pre_provider_search', _on_pre_provider_search)
+
+hook_manager.add_filter("pre_provider_search", _on_pre_provider_search)
 ```
 
 ---

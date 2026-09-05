@@ -12,11 +12,17 @@ def test_scheduled_job_clears_running_lock_and_disposes_working_db(monkeypatch):
     class FakeRegistry:
         def __init__(self, counter):
             self.counter = counter
+
         def remove(self):
             self.counter["count"] += 1
 
-    monkeypatch.setattr("database.working_database.working_session_registry", FakeRegistry(removed_working))
-    monkeypatch.setattr("database.music_database.music_session_registry", FakeRegistry(removed_music))
+    monkeypatch.setattr(
+        "database.working_database.working_session_registry",
+        FakeRegistry(removed_working),
+    )
+    monkeypatch.setattr(
+        "database.music_database.music_session_registry", FakeRegistry(removed_music)
+    )
 
     def failing_job():
         raise RuntimeError("boom")

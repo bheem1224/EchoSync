@@ -9,15 +9,19 @@ Two entry points:
 """
 
 import datetime
-from typing import List, Optional
-from database.working_database import get_working_database, PlaybackHistory
-from database.music_database import get_database as get_music_database, Track, Artist, TrackAudioFeatures
+
 from core.matching_engine.text_utils import generate_deterministic_id
-from core.suggestion_engine.vibe_profiler import calculate_user_vibe, calculate_vibe_distance
+from core.suggestion_engine.vibe_profiler import (
+    calculate_user_vibe,
+    calculate_vibe_distance,
+)
+from database.music_database import Artist, Track, TrackAudioFeatures
+from database.music_database import get_database as get_music_database
+from database.working_database import PlaybackHistory, get_working_database
 from time_utils import utc_now
 
 
-def suggest_from_library(user_id: str, limit: int = 50) -> List[dict]:
+def suggest_from_library(user_id: str, limit: int = 50) -> list[dict]:
     """
     Surfaces owned content from the local MusicDatabase using Content-Based Filtering.
 
@@ -34,19 +38,27 @@ def suggest_from_library(user_id: str, limit: int = 50) -> List[dict]:
     music_db = get_music_database()
 
     from database.music_database import ExternalIdentifier
+
     thirty_days_ago = utc_now() - datetime.timedelta(days=30)
     with working_db.session_scope() as w_session:
         user_recent_pids = [
-            row.provider_item_id for row in w_session.query(PlaybackHistory.provider_item_id).filter(
+            row.provider_item_id
+            for row in w_session.query(PlaybackHistory.provider_item_id)
+            .filter(
                 PlaybackHistory.user_id == user_id,
-                PlaybackHistory.listened_at >= thirty_days_ago
-            ).group_by(PlaybackHistory.provider_item_id).limit(100).all()
+                PlaybackHistory.listened_at >= thirty_days_ago,
+            )
+            .group_by(PlaybackHistory.provider_item_id)
+            .limit(100)
+            .all()
         ]
     if user_recent_pids:
         with music_db.session_scope() as session:
-            recent_identifiers = session.query(ExternalIdentifier).filter(
-                ExternalIdentifier.provider_item_id.in_(user_recent_pids)
-            ).all()
+            recent_identifiers = (
+                session.query(ExternalIdentifier)
+                .filter(ExternalIdentifier.provider_item_id.in_(user_recent_pids))
+                .all()
+            )
             for identifier in recent_identifiers:
                 if identifier.track and identifier.track.artist:
                     recent_artists_set.add(identifier.track.artist.name.lower())
@@ -59,19 +71,23 @@ def suggest_from_library(user_id: str, limit: int = 50) -> List[dict]:
     track_play_data = {}
     with working_db.session_scope() as w_session:
         from sqlalchemy import func
+
         # Count all-time plays
-        play_counts = w_session.query(
-            PlaybackHistory.provider_item_id,
-            func.count(PlaybackHistory.id).label('total_plays'),
-            func.max(PlaybackHistory.listened_at).label('last_played')
-        ).filter(
-            PlaybackHistory.user_id == user_id
-        ).group_by(PlaybackHistory.provider_item_id).all()
+        play_counts = (
+            w_session.query(
+                PlaybackHistory.provider_item_id,
+                func.count(PlaybackHistory.id).label("total_plays"),
+                func.max(PlaybackHistory.listened_at).label("last_played"),
+            )
+            .filter(PlaybackHistory.user_id == user_id)
+            .group_by(PlaybackHistory.provider_item_id)
+            .all()
+        )
 
         for pc in play_counts:
             track_play_data[pc.provider_item_id] = {
-                'total_plays': pc.total_plays,
-                'last_played': pc.last_played
+                "total_plays": pc.total_plays,
+                "last_played": pc.last_played,
             }
 
     scored_tracks = []
@@ -81,11 +97,16 @@ def suggest_from_library(user_id: str, limit: int = 50) -> List[dict]:
         # We need Tracks and their Audio Features.
         # Since we might have many tracks, we fetch all tracks and then filter/score.
         from sqlalchemy.orm import selectinload
-        all_tracks = session.query(Track).options(
-            selectinload(Track.artist),
-            selectinload(Track.external_identifiers),
-            selectinload(Track.album)
-        ).yield_per(1000)
+
+        all_tracks = (
+            session.query(Track)
+            .options(
+                selectinload(Track.artist),
+                selectinload(Track.external_identifiers),
+                selectinload(Track.album),
+            )
+            .yield_per(1000)
+        )
 
         # Pre-fetch all TrackAudioFeatures into a dictionary
         all_features = session.query(TrackAudioFeatures).yield_per(1000)
@@ -108,10 +129,10 @@ def suggest_from_library(user_id: str, limit: int = 50) -> List[dict]:
                     if not p_data:
                         is_rarely_played = True
                         break
-                    if p_data['total_plays'] < 3:
+                    if p_data["total_plays"] < 3:
                         is_rarely_played = True
                         break
-                    if p_data['last_played'] < ninety_days_ago:
+                    if p_data["last_played"] < ninety_days_ago:
                         is_rarely_played = True
                         break
 
@@ -124,7 +145,9 @@ def suggest_from_library(user_id: str, limit: int = 50) -> List[dict]:
 
             distance = 0.0
             if vibe_signature:
-                base_sync_id = f"ss:track:meta:{generate_deterministic_id(t.artist.name, t.title)}"
+                base_sync_id = (
+                    f"ss:track:meta:{generate_deterministic_id(t.artist.name, t.title)}"
+                )
                 track_features = features_dict.get(base_sync_id)
                 if track_features:
                     distance = calculate_vibe_distance(vibe_signature, track_features)
@@ -135,8 +158,7 @@ def suggest_from_library(user_id: str, limit: int = 50) -> List[dict]:
             # Apply artist bonus
             if t.artist and t.artist.name.lower() in recent_artists_set:
                 distance -= 0.15
-                if distance < 0.0:
-                    distance = 0.0
+                distance = max(distance, 0.0)
 
             scored_tracks.append((distance, t))
 
@@ -154,13 +176,13 @@ def suggest_from_library(user_id: str, limit: int = 50) -> List[dict]:
                 "musicbrainz_id": t.musicbrainz_id,
                 "isrc": t.isrc,
                 "file_path": t.file_path,
-                "vibe_score": score
+                "vibe_score": score,
             }
             for score, t in top_tracks
         ]
 
 
-def discover_new_tracks(user_id: str) -> List[dict]:
+def discover_new_tracks(user_id: str) -> list[dict]:
     """
     Discovers new tracks not in the local MusicDatabase based on the user's recent history.
     """
@@ -171,52 +193,75 @@ def discover_new_tracks(user_id: str) -> List[dict]:
     music_db = get_music_database()
 
     from sqlalchemy import func as sa_func
+
     from database.music_database import ExternalIdentifier
+
     thirty_days_ago = utc_now() - datetime.timedelta(days=30)
     working_db = get_working_database()
     with working_db.session_scope() as w_session:
-        user_play_rows = w_session.query(
-            PlaybackHistory.provider_item_id,
-            sa_func.count(PlaybackHistory.id).label('play_count')
-        ).filter(
-            PlaybackHistory.user_id == user_id,
-            PlaybackHistory.listened_at >= thirty_days_ago
-        ).group_by(PlaybackHistory.provider_item_id).order_by(
-            sa_func.count(PlaybackHistory.id).desc()
-        ).limit(200).all()
+        user_play_rows = (
+            w_session.query(
+                PlaybackHistory.provider_item_id,
+                sa_func.count(PlaybackHistory.id).label("play_count"),
+            )
+            .filter(
+                PlaybackHistory.user_id == user_id,
+                PlaybackHistory.listened_at >= thirty_days_ago,
+            )
+            .group_by(PlaybackHistory.provider_item_id)
+            .order_by(sa_func.count(PlaybackHistory.id).desc())
+            .limit(200)
+            .all()
+        )
         pid_counts = {row.provider_item_id: row.play_count for row in user_play_rows}
     if pid_counts:
         with music_db.session_scope() as session:
-            discover_identifiers = session.query(ExternalIdentifier).filter(
-                ExternalIdentifier.provider_item_id.in_(list(pid_counts.keys()))
-            ).all()
+            discover_identifiers = (
+                session.query(ExternalIdentifier)
+                .filter(
+                    ExternalIdentifier.provider_item_id.in_(list(pid_counts.keys()))
+                )
+                .all()
+            )
             for identifier in discover_identifiers:
                 if identifier.track and identifier.track.artist:
                     artist_name = identifier.track.artist.name
-                    recent_artists_counts[artist_name] = recent_artists_counts.get(artist_name, 0) + pid_counts.get(identifier.provider_item_id, 0)
+                    recent_artists_counts[artist_name] = recent_artists_counts.get(
+                        artist_name, 0
+                    ) + pid_counts.get(identifier.provider_item_id, 0)
 
     # Sort artists by play count
-    sorted_artists = sorted(recent_artists_counts.items(), key=lambda x: x[1], reverse=True)
+    sorted_artists = sorted(
+        recent_artists_counts.items(), key=lambda x: x[1], reverse=True
+    )
     top_3_artists = [artist for artist, count in sorted_artists[:3]]
 
     if not top_3_artists:
         import logging
-        logging.getLogger("discovery_engine").debug("No top artists found to base discovery on.")
+
+        logging.getLogger("discovery_engine").debug(
+            "No top artists found to base discovery on."
+        )
         return []
 
     # 2. Get similar artists/tracks from ListenBrainz
     from core.nexus_framework.plugin_loader import get_plugin
-    lb_plugin = get_plugin('listenbrainz')
+
+    lb_plugin = get_plugin("listenbrainz")
     if not lb_plugin:
         import logging
+
         logging.getLogger("discovery_engine").error("ListenBrainz plugin not found.")
         return []
 
     # get_similar_artists should return a list of EchosyncTrack or similar dictionary objects from those artists
     # Depending on implementation, we assume it returns top tracks by similar artists
-    if not hasattr(lb_plugin, 'get_similar_artists'):
+    if not hasattr(lb_plugin, "get_similar_artists"):
         import logging
-        logging.getLogger("discovery_engine").error("ListenBrainz plugin does not support get_similar_artists.")
+
+        logging.getLogger("discovery_engine").error(
+            "ListenBrainz plugin does not support get_similar_artists."
+        )
         return []
 
     discovered_tracks = lb_plugin.get_similar_artists(top_3_artists)
@@ -226,12 +271,12 @@ def discover_new_tracks(user_id: str) -> List[dict]:
     # 3. ListenBrainz / MusicBrainz cross-referencing loop (Chunked Concurrency)
     new_tracks = []
 
-    mb_plugin = get_plugin('musicbrainz')
+    mb_plugin = get_plugin("musicbrainz")
     import asyncio
 
     CHUNK_SIZE = 50
     for chunk_start in range(0, len(discovered_tracks), CHUNK_SIZE):
-        chunk = discovered_tracks[chunk_start:chunk_start + CHUNK_SIZE]
+        chunk = discovered_tracks[chunk_start : chunk_start + CHUNK_SIZE]
 
         async def fetch_mbids(chunk_list):
             if not mb_plugin:
@@ -239,12 +284,28 @@ def discover_new_tracks(user_id: str) -> List[dict]:
 
             tasks = []
             for track in chunk_list:
-                mbid = track.get("musicbrainz_id") if isinstance(track, dict) else getattr(track, "musicbrainz_id", None)
+                mbid = (
+                    track.get("musicbrainz_id")
+                    if isinstance(track, dict)
+                    else getattr(track, "musicbrainz_id", None)
+                )
                 if not mbid:
-                    title = track.get("title") if isinstance(track, dict) else getattr(track, "title", None)
-                    artist_name = track.get("artist_name") if isinstance(track, dict) else getattr(track, "artist_name", None)
+                    title = (
+                        track.get("title")
+                        if isinstance(track, dict)
+                        else getattr(track, "title", None)
+                    )
+                    artist_name = (
+                        track.get("artist_name")
+                        if isinstance(track, dict)
+                        else getattr(track, "artist_name", None)
+                    )
                     if title and artist_name:
-                        tasks.append(mb_plugin.search_recording_strict(artist_name, title, immediate=False))
+                        tasks.append(
+                            mb_plugin.search_recording_strict(
+                                artist_name, title, immediate=False
+                            )
+                        )
                     else:
                         tasks.append(asyncio.sleep(0, result=[]))
                 else:
@@ -252,11 +313,14 @@ def discover_new_tracks(user_id: str) -> List[dict]:
 
             return await asyncio.gather(*tasks, return_exceptions=True)
 
-        mb_results_batch = asyncio.run(fetch_mbids(chunk)) if mb_plugin else [[] for _ in chunk]
+        mb_results_batch = (
+            asyncio.run(fetch_mbids(chunk)) if mb_plugin else [[] for _ in chunk]
+        )
 
         with music_db.session_scope() as session:
-            from database.music_database import Track, Artist
             from sqlalchemy import and_, or_
+
+            from database.music_database import Artist, Track
 
             # 1. Pre-process the chunk to gather all potential MBIDs and Title/Artist pairs
             pending_tracks = []
@@ -264,7 +328,11 @@ def discover_new_tracks(user_id: str) -> List[dict]:
             pairs_to_check = set()
 
             for track, mb_results in zip(chunk, mb_results_batch):
-                mbid = track.get("musicbrainz_id") if isinstance(track, dict) else getattr(track, "musicbrainz_id", None)
+                mbid = (
+                    track.get("musicbrainz_id")
+                    if isinstance(track, dict)
+                    else getattr(track, "musicbrainz_id", None)
+                )
 
                 if not mbid and not isinstance(mb_results, Exception) and mb_results:
                     top_match = mb_results[0]
@@ -272,22 +340,32 @@ def discover_new_tracks(user_id: str) -> List[dict]:
                     if isinstance(track, dict):
                         track["musicbrainz_id"] = mbid
                     else:
-                        setattr(track, "musicbrainz_id", mbid)
+                        track.musicbrainz_id = mbid
 
-                title = track.get("title") if isinstance(track, dict) else getattr(track, "title", None)
-                artist_name = track.get("artist_name") if isinstance(track, dict) else getattr(track, "artist_name", None)
+                title = (
+                    track.get("title")
+                    if isinstance(track, dict)
+                    else getattr(track, "title", None)
+                )
+                artist_name = (
+                    track.get("artist_name")
+                    if isinstance(track, dict)
+                    else getattr(track, "artist_name", None)
+                )
 
                 if mbid:
                     mbids_to_check.add(mbid)
                 if title and artist_name:
                     pairs_to_check.add((title, artist_name))
 
-                pending_tracks.append({
-                    "original_track": track,
-                    "mbid": mbid,
-                    "title": title,
-                    "artist_name": artist_name
-                })
+                pending_tracks.append(
+                    {
+                        "original_track": track,
+                        "mbid": mbid,
+                        "title": title,
+                        "artist_name": artist_name,
+                    }
+                )
 
             # 2. Batch Query existing matches
             existing_mbids = set()
@@ -295,21 +373,28 @@ def discover_new_tracks(user_id: str) -> List[dict]:
                 # Chunk the IN clause to be safe (SQLite limit, though chunk size is 50 here anyway)
                 mbids_list = list(mbids_to_check)
                 for i in range(0, len(mbids_list), 500):
-                    batch = mbids_list[i:i + 500]
-                    found = session.query(Track.musicbrainz_id).filter(
-                        Track.musicbrainz_id.in_(batch)
-                    ).all()
+                    batch = mbids_list[i : i + 500]
+                    found = (
+                        session.query(Track.musicbrainz_id)
+                        .filter(Track.musicbrainz_id.in_(batch))
+                        .all()
+                    )
                     existing_mbids.update([row[0] for row in found])
 
             existing_pairs = set()
             if pairs_to_check:
                 pairs_list = list(pairs_to_check)
                 for i in range(0, len(pairs_list), 250):  # 250 pairs = 500 expressions
-                    batch = pairs_list[i:i + 250]
-                    or_conditions = [and_(Track.title == t, Artist.name == a) for t, a in batch]
-                    found = session.query(Track.title, Artist.name).join(Artist).filter(
-                        or_(*or_conditions)
-                    ).all()
+                    batch = pairs_list[i : i + 250]
+                    or_conditions = [
+                        and_(Track.title == t, Artist.name == a) for t, a in batch
+                    ]
+                    found = (
+                        session.query(Track.title, Artist.name)
+                        .join(Artist)
+                        .filter(or_(*or_conditions))
+                        .all()
+                    )
                     existing_pairs.update([(row[0], row[1]) for row in found])
 
             # 3. Filter tracks using the pre-populated sets (O(1) lookup)
@@ -329,7 +414,9 @@ def discover_new_tracks(user_id: str) -> List[dict]:
                     track_dict = {
                         "title": getattr(original_track, "title", None),
                         "artist_name": getattr(original_track, "artist_name", None),
-                        "musicbrainz_id": getattr(original_track, "musicbrainz_id", None)
+                        "musicbrainz_id": getattr(
+                            original_track, "musicbrainz_id", None
+                        ),
                     }
                     new_tracks.append(track_dict)
                 else:
@@ -348,7 +435,7 @@ discover_tracks = discover_new_tracks
 def recommend_near_miss(
     user_id: str,
     music_db_track_id: int,
-    context: Optional[dict] = None,
+    context: dict | None = None,
 ) -> bool:
     """
     Insert a near-miss suggestion into the staging queue.
@@ -376,8 +463,10 @@ def recommend_near_miss(
         False — already existed (idempotent; not an error).
     """
     import logging
-    from database.working_database import get_working_database, SuggestionStagingQueue
+
     from sqlalchemy.exc import IntegrityError
+
+    from database.working_database import SuggestionStagingQueue, get_working_database
 
     logger = logging.getLogger("suggestion_engine.discovery")
 
@@ -388,7 +477,8 @@ def recommend_near_miss(
             resolved_sync_id = None
             if music_db_track_id:
                 try:
-                    from database.music_database import get_database, Track
+                    from database.music_database import Track, get_database
+
                     music_db = get_database()
                     with music_db.session_scope() as m_sess:
                         t = m_sess.get(Track, music_db_track_id)
@@ -410,20 +500,24 @@ def recommend_near_miss(
             session.flush()
         logger.info(
             "Near-miss suggestion queued: user=%s track_id=%s ctx=%s",
-            user_id, music_db_track_id, context,
+            user_id,
+            music_db_track_id,
+            context,
         )
         return True
     except IntegrityError:
         # Already queued for this (user, track, reason) triplet — idempotent.
         logger.debug(
             "Near-miss suggestion already exists: user=%s track_id=%s",
-            user_id, music_db_track_id,
+            user_id,
+            music_db_track_id,
         )
         return False
     except Exception:
         logger.exception(
             "Failed to queue near-miss suggestion: user=%s track_id=%s",
-            user_id, music_db_track_id,
+            user_id,
+            music_db_track_id,
         )
         return False
 
@@ -458,11 +552,18 @@ def mine_cached_playlists(user_id: str, limit: int = 20) -> int:
     """
     import logging
     from itertools import islice
-    from sqlalchemy import or_, and_
-    from sqlalchemy.exc import IntegrityError
+
     from plugins.spotify.cache_manager import SpotifyCacheManager
-    from database.working_database import get_working_database, SuggestionStagingQueue, Download
-    from database.music_database import get_database as get_music_database, Track, Artist
+    from sqlalchemy import and_, or_
+    from sqlalchemy.exc import IntegrityError
+
+    from database.music_database import Track
+    from database.music_database import get_database as get_music_database
+    from database.working_database import (
+        Download,
+        SuggestionStagingQueue,
+        get_working_database,
+    )
 
     logger = logging.getLogger("suggestion_engine.discovery")
 
@@ -500,32 +601,40 @@ def mine_cached_playlists(user_id: str, limit: int = 20) -> int:
             sync_ids = set()
 
             for track in chunk:
-                title = getattr(track, "title", None) or getattr(track, "raw_title", None)
+                title = getattr(track, "title", None) or getattr(
+                    track, "raw_title", None
+                )
                 artist_name = getattr(track, "artist_name", None)
                 isrc = getattr(track, "isrc", None)
 
                 if not title or not artist_name:
                     continue
 
-                sync_id = f"ss:track:meta:{generate_deterministic_id(artist_name, title)}"
+                sync_id = (
+                    f"ss:track:meta:{generate_deterministic_id(artist_name, title)}"
+                )
 
-                batch_data.append({
+                batch_data.append(
+                    {
+                        "title": title,
+                        "artist_name": artist_name,
+                        "isrc": isrc,
+                        "sync_id": sync_id,
+                        "track_obj": track,
+                    }
+                )
+
+            sync_id = f"ss:track:meta:{generate_deterministic_id(artist_name, title)}"
+            candidates.append(
+                {
                     "title": title,
                     "artist_name": artist_name,
                     "isrc": isrc,
                     "sync_id": sync_id,
-                    "track_obj": track
-                })
-
-            sync_id = f"ss:track:meta:{generate_deterministic_id(artist_name, title)}"
-            candidates.append({
-                "title": title,
-                "artist_name": artist_name,
-                "isrc": isrc,
-                "sync_id": sync_id,
-                "playlist_id": playlist_id,
-                "playlist_name": playlist_name,
-            })
+                    "playlist_id": playlist_id,
+                    "playlist_name": playlist_name,
+                }
+            )
 
     if not candidates:
         return 0
@@ -556,7 +665,12 @@ def mine_cached_playlists(user_id: str, limit: int = 20) -> int:
         # Needs to join Artist
         for chunk in chunked_iterable(all_pairs, 500):
             conditions = [and_(Track.title == t, Artist.name == a) for t, a in chunk]
-            found = m_session.query(Track.title, Artist.name).join(Artist).filter(or_(*conditions)).all()
+            found = (
+                m_session.query(Track.title, Artist.name)
+                .join(Artist)
+                .filter(or_(*conditions))
+                .all()
+            )
             existing_pairs.update([(r[0], r[1]) for r in found])
 
     # 3. Gate 2: Batch Process Working Database (Active Downloads & Staging Queue)
@@ -564,19 +678,26 @@ def mine_cached_playlists(user_id: str, limit: int = 20) -> int:
     with working_db.session_scope() as w_session:
         # Active Downloads
         for chunk in chunked_iterable(all_sync_ids, 500):
-            found = w_session.query(Download.sync_id).filter(
-                Download.sync_id.in_(chunk),
-                Download.status.in_(ACTIVE_STATUSES)
-            ).all()
+            found = (
+                w_session.query(Download.sync_id)
+                .filter(
+                    Download.sync_id.in_(chunk), Download.status.in_(ACTIVE_STATUSES)
+                )
+                .all()
+            )
             active_sync_ids.update([r[0] for r in found])
 
         # Staging Queue (to prevent IntegrityError logging spam)
         for chunk in chunked_iterable(all_sync_ids, 500):
-            found = w_session.query(SuggestionStagingQueue.sync_id).filter(
-                SuggestionStagingQueue.user_id == str(user_id),
-                SuggestionStagingQueue.reason == "playlist_gap",
-                SuggestionStagingQueue.sync_id.in_(chunk)
-            ).all()
+            found = (
+                w_session.query(SuggestionStagingQueue.sync_id)
+                .filter(
+                    SuggestionStagingQueue.user_id == str(user_id),
+                    SuggestionStagingQueue.reason == "playlist_gap",
+                    SuggestionStagingQueue.sync_id.in_(chunk),
+                )
+                .all()
+            )
             already_queued_sync_ids.update([r[0] for r in found])
 
     # 4. Filter and Insert
@@ -600,7 +721,9 @@ def mine_cached_playlists(user_id: str, limit: int = 20) -> int:
             if sync_id in active_sync_ids:
                 logger.debug(
                     "mine_cached_playlists: '%s' by '%s' skipped -- active download job (sync_id=%s).",
-                    title, artist_name, sync_id,
+                    title,
+                    artist_name,
+                    sync_id,
                 )
                 continue
 
@@ -630,16 +753,20 @@ def mine_cached_playlists(user_id: str, limit: int = 20) -> int:
                 inserted += 1
                 logger.info(
                     "mine_cached_playlists: suggestion queued '%s' by '%s' (sync_id=%s).",
-                    title, artist_name, sync_id,
+                    title,
+                    artist_name,
+                    sync_id,
                 )
             except IntegrityError:
                 logger.debug(
                     "mine_cached_playlists: duplicate skipped '%s' by '%s'.",
-                    title, artist_name,
+                    title,
+                    artist_name,
                 )
 
     logger.info(
         "mine_cached_playlists: complete for user=%s -- %d new suggestion(s) inserted.",
-        user_id, inserted,
+        user_id,
+        inserted,
     )
     return inserted

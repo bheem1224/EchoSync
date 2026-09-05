@@ -9,19 +9,19 @@ This module contains ScoringProfile classes that define how tracks are matched i
 Profiles can be customized by modifying the matching_profiles section in config.json
 """
 
+import json
+import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Dict, Optional
 from enum import Enum
-import json
 from pathlib import Path
-import logging
 
 logger = logging.getLogger(__name__)
 
 
 class ProfileType(Enum):
     """Available scoring profiles"""
+
     EXACT_SYNC = "exact_sync"
     DOWNLOAD_SEARCH = "download_search"
     LIBRARY_IMPORT = "library_import"
@@ -51,57 +51,67 @@ class ScoringWeights:
     quality_bonus: float = 0.05  # Bonus points for better quality
 
     # Penalties (subtracted from score)
-    version_mismatch_penalty: float = 15.0  # Penalty if versions don't match (0-100 scale)
-    edition_mismatch_penalty: float = 10.0  # Penalty if editions don't match (track_total, album type differ)
+    version_mismatch_penalty: float = (
+        15.0  # Penalty if versions don't match (0-100 scale)
+    )
+    edition_mismatch_penalty: float = (
+        10.0  # Penalty if editions don't match (track_total, album type differ)
+    )
     duration_tolerance_ms: int = 3000  # Allow 3 second difference in duration
     fuzzy_match_threshold: float = 0.85  # Fuzzy match must be >= this to pass gating
 
     # Minimum confidence thresholds
     min_confidence_to_accept: float = 70.0  # Minimum score to consider a match valid
-    text_match_fallback: float = 0.80  # Fallback text fuzzy match if no fingerprints available
+    text_match_fallback: float = (
+        0.80  # Fallback text fuzzy match if no fingerprints available
+    )
 
     # Advanced Scoring Flags
     tie_breaker: str = "MAX_QUALITY"  # Options: MAX_QUALITY, SAVE_STORAGE, SPEED
-    enforce_duration_match: bool = False  # If True, reject files outside duration tolerance before scoring.
+    enforce_duration_match: bool = (
+        False  # If True, reject files outside duration tolerance before scoring.
+    )
 
     # Weights validation
     def validate(self) -> bool:
         """Validate that weights sum properly"""
         # Note: weights don't need to sum to 1.0 since we normalize in the matching engine
-        return all([
-            0.0 <= self.text_weight <= 1.0,
-            0.0 <= self.title_weight <= 1.0,
-            0.0 <= self.artist_weight <= 1.0,
-            0.0 <= self.album_weight <= 1.0,
-            0.0 <= self.duration_weight <= 1.0,
-            0.0 <= self.fingerprint_weight <= 1.0,
-            0.0 <= self.quality_bonus <= 1.0,
-            self.version_mismatch_penalty >= 0,
-            self.edition_mismatch_penalty >= 0,
-        ])
+        return all(
+            [
+                0.0 <= self.text_weight <= 1.0,
+                0.0 <= self.title_weight <= 1.0,
+                0.0 <= self.artist_weight <= 1.0,
+                0.0 <= self.album_weight <= 1.0,
+                0.0 <= self.duration_weight <= 1.0,
+                0.0 <= self.fingerprint_weight <= 1.0,
+                0.0 <= self.quality_bonus <= 1.0,
+                self.version_mismatch_penalty >= 0,
+                self.edition_mismatch_penalty >= 0,
+            ]
+        )
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization"""
         return {
-            'text_weight': self.text_weight,
-            'title_weight': self.title_weight,
-            'artist_weight': self.artist_weight,
-            'album_weight': self.album_weight,
-            'duration_weight': self.duration_weight,
-            'fingerprint_weight': self.fingerprint_weight,
-            'quality_bonus': self.quality_bonus,
-            'version_mismatch_penalty': self.version_mismatch_penalty,
-            'edition_mismatch_penalty': self.edition_mismatch_penalty,
-            'duration_tolerance_ms': self.duration_tolerance_ms,
-            'fuzzy_match_threshold': self.fuzzy_match_threshold,
-            'min_confidence_to_accept': self.min_confidence_to_accept,
-            'text_match_fallback': self.text_match_fallback,
-            'tie_breaker': self.tie_breaker,
-            'enforce_duration_match': self.enforce_duration_match,
+            "text_weight": self.text_weight,
+            "title_weight": self.title_weight,
+            "artist_weight": self.artist_weight,
+            "album_weight": self.album_weight,
+            "duration_weight": self.duration_weight,
+            "fingerprint_weight": self.fingerprint_weight,
+            "quality_bonus": self.quality_bonus,
+            "version_mismatch_penalty": self.version_mismatch_penalty,
+            "edition_mismatch_penalty": self.edition_mismatch_penalty,
+            "duration_tolerance_ms": self.duration_tolerance_ms,
+            "fuzzy_match_threshold": self.fuzzy_match_threshold,
+            "min_confidence_to_accept": self.min_confidence_to_accept,
+            "text_match_fallback": self.text_match_fallback,
+            "tie_breaker": self.tie_breaker,
+            "enforce_duration_match": self.enforce_duration_match,
         }
 
     @classmethod
-    def from_dict(cls, data: Dict) -> 'ScoringWeights':
+    def from_dict(cls, data: dict) -> "ScoringWeights":
         """Create from dictionary"""
         return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
 
@@ -116,12 +126,10 @@ class ScoringProfile(ABC):
     @abstractmethod
     def get_weights(self) -> ScoringWeights:
         """Get the weights for this profile"""
-        pass
 
     @abstractmethod
     def describe(self) -> str:
         """Get a human-readable description of this profile"""
-        pass
 
     def validate_weights(self) -> bool:
         """Validate that weights are properly configured"""
@@ -149,12 +157,14 @@ class ExactSyncProfile(ScoringProfile):
     profile_type = ProfileType.EXACT_SYNC
 
     def __init__(self):
-        self.description = "Exact track identification for structured metadata (Spotify/Tidal/Plex)"
+        self.description = (
+            "Exact track identification for structured metadata (Spotify/Tidal/Plex)"
+        )
         self.weights = ScoringWeights(
             text_weight=0.80,  # Combined title (35%) + artist (35%) + album (10%) = 80%
             title_weight=0.4375,  # 35/80
-            artist_weight=0.4375, # 35/80
-            album_weight=0.125,   # 10/80
+            artist_weight=0.4375,  # 35/80
+            album_weight=0.125,  # 10/80
             duration_weight=0.20,  # 20% - allow ~3s variance
             fingerprint_weight=0.0,  # NO fingerprint for metadata matching
             quality_bonus=0.05,  # 5% bonus for quality
@@ -204,7 +214,7 @@ class DownloadSearchProfile(ScoringProfile):
         self.weights = ScoringWeights(
             text_weight=0.80,  # Combined title (40%) + artist (30%) + album (10%) = 80%
             title_weight=0.50,  # 40/80
-            artist_weight=0.375, # 30/80
+            artist_weight=0.375,  # 30/80
             album_weight=0.125,  # 10/80
             duration_weight=0.20,  # 20% - BS detector (>5s = likely wrong)
             fingerprint_weight=0.0,  # No fingerprint for search
@@ -250,7 +260,9 @@ class LibraryImportProfile(ScoringProfile):
     profile_type = ProfileType.LIBRARY_IMPORT
 
     def __init__(self):
-        self.description = "Fingerprint-first identification for local files (Picard style)"
+        self.description = (
+            "Fingerprint-first identification for local files (Picard style)"
+        )
         self.weights = ScoringWeights(
             text_weight=0.10,  # 10% - existing tags trusted least
             duration_weight=0.30,  # 30% - confirms fingerprint
@@ -277,7 +289,6 @@ class LibraryImportProfile(ScoringProfile):
         )
 
 
-
 class AutoImportStrictProfile(ScoringProfile):
     """
     AUTO_IMPORT_STRICT Profile - For strict automated import decisions without fingerprint
@@ -296,7 +307,7 @@ class AutoImportStrictProfile(ScoringProfile):
         self.weights = ScoringWeights(
             text_weight=0.80,  # 80% total text weight
             title_weight=0.50,  # 50/100 of text
-            artist_weight=0.40, # 40/100 of text
+            artist_weight=0.40,  # 40/100 of text
             album_weight=0.10,  # 10/100 of text
             duration_weight=0.20,  # 20% duration weight
             fingerprint_weight=0.0,  # No fingerprint used for this profile
@@ -378,15 +389,18 @@ class ConfigurableProfile(ScoringProfile):
         return self.description or f"Custom profile: {self.name}"
 
     @classmethod
-    def from_config(cls, name: str, config_data: Dict) -> 'ConfigurableProfile':
+    def from_config(cls, name: str, config_data: dict) -> "ConfigurableProfile":
         """Create profile from config dictionary"""
         # Extract weights
-        weights_dict = {k: v for k, v in config_data.items() 
-                       if k in ScoringWeights.__dataclass_fields__}
+        weights_dict = {
+            k: v
+            for k, v in config_data.items()
+            if k in ScoringWeights.__dataclass_fields__
+        }
         weights = ScoringWeights.from_dict(weights_dict)
 
         description = config_data.get("description", "")
-        
+
         profile = cls(name, weights, description)
         return profile
 
@@ -401,11 +415,11 @@ class ProfileFactory:
         ProfileType.AUTO_IMPORT_STRICT: AutoImportStrictProfile,
         ProfileType.DUPLICATE_DETECTION: DuplicateDetectionProfile,
     }
-    
-    _config_profiles: Optional[Dict] = None  # Cached config profiles
+
+    _config_profiles: dict | None = None  # Cached config profiles
 
     @classmethod
-    def _load_config_profiles(cls) -> Dict:
+    def _load_config_profiles(cls) -> dict:
         """Load matching profiles from config.json"""
         if cls._config_profiles is not None:
             return cls._config_profiles or {}
@@ -416,14 +430,14 @@ class ProfileFactory:
                 Path("config/config.json"),
                 Path("./config.json"),
             ]
-            
+
             for config_path in config_paths:
                 if config_path.exists():
-                    with open(config_path, 'r') as f:
+                    with open(config_path, "r") as f:
                         config = json.load(f)
                         cls._config_profiles = config.get("matching_profiles", {})
                         return cls._config_profiles or {}
-            
+
             logger.debug("config.json not found, using built-in profiles")
             cls._config_profiles = {}
             return cls._config_profiles
@@ -437,15 +451,15 @@ class ProfileFactory:
         """Create a scoring profile by type"""
         if profile_type not in cls._profiles:
             raise ValueError(f"Unknown profile type: {profile_type}")
-        
+
         # Try to load from config first
         config_profiles = cls._load_config_profiles()
         profile_name = profile_type.value.upper()
-        
+
         if profile_name in config_profiles:
             config_data = config_profiles[profile_name]
             return ConfigurableProfile.from_config(profile_name, config_data)
-        
+
         # Fall back to built-in profile
         return cls._profiles[profile_type]()
 

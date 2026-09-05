@@ -1,29 +1,45 @@
 """System endpoints for status, settings, and logs."""
 
-from web.auth import require_auth
-from fastapi import APIRouter, HTTPException, Depends, Request, Response
-from fastapi.responses import JSONResponse, FileResponse
-from pydantic import BaseModel
-from typing import Optional, Dict, Any, List
 import json
 import os
 import time
-import platform
-import psutil
-from core.tiered_logger import get_logger
-from core.settings import config_manager
-from core.backup_manager import backup_manager
 from pathlib import Path
+
+import psutil
+from fastapi import APIRouter, Depends, HTTPException, Request
+
+from core.backup_manager import backup_manager
+from core.settings import config_manager
+from core.tiered_logger import get_logger
+from web.auth import require_auth
 
 logger = get_logger("system_route")
 router = APIRouter(prefix="/api/v1/system", tags=["System"])
+
+
+@router.get("/status")
+def get_status():
+    """Get system runtime status, platform, and uptime."""
+    import platform
+    import sys
+    from core.state import system_state
+
+    uptime_seconds = int(time.time() - system_state.start_time)
+    return {
+        "status": "ok",
+        "platform": sys.platform,
+        "python_version": platform.python_version(),
+        "uptime": uptime_seconds,
+        "restart_pending": system_state.restart_pending,
+    }
 
 
 @router.get("/health")
 def health_check():
     """Health endpoint with actual service health check results."""
     try:
-        from services.health_check import get_system_health
+        from core.task_manager.health_service import get_system_health
+
         health_data = get_system_health()
         return health_data
     except Exception as e:
@@ -31,37 +47,33 @@ def health_check():
         return {"status": "error", "results": {}}
 
 
-
-
-
 @router.post("/restart", dependencies=[Depends(require_auth)])
 def request_restart():
     """Forcefully but cleanly exit the application to trigger a Docker/System restart."""
-    import time
-    import threading
     import os
+    import threading
+
+    from core.task_manager.task_queue import JobQueue
     from core.state import system_state
-    from core.job_queue import JobQueue
 
     logger.info("Application restart requested via API")
-    
+
     # 1. Tell the job queue to freeze
     system_state.restart_pending = True
     JobQueue.RESTART_PENDING = True
 
     # 2. Define a hard-kill function
     def hard_kill():
-        time.sleep(2) # Give the API exactly 2 seconds to return the 200 OK to the frontend
+        time.sleep(
+            2
+        )  # Give the API exactly 2 seconds to return the 200 OK to the frontend
         logger.warning("Executing hard restart via os._exit(1)...")
-        os._exit(1)   # Instantly kills the container. Docker will reboot it.
+        os._exit(1)  # Instantly kills the container. Docker will reboot it.
 
     # 3. Spin it off in a background thread so the HTTP response can complete
     threading.Thread(target=hard_kill, daemon=True).start()
 
-    return {
-        "success": True, 
-        "message": "Restarting EchoSync..."
-    }
+    return {"success": True, "message": "Restarting EchoSync..."}
 
 
 @router.post("/backup", dependencies=[Depends(require_auth)])
@@ -72,7 +84,7 @@ def create_system_backup():
         return {
             "success": True,
             "backup_path": backup_path,
-            "filename": Path(backup_path).name
+            "filename": Path(backup_path).name,
         }
     except Exception as e:
         logger.error(f"Backup failed: {e}", exc_info=True)
@@ -84,10 +96,7 @@ def list_system_backups():
     """Returns a list of all available backup files."""
     try:
         backups = backup_manager.list_backups()
-        return {
-            "success": True,
-            "backups": backups
-        }
+        return {"success": True, "backups": backups}
     except Exception as e:
         logger.error(f"Failed to list backups: {e}", exc_info=True)
         return {"success": False, "error": "Failed to list backups"}
@@ -98,11 +107,9 @@ def download_system_backup(filename):
     """Downloads a specific backup file."""
     try:
         file_path = backup_manager.get_backup_path(filename)
-        return send_file(
-            file_path,
-            as_attachment=True,
-            download_name=filename
-        )
+        from fastapi.responses import FileResponse
+
+        return FileResponse(file_path, filename=filename)
     except FileNotFoundError:
         return {"success": False, "error": "Backup not found"}
     except ValueError as e:
@@ -117,45 +124,46 @@ def download_system_backup(filename):
 async def restore_system_backup(request: Request):
     """Restores the system from an uploaded zip OR a local filename."""
     tmp_path = None
-    
+
     try:
         content_type = request.headers.get("content-type", "")
         # Check if it's a file upload
         if "multipart/form-data" in content_type:
             form = await request.form()
-            if 'file' in form:
-                file = form['file']
-                if not file.filename or not file.filename.endswith('.zip'):
+            if "file" in form:
+                file = form["file"]
+                if not file.filename or not file.filename.endswith(".zip"):
                     return {"success": False, "error": "Invalid file upload"}
-                
+
                 import tempfile
-                with tempfile.NamedTemporaryFile(delete=False, suffix='.zip') as tmp:
+
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".zip") as tmp:
                     content = await file.read()
                     tmp.write(content)
                     tmp_path = Path(tmp.name)
                     restore_file = tmp_path
             else:
                 return {"success": False, "error": "No file uploaded"}
-        
+
         # Or a JSON payload with filename
         elif "application/json" in content_type:
             data = await request.json()
             filename = data.get("filename")
             if not filename:
                 return {"success": False, "error": "Filename missing in JSON"}
-            
+
             restore_file = backup_manager.get_backup_path(filename)
-            
+
         else:
             return {"success": False, "error": "No restore source provided"}
 
         # Execute restore
         success = backup_manager.restore_backup(restore_file)
         if success:
-            request_restart() # Trigger reboot
+            request_restart()  # Trigger reboot
             return {
                 "success": True,
-                "message": f"Restore from {Path(restore_file).name} successful. Restarting..."
+                "message": f"Restore from {Path(restore_file).name} successful. Restarting...",
             }
         else:
             return {"success": False, "error": "Restore engine failed"}
@@ -175,6 +183,7 @@ def system_stats():
     """System resource usage statistics, distinguishing app vs system."""
     try:
         import os
+
         # Total system stats
         sys_mem = psutil.virtual_memory()
         # Get system CPU first (non-blocking)
@@ -188,8 +197,9 @@ def system_stats():
 
         # Wait a tiny bit for meaningful deltas
         import time
+
         time.sleep(0.5)
-        
+
         sys_cpu = psutil.cpu_percent(interval=None)
         app_cpu = process.cpu_percent(interval=None)
 
@@ -198,12 +208,9 @@ def system_stats():
                 "total": sys_mem.total,
                 "available": sys_mem.available,
                 "percent": sys_mem.percent,
-                "app_rss": app_mem
+                "app_rss": app_mem,
             },
-            "cpu": {
-                "system": sys_cpu,
-                "app": app_cpu
-            }
+            "cpu": {"system": sys_cpu, "app": app_cpu},
         }
     except Exception as e:
         logger.error(f"Error getting system stats: {e}")
@@ -211,6 +218,7 @@ def system_stats():
 
 
 from services.metadata_enhancer import get_metadata_enhancer
+
 
 @router.get("/settings")
 def get_settings():
@@ -220,9 +228,9 @@ def get_settings():
     """
     try:
         data = config_manager.get_all() if hasattr(config_manager, "get_all") else {}
-        dev_mode = os.getenv('DEV_MODE', 'false').lower() in ('true', '1', 'yes')
+        dev_mode = os.getenv("DEV_MODE", "false").lower() in ("true", "1", "yes")
         data["dev_mode"] = dev_mode
-        safe_mode = os.getenv('ECHOSYNC_SAFE_MODE', '') in ('1', 'true')
+        safe_mode = os.getenv("ECHOSYNC_SAFE_MODE", "") in ("1", "true")
         data["safe_mode"] = safe_mode
         # Inject live console log level.  In DEV_MODE the startup level is always
         # DEBUG (set by run_api.py), so we can short-circuit the handler scan which
@@ -232,6 +240,7 @@ def get_settings():
         else:
             try:
                 from core.tiered_logger import get_current_log_level
+
                 data["log_level"] = get_current_log_level()
             except Exception:
                 pass
@@ -254,12 +263,10 @@ def get_encryption_key_warning():
             return {
                 "auto_generated": True,
                 "key_value": key_value,
-                "message": "Encryption key was auto-generated. Pass MASTER_KEY as environment variable to persist settings across container restarts."
+                "message": "Encryption key was auto-generated. Pass MASTER_KEY as environment variable to persist settings across container restarts.",
             }
         else:
-            return {
-                "auto_generated": False
-            }
+            return {"auto_generated": False}
     except Exception as e:
         logger.error(f"Error checking encryption key status: {e}")
         return {"error": "Failed to check encryption key status"}
@@ -270,10 +277,11 @@ def get_migration_status():
     """Check if v2.1.0 migration was triggered and notify frontend."""
     try:
         from core.db.migrations import was_v2_1_migration_triggered
+
         is_migrated = was_v2_1_migration_triggered()
         return {
             "v2_1_migration_triggered": is_migrated,
-            "message": "Echosync has been upgraded to v2.1.0! The database schema has undergone a massive structural upgrade to support the new Matching Engine. Your configuration is safe, but your media library database has been wiped and is currently being rebuilt from scratch in the background."
+            "message": "Echosync has been upgraded to v2.1.0! The database schema has undergone a massive structural upgrade to support the new Matching Engine. Your configuration is safe, but your media library database has been wiped and is currently being rebuilt from scratch in the background.",
         }
     except Exception as e:
         logger.error(f"Error checking migration status: {e}")
@@ -285,6 +293,7 @@ def acknowledge_migration():
     """Acknowledge the v2.1.0 migration notification."""
     try:
         from core.db.migrations import acknowledge_v2_1_migration
+
         acknowledge_v2_1_migration()
         logger.info("v2.1.0 migration notification acknowledged by user")
         return {"success": True}
@@ -296,22 +305,24 @@ def acknowledge_migration():
 # Allowlist of top-level config keys that the UI is permitted to write via this
 # endpoint.  Any key not in this set is rejected with 400 to prevent arbitrary
 # config-tree poisoning (C1 security fix).
-_SETTINGS_ALLOWLIST: frozenset = frozenset({
-    "log_level",
-    "active_media_server",
-    "active_download_client",
-    "metadata_enhancement",
-    "library_import",
-    "quality_profiles",
-    "scan_interval",
-    "file_rename_template",
-    "match_threshold",
-    "storage",
-    "theme",
-    "active_matching_engine",
-    "account_mapping",
-    "custom_ui_path",
-})
+_SETTINGS_ALLOWLIST: frozenset = frozenset(
+    {
+        "log_level",
+        "active_media_server",
+        "active_download_client",
+        "metadata_enhancement",
+        "library_import",
+        "quality_profiles",
+        "scan_interval",
+        "file_rename_template",
+        "match_threshold",
+        "storage",
+        "theme",
+        "active_matching_engine",
+        "account_mapping",
+        "custom_ui_path",
+    }
+)
 
 
 @router.get("/accounts", dependencies=[Depends(require_auth)])
@@ -323,13 +334,15 @@ def get_all_system_accounts():
     """
     from database.config_database import get_config_database
     from web.services.plugin_registry import list_plugins
+
     try:
         config_db = get_config_database()
         from core.nexus_framework.plugin_loader import PluginRegistry
-        active_servers = PluginRegistry.get_active_services_by_type('media_server')
+
+        active_servers = PluginRegistry.get_active_services_by_type("media_server")
         plugins = list_plugins()
-        
-        active_media_server_name = 'plex'
+
+        active_media_server_name = "plex"
         if active_servers:
             db_name = config_db.get_service_name(active_servers[0])
             if db_name:
@@ -338,36 +351,50 @@ def get_all_system_accounts():
         # 1. Get all music service accounts
         all_accounts = []
         from core.nexus_framework.plugin_SDK import PlaylistSupport
+
         for plugin in plugins:
-            plugin_name_lower = plugin['name'].lower()
-            
+            plugin_name_lower = plugin["name"].lower()
+
             # Skip the active media server's own accounts to prevent self-mapping
             if plugin_name_lower == active_media_server_name:
                 continue
 
-            plugin_cls = PluginRegistry.get_plugin_class(plugin['plugin_id'])
-            if not plugin_cls or not hasattr(plugin_cls, 'capabilities'):
+            plugin_cls = PluginRegistry.get_plugin_class(plugin["plugin_id"])
+            if not plugin_cls or not hasattr(plugin_cls, "capabilities"):
                 continue
 
             caps = plugin_cls.capabilities
-            if getattr(caps, 'supports_playlists', PlaylistSupport.NONE) not in (PlaylistSupport.READ, PlaylistSupport.READ_WRITE):
+            if getattr(caps, "supports_playlists", PlaylistSupport.NONE) not in (
+                PlaylistSupport.READ,
+                PlaylistSupport.READ_WRITE,
+            ):
                 continue
 
-            service_id = config_db.get_or_create_service_id(plugin['plugin_id'])
+            service_id = config_db.get_or_create_service_id(plugin["plugin_id"])
             accounts = config_db.get_accounts(service_id=service_id)
             for acc in accounts:
-                all_accounts.append({
-                    'id': acc.get('id'),
-                    'name': acc.get('display_name') or acc.get('account_name'),
-                    'service': plugin_name_lower,
-                    'label': f"{acc.get('display_name') or acc.get('account_name')} ({plugin['name']})",
-                    'color': '#1DB954' if plugin_name_lower == 'spotify' else '#00E5FF' if plugin_name_lower == 'tidal' else '#5b21b6'
-                })
+                all_accounts.append(
+                    {
+                        "id": acc.get("id"),
+                        "name": acc.get("display_name") or acc.get("account_name"),
+                        "service": plugin_name_lower,
+                        "label": f"{acc.get('display_name') or acc.get('account_name')} ({plugin['name']})",
+                        "color": "#1DB954"
+                        if plugin_name_lower == "spotify"
+                        else "#00E5FF"
+                        if plugin_name_lower == "tidal"
+                        else "#5b21b6",
+                    }
+                )
 
         # 2. Get media server users and ensure they have Account records in config.db
         media_users = []
-        media_service_id = config_db.get_or_create_service_id(active_servers[0]) if active_servers else None
-        if active_media_server_name == 'plex' and media_service_id:
+        media_service_id = (
+            config_db.get_or_create_service_id(active_servers[0])
+            if active_servers
+            else None
+        )
+        if active_media_server_name == "plex" and media_service_id:
             PlexClient = PluginRegistry.get_plugin_class(active_servers[0])
             if PlexClient:
                 try:
@@ -379,50 +406,55 @@ def get_all_system_accounts():
                             service_id=media_service_id,
                             user_id=str(myplex.id),
                             account_name=myplex.username,
-                            display_name=myplex.title or myplex.username
+                            display_name=myplex.title or myplex.username,
                         )
-                        media_users.append({
-                            'id': admin_id,
-                            'user_id': str(myplex.id),
-                            'name': myplex.title or myplex.username,
-                            'account_name': myplex.username,
-                            'display_name': myplex.title or myplex.username,
-                            'is_admin': True,
-                            'linked_account_ids': []
-                        })
+                        media_users.append(
+                            {
+                                "id": admin_id,
+                                "user_id": str(myplex.id),
+                                "name": myplex.title or myplex.username,
+                                "account_name": myplex.username,
+                                "display_name": myplex.title or myplex.username,
+                                "is_admin": True,
+                                "linked_account_ids": [],
+                            }
+                        )
                         for user in myplex.users():
                             u_id = config_db.upsert_account(
                                 service_id=media_service_id,
                                 user_id=str(user.id),
                                 account_name=user.username,
-                                display_name=user.title or user.username
+                                display_name=user.title or user.username,
                             )
-                            media_users.append({
-                                'id': u_id,
-                                'user_id': str(user.id),
-                                'name': user.title or user.username,
-                                'account_name': user.username,
-                                'display_name': user.title or user.username,
-                                'is_admin': False,
-                                'linked_account_ids': []
-                            })
+                            media_users.append(
+                                {
+                                    "id": u_id,
+                                    "user_id": str(user.id),
+                                    "name": user.title or user.username,
+                                    "account_name": user.username,
+                                    "display_name": user.title or user.username,
+                                    "is_admin": False,
+                                    "linked_account_ids": [],
+                                }
+                            )
                 except Exception as e:
                     logger.warning(f"Failed to fetch Plex users: {e}")
 
         # 3. Load existing stateful mappings from config.db
         for user in media_users:
-            mappings = config_db.get_account_mappings(account_id=user['id'])
+            mappings = config_db.get_account_mappings(account_id=user["id"])
             linked_ids = []
             for m in mappings:
                 # Find the 'other' ID in the mapping pair
-                other_id = m['mapped_account_id'] if m['source_account_id'] == user['id'] else m['source_account_id']
+                other_id = (
+                    m["mapped_account_id"]
+                    if m["source_account_id"] == user["id"]
+                    else m["source_account_id"]
+                )
                 linked_ids.append(other_id)
-            user['linked_account_ids'] = linked_ids
+            user["linked_account_ids"] = linked_ids
 
-        return {
-            'music_accounts': all_accounts,
-            'media_users': media_users
-        }
+        return {"music_accounts": all_accounts, "media_users": media_users}
     except Exception as e:
         logger.error(f"Error getting system accounts: {e}", exc_info=True)
         return {"error": "Failed to get system accounts"}
@@ -441,12 +473,13 @@ async def map_system_accounts(request: Request):
         except Exception:
             payload = {}
         # user_id here is the relational Account.id for the media user
-        source_account_id = payload.get('user_id')
-        account_ids = [int(aid) for aid in payload.get('account_ids', [])]
+        source_account_id = payload.get("user_id")
+        account_ids = [int(aid) for aid in payload.get("account_ids", [])]
         if source_account_id is None:
-            return {'error': 'user_id (Account ID) is required'}
+            return {"error": "user_id (Account ID) is required"}
 
         from database.config_database import get_config_database
+
         config_db = get_config_database()
 
         # Clear existing mappings for this account
@@ -456,7 +489,7 @@ async def map_system_accounts(request: Request):
         for target_id in account_ids:
             config_db.set_account_mapping(int(source_account_id), target_id)
 
-        return {'success': True}
+        return {"success": True}
     except Exception as e:
         logger.error(f"Error mapping accounts: {e}", exc_info=True)
         return {"error": "Failed to map system accounts"}
@@ -477,18 +510,21 @@ async def update_settings(request: Request):
         payload = await request.json()
     except Exception:
         payload = {}
-        
+
     if not isinstance(payload, dict):
         raise HTTPException(status_code=400, detail="Invalid JSON payload")
 
     rejected_keys = [k for k in payload if k not in _SETTINGS_ALLOWLIST]
     if rejected_keys:
         logger.warning(f"Rejected unknown settings keys: {rejected_keys}")
-        raise HTTPException(status_code=400, detail={
-            "error": "Rejected unknown settings keys",
-            "rejected_keys": rejected_keys,
-            "allowed_keys": list(_SETTINGS_ALLOWLIST)
-        })
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "Rejected unknown settings keys",
+                "rejected_keys": rejected_keys,
+                "allowed_keys": list(_SETTINGS_ALLOWLIST),
+            },
+        )
 
     # Adjust log level immediately if requested.
     if "log_level" in payload:
@@ -502,6 +538,7 @@ async def update_settings(request: Request):
             normalized = "DEBUG"
         try:
             from core.tiered_logger import set_log_level
+
             set_log_level(normalized.upper())
         except Exception:
             pass
@@ -512,15 +549,23 @@ async def update_settings(request: Request):
         ui_path = str(payload["custom_ui_path"]).strip()
         if ui_path:
             try:
-                from core.path_security import resolve_safe_path, PathTraversalError
-                allowed_ui_root = (Path(config_manager.config_dir) / "custom_ui").resolve()
+                from core.path_security import PathTraversalError, resolve_safe_path
+
+                allowed_ui_root = (
+                    Path(config_manager.config_dir) / "custom_ui"
+                ).resolve()
                 allowed_ui_root.mkdir(parents=True, exist_ok=True)
                 resolved_ui = resolve_safe_path(allowed_ui_root, ui_path)
                 if not resolved_ui.is_dir():
-                    raise HTTPException(status_code=400, detail="Custom UI directory does not exist")
+                    raise HTTPException(
+                        status_code=400, detail="Custom UI directory does not exist"
+                    )
                 payload["custom_ui_path"] = str(resolved_ui)
             except (PathTraversalError, ValueError):
-                raise HTTPException(status_code=403, detail="Security violation: Custom UI path must be inside config/custom_ui")
+                raise HTTPException(
+                    status_code=403,
+                    detail="Security violation: Custom UI path must be inside config/custom_ui",
+                )
             except HTTPException:
                 raise
             except Exception:
@@ -535,13 +580,18 @@ async def update_settings(request: Request):
 
         try:
             from core.event_bus import event_bus
-            event_bus.publish("system", "CONFIG_UPDATED", {"updated_keys": list(payload.keys())})
+
+            event_bus.publish(
+                "system", "CONFIG_UPDATED", {"updated_keys": list(payload.keys())}
+            )
         except Exception as eb_err:
             logger.debug(f"Could not publish CONFIG_UPDATED event: {eb_err}")
 
         resp = {"success": True}
         if restart_warning:
-            resp["warning"] = "Application restart is required to apply the Custom UI Path."
+            resp["warning"] = (
+                "Application restart is required to apply the Custom UI Path."
+            )
 
         return resp
     except Exception as e:
@@ -575,22 +625,13 @@ def activity_toasts():
 @router.get("/downloads/status")
 def downloads_status():
     """Download queue status."""
-    return {
-        "active": [],
-        "queued": [],
-        "completed": [],
-        "failed": []
-    }
+    return {"active": [], "queued": [], "completed": [], "failed": []}
 
 
 @router.get("/quality-profile")
 def quality_profile():
     """Audio quality preferences."""
-    return {
-        "min_bitrate": 320,
-        "preferred_format": "FLAC",
-        "fallback_format": "MP3"
-    }
+    return {"min_bitrate": 320, "preferred_format": "FLAC", "fallback_format": "MP3"}
 
 
 @router.get("/quality-profiles")
@@ -600,15 +641,13 @@ def list_quality_profiles():
     try:
         profiles = config_manager.get_quality_profiles()
         from core.nexus_framework.plugin_loader import PluginRegistry
+
         plugin_options = PluginRegistry.get_all_quality_options()
-        
-        return {
-            'profiles': profiles,
-            'plugin_options': plugin_options
-        }
+
+        return {"profiles": profiles, "plugin_options": plugin_options}
     except Exception as e:
         logger.error(f"Error listing quality profiles: {e}")
-        return {'error': 'Failed to list quality profiles'}
+        return {"error": "Failed to list quality profiles"}
 
 
 @router.post("/quality-profiles", dependencies=[Depends(require_auth)])
@@ -622,32 +661,37 @@ async def save_quality_profiles(request: Request):
             payload = await request.json()
         except Exception:
             payload = {}
-        profiles = payload.get('profiles') if isinstance(payload, dict) else None
+        profiles = payload.get("profiles") if isinstance(payload, dict) else None
         if profiles is None:
-            return {'error': 'Missing profiles list'}
+            return {"error": "Missing profiles list"}
 
         # Basic validation: list of dicts with id and name
         if not isinstance(profiles, list):
-            return {'error': 'Profiles must be a list'}
+            return {"error": "Profiles must be a list"}
 
         for p in profiles:
-            if not isinstance(p, dict) or 'id' not in p or 'name' not in p:
-                return {'error': 'Invalid profiles format; each profile must include id and name'}
+            if not isinstance(p, dict) or "id" not in p or "name" not in p:
+                return {
+                    "error": "Invalid profiles format; each profile must include id and name"
+                }
 
         ok = config_manager.set_quality_profiles(profiles)
         if not ok:
-            return {'error': 'Failed to persist profiles'}
+            return {"error": "Failed to persist profiles"}
 
         try:
             from core.event_bus import event_bus
-            event_bus.publish("system", "CONFIG_UPDATED", {"updated_keys": ["quality_profiles"]})
+
+            event_bus.publish(
+                "system", "CONFIG_UPDATED", {"updated_keys": ["quality_profiles"]}
+            )
         except Exception as eb_err:
             logger.debug(f"Could not publish CONFIG_UPDATED event: {eb_err}")
 
-        return {'success': True}
+        return {"success": True}
     except Exception as e:
         logger.error(f"Error saving quality profiles: {e}")
-        return {'error': 'Failed to save profiles'}
+        return {"error": "Failed to save profiles"}
 
 
 @router.post("/quality-profile", dependencies=[Depends(require_auth)])
@@ -662,50 +706,59 @@ async def save_single_quality_profile(request: Request):
             payload = await request.json()
         except Exception:
             payload = {}
-        profile = payload.get('profile') if isinstance(payload, dict) else None
+        profile = payload.get("profile") if isinstance(payload, dict) else None
         if profile is None:
-            return {'error': 'Missing profile object'}
+            return {"error": "Missing profile object"}
 
-        if not isinstance(profile, dict) or 'id' not in profile or 'name' not in profile:
-            return {'error': 'Invalid profile format; id and name required'}
+        if (
+            not isinstance(profile, dict)
+            or "id" not in profile
+            or "name" not in profile
+        ):
+            return {"error": "Invalid profile format; id and name required"}
 
         # Debug log incoming profile payload to help track missing arrays
         try:
-            logger.debug(f"Incoming single profile payload: {json.dumps(profile, default=str)[:2000]}")
+            logger.debug(
+                f"Incoming single profile payload: {json.dumps(profile, default=str)[:2000]}"
+            )
         except Exception:
-            logger.debug(f"Incoming single profile payload (non-serializable)")
+            logger.debug("Incoming single profile payload (non-serializable)")
 
         # Load existing profiles
         existing = config_manager.get_quality_profiles() or []
         found = False
         for i, p in enumerate(existing):
-            if str(p.get('id')) == str(profile.get('id')):
+            if str(p.get("id")) == str(profile.get("id")):
                 # Preserve existing name if incoming profile omitted it
-                if not profile.get('name') and p.get('name'):
-                    profile['name'] = p.get('name')
+                if not profile.get("name") and p.get("name"):
+                    profile["name"] = p.get("name")
                 existing[i] = profile
                 found = True
                 break
         if not found:
             # Ensure new profile has a name
-            if not profile.get('name'):
-                profile['name'] = f"Profile {len(existing) + 1}"
+            if not profile.get("name"):
+                profile["name"] = f"Profile {len(existing) + 1}"
             existing.append(profile)
 
         ok = config_manager.set_quality_profiles(existing)
         if not ok:
-            return {'error': 'Failed to persist profile'}
+            return {"error": "Failed to persist profile"}
 
         try:
             from core.event_bus import event_bus
-            event_bus.publish("system", "CONFIG_UPDATED", {"updated_keys": ["quality_profiles"]})
+
+            event_bus.publish(
+                "system", "CONFIG_UPDATED", {"updated_keys": ["quality_profiles"]}
+            )
         except Exception as eb_err:
             logger.debug(f"Could not publish CONFIG_UPDATED event: {eb_err}")
 
-        return {'success': True, 'profile': profile}
+        return {"success": True, "profile": profile}
     except Exception as e:
         logger.error(f"Error saving single quality profile: {e}")
-        return {'error': 'Failed to save profile'}
+        return {"error": "Failed to save profile"}
 
 
 @router.get("/browse")
@@ -719,26 +772,26 @@ def browse_filesystem(request: Request):
     Returns JSON: { path: <abs>, root: <root_key>, entries: [ {name, path, relpath, is_dir} ] }
     """
     try:
-        requested = request.query_params.get('path', '')
+        requested = request.query_params.get("path", "")
         settings_data = config_manager.get_all() or {}
-        storage = settings_data.get('storage', {})
+        storage = settings_data.get("storage", {})
 
         roots = {
-            'data': storage.get('data_dir'),
-            'downloads': storage.get('download_dir'),
-            'library': storage.get('library_dir'),
-            'logs': storage.get('log_dir'),
-            'config': storage.get('config_dir'),
+            "data": storage.get("data_dir"),
+            "downloads": storage.get("download_dir"),
+            "library": storage.get("library_dir"),
+            "logs": storage.get("log_dir"),
+            "config": storage.get("config_dir"),
         }
         # Filter out None values
         allowed_roots = {k: os.path.abspath(v) for k, v in roots.items() if v}
 
         # If no path provided, return available roots
         if not requested:
-            return {'roots': [{'key': k, 'path': p} for k, p in allowed_roots.items()]}
+            return {"roots": [{"key": k, "path": p} for k, p in allowed_roots.items()]}
 
         # Special-case: allow browsing filesystem root when client requests '/'
-        if requested == '/':
+        if requested == "/":
             req_path = os.path.abspath(os.sep)
         else:
             # If requested is a root key, map it
@@ -749,14 +802,14 @@ def browse_filesystem(request: Request):
                 if os.path.isabs(requested):
                     req_path = os.path.abspath(requested)
                 else:
-                    base = allowed_roots.get('data') or os.getcwd()
+                    base = allowed_roots.get("data") or os.getcwd()
                     req_path = os.path.abspath(os.path.join(base, requested))
 
         matched_root = None
         req_p = Path(req_path).resolve()
         if req_path == os.path.abspath(os.sep):
             # browsing top-level root; use root key 'root'
-            matched_root = ('root', req_path)
+            matched_root = ("root", req_path)
         else:
             for key, root_path in allowed_roots.items():
                 try:
@@ -766,38 +819,47 @@ def browse_filesystem(request: Request):
                         break
                 except Exception:
                     continue
-            if not matched_root and os.path.isabs(req_path) and os.path.exists(req_path) and os.path.isdir(req_path):
+            if (
+                not matched_root
+                and os.path.isabs(req_path)
+                and os.path.exists(req_path)
+                and os.path.isdir(req_path)
+            ):
                 # Allow browsing absolute host paths (useful when running on host)
-                matched_root = ('host', req_path)
+                matched_root = ("host", req_path)
 
         if not matched_root:
-            return {'error': 'Path not allowed'}
+            return {"error": "Path not allowed"}
 
         # Path must exist and be a directory
         if not os.path.exists(req_path) or not os.path.isdir(req_path):
-            return {'error': 'Path not found or not a directory'}
+            return {"error": "Path not found or not a directory"}
 
         entries = []
         for name in sorted(os.listdir(req_path)):
             full = os.path.join(req_path, name)
-            entries.append({
-                'name': name,
-                'path': os.path.abspath(full),
-                'relpath': os.path.relpath(full, matched_root[1]) if matched_root and matched_root[1] else name,
-                'is_dir': os.path.isdir(full)
-            })
+            entries.append(
+                {
+                    "name": name,
+                    "path": os.path.abspath(full),
+                    "relpath": os.path.relpath(full, matched_root[1])
+                    if matched_root and matched_root[1]
+                    else name,
+                    "is_dir": os.path.isdir(full),
+                }
+            )
 
-        return {'path': req_path, 'root': matched_root[0], 'entries': entries}
+        return {"path": req_path, "root": matched_root[0], "entries": entries}
     except Exception as e:
         logger.error(f"Error browsing filesystem: {e}")
-        return {'error': 'Failed to browse path'}
+        return {"error": "Failed to browse path"}
 
 
 @router.get("/settings/preferences")
 def get_preferences():
     """Get metadata enhancement preferences."""
     try:
-        prefs = config_manager.get('metadata_enhancement') or {}
+        prefs = config_manager.get("metadata_enhancement") or {}
         return prefs
     except Exception as e:
         logger.error(f"Error getting preferences: {e}")
@@ -813,10 +875,10 @@ async def update_preferences(request: Request):
             return {"error": "Missing payload"}
 
         # Validate/Sanitize if needed
-        current = config_manager.get('metadata_enhancement') or {}
+        current = config_manager.get("metadata_enhancement") or {}
         updated = {**current, **payload}
 
-        config_manager.set('metadata_enhancement', updated)
+        config_manager.set("metadata_enhancement", updated)
         return {"success": True, "preferences": updated}
     except Exception as e:
         logger.error(f"Error updating preferences: {e}")
@@ -829,13 +891,13 @@ async def preview_rename(request: Request):
     try:
         payload = await request.json()
         if not payload:
-             return {"error": "Missing payload"}
+            return {"error": "Missing payload"}
 
-        template = payload.get('template')
-        sample_data = payload.get('sample_data') # Optional
+        template = payload.get("template")
+        sample_data = payload.get("sample_data")  # Optional
 
         if not template:
-             return {"error": "Missing template"}
+            return {"error": "Missing template"}
 
         enhancer = get_metadata_enhancer()
         preview = enhancer.generate_preview_path(template, sample_data)
@@ -863,7 +925,9 @@ async def trigger_metadata_enhancement(request: Request):
         limit_val = body.get("limit")
         limit = int(limit_val) if limit_val is not None else None
         check_all = bool(body.get("check_all_files", False))
-        get_metadata_enhancer().enhance_library_metadata(batch_size=size, check_all_files=check_all, limit=limit)
+        get_metadata_enhancer().enhance_library_metadata(
+            batch_size=size, check_all_files=check_all, limit=limit
+        )
         return {"status": "ok", "batch_size": size, "limit": limit}
     except Exception as exc:
         logger.error("Manual enhance trigger failed: %s", exc, exc_info=True)
@@ -875,6 +939,7 @@ def reset_state():
     """Drops all tables in working.db and calls create_all() to give a clean operational slate."""
     try:
         from database.working_database import get_working_database
+
         logger.info("System state reset requested - dropping and recreating working.db")
         working_db = get_working_database()
         working_db.drop_all()
@@ -890,11 +955,17 @@ def reset_library():
     """Drops and recreates all tables in music_library.db (Wipes the media database, forces a re-crawl)."""
     try:
         from database.music_database import get_database
-        logger.info("Library reset requested - dropping and recreating music_library.db")
+
+        logger.info(
+            "Library reset requested - dropping and recreating music_library.db"
+        )
         music_db = get_database()
         music_db.drop_all()
         music_db.create_all()
-        return {"success": True, "message": "Music library reset successfully. Ready for rescanning."}
+        return {
+            "success": True,
+            "message": "Music library reset successfully. Ready for rescanning.",
+        }
     except Exception as e:
         logger.error(f"Error resetting library: {e}", exc_info=True)
         return {"success": False, "error": "Failed to reset library"}
@@ -904,40 +975,44 @@ def reset_library():
 def reset_factory():
     """Deletes working.db, music_library.db, and config.db, triggering OOBE on next boot."""
     try:
-        from core.state import system_state
-        from core.job_queue import JobQueue
         import threading
         import time
-        
+
+        from core.task_manager.task_queue import JobQueue
+        from core.state import system_state
+
         logger.warning("Factory reset requested! Deleting all primary databases.")
-        
+
         def execute_factory_reset():
             time.sleep(2)  # Allow API response to return
             try:
                 from database.working_database import close_working_database
+
                 close_working_database()
             except ImportError:
                 pass
-            
+
             try:
                 from database.music_database import close_database
+
                 close_database()
             except ImportError:
                 pass
-                
+
             try:
                 from database.config_database import close_config_database
+
                 close_config_database()
             except ImportError:
                 pass
-            
+
             data_dir = os.getenv("ECHOSYNC_DATA_DIR", "data")
             db_files = [
                 os.path.join(data_dir, "working.db"),
                 os.path.join(data_dir, "music_library.db"),
-                os.path.join(data_dir, "config.db")
+                os.path.join(data_dir, "config.db"),
             ]
-            
+
             for db_path in db_files:
                 if os.path.exists(db_path):
                     try:
@@ -945,32 +1020,39 @@ def reset_factory():
                         logger.info(f"Deleted database: {db_path}")
                     except Exception as e:
                         logger.error(f"Failed to delete {db_path}: {e}")
-                        
-            logger.warning("Factory reset complete. Executing hard restart to trigger OOBE.")
+
+            logger.warning(
+                "Factory reset complete. Executing hard restart to trigger OOBE."
+            )
             os._exit(1)
-            
+
         system_state.restart_pending = True
         JobQueue.RESTART_PENDING = True
         threading.Thread(target=execute_factory_reset, daemon=True).start()
-        
-        return {"success": True, "message": "Factory reset initiated. System will restart shortly."}
+
+        return {
+            "success": True,
+            "message": "Factory reset initiated. System will restart shortly.",
+        }
     except Exception as e:
         logger.error(f"Error initiating factory reset: {e}", exc_info=True)
         return {"success": False, "error": "Failed to initiate factory reset"}
+
 
 @router.post("/jobs/{job_name}/kill", dependencies=[Depends(require_auth)])
 def kill_job(job_name):
     """Terminate a running job violently if it is a process, or softly if it is a thread."""
     try:
-        from core.job_queue import job_queue
         import multiprocessing
+
+        from core.task_manager.task_queue import job_queue
 
         with job_queue._lock:
             val = job_queue._is_running.get(job_name)
             job = job_queue._jobs.get(job_name)
 
             if not val and not (job and job.running):
-                return {'error': 'Job not running'}
+                return {"error": "Job not running"}
 
             # If it's a multiprocessing Process, terminate it
             if isinstance(val, multiprocessing.Process) and val.is_alive():
@@ -978,21 +1060,27 @@ def kill_job(job_name):
                 val.terminate()
                 val.join(timeout=2.0)
                 if val.is_alive():
-                    val.kill() # Escalation
+                    val.kill()  # Escalation
                 job_queue._is_running[job_name] = False
                 if job:
                     job.running = False
-                return {'success': True, 'message': f'Process terminated for {job_name}'}
+                return {
+                    "success": True,
+                    "message": f"Process terminated for {job_name}",
+                }
 
             # Otherwise, soft kill for threads
             if job:
                 job.running = False
             job_queue._is_running[job_name] = False
-            return {'success': True, 'message': f'Soft stop signal sent to thread for {job_name}'}
+            return {
+                "success": True,
+                "message": f"Soft stop signal sent to thread for {job_name}",
+            }
 
     except Exception as e:
         logger.error(f"Error killing job: {e}")
-        return {'error': 'Failed to kill job'}
+        return {"error": "Failed to kill job"}
 
 
 bp = router

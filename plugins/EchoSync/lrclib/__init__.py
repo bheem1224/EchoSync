@@ -7,4 +7,4 @@ from .provider import LRCLibProvider
 
 ProviderClass = LRCLibProvider
 
-__all__ = ['LRCLibProvider', 'ProviderClass']
+__all__ = ["LRCLibProvider", "ProviderClass"]

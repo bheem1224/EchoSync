@@ -10,4 +10,3 @@ Direct usage of PlexClient is recommended instead.
 from core.tiered_logger import get_logger
 
 logger = get_logger("plex_adapter")
-

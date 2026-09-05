@@ -2,14 +2,14 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from database.music_database import Base, Track, Artist, Album, LocalMedia, TrackArtist
-from core.db.echo_sync_track import EchosyncTrack, EchosyncMedia
 from core.database.repositories.track_repo import TrackRepository
+from core.db.echo_sync_track import EchosyncMedia, EchosyncTrack
 from core.matching_engine.matching_engine import (
     WeightedMatchingEngine,
     calculate_duration_score,
 )
 from core.matching_engine.scoring_profile import ExactSyncProfile
+from database.music_database import Artist, Base
 from services.playlists_api import get_library_candidates, resolve_duplicate_matches
 
 
@@ -82,7 +82,9 @@ def test_e2e_multi_artist_schema_and_collaborator_resolution(e2e_db):
     assert "Jonas Blue feat. William Singe" not in all_artists
 
     # 2. Check "Mama" collaborator query via track_artists
-    mama_cand = get_library_candidates(session, target_title="Mama", target_artist="William Singe")
+    mama_cand = get_library_candidates(
+        session, target_title="Mama", target_artist="William Singe"
+    )
     assert len(mama_cand) == 1
     assert mama_cand[0].title == "Mama"
     assert mama_cand[0].artist.name == "Jonas Blue"
@@ -136,7 +138,10 @@ def test_e2e_cover_version_and_remix_boundaries():
     )
     cover_match = engine.calculate_match(source_cover, cand_original)
     assert cover_match.confidence_score == 0.0
-    assert "Artist boundary mismatch" in cover_match.reasoning or cover_match.fuzzy_text_score < 0.70
+    assert (
+        "Artist boundary mismatch" in cover_match.reasoning
+        or cover_match.fuzzy_text_score < 0.70
+    )
 
     # 2. Canonical Cut vs Extended Remix
     source_original_query = EchosyncTrack(
@@ -209,10 +214,22 @@ def test_e2e_playlist_sync_telemetry_and_greedy_winner_take_all(e2e_db):
 
     # Simulated Playlist Input
     playlist_source_items = [
-        {"title": "Rewrite The Stars", "artist": "Zac Efron & Zendaya", "duration": 217000},
-        {"title": "Rewrite The Stars", "artist": "James Arthur & Anne-Marie", "duration": 217000},
+        {
+            "title": "Rewrite The Stars",
+            "artist": "Zac Efron & Zendaya",
+            "duration": 217000,
+        },
+        {
+            "title": "Rewrite The Stars",
+            "artist": "James Arthur & Anne-Marie",
+            "duration": 217000,
+        },
         {"title": "Safe and Sound", "artist": "Capital Cities", "duration": 192000},
-        {"title": "Mama", "artist": "Jonas Blue feat. William Singe", "duration": 184000},
+        {
+            "title": "Mama",
+            "artist": "Jonas Blue feat. William Singe",
+            "duration": 184000,
+        },
         {"title": "Nonexistent Song", "artist": "Unknown Band", "duration": 200000},
     ]
 
@@ -240,38 +257,56 @@ def test_e2e_playlist_sync_telemetry_and_greedy_winner_take_all(e2e_db):
             )
             res = engine.calculate_match(src_track, cand_dto)
             if res.confidence_score >= 70.0:
-                cand_matches.append({
-                    "id": cand.id,
-                    "score": res.confidence_score,
-                    "target_identifier": f"plex://{cand.id}",
-                })
+                cand_matches.append(
+                    {
+                        "id": cand.id,
+                        "score": res.confidence_score,
+                        "target_identifier": f"plex://{cand.id}",
+                    }
+                )
             if res.confidence_score > best_score:
                 best_score = res.confidence_score
                 best_cand_id = cand.id
 
-        lib_match = "Found" if best_score >= 85 else ("Found (score: 75%)" if best_score >= 70 else "Not Found")
-        evaluated_playlist.append({
-            "title": item["title"],
-            "artist": item["artist"],
-            "matched_track_id": best_cand_id if best_score >= 70 else None,
-            "match_score": best_score,
-            "library_match": lib_match,
-            "target_identifier": f"plex://{best_cand_id}" if (best_cand_id and best_score >= 70) else None,
-            "candidate_matches": cand_matches,
-        })
+        lib_match = (
+            "Found"
+            if best_score >= 85
+            else ("Found (score: 75%)" if best_score >= 70 else "Not Found")
+        )
+        evaluated_playlist.append(
+            {
+                "title": item["title"],
+                "artist": item["artist"],
+                "matched_track_id": best_cand_id if best_score >= 70 else None,
+                "match_score": best_score,
+                "library_match": lib_match,
+                "target_identifier": f"plex://{best_cand_id}"
+                if (best_cand_id and best_score >= 70)
+                else None,
+                "candidate_matches": cand_matches,
+            }
+        )
 
     # Run Greedy 1:1 Winner-Take-All Collision Resolution
     resolved_playlist = resolve_duplicate_matches(evaluated_playlist)
 
     total_tracks = len(resolved_playlist)
-    found_count = sum(1 for t in resolved_playlist if t["library_match"].startswith("Found"))
-    missing_count = sum(1 for t in resolved_playlist if t["library_match"] == "Not Found")
+    found_count = sum(
+        1 for t in resolved_playlist if t["library_match"].startswith("Found")
+    )
+    missing_count = sum(
+        1 for t in resolved_playlist if t["library_match"] == "Not Found"
+    )
 
     # Invariant: found + missing == total
     assert found_count + missing_count == total_tracks
 
     # Invariant: Zero duplicate matched_track_id assignments
-    assigned_ids = [t["matched_track_id"] for t in resolved_playlist if t["matched_track_id"] is not None]
+    assigned_ids = [
+        t["matched_track_id"]
+        for t in resolved_playlist
+        if t["matched_track_id"] is not None
+    ]
     assert len(assigned_ids) == len(set(assigned_ids))
 
     # Assert specific outcomes

@@ -1,8 +1,10 @@
-from typing import Optional, Dict, Any
+from typing import Any
+
 from core.settings import config_manager
 from core.tiered_logger import get_logger
 
 logger = get_logger("account_manager")
+
 
 class AccountManager:
     """
@@ -11,36 +13,40 @@ class AccountManager:
     """
 
     @staticmethod
-    def get_account_token(service_name: str, account_id: int) -> Optional[Dict[str, Any]]:
+    def get_account_token(service_name: str, account_id: int) -> dict[str, Any] | None:
         """Retrieve token data for a specific account."""
-        if service_name == 'spotify':
-            accounts = []
-        elif service_name == 'tidal':
+        if service_name == "spotify" or service_name == "tidal":
             accounts = []
         else:
-            logger.warning(f"Unsupported service for account token retrieval: {service_name}")
+            logger.warning(
+                f"Unsupported service for account token retrieval: {service_name}"
+            )
             return None
 
         for acc in accounts:
-            if acc.get('id') == account_id:
+            if acc.get("id") == account_id:
                 return {
-                    'access_token': acc.get('access_token'),
-                    'refresh_token': acc.get('refresh_token'),
-                    'expires_at': acc.get('expires_at'),
-                    'scope': acc.get('scope'),
-                    'token_type': acc.get('token_type', 'Bearer')
+                    "access_token": acc.get("access_token"),
+                    "refresh_token": acc.get("refresh_token"),
+                    "expires_at": acc.get("expires_at"),
+                    "scope": acc.get("scope"),
+                    "token_type": acc.get("token_type", "Bearer"),
                 }
         return None
 
     @staticmethod
-    def save_account_token(service_name: str, account_id: int, token_info: Dict[str, Any]) -> bool:
+    def save_account_token(
+        service_name: str, account_id: int, token_info: dict[str, Any]
+    ) -> bool:
         """Save updated token information for an account."""
-        if service_name == 'spotify':
+        if service_name == "spotify":
             return bool(config_manager.update_spotify_account(account_id, token_info))
-        elif service_name == 'tidal':
+        elif service_name == "tidal":
             return bool(config_manager.update_tidal_account(account_id, token_info))
         else:
-            logger.warning(f"Unsupported service for account token storage: {service_name}")
+            logger.warning(
+                f"Unsupported service for account token storage: {service_name}"
+            )
             return False
 
     @staticmethod
@@ -53,9 +59,10 @@ class AccountManager:
         the same logic.
         """
         # try the database first for the two multi-account services
-        if service_name in ('spotify', 'tidal'):
+        if service_name in ("spotify", "tidal"):
             try:
                 from database.config_database import get_config_database
+
                 db = get_config_database()
                 service_id = db.get_or_create_service_id(service_name)
                 accounts = db.get_accounts(service_id=service_id)
@@ -65,14 +72,12 @@ class AccountManager:
                 pass
 
         # legacy fallback
-        if service_name == 'spotify':
-            return []
-        elif service_name == 'tidal':
+        if service_name == "spotify" or service_name == "tidal":
             return []
         return []
 
     @staticmethod
-    def get_service_config(service_name: str, key: str) -> Optional[Any]:
+    def get_service_config(service_name: str, key: str) -> Any | None:
         """Get global service configuration.
 
         Modern credentials are stored in the encrypted *service_config* table and
@@ -97,22 +102,24 @@ class AccountManager:
             return creds[key]
 
         # Legacy fallback (stored in config_data)
-        return config_manager.get(f'{service_name}.{key}')
+        return config_manager.get(f"{service_name}.{key}")
 
     @staticmethod
-    def get_account(service_name: str, account_id: int) -> Optional[Dict[str, Any]]:
+    def get_account(service_name: str, account_id: int) -> dict[str, Any] | None:
         """Get full account details."""
         accounts = AccountManager.list_accounts(service_name)
         for acc in accounts:
-            if acc.get('id') == account_id:
+            if acc.get("id") == account_id:
                 return acc
         return None
 
     @staticmethod
-    def update_account(service_name: str, account_id: int, updates: Dict[str, Any]) -> bool:
+    def update_account(
+        service_name: str, account_id: int, updates: dict[str, Any]
+    ) -> bool:
         """Update generic account fields."""
-        if service_name == 'spotify':
+        if service_name == "spotify":
             return bool(config_manager.update_spotify_account(account_id, updates))
-        elif service_name == 'tidal':
+        elif service_name == "tidal":
             return bool(config_manager.update_tidal_account(account_id, updates))
         return False

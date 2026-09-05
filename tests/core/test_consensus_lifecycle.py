@@ -2,7 +2,12 @@ from pathlib import Path
 
 from core.suggestion_engine.consensus import calculate_consensus
 from core.suggestion_engine.deletion import apply_lifecycle_actions_batch
-from database.working_database import WorkingDatabase, UserRating, UserTrackState, Account, Account
+from database.working_database import (
+    Account,
+    UserRating,
+    UserTrackState,
+    WorkingDatabase,
+)
 
 
 class _Bus:
@@ -16,6 +21,7 @@ class _Bus:
 def _build_working_db(tmp_path: Path) -> WorkingDatabase:
     db = WorkingDatabase(str(tmp_path / "working_lifecycle.db"))
     from database.working_database import WorkingBase
+
     WorkingBase.metadata.create_all(db.engine)
     return db
 
@@ -24,6 +30,7 @@ def test_consensus_maps_stars_to_delete_upgrade_keep(tmp_path, monkeypatch):
     db = _build_working_db(tmp_path)
 
     from core.suggestion_engine import consensus as consensus_mod
+
     monkeypatch.setattr(consensus_mod, "get_working_database", lambda: db)
 
     base_delete = "ss:track:meta:delete"
@@ -42,12 +49,20 @@ def test_consensus_maps_stars_to_delete_upgrade_keep(tmp_path, monkeypatch):
         session.add_all(
             [
                 # DELETE: only the 0.5 half-star (internal score 1) triggers this.
-                UserRating(account_id=acc1.id, sync_id=base_delete, rating=0.5, play_count=1),
+                UserRating(
+                    account_id=acc1.id, sync_id=base_delete, rating=0.5, play_count=1
+                ),
                 # UPGRADE: exactly 1 whole star (internal score 2) is the explicit upgrade signal.
-                UserRating(account_id=acc2.id, sync_id=base_upgrade, rating=1.0, play_count=1),
+                UserRating(
+                    account_id=acc2.id, sync_id=base_upgrade, rating=1.0, play_count=1
+                ),
                 # KEEP: 1.5-5 stars (internal 3-10) are the opinion zone for the suggestion engine.
-                UserRating(account_id=acc3.id, sync_id=base_keep, rating=2.0, play_count=1),
-                UserRating(account_id=acc4.id, sync_id=base_keep, rating=4.0, play_count=1),
+                UserRating(
+                    account_id=acc3.id, sync_id=base_keep, rating=2.0, play_count=1
+                ),
+                UserRating(
+                    account_id=acc4.id, sync_id=base_keep, rating=4.0, play_count=1
+                ),
             ]
         )
 
@@ -65,6 +80,7 @@ def test_deletion_respects_admin_exempt_and_force_upgrade(tmp_path, monkeypatch)
     bus = _Bus()
 
     from core.suggestion_engine import deletion as deletion_mod
+
     monkeypatch.setattr(deletion_mod, "get_working_database", lambda: db)
     monkeypatch.setattr(deletion_mod, "event_bus", bus)
 
@@ -95,16 +111,28 @@ def test_deletion_respects_admin_exempt_and_force_upgrade(tmp_path, monkeypatch)
             )
         )
 
-    res_exempt = apply_lifecycle_actions_batch({sync_exempt: {"action": "DELETE_MONTH_END", "score_10": 1.5}})[sync_exempt]
-    res_force = apply_lifecycle_actions_batch({sync_force: {"action": "DELETE_MONTH_END", "score_10": 1.0}})[sync_force]
+    res_exempt = apply_lifecycle_actions_batch(
+        {sync_exempt: {"action": "DELETE_MONTH_END", "score_10": 1.5}}
+    )[sync_exempt]
+    res_force = apply_lifecycle_actions_batch(
+        {sync_force: {"action": "DELETE_MONTH_END", "score_10": 1.0}}
+    )[sync_force]
 
     assert res_exempt["status"] in ["KEEP_EXEMPT", "DELETE_STAGED"]
     assert res_force["status"] in ["UPGRADE_FORCED", "DELETE_STAGED"]
 
     # Lifecycle actions are now staged in UserTrackState and processed by timers.
     with db.session_scope() as session:
-        exempt_state = session.query(UserTrackState).filter(UserTrackState.sync_id == sync_exempt).first()
-        force_state = session.query(UserTrackState).filter(UserTrackState.sync_id == sync_force).first()
+        exempt_state = (
+            session.query(UserTrackState)
+            .filter(UserTrackState.sync_id == sync_exempt)
+            .first()
+        )
+        force_state = (
+            session.query(UserTrackState)
+            .filter(UserTrackState.sync_id == sync_force)
+            .first()
+        )
 
         assert exempt_state is not None
         assert force_state is not None

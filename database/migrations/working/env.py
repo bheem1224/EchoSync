@@ -1,8 +1,5 @@
 from logging.config import fileConfig
 
-from sqlalchemy import engine_from_config
-from sqlalchemy import pool
-
 from alembic import context
 
 from database.working_database import WorkingBase, get_working_database
@@ -15,7 +12,9 @@ config = context.config
 # This line sets up loggers basically.
 # Guard: when invoked programmatically (e.g. run_auto_migrations), the caller
 # sets configure_logger=False to prevent Alembic wiping our tiered log setup.
-if config.config_file_name is not None and config.attributes.get('configure_logger', True):
+if config.config_file_name is not None and config.attributes.get(
+    "configure_logger", True
+):
     fileConfig(config.config_file_name)
 
 # add your model's MetaData object here
@@ -26,8 +25,9 @@ target_metadata.naming_convention = {
     "uq": "uq_%(table_name)s_%(column_0_name)s",
     "ck": "ck_%(table_name)s_%(constraint_name)s",
     "fk": "fk_%(table_name)s_%(column_0_name)s_%(referred_table_name)s",
-    "pk": "pk_%(table_name)s"
+    "pk": "pk_%(table_name)s",
 }
+
 
 def run_migrations_offline() -> None:
     db = get_working_database()
@@ -48,12 +48,12 @@ def run_migrations_online() -> None:
 
     with connectable.connect() as connection:
         context.configure(
-            connection=connection, target_metadata=target_metadata,
-            render_as_batch=True
+            connection=connection, target_metadata=target_metadata, render_as_batch=True
         )
 
         with context.begin_transaction():
             context.run_migrations()
+
 
 if context.is_offline_mode():
     run_migrations_offline()

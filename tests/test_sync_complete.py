@@ -1,33 +1,31 @@
+from fastapi.testclient import TestClient
 """Test complete sync implementation with all 5 remaining features."""
-import pytest
+
 import time
-import json
-from unittest.mock import Mock, patch, MagicMock
-from web.routes.playlists import (
-    trigger_sync,
-    _sync_to_plex,
-    _sync_to_tier,
-    _register_scheduled_sync_job,
-    load_scheduled_syncs_on_startup,
-)
-from core.job_queue import job_queue
+from unittest.mock import MagicMock
+
+import pytest
+from flask import Flask
+
 from core.event_bus import event_bus
 from core.sync_history import sync_history
-from flask import Flask
+from web.routes.playlists import (
+    trigger_sync,
+)
 
 
 @pytest.fixture
 def app():
     """Create Flask test app."""
     app = Flask(__name__)
-    app.config['TESTING'] = True
+    app.config["TESTING"] = True
     return app
 
 
 @pytest.fixture
 def client(app):
     """Create test client."""
-    with app.test_client() as client:
+    with TestClient(app) as client:
         yield client
 
 
@@ -35,20 +33,20 @@ def test_sync_mode_detection_tier_to_tier():
     """Test sync mode detection for tier-to-tier sync (Spotify↔Tidal)."""
     tier_to_tier_providers = {"spotify", "tidal", "apple_music"}
     local_server_providers = {"plex", "jellyfin", "navidrome"}
-    
+
     source = "spotify"
     target = "tidal"
-    
+
     is_source_tier = source in tier_to_tier_providers
     is_target_tier = target in tier_to_tier_providers
-    
+
     assert is_source_tier is True
     assert is_target_tier is True
-    
+
     # Should detect as tier-to-tier
     if is_source_tier and is_target_tier:
         sync_mode = "tier-to-tier"
-    
+
     assert sync_mode == "tier-to-tier"
 
 
@@ -56,20 +54,20 @@ def test_sync_mode_detection_local_server():
     """Test sync mode detection for local-server sync (Spotify→Plex)."""
     tier_to_tier_providers = {"spotify", "tidal", "apple_music"}
     local_server_providers = {"plex", "jellyfin", "navidrome"}
-    
+
     source = "spotify"
     target = "plex"
-    
+
     is_source_tier = source in tier_to_tier_providers
     is_target_server = target in local_server_providers
-    
+
     assert is_source_tier is True
     assert is_target_server is True
-    
+
     # Should detect as local-server
     if is_source_tier and is_target_server:
         sync_mode = "local-server"
-    
+
     assert sync_mode == "local-server"
 
 
@@ -77,43 +75,43 @@ def test_sync_mode_detection_server_to_tier():
     """Test sync mode detection for server-to-tier sync (Plex→Spotify)."""
     tier_to_tier_providers = {"spotify", "tidal", "apple_music"}
     local_server_providers = {"plex", "jellyfin", "navidrome"}
-    
+
     source = "plex"
     target = "spotify"
-    
+
     is_source_server = source in local_server_providers
     is_target_tier = target in tier_to_tier_providers
-    
+
     assert is_source_server is True
     assert is_target_tier is True
-    
+
     # Should detect as server-to-tier
     if is_source_server and is_target_tier:
         sync_mode = "server-to-tier"
-    
+
     assert sync_mode == "server-to-tier"
 
 
 def test_event_bus_publish_and_get():
     """Test event bus pub/sub for sync progress."""
     job_name = "test:sync:job:123"
-    
+
     # Clear previous events
     event_bus.clear(job_name)
-    
+
     # Publish events
     event_bus.publish(job_name, "sync_started", {"total": 10, "playlist": "test"})
     event_bus.publish(job_name, "track_synced", {"index": 1, "rating_key": "abc"})
     event_bus.publish(job_name, "sync_complete", {"synced": 10, "failed": 0})
-    
+
     # Get events since -1 (all)
     events = event_bus.get_events(job_name, since_id=-1)
-    
+
     assert len(events) == 3
     assert events[0]["type"] == "sync_started"
     assert events[1]["type"] == "track_synced"
     assert events[2]["type"] == "sync_complete"
-    
+
     # Get events since event 1 (only last 2)
     events = event_bus.get_events(job_name, since_id=0)
     assert len(events) == 2
@@ -122,7 +120,7 @@ def test_event_bus_publish_and_get():
 def test_sync_history_recording():
     """Test sync history recording and retention."""
     sync_history.clear()
-    
+
     # Record multiple syncs
     for i in range(5):
         sync_history.record_sync(
@@ -135,11 +133,11 @@ def test_sync_history_recording():
             download_missing=False,
             job_name=f"sync:job:{i}",
         )
-    
+
     # Check history
     history = sync_history.get_recent(limit=10)
     assert len(history) == 5
-    
+
     # Check most recent
     recent = sync_history.get_recent(limit=1)
     assert len(recent) == 1
@@ -158,7 +156,7 @@ def test_scheduled_sync_config_creation():
         "enabled": True,
         "created_at": time.time(),
     }
-    
+
     # Verify config structure
     assert sync_config["source"] == "spotify"
     assert sync_config["target"] == "plex"
@@ -179,7 +177,7 @@ def test_scheduled_sync_intervals():
         (86400, "24 hours"),
         (604800, "1 week"),
     ]
-    
+
     for seconds, label in intervals:
         assert seconds > 0
         assert isinstance(label, str)
@@ -190,17 +188,17 @@ def test_event_monotonic_ids():
     """Test that event IDs are monotonically increasing."""
     job_name = "test:monotonic:job"
     event_bus.clear(job_name)
-    
+
     # Publish multiple events
     for i in range(10):
         event_bus.publish(job_name, f"event_{i}", {"index": i})
-    
+
     # Get events
     events = event_bus.get_events(job_name, since_id=-1)
-    
+
     # Verify IDs increase
     for i in range(1, len(events)):
-        assert events[i]["id"] > events[i-1]["id"]
+        assert events[i]["id"] > events[i - 1]["id"]
 
 
 def test_sync_job_retry_config():
@@ -208,13 +206,13 @@ def test_sync_job_retry_config():
     max_retries = 3
     backoff_base = 5.0
     backoff_factor = 2.0
-    
+
     # Calculate backoff times
     backoff_times = []
     for retry_count in range(1, max_retries + 1):
         backoff = backoff_base * (backoff_factor ** (retry_count - 1))
         backoff_times.append(backoff)
-    
+
     # Verify exponential growth
     assert backoff_times[0] == 5.0  # 5 * (2 ^ 0)
     assert backoff_times[1] == 10.0  # 5 * (2 ^ 1)
@@ -239,7 +237,7 @@ def test_sync_payload_validation():
             "download_missing": True,
         },
     ]
-    
+
     for payload in valid_payloads:
         assert "source" in payload
         assert "target_source" in payload
@@ -257,11 +255,11 @@ def test_ui_schedule_modal_data_binding():
         "interval": 3600,
         "download_missing": False,
     }
-    
+
     # Simulate form updates
     schedule_form["interval"] = 21600  # Change to 6 hours
     schedule_form["download_missing"] = True
-    
+
     assert schedule_form["interval"] == 21600
     assert schedule_form["download_missing"] is True
     assert len(schedule_form["playlists"]) == 3
@@ -279,15 +277,15 @@ def test_sync_button_enabled_state():
             "missing_tracks": 0,
         }
     }
-    
+
     # Button should be enabled when there are matches and can_sync is true
     can_enable_sync_button = (
-        analysis_result_with_matches is not None and
-        analysis_result_with_matches.get("summary", {}).get("can_sync", False)
+        analysis_result_with_matches is not None
+        and analysis_result_with_matches.get("summary", {}).get("can_sync", False)
     )
-    
+
     assert can_enable_sync_button is True
-    
+
     # Test with no matches
     analysis_result_no_matches = {
         "summary": {
@@ -296,18 +294,22 @@ def test_sync_button_enabled_state():
             "missing_tracks": 100,
         }
     }
-    
+
     can_enable_sync_button = (
-        analysis_result_no_matches is not None and
-        analysis_result_no_matches.get("summary", {}).get("can_sync", False)
+        analysis_result_no_matches is not None
+        and analysis_result_no_matches.get("summary", {}).get("can_sync", False)
     )
     assert can_enable_sync_button is False
 
 
 def test_trigger_sync_account_id_resolution_and_plex_dispatch(monkeypatch):
     """Verify trigger_sync correctly resolves numeric account IDs and dispatches without NameError."""
-    from web.routes.playlists import trigger_sync
-    from core.nexus_framework.plugin_SDK import ProviderCapabilities, PlaylistSupport, SearchCapabilities, MetadataRichness
+    from core.nexus_framework.plugin_SDK import (
+        MetadataRichness,
+        PlaylistSupport,
+        ProviderCapabilities,
+        SearchCapabilities,
+    )
 
     # Mock capabilities for numeric account IDs
     spotify_caps = ProviderCapabilities(
@@ -315,21 +317,29 @@ def test_trigger_sync_account_id_resolution_and_plex_dispatch(monkeypatch):
         supports_playlists=PlaylistSupport.READ_WRITE,
         search=SearchCapabilities(),
         metadata=MetadataRichness.HIGH,
-        supports_streaming=True
+        supports_streaming=True,
     )
     plex_caps = ProviderCapabilities(
         name="EchoSync.plex",
         supports_playlists=PlaylistSupport.READ_WRITE,
         search=SearchCapabilities(),
         metadata=MetadataRichness.HIGH,
-        supports_library_scan=True
+        supports_library_scan=True,
     )
 
-    monkeypatch.setattr("core.nexus_framework.plugin_loader.get_plugin_capabilities", lambda p: spotify_caps if str(p) == "2391116200" else plex_caps)
-    monkeypatch.setattr("web.routes.playlists._normalize_provider_short_name", lambda p: "spotify" if str(p) == "2391116200" else "plex")
+    monkeypatch.setattr(
+        "core.nexus_framework.plugin_loader.get_plugin_capabilities",
+        lambda p: spotify_caps if str(p) == "2391116200" else plex_caps,
+    )
+    monkeypatch.setattr(
+        "web.routes.playlists._normalize_provider_short_name",
+        lambda p: "spotify" if str(p) == "2391116200" else "plex",
+    )
 
     # Mock _sync_to_plex to intercept execution
-    mock_sync_plex = MagicMock(return_value={"accepted": True, "job_name": "sync:plex:test"})
+    mock_sync_plex = MagicMock(
+        return_value={"accepted": True, "job_name": "sync:plex:test"}
+    )
     monkeypatch.setattr("web.routes.playlists._sync_to_plex", mock_sync_plex)
 
     payload = {
@@ -345,9 +355,8 @@ def test_trigger_sync_account_id_resolution_and_plex_dispatch(monkeypatch):
     assert mock_sync_plex.called
     args = mock_sync_plex.call_args[0]
     assert args[1] == "2391116200"  # source
-    assert args[2] == "977698763"   # target
+    assert args[2] == "977698763"  # target
 
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
-

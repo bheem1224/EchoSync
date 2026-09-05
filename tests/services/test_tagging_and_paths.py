@@ -3,27 +3,25 @@ Test suite for deterministic audio tagging, lofty Rust FFI extension,
 dynamic path formatting, and roundtrip verification gates.
 """
 
-import pytest
-from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 import echosync_core
+import pytest
+
 from core.path_formatter import (
-    sanitize_path_segment,
     build_destination_path,
     get_library_preferences,
 )
-from services.metadata_enhancer import (
-    RetroactiveEnhancer,
-    MetadataWriteVerificationError,
-    build_native_tag_payload,
-)
 from services.auto_importer import AutoImportService
+from services.metadata_enhancer import (
+    MetadataWriteVerificationError,
+    RetroactiveEnhancer,
+)
 from tests.core.test_metadata_writer import (
-    _create_minimal_wav_file,
     _create_minimal_flac_file,
-    _create_minimal_mp3_file,
     _create_minimal_m4a_file,
+    _create_minimal_mp3_file,
+    _create_minimal_wav_file,
 )
 
 
@@ -41,7 +39,12 @@ def test_user_defined_path_formatting(tmp_path):
         "year": "2013",
     }
     p1 = build_destination_path(str(lib_root), pattern, meta1, "flac")
-    expected_p1 = lib_root / "Daft Punk" / "Random Access Memories" / "01 - Give Life Back to Music.flac"
+    expected_p1 = (
+        lib_root
+        / "Daft Punk"
+        / "Random Access Memories"
+        / "01 - Give Life Back to Music.flac"
+    )
     assert p1 == expected_p1
 
     # 2. Clean omission of Track (no dangling hyphens like '- Title.ext')
@@ -63,7 +66,9 @@ def test_user_defined_path_formatting(tmp_path):
         "title": "Levels",
         "version": "Radio Edit",
     }
-    p3 = build_destination_path(str(lib_root), "{Artist}/{Album}/{Title}.{ext}", meta3, "m4a")
+    p3 = build_destination_path(
+        str(lib_root), "{Artist}/{Album}/{Title}.{ext}", meta3, "m4a"
+    )
     expected_p3 = lib_root / "Avicii" / "Singles" / "Levels (Radio Edit).m4a"
     assert p3 == expected_p3
 
@@ -75,10 +80,10 @@ def test_user_defined_path_formatting(tmp_path):
         "track_number": "2/10",
     }
     p4 = build_destination_path(str(lib_root), pattern, meta4, "flac")
-    for illegal in ['/', '\\', '*', '?', ':', '"', '<', '>', '|']:
+    for illegal in ["/", "\\", "*", "?", ":", '"', "<", ">", "|"]:
         assert illegal not in p4.parent.parent.name  # Artist
-        assert illegal not in p4.parent.name         # Album
-        assert illegal not in p4.name                # Filename
+        assert illegal not in p4.parent.name  # Album
+        assert illegal not in p4.name  # Filename
 
 
 def test_version_tag_injection(tmp_path):
@@ -183,16 +188,21 @@ def test_verification_failure_blocks_move(tmp_path):
             auto_importer.finalize_import(source_file, meta)
 
         # Source file must STILL exist in source directory
-        assert source_file.exists(), "Source file should not have been moved or deleted upon failure!"
+        assert source_file.exists(), (
+            "Source file should not have been moved or deleted upon failure!"
+        )
 
         # No destination files should have been created in library
         dest_files = list(library_dir.rglob("*.flac"))
-        assert len(dest_files) == 0, f"No files should have been moved into library, but found: {dest_files}"
+        assert len(dest_files) == 0, (
+            f"No files should have been moved into library, but found: {dest_files}"
+        )
 
 
 def test_preferences_priority_lookup(tmp_path):
     """Verifies that config.db system_settings takes precedence over default settings."""
     from database.config_database import get_config_database
+
     db = get_config_database()
 
     test_root = (tmp_path / "custom_lib").as_posix()
@@ -201,8 +211,14 @@ def test_preferences_priority_lookup(tmp_path):
     # Insert into system_settings
     with db._get_connection() as conn:
         c = conn.cursor()
-        c.execute("INSERT OR REPLACE INTO system_settings (key, value) VALUES ('storage_locations.library', ?)", (test_root,))
-        c.execute("INSERT OR REPLACE INTO system_settings (key, value) VALUES ('library_import.renaming_pattern', ?)", (test_pattern,))
+        c.execute(
+            "INSERT OR REPLACE INTO system_settings (key, value) VALUES ('storage_locations.library', ?)",
+            (test_root,),
+        )
+        c.execute(
+            "INSERT OR REPLACE INTO system_settings (key, value) VALUES ('library_import.renaming_pattern', ?)",
+            (test_pattern,),
+        )
         conn.commit()
 
     try:
@@ -213,5 +229,7 @@ def test_preferences_priority_lookup(tmp_path):
         # Cleanup test settings from config.db
         with db._get_connection() as conn:
             c = conn.cursor()
-            c.execute("DELETE FROM system_settings WHERE key IN ('storage_locations.library', 'library_import.renaming_pattern')")
+            c.execute(
+                "DELETE FROM system_settings WHERE key IN ('storage_locations.library', 'library_import.renaming_pattern')"
+            )
             conn.commit()

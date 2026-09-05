@@ -454,22 +454,22 @@ To change how user vibes are calculated, modify `vibe_profiler.py`:
 **Current weights (equal):**
 ```python
 features_accumulator = {
-    'tempo': 0.0,
-    'energy': 0.0,
-    'valence': 0.0,
-    'danceability': 0.0,
-    'acousticness': 0.0
+    "tempo": 0.0,
+    "energy": 0.0,
+    "valence": 0.0,
+    "danceability": 0.0,
+    "acousticness": 0.0,
 }
 ```
 
 **Customization e.g., weight valence higher:**
 ```python
 weights = {
-    'tempo': 1.0,
-    'energy': 1.0,
-    'valence': 2.0,        # Higher weight
-    'danceability': 1.0,
-    'acousticness': 1.0
+    "tempo": 1.0,
+    "energy": 1.0,
+    "valence": 2.0,  # Higher weight
+    "danceability": 1.0,
+    "acousticness": 1.0,
 }
 for feature, weight in weights.items():
     features_accumulator[feature] += raw_features[feature] * count * weight
@@ -484,9 +484,9 @@ To change what "rarely played" means, modify `discovery.py`:
 is_rarely_played = False
 if not provider_ids:
     is_rarely_played = True  # Never played
-elif p_data['total_plays'] < 3:
+elif p_data["total_plays"] < 3:
     is_rarely_played = True  # <3 all-time scrobbles
-elif p_data['last_played'] < ninety_days_ago:
+elif p_data["last_played"] < ninety_days_ago:
     is_rarely_played = True  # Not played in 90 days
 ```
 
@@ -494,8 +494,7 @@ elif p_data['last_played'] < ninety_days_ago:
 ```python
 # Only return tracks with <1 scrobble in last 6 months
 if not provider_ids or (
-    p_data['total_plays'] < 1
-    and p_data['last_played'] < six_months_ago
+    p_data["total_plays"] < 1 and p_data["last_played"] < six_months_ago
 ):
     is_rarely_played = True
 ```
@@ -507,11 +506,11 @@ To use a different distance algorithm, replace `calculate_vibe_distance()` in `v
 **Current: Euclidean distance with tempo normalization**
 ```python
 distance_squared = (
-    (norm_t_tempo - norm_f_tempo) ** 2 +
-    (t_energy - f_energy) ** 2 +
-    (t_valence - f_valence) ** 2 +
-    (t_dance - f_dance) ** 2 +
-    (t_acoustic - f_acoustic) ** 2
+    (norm_t_tempo - norm_f_tempo) ** 2
+    + (t_energy - f_energy) ** 2
+    + (t_valence - f_valence) ** 2
+    + (t_dance - f_dance) ** 2
+    + (t_acoustic - f_acoustic) ** 2
 )
 return math.sqrt(distance_squared)
 ```
@@ -519,11 +518,11 @@ return math.sqrt(distance_squared)
 **Alternative: Manhattan distance (taxicab metric)**
 ```python
 return (
-    abs(norm_t_tempo - norm_f_tempo) +
-    abs(t_energy - f_energy) +
-    abs(t_valence - f_valence) +
-    abs(t_dance - f_dance) +
-    abs(t_acoustic - f_acoustic)
+    abs(norm_t_tempo - norm_f_tempo)
+    + abs(t_energy - f_energy)
+    + abs(t_valence - f_valence)
+    + abs(t_dance - f_dance)
+    + abs(t_acoustic - f_acoustic)
 )
 ```
 
@@ -591,11 +590,12 @@ def _on_suggest_filters(track, user_id, vibe_signature):
     if track.artist.name in user_blacklist:
         return False
     # Exclude non-English tracks for English-only user
-    if user_language == 'en' and track.language != 'en':
+    if user_language == "en" and track.language != "en":
         return False
     return True
 
-hook_manager.add_filter('suggest_from_library_filters', _on_suggest_filters)
+
+hook_manager.add_filter("suggest_from_library_filters", _on_suggest_filters)
 ```
 
 #### `vibe_score_adjustment` (proposed)
@@ -609,7 +609,7 @@ hook_manager.add_filter('suggest_from_library_filters', _on_suggest_filters)
 ```python
 def _on_vibe_boost(track, distance, user_context):
     # Seasonal boost: heavy metal in winter, pop in summer
-    if is_winter and track.genre == 'Metal':
+    if is_winter and track.genre == "Metal":
         return distance * 0.8  # Lower distance = better match
     # Temporal relevance: boost recently-added tracks
     days_since_added = (now - track.date_added).days
@@ -617,7 +617,8 @@ def _on_vibe_boost(track, distance, user_context):
         return distance * 0.9
     return distance
 
-hook_manager.add_filter('vibe_score_adjustment', _on_vibe_boost)
+
+hook_manager.add_filter("vibe_score_adjustment", _on_vibe_boost)
 ```
 
 #### `lifecycle_decision` (proposed)
@@ -634,11 +635,12 @@ def _on_lifecycle_override(track, decision, user_ids):
     if track.artist.name in FAVORITE_ARTISTS:
         return {"status": "KEEP", "action": "KEEP_AND_FEED_PREFERENCE_MODEL"}
     # Always upgrade tracks with >10 users voting keep
-    if len(user_ids) > 10 and decision['status'] != 'DELETE_CANDIDATE':
-        decision['action'] = 'UPGRADE_WEEK_END'
+    if len(user_ids) > 10 and decision["status"] != "DELETE_CANDIDATE":
+        decision["action"] = "UPGRADE_WEEK_END"
     return decision
 
-hook_manager.add_filter('lifecycle_decision', _on_lifecycle_override)
+
+hook_manager.add_filter("lifecycle_decision", _on_lifecycle_override)
 ```
 
 #### `discover_new_tracks_filter` (proposed)
@@ -652,15 +654,16 @@ hook_manager.add_filter('lifecycle_decision', _on_lifecycle_override)
 ```python
 def _on_discover_filter(tracks, user_id):
     # Only return tracks from "main" releases (not remixes or bootlegs)
-    filtered = [t for t in tracks if 'remix' not in t.get('title', '').lower()]
+    filtered = [t for t in tracks if "remix" not in t.get("title", "").lower()]
     # Prioritize classical if user listens to lots of classical
-    classical_ratio = user_genre_distribution('classical')
+    classical_ratio = user_genre_distribution("classical")
     if classical_ratio > 0.5:
-        classical_first = [t for t in filtered if t.get('genre') == 'Classical']
-        return classical_first + [t for t in filtered if t.get('genre') != 'Classical']
+        classical_first = [t for t in filtered if t.get("genre") == "Classical"]
+        return classical_first + [t for t in filtered if t.get("genre") != "Classical"]
     return filtered
 
-hook_manager.add_filter('discover_new_tracks_filter', _on_discover_filter)
+
+hook_manager.add_filter("discover_new_tracks_filter", _on_discover_filter)
 ```
 
 ---

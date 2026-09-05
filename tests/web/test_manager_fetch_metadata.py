@@ -1,10 +1,10 @@
-import pytest
 from datetime import date
-from pathlib import Path
 from unittest.mock import MagicMock, patch
-from database.music_database import get_database, Track, Artist, Album, LocalMedia
-from database.working_database import get_working_database, ReviewTask
+
+from database.music_database import Album, Artist, LocalMedia, Track, get_database
+from database.working_database import ReviewTask, get_working_database
 from web.routes.manager import fetch_metadata
+
 
 def test_fetch_metadata_creates_review_task_for_library_track(tmp_path):
     # Setup real test audio file on disk
@@ -15,7 +15,12 @@ def test_fetch_metadata_creates_review_task_for_library_track(tmp_path):
     db = get_database()
     with db.session_scope() as session:
         artist = Artist(name="Test Artist", normalized_name="test artist")
-        album = Album(title="Test Album", normalized_title="test album", artist=artist, release_date=date(2024, 1, 1))
+        album = Album(
+            title="Test Album",
+            normalized_title="test album",
+            artist=artist,
+            release_date=date(2024, 1, 1),
+        )
         session.add_all([artist, album])
         session.flush()
 
@@ -28,7 +33,7 @@ def test_fetch_metadata_creates_review_task_for_library_track(tmp_path):
             track_number=1,
             disc_number=1,
             duration=180000,
-            media_files=[media]
+            media_files=[media],
         )
         session.add(track)
         session.flush()
@@ -41,9 +46,9 @@ def test_fetch_metadata_creates_review_task_for_library_track(tmp_path):
             "artist": "Test Artist",
             "album": "Identified Album",
             "year": 2024,
-            "musicbrainz_id": "mbid-xyz-999"
+            "musicbrainz_id": "mbid-xyz-999",
         },
-        0.95
+        0.95,
     )
 
     with patch("web.routes.manager.get_metadata_enhancer", return_value=mock_enhancer):
@@ -61,10 +66,13 @@ def test_fetch_metadata_creates_review_task_for_library_track(tmp_path):
     # Verify task was persisted in working.db
     working_db = get_working_database()
     with working_db.session_scope() as w_session:
-        task_row = w_session.query(ReviewTask).filter(ReviewTask.id == task_dict["id"]).first()
+        task_row = (
+            w_session.query(ReviewTask).filter(ReviewTask.id == task_dict["id"]).first()
+        )
         assert task_row is not None
         assert task_row.file_path == str(file_path)
         assert task_row.status == "pending"
+
 
 def test_fetch_metadata_returns_error_if_track_or_file_missing(tmp_path):
     response = fetch_metadata(track_id=999999)

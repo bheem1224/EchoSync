@@ -11,23 +11,22 @@ Validates:
 """
 
 import json
-import os
 import shutil
 import tempfile
 from pathlib import Path
+
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from database.config_database import ConfigDatabase
+import web.routes.system as system_route_module
 from core.settings import (
     COLD_BOOTSTRAP_KEYS,
     ConfigManager,
     migrate_legacy_json_to_db,
-    sanitize_legacy_config_json,
 )
+from database.config_database import ConfigDatabase
 from web.auth import require_auth
-import web.routes.system as system_route_module
 
 
 @pytest.fixture
@@ -52,7 +51,9 @@ def test_system_settings_seed_and_crud(fresh_db):
     singles_pat = fresh_db.get_system_setting("library_import.singles_pattern")
     assert singles_pat == "{Artist}/Singles/{Track} - {Title}.{ext}"
 
-    pref_studio = fresh_db.get_system_setting("metadata_enhancement.prefer_canonical_studio_album")
+    pref_studio = fresh_db.get_system_setting(
+        "metadata_enhancement.prefer_canonical_studio_album"
+    )
     assert pref_studio is True
 
     # Set new setting
@@ -192,7 +193,9 @@ def test_legacy_json_migration_and_sanitization(temp_dirs):
         clean_json = json.load(f)
 
     for k in clean_json:
-        assert k in COLD_BOOTSTRAP_KEYS, f"Hot key {k} should have been pruned from config.json!"
+        assert k in COLD_BOOTSTRAP_KEYS, (
+            f"Hot key {k} should have been pruned from config.json!"
+        )
 
     assert "server" in clean_json
     assert "storage" in clean_json
@@ -275,7 +278,9 @@ def test_system_settings_api_patch_allowlist(monkeypatch, temp_dirs):
     assert db.get_system_setting("theme") == "dark"
 
     # Rejection test: unknown key must return 400
-    bad_resp = client.patch("/api/v1/system/settings", json={"malicious_key": "exploit"})
+    bad_resp = client.patch(
+        "/api/v1/system/settings", json={"malicious_key": "exploit"}
+    )
     assert bad_resp.status_code == 400
     assert "Rejected unknown settings keys" in bad_resp.text
 
@@ -290,9 +295,9 @@ def test_path_formatter_reads_hot_db(monkeypatch, temp_dirs):
     monkeypatch.setattr("database.config_database.get_config_database", lambda: db)
 
     from core.path_formatter import (
-        get_singles_pattern,
-        get_prefer_canonical_studio_album,
         get_library_preferences,
+        get_prefer_canonical_studio_album,
+        get_singles_pattern,
     )
 
     # Test initial defaults from seeded DB
@@ -300,10 +305,14 @@ def test_path_formatter_reads_hot_db(monkeypatch, temp_dirs):
     assert get_singles_pattern() == "{Artist}/Singles/{Track} - {Title}.{ext}"
 
     # Update system_settings in DB
-    db.set_system_setting("library_import.singles_pattern", "{Artist}/Singles2/{Title}.{ext}")
+    db.set_system_setting(
+        "library_import.singles_pattern", "{Artist}/Singles2/{Title}.{ext}"
+    )
     db.set_system_setting("metadata_enhancement.prefer_canonical_studio_album", False)
     db.set_system_setting("storage_locations.library", "/custom/music/path")
-    db.set_system_setting("library_import.renaming_pattern", "{Artist} - {Album}/{Track} {Title}.{ext}")
+    db.set_system_setting(
+        "library_import.renaming_pattern", "{Artist} - {Album}/{Track} {Title}.{ext}"
+    )
 
     assert get_singles_pattern() == "{Artist}/Singles2/{Title}.{ext}"
     assert get_prefer_canonical_studio_album() is False

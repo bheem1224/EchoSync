@@ -6,6 +6,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 from web.api_app import create_app
 
+
 def generate_markdown_docs():
     app = create_app(testing=True)
     openapi = app.openapi()
@@ -38,21 +39,25 @@ def generate_markdown_docs():
         for method, spec in methods.items():
             if method.lower() not in ["get", "post", "put", "delete", "patch"]:
                 continue
-            
+
             tags = spec.get("tags", ["General"])
             tag = tags[0] if tags else "General"
 
             if tag not in tagged_endpoints:
                 tagged_endpoints[tag] = []
 
-            tagged_endpoints[tag].append({
-                "method": method.upper(),
-                "path": path,
-                "summary": spec.get("summary", spec.get("description", "No summary provided.")),
-                "parameters": spec.get("parameters", []),
-                "request_body": spec.get("requestBody"),
-                "responses": spec.get("responses", {})
-            })
+            tagged_endpoints[tag].append(
+                {
+                    "method": method.upper(),
+                    "path": path,
+                    "summary": spec.get(
+                        "summary", spec.get("description", "No summary provided.")
+                    ),
+                    "parameters": spec.get("parameters", []),
+                    "request_body": spec.get("requestBody"),
+                    "responses": spec.get("responses", {}),
+                }
+            )
 
     # 3. Format Endpoints into Markdown
     md_lines.append("## API Endpoints Reference\n")
@@ -75,7 +80,9 @@ def generate_markdown_docs():
                     p_schema = p.get("schema", {})
                     p_type = p_schema.get("type", "string")
                     p_desc = p.get("description", "")
-                    md_lines.append(f"| `{p_name}` | {p_in} | {p_req} | `{p_type}` | {p_desc} |")
+                    md_lines.append(
+                        f"| `{p_name}` | {p_in} | {p_req} | `{p_type}` | {p_desc} |"
+                    )
                 md_lines.append("")
 
             # Request Body
@@ -99,6 +106,7 @@ def generate_markdown_docs():
         f.write(doc_content)
 
     print("Successfully generated docs/API_REFERENCE.md")
+
 
 if __name__ == "__main__":
     generate_markdown_docs()

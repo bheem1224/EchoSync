@@ -1,12 +1,10 @@
 """Test Spotify and Plex routes under FastAPI."""
 
-import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from web.api_app import create_app
-from database.config_database import get_config_database
+
 from plugins.EchoSync.plex.routes import router as plex_router
 from plugins.EchoSync.Spotify.routes import router as spotify_router
-from fastapi import FastAPI
 
 
 def test_plex_poll_route_syntax():
@@ -35,10 +33,13 @@ def test_spotify_settings_and_accounts_routes():
     assert "redirect_uri" in data["settings"]
 
     # Test POST settings
-    resp = client.post("/settings", json={
-        "client_id": "test_spotify_client_id",
-        "client_secret": "test_spotify_client_secret"
-    })
+    resp = client.post(
+        "/settings",
+        json={
+            "client_id": "test_spotify_client_id",
+            "client_secret": "test_spotify_client_secret",
+        },
+    )
     assert resp.status_code == 200
     assert resp.json().get("success") is True
 

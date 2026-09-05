@@ -1,15 +1,21 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 
-from core.tiered_logger import get_logger
-from core.task_manager import job_queue, supervisor, plugin_state_manager, get_system_health, PluginLifecycleState
 from api.schemas.system_tasks import (
-    TaskQueueSummaryResponse,
-    ProcessListResponse,
     ProcessTerminateResponse,
     SystemHealthResponse,
+    TaskQueueSummaryResponse,
 )
+from core.task_manager import (
+    PluginLifecycleState,
+    get_system_health,
+    job_queue,
+    plugin_state_manager,
+    supervisor,
+)
+from core.tiered_logger import get_logger
 
 logger = get_logger("system_tasks_api")
 
@@ -28,11 +34,13 @@ def get_task_queue_status():
             stats=raw_state.get("stats", {}),
             running_jobs=raw_state.get("running_jobs", []),
             pending_jobs=raw_state.get("pending_jobs", []),
-            blocked_jobs=raw_state.get("blocked_jobs", [])
+            blocked_jobs=raw_state.get("blocked_jobs", []),
         )
     except Exception as e:
         logger.error(f"Error fetching task queue status: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to retrieve task queue status: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to retrieve task queue status: {e!s}"
+        )
 
 
 @router.get("/processes")
@@ -47,7 +55,9 @@ def get_active_processes():
         return {"total": len(processes), "processes": processes}
     except Exception as e:
         logger.error(f"Error listing active processes: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to retrieve active processes: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to retrieve active processes: {e!s}"
+        )
 
 
 @router.get("/processes/stream")
@@ -57,6 +67,7 @@ async def stream_processes():
     SSE stream that pushes live process list updates every 2 seconds with
     keepalive heartbeats every 15 seconds.
     """
+
     async def event_generator():
         import asyncio
         import json
@@ -97,7 +108,9 @@ async def stream_processes():
     )
 
 
-@router.post("/processes/{registration_id}/terminate", response_model=ProcessTerminateResponse)
+@router.post(
+    "/processes/{registration_id}/terminate", response_model=ProcessTerminateResponse
+)
 def terminate_process(registration_id: str):
     """
     POST /api/v1/system/tasks/processes/{registration_id}/terminate
@@ -109,7 +122,9 @@ def terminate_process(registration_id: str):
             owner = supervisor._processes.get(registration_id)
 
         if not owner:
-            raise HTTPException(status_code=404, detail="Process registration not found")
+            raise HTTPException(
+                status_code=404, detail="Process registration not found"
+            )
 
         # Unregister from supervisor
         supervisor.unregister_process(registration_id)
@@ -121,13 +136,17 @@ def terminate_process(registration_id: str):
         return ProcessTerminateResponse(
             status="terminated",
             registration_id=registration_id,
-            message=f"Successfully terminated process '{registration_id}' (Task: {owner.task_name})"
+            message=f"Successfully terminated process '{registration_id}' (Task: {owner.task_name})",
         )
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error terminating process '{registration_id}': {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to terminate process: {str(e)}")
+        logger.error(
+            f"Error terminating process '{registration_id}': {e}", exc_info=True
+        )
+        raise HTTPException(
+            status_code=500, detail=f"Failed to terminate process: {e!s}"
+        )
 
 
 @router.post("/processes/{registration_id}/kill")
@@ -141,12 +160,16 @@ def kill_process_with_cleanup(registration_id: str):
         success, message = supervisor.kill_with_cleanup(registration_id)
         if not success:
             raise HTTPException(status_code=404, detail=message)
-        return {"status": "killed", "registration_id": registration_id, "message": message}
+        return {
+            "status": "killed",
+            "registration_id": registration_id,
+            "message": message,
+        }
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Error killing process '{registration_id}': {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to kill process: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to kill process: {e!s}")
 
 
 @router.get("/health", response_model=SystemHealthResponse)
@@ -157,7 +180,7 @@ def get_unified_system_health():
     """
     try:
         health_data = get_system_health()
-        
+
         with plugin_state_manager._lock:
             plugin_states = {
                 p_id: status.model_dump()
@@ -167,19 +190,26 @@ def get_unified_system_health():
 
         # Calculate overall unified health status
         raw_status = health_data.get("status", "healthy").lower()
-        if raw_status == "error" or any(s.get("state") == PluginLifecycleState.ERROR for s in plugin_states.values()):
+        if raw_status == "error" or any(
+            s.get("state") == PluginLifecycleState.ERROR for s in plugin_states.values()
+        ):
             overall_status = "error"
-        elif raw_status == "degraded" or any(s.get("state") == PluginLifecycleState.DEGRADED for s in plugin_states.values()):
+        elif raw_status == "degraded" or any(
+            s.get("state") == PluginLifecycleState.DEGRADED
+            for s in plugin_states.values()
+        ):
             overall_status = "degraded"
         else:
             overall_status = "healthy"
 
         return SystemHealthResponse(
             status=overall_status,
-            timestamp=datetime.now(timezone.utc).isoformat(),
+            timestamp=datetime.now(UTC).isoformat(),
             health_checks=health_data,
-            plugin_states=plugin_states
+            plugin_states=plugin_states,
         )
     except Exception as e:
         logger.error(f"Error fetching unified system health: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to retrieve system health: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to retrieve system health: {e!s}"
+        )

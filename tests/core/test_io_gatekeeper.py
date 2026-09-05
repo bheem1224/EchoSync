@@ -1,6 +1,5 @@
 import pytest
-import os
-from pathlib import Path
+
 from core.io_gatekeeper import Gatekeeper, SecurityViolationError
 
 
@@ -10,7 +9,7 @@ def test_gatekeeper_uri_resolution(tmp_path):
     (lib_dir / "test.flac").touch()
 
     gatekeeper = Gatekeeper(allowed_roots=[tmp_path])
-    resolved = gatekeeper.resolve_uri(f"echosync://library/test.flac")
+    resolved = gatekeeper.resolve_uri("echosync://library/test.flac")
     assert resolved.name == "test.flac"
 
 
@@ -43,6 +42,7 @@ def test_gatekeeper_authorize_and_execute(tmp_path):
     gatekeeper = Gatekeeper(allowed_roots=[tmp_path])
 
     received_batches = []
+
     def telemetry_callback(batch):
         received_batches.extend(batch)
 

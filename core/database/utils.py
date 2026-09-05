@@ -1,5 +1,6 @@
 import sqlite3
 
+
 def calculate_safe_batch_size(column_count: int, buffer: int = 50) -> int:
     """
     Calculate the safe batch size for SQLite bulk operations to avoid e3q8 exhaustion.
@@ -9,5 +10,5 @@ def calculate_safe_batch_size(column_count: int, buffer: int = 50) -> int:
         max_vars = 32766
     else:
         max_vars = 999
-        
+
     return (max_vars - buffer) // column_count

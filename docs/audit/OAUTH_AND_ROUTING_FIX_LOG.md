@@ -25,7 +25,8 @@
         ```python
         import zlib
         from core.nexus_framework.plugin_SDK import PluginStorageBox
-        sdk = PluginStorageBox(plugin_id=zlib.crc32(b'echosync.spotify') & 0xFFFFFFFF)
+
+        sdk = PluginStorageBox(plugin_id=zlib.crc32(b"echosync.spotify") & 0xFFFFFFFF)
         ```
     *   Apply this to all routes requiring the SDK.
 

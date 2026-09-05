@@ -1,4 +1,5 @@
 """Shared time helpers for consistent UTC handling across the app."""
+
 from __future__ import annotations
 
 from datetime import UTC, datetime

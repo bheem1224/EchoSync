@@ -1,5 +1,4 @@
-import os
-
+from fastapi.testclient import TestClient
 def test_spa_catchall(tmp_path, monkeypatch):
     """Ensure non-API requests are served from static folder or fallback to index."""
     from web.api_app import create_app
@@ -14,17 +13,17 @@ def test_spa_catchall(tmp_path, monkeypatch):
     # monkeypatch the static_folder so our fake directory is used
     app.static_folder = str(build_dir)
 
-    client = app.test_client()
+    client = TestClient(app)
 
     # root should serve index.html
     resp = client.get("/")
     assert resp.status_code == 200
-    assert b"hello" in resp.data
+    assert b"hello" in resp.content
 
     # requesting a known asset returns it
     resp = client.get("/foo.js")
     assert resp.status_code == 200
-    assert b"console.log" in resp.data
+    assert b"console.log" in resp.content
 
     # API path should still return 404 (content may be standard Flask HTML)
     resp = client.get("/api/notfound")

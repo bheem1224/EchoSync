@@ -1,12 +1,18 @@
 import hmac
 import ipaddress
-from fastapi import APIRouter, Request, HTTPException
+
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
-from core.tiered_logger import get_logger
-from core.plugins.sdk import compute_plugin_crc32, dispatch_webhook, lookup_registered_endpoint
-from core.webhook_parsers import parse_media_server_webhook
-from database.working_database import get_working_database, PlaybackHistory
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+
+from core.plugins.sdk import (
+    compute_plugin_crc32,
+    dispatch_webhook,
+    lookup_registered_endpoint,
+)
+from core.tiered_logger import get_logger
+from core.webhook_parsers import parse_media_server_webhook
+from database.working_database import PlaybackHistory, get_working_database
 from time_utils import utc_now
 
 logger = get_logger("webhooks")
@@ -61,7 +67,7 @@ async def handle_plugin_ingress_webhook(
         )
         raise HTTPException(
             status_code=404,
-            detail="Invalid plugin identifier: bare unqualified names are not permitted. Use fully qualified namespace (e.g. 'EchoSync.slskd') or CRC32 ID."
+            detail="Invalid plugin identifier: bare unqualified names are not permitted. Use fully qualified namespace (e.g. 'EchoSync.slskd') or CRC32 ID.",
         )
 
     # 2. Lookup Endpoint Registration
@@ -81,7 +87,9 @@ async def handle_plugin_ingress_webhook(
 
     allowed_subnets = endpoint_meta.get("allowed_subnets", [])
     if not is_ip_allowed(client_ip, allowed_subnets):
-        logger.warning(f"Forbidden webhook access from IP {client_ip} to {endpoint_slug} (CIDR mismatch)")
+        logger.warning(
+            f"Forbidden webhook access from IP {client_ip} to {endpoint_slug} (CIDR mismatch)"
+        )
         raise HTTPException(status_code=403, detail="Forbidden: IP address not allowed")
 
     # 4. Secret / Authentication Check
@@ -90,10 +98,19 @@ async def handle_plugin_ingress_webhook(
         expected_secret = endpoint_meta.get("secret")
         if expected_secret:
             # Check X-EchoSync-Webhook-Secret header or ?secret= query parameter
-            provided_secret = request.headers.get("X-EchoSync-Webhook-Secret") or request.query_params.get("secret")
-            if not provided_secret or not hmac.compare_digest(str(provided_secret), str(expected_secret)):
-                logger.warning(f"Unauthorized webhook attempt for {endpoint_slug} on plugin {plugin_id}")
-                raise HTTPException(status_code=401, detail="Unauthorized: invalid or missing webhook secret")
+            provided_secret = request.headers.get(
+                "X-EchoSync-Webhook-Secret"
+            ) or request.query_params.get("secret")
+            if not provided_secret or not hmac.compare_digest(
+                str(provided_secret), str(expected_secret)
+            ):
+                logger.warning(
+                    f"Unauthorized webhook attempt for {endpoint_slug} on plugin {plugin_id}"
+                )
+                raise HTTPException(
+                    status_code=401,
+                    detail="Unauthorized: invalid or missing webhook secret",
+                )
 
     # 5. Extract Payload
     payload = {}
@@ -101,13 +118,17 @@ async def handle_plugin_ingress_webhook(
     try:
         if "application/json" in content_type:
             payload = await request.json()
-        elif "application/x-www-form-urlencoded" in content_type or "multipart/form-data" in content_type:
+        elif (
+            "application/x-www-form-urlencoded" in content_type
+            or "multipart/form-data" in content_type
+        ):
             form = await request.form()
             payload = dict(form)
         else:
             raw_body = await request.body()
             if raw_body:
                 import json
+
                 try:
                     payload = json.loads(raw_body.decode("utf-8", errors="replace"))
                 except Exception:
@@ -120,8 +141,12 @@ async def handle_plugin_ingress_webhook(
     try:
         await dispatch_webhook(plugin_id, endpoint_slug, payload)
     except Exception as e:
-        logger.error(f"Error dispatching webhook to plugin {plugin_id}: {e}", exc_info=True)
-        return JSONResponse(status_code=500, content={"status": "error", "detail": str(e)})
+        logger.error(
+            f"Error dispatching webhook to plugin {plugin_id}: {e}", exc_info=True
+        )
+        return JSONResponse(
+            status_code=500, content={"status": "error", "detail": str(e)}
+        )
 
     return {"status": "ok", "plugin_id": plugin_id, "endpoint": endpoint_slug}
 
@@ -139,23 +164,32 @@ async def handle_plugin_webhook(plugin: str, request: Request):
 
             if "application/json" in content_type:
                 raw_payload = await request.json()
-            elif "application/x-www-form-urlencoded" in content_type or "multipart/form-data" in content_type:
+            elif (
+                "application/x-www-form-urlencoded" in content_type
+                or "multipart/form-data" in content_type
+            ):
                 form = await request.form()
                 form_data = dict(form)
                 raw_payload = form_data
             else:
                 body = await request.body()
-                raw_payload = body.decode('utf-8', errors='replace')
+                raw_payload = body.decode("utf-8", errors="replace")
 
             plugin_action = hook_manager.apply_filters(
-                'ON_INBOUND_WEBHOOK', None, provider=plugin, payload=raw_payload, headers=dict(request.headers)
+                "ON_INBOUND_WEBHOOK",
+                None,
+                provider=plugin,
+                payload=raw_payload,
+                headers=dict(request.headers),
             )
             if plugin_action == "SKIP":
-                logger.info(f"Plugin intercepted and handled webhook for plugin: {plugin}")
+                logger.info(
+                    f"Plugin intercepted and handled webhook for plugin: {plugin}"
+                )
                 return {"status": "ok"}
         except Exception as e:
             logger.error(f"Error in ON_INBOUND_WEBHOOK hook: {e}")
-            form_data = {} # fallback
+            form_data = {}  # fallback
             raw_payload = {}
 
         # Pass the parsed dictionary to the webhook parser
@@ -163,8 +197,8 @@ async def handle_plugin_webhook(plugin: str, request: Request):
         parsed_data = parse_media_server_webhook(payload_to_parse, plugin=plugin)
 
         if parsed_data:
-            user_id = parsed_data.get('user_id')
-            plugin_item_id = parsed_data.get('plugin_item_id')
+            user_id = parsed_data.get("user_id")
+            plugin_item_id = parsed_data.get("plugin_item_id")
 
             if user_id and plugin_item_id:
                 listened_at = utc_now()
@@ -172,21 +206,31 @@ async def handle_plugin_webhook(plugin: str, request: Request):
                 with working_db.session_scope() as session:
                     # INSERT OR IGNORE: delivery retries for the same scrobble at
                     # the same timestamp must not raise IntegrityError.
-                    if working_db.engine.dialect.name == 'sqlite':
-                        stmt = sqlite_insert(PlaybackHistory).values(
-                            user_id=user_id,
-                            plugin_item_id=plugin_item_id,
-                            listened_at=listened_at,
-                        ).on_conflict_do_nothing(
-                            index_elements=['user_id', 'plugin_item_id', 'listened_at']
+                    if working_db.engine.dialect.name == "sqlite":
+                        stmt = (
+                            sqlite_insert(PlaybackHistory)
+                            .values(
+                                user_id=user_id,
+                                plugin_item_id=plugin_item_id,
+                                listened_at=listened_at,
+                            )
+                            .on_conflict_do_nothing(
+                                index_elements=[
+                                    "user_id",
+                                    "plugin_item_id",
+                                    "listened_at",
+                                ]
+                            )
                         )
                         session.execute(stmt)
                     else:
-                        session.add(PlaybackHistory(
-                            user_id=user_id,
-                            plugin_item_id=plugin_item_id,
-                            listened_at=listened_at,
-                        ))
+                        session.add(
+                            PlaybackHistory(
+                                user_id=user_id,
+                                plugin_item_id=plugin_item_id,
+                                listened_at=listened_at,
+                            )
+                        )
                     logger.info(
                         f"Recorded {plugin} playback: user={user_id}, "
                         f"plugin_item_id={plugin_item_id}"

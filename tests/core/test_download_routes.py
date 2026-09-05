@@ -1,11 +1,12 @@
 """Tests for Downloads API routes."""
 
-import pytest
-from unittest.mock import patch, MagicMock
-from fastapi.testclient import TestClient
-from fastapi import FastAPI
+from unittest.mock import MagicMock, patch
 
-from web.routes.downloads import router, core_router
+import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+from web.routes.downloads import core_router, router
 
 
 @pytest.fixture
@@ -25,7 +26,7 @@ def test_delete_queue_empty_request(client):
     mock_query.delete.return_value = 5
     mock_db.session_scope.return_value.__enter__.return_value = mock_session
 
-    with patch('web.routes.downloads.get_working_database', return_value=mock_db):
+    with patch("web.routes.downloads.get_working_database", return_value=mock_db):
         resp = client.delete("/api/v1/core/downloads/queue")
         assert resp.status_code == 200
         data = resp.json()
@@ -44,7 +45,7 @@ def test_delete_queue_with_scope_or_status(client):
     mock_filter.delete.return_value = 2
     mock_db.session_scope.return_value.__enter__.return_value = mock_session
 
-    with patch('web.routes.downloads.get_working_database', return_value=mock_db):
+    with patch("web.routes.downloads.get_working_database", return_value=mock_db):
         resp = client.delete("/api/v1/core/downloads/queue?scope=failed")
         assert resp.status_code == 200
         assert resp.json().get("count") == 2
@@ -60,7 +61,7 @@ def test_delete_single_download_item(client):
     mock_query.filter.return_value.first.return_value = mock_download
     mock_db.session_scope.return_value.__enter__.return_value = mock_session
 
-    with patch('web.routes.downloads.get_working_database', return_value=mock_db):
+    with patch("web.routes.downloads.get_working_database", return_value=mock_db):
         resp = client.delete("/api/v1/core/downloads/42")
         assert resp.status_code == 200
         assert resp.json().get("success") is True

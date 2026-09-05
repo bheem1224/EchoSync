@@ -1,11 +1,14 @@
-import threading
-from fastapi import APIRouter, Request, HTTPException
-from fastapi.responses import JSONResponse, StreamingResponse
 import asyncio
 import json
+import threading
+
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import StreamingResponse
+
 from web.services.search_service import SearchAdapter
 
 router = APIRouter(prefix="/api/v1/core/search", tags=["Search"])
+
 
 @router.get("/")
 async def aggregate_search(request: Request):
@@ -36,12 +39,15 @@ async def aggregate_search(request: Request):
                     break
                 yield f"data: {json.dumps({'source': source, 'results': results})}\n\n"
                 await asyncio.sleep(0.01)
-            yield "data: {\"status\": \"done\"}\n\n"
+            yield 'data: {"status": "done"}\n\n'
         except (asyncio.CancelledError, GeneratorExit):
             cancel_event.set()
         except Exception as e:
             from core.tiered_logger import get_logger
-            get_logger("search_route").error(f"Error in aggregate_search stream generator: {e}")
+
+            get_logger("search_route").error(
+                f"Error in aggregate_search stream generator: {e}"
+            )
             cancel_event.set()
         finally:
             cancel_event.set()
@@ -63,6 +69,7 @@ async def federated_discovery(request: Request):
         results = await adapter.federated_discovery(q, enabled_plugins=plugin_names)
     except Exception as e:
         from core.tiered_logger import get_logger
+
         get_logger("search_route").error(f"Federated discovery error: {e}")
         results = []
 

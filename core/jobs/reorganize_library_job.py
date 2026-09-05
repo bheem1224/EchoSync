@@ -1,41 +1,46 @@
-import logging
-from typing import Optional
-
-from core.tiered_logger import get_logger
-from services.library_reorganizer import LibraryReorganizerService
 from core.event_bus import event_bus
 from core.task_manager.task_queue import register_job
+from core.tiered_logger import get_logger
+from services.library_reorganizer import LibraryReorganizerService
 
 logger = get_logger("jobs.reorganize_library")
+
 
 # Defining a BaseJob interface if it doesn't already exist in the system,
 # to provide the requested update_progress functionality.
 class BaseJob:
     def update_progress(self, current: int, total: int, status: str = ""):
-        event_bus.publish("job_progress", {
-            "job_name": self.__class__.__name__,
-            "current": current,
-            "total": total,
-            "status": status,
-            "percentage": round((current / total) * 100, 1) if total > 0 else 0
-        })
+        event_bus.publish(
+            "job_progress",
+            {
+                "job_name": self.__class__.__name__,
+                "current": current,
+                "total": total,
+                "status": status,
+                "percentage": round((current / total) * 100, 1) if total > 0 else 0,
+            },
+        )
+
 
 class ReorganizeLibraryJob(BaseJob):
     def execute(self, *args, **kwargs):
         logger.info("Starting library reorganization job")
         service = LibraryReorganizerService()
-        
+
         # Use the inherited progress method as the callback
         service.reorganize_library(progress_callback=self.update_progress)
-        
+
         logger.info("Library reorganization job completed")
 
-def register_reorganize_library_job(interval_seconds: Optional[int] = 315360000, enabled: bool = True):
+
+def register_reorganize_library_job(
+    interval_seconds: int | None = 315360000, enabled: bool = True
+):
     """
     Registration snippet for the global JobRegistry (job_queue).
     """
     job_instance = ReorganizeLibraryJob()
-    
+
     # Register with a 10-year interval and start_after so it never runs automatically,
     # but remains persistent in the UI for manual triggering.
     register_job(
@@ -43,5 +48,5 @@ def register_reorganize_library_job(interval_seconds: Optional[int] = 315360000,
         func=job_instance.execute,
         interval_seconds=interval_seconds,
         start_after=315360000,
-        enabled=enabled
+        enabled=enabled,
     )

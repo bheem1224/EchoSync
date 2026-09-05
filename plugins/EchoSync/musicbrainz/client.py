@@ -1,25 +1,26 @@
-from typing import List, Optional, Dict, Any
-import re
-
-from core.caching.plugin_cache import plugin_cache
-from core.nexus_framework.plugin_SDK import PluginBase
-from core.nexus_framework.plugin_SDK import (
-    ProviderCapabilities,
-    PlaylistSupport,
-    SearchCapabilities,
-    MetadataRichness
-)
-from core.request_manager import RateLimitConfig
 import asyncio
 import hashlib
+import re
+from typing import Any
+
 from rapidfuzz import fuzz
 
+from core.caching.plugin_cache import plugin_cache
 from core.db.echo_sync_track import EchosyncTrack
-from .models import PluginMusicbrainzCache
-from core.nexus_framework.plugin_SDK import sdk
-from core.tiered_logger import get_logger
-from core.matching_engine.text_utils import normalize_title, normalize_artist
+from core.matching_engine.text_utils import normalize_artist, normalize_title
 from core.matching_engine.track_parser import TrackParser
+from core.nexus_framework.plugin_SDK import (
+    MetadataRichness,
+    PlaylistSupport,
+    PluginBase,
+    ProviderCapabilities,
+    SearchCapabilities,
+)
+from core.request_manager import RateLimitConfig
+from core.tiered_logger import get_logger
+
+from .models import PluginMusicbrainzCache
+
 
 def _safe_getattr(obj: Any, attr: str, default: Any = None) -> Any:
     """AST-compliant alternative to getattr()."""
@@ -29,6 +30,7 @@ def _safe_getattr(obj: Any, attr: str, default: Any = None) -> Any:
         except AttributeError:
             return default
     return default
+
 
 logger = get_logger("provider.musicbrainz")
 
@@ -44,7 +46,9 @@ class MusicBrainzClient(PluginBase):
     capabilities = ProviderCapabilities(
         name="EchoSync.musicbrainz",
         supports_playlists=PlaylistSupport.NONE,
-        search=SearchCapabilities(tracks=True, artists=True, albums=True, playlists=False),
+        search=SearchCapabilities(
+            tracks=True, artists=True, albums=True, playlists=False
+        ),
         metadata=MetadataRichness.HIGH,
         supports_cover_art=True,
         supports_lyrics=False,
@@ -66,13 +70,15 @@ class MusicBrainzClient(PluginBase):
                 "Accept": "application/json",
             }
         )
-        self.api_base = self.config.get("api_base_url") or "https://musicbrainz.org/ws/2"
+        self.api_base = (
+            self.config.get("api_base_url") or "https://musicbrainz.org/ws/2"
+        )
         self._search_queue = []
         self._batch_task = None
         self._lock = asyncio.Lock()
 
     @plugin_cache(ttl_seconds=2592000)
-    def _fetch_artist_track_dicts(self, artist_name: str) -> List[Dict[str, Any]]:
+    def _fetch_artist_track_dicts(self, artist_name: str) -> list[dict[str, Any]]:
         """Cached paginated recording fetch returning JSON-serialisable dicts.
 
         Separating the API calls from EchosyncTrack construction keeps the
@@ -83,7 +89,7 @@ class MusicBrainzClient(PluginBase):
         if not artist_name:
             return []
 
-        raw: List[Dict[str, Any]] = []
+        raw: list[dict[str, Any]] = []
         offset = 0
         limit = 100
         max_records = 500
@@ -91,7 +97,7 @@ class MusicBrainzClient(PluginBase):
         try:
             while len(raw) < max_records:
                 if re.fullmatch(r"[0-9a-fA-F-]{36}", artist_name):
-                    query = f'arid:{artist_name}'
+                    query = f"arid:{artist_name}"
                 else:
                     query = f'artist:"{artist_name}"'
                 response = self.http.get(
@@ -146,14 +152,16 @@ class MusicBrainzClient(PluginBase):
                     if isrc_list:
                         isrc = str(isrc_list[0] or "").strip() or None
 
-                    raw.append({
-                        "title": title,
-                        "artist": provider_artist,
-                        "album": album_title or "Unknown Album",
-                        "mbid": recording_mbid,
-                        "isrc": isrc,
-                        "year": release_year,
-                    })
+                    raw.append(
+                        {
+                            "title": title,
+                            "artist": provider_artist,
+                            "album": album_title or "Unknown Album",
+                            "mbid": recording_mbid,
+                            "isrc": isrc,
+                            "year": release_year,
+                        }
+                    )
                     if len(raw) >= max_records:
                         break
 
@@ -163,11 +171,14 @@ class MusicBrainzClient(PluginBase):
 
         except Exception as exc:
             logger.error(
-                "Failed to fetch artist tracks for '%s': %s", artist_name, exc, exc_info=True
+                "Failed to fetch artist tracks for '%s': %s",
+                artist_name,
+                exc,
+                exc_info=True,
             )
 
         # Deduplicate by artist+title to keep discovery diff deterministic.
-        deduped: Dict[str, Dict[str, Any]] = {}
+        deduped: dict[str, dict[str, Any]] = {}
         for d in raw:
             key = f"{d['artist']}|{d['title']}"
             if key not in deduped:
@@ -175,7 +186,9 @@ class MusicBrainzClient(PluginBase):
         return list(deduped.values())
 
     @plugin_cache(ttl_seconds=2592000)
-    def get_artist_ensemble_relationship(self, artist_mbid: str) -> Optional[Dict[str, str]]:
+    def get_artist_ensemble_relationship(
+        self, artist_mbid: str
+    ) -> dict[str, str] | None:
         """Look up band/group membership for an artist via MusicBrainz artist-rels."""
         artist_mbid = str(artist_mbid or "").strip()
         if not artist_mbid:
@@ -205,11 +218,17 @@ class MusicBrainzClient(PluginBase):
                             "parent_ensemble_mbid": str(band_mbid).strip(),
                         }
         except Exception as exc:
-            logger.debug("Failed to resolve artist ensemble relationship for %s: %s", artist_mbid, exc)
+            logger.debug(
+                "Failed to resolve artist ensemble relationship for %s: %s",
+                artist_mbid,
+                exc,
+            )
 
         return None
 
-    def resolve_canonical_studio_release(self, releases: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    def resolve_canonical_studio_release(
+        self, releases: list[dict[str, Any]]
+    ) -> dict[str, Any] | None:
         """
         Traverse releases attached to a recording to find the earliest non-compilation
         canonical studio album/EP.
@@ -227,9 +246,14 @@ class MusicBrainzClient(PluginBase):
 
             rg = r.get("release-group") or {}
             p_type = (rg.get("primary-type") or "").strip().lower()
-            s_types = [str(st).strip().lower() for st in (rg.get("secondary-types") or [])]
+            s_types = [
+                str(st).strip().lower() for st in (rg.get("secondary-types") or [])
+            ]
 
-            is_compilation = "compilation" in s_types or "various artists" in str((r.get("artist-credit") or [])).lower()
+            is_compilation = (
+                "compilation" in s_types
+                or "various artists" in str(r.get("artist-credit") or []).lower()
+            )
             if is_compilation:
                 continue
 
@@ -243,13 +267,15 @@ class MusicBrainzClient(PluginBase):
 
             is_studio_type = p_type in ("album", "ep") or not p_type
             if is_studio_type:
-                candidates.append({
-                    "canonical_studio_album": title,
-                    "canonical_studio_release_mbid": r.get("id"),
-                    "canonical_studio_release_group_mbid": rg.get("id"),
-                    "canonical_year": year_val,
-                    "date": date_str,
-                })
+                candidates.append(
+                    {
+                        "canonical_studio_album": title,
+                        "canonical_studio_release_mbid": r.get("id"),
+                        "canonical_studio_release_group_mbid": rg.get("id"),
+                        "canonical_year": year_val,
+                        "date": date_str,
+                    }
+                )
 
         if not candidates:
             return None
@@ -257,14 +283,14 @@ class MusicBrainzClient(PluginBase):
         candidates.sort(key=lambda c: c.get("date") or "9999")
         return candidates[0]
 
-    def get_artist_tracks(self, artist_name: str) -> List[EchosyncTrack]:
+    def get_artist_tracks(self, artist_name: str) -> list[EchosyncTrack]:
         """Fetch a full-ish artist tracklist from MusicBrainz recordings search.
 
         The discovery engine uses EchosyncTrack.sync_id to diff these results
         against local libraries, so tracks must be created through the standard
         factory path to ensure deterministic IDs.
         """
-        tracks: List[EchosyncTrack] = []
+        tracks: list[EchosyncTrack] = []
         for d in self._fetch_artist_track_dicts(artist_name):
             track_obj = self.create_echo_sync_track(
                 title=d["title"],
@@ -281,7 +307,9 @@ class MusicBrainzClient(PluginBase):
         return tracks
 
     @plugin_cache(ttl_seconds=604800)
-    def _search_metadata_query(self, query: str, limit: int = 5) -> List[Dict[str, Any]]:
+    def _search_metadata_query(
+        self, query: str, limit: int = 5
+    ) -> list[dict[str, Any]]:
         """Cached helper for string queries to maintain legacy query caching."""
         query = str(query or "").strip()
         if not query:
@@ -289,7 +317,9 @@ class MusicBrainzClient(PluginBase):
 
         safe_limit = max(1, min(int(limit or 5), 100))
         try:
-            logger.debug(f"[MusicBrainz Client] Sending search query to MusicBrainz: query='{query}', limit={safe_limit}")
+            logger.debug(
+                f"[MusicBrainz Client] Sending search query to MusicBrainz: query='{query}', limit={safe_limit}"
+            )
             response = self.http.get(
                 f"{self.api_base}/recording",
                 params={
@@ -298,7 +328,9 @@ class MusicBrainzClient(PluginBase):
                     "limit": safe_limit,
                 },
             )
-            logger.debug(f"[MusicBrainz Client] Received response: status={response.status_code}")
+            logger.debug(
+                f"[MusicBrainz Client] Received response: status={response.status_code}"
+            )
             if response.status_code != 200:
                 logger.warning(
                     "MusicBrainz search_metadata failed (status=%s, query=%s)",
@@ -309,8 +341,10 @@ class MusicBrainzClient(PluginBase):
 
             payload = response.json() or {}
             recordings = payload.get("recordings", []) or []
-            logger.debug(f"[MusicBrainz Client] Found {len(recordings)} recordings in response payload")
-            results: List[Dict[str, Any]] = []
+            logger.debug(
+                f"[MusicBrainz Client] Found {len(recordings)} recordings in response payload"
+            )
+            results: list[dict[str, Any]] = []
 
             for recording in recordings:
                 mbid = str(recording.get("id") or "").strip()
@@ -318,7 +352,7 @@ class MusicBrainzClient(PluginBase):
                     continue
 
                 artist_credit = recording.get("artist-credit") or []
-                artist_parts: List[str] = []
+                artist_parts: list[str] = []
                 for entry in artist_credit:
                     if isinstance(entry, dict):
                         artist_parts.append(str(entry.get("name") or ""))
@@ -350,26 +384,46 @@ class MusicBrainzClient(PluginBase):
 
             return results
         except Exception as exc:
-            logger.warning(f"MusicBrainz search_metadata exception for '{query}': {exc}")
+            logger.warning(
+                f"MusicBrainz search_metadata exception for '{query}': {exc}"
+            )
             return []
 
     def search_metadata(self, track: Any, limit: int = 10) -> Any:
         """Centralized metadata search. Supports both new EchosyncTrack contract and legacy string queries."""
         logger.debug(f"[MusicBrainz Client] search_metadata called with track={track}")
         if isinstance(track, str):
-            logger.debug(f"[MusicBrainz Client] track is a string, calling _search_metadata_query('{track}')")
+            logger.debug(
+                f"[MusicBrainz Client] track is a string, calling _search_metadata_query('{track}')"
+            )
             return self._search_metadata_query(track, limit=limit)
 
-        if isinstance(track, dict) or hasattr(track, 'get'):
-            artist = track.get('artist_name') or track.get('artist') or ''
-            title = track.get('title') or track.get('raw_title') or ''
-            album = track.get('album_title') or track.get('album') or ''
-            duration = track.get('duration_ms') or track.get('duration')
+        if isinstance(track, dict) or hasattr(track, "get"):
+            artist = track.get("artist_name") or track.get("artist") or ""
+            title = track.get("title") or track.get("raw_title") or ""
+            album = track.get("album_title") or track.get("album") or ""
+            duration = track.get("duration_ms") or track.get("duration")
         else:
-            artist = track.artist_name if hasattr(track, 'artist_name') else (track.artist if hasattr(track, 'artist') else '')
-            title = track.title if hasattr(track, 'title') else (track.raw_title if hasattr(track, 'raw_title') else '')
-            album = track.album_title if hasattr(track, 'album_title') else (track.album if hasattr(track, 'album') else '')
-            duration = track.duration_ms if hasattr(track, 'duration_ms') else (track.duration if hasattr(track, 'duration') else None)
+            artist = (
+                track.artist_name
+                if hasattr(track, "artist_name")
+                else (track.artist if hasattr(track, "artist") else "")
+            )
+            title = (
+                track.title
+                if hasattr(track, "title")
+                else (track.raw_title if hasattr(track, "raw_title") else "")
+            )
+            album = (
+                track.album_title
+                if hasattr(track, "album_title")
+                else (track.album if hasattr(track, "album") else "")
+            )
+            duration = (
+                track.duration_ms
+                if hasattr(track, "duration_ms")
+                else (track.duration if hasattr(track, "duration") else None)
+            )
 
         duration_ms = None
         try:
@@ -384,17 +438,26 @@ class MusicBrainzClient(PluginBase):
 
         # 1. Sanitize track number prefixes from title
         import re
-        track_num_match = re.match(r'^(?:(?P<disc>\d+)[.-])?(?P<track>\d{1,2})[\s.-]+', title)
+
+        track_num_match = re.match(
+            r"^(?:(?P<disc>\d+)[.-])?(?P<track>\d{1,2})[\s.-]+", title
+        )
         if track_num_match:
-            title = title[track_num_match.end():].strip()
+            title = title[track_num_match.end() :].strip()
 
         # 2. Check if title contains filename-like structures, parse it structurally if so
-        if " - " in title or re.search(r'\.(mp3|flac|m4a|aac|ogg|wav|wma)$', title, re.IGNORECASE):
+        if " - " in title or re.search(
+            r"\.(mp3|flac|m4a|aac|ogg|wav|wma)$", title, re.IGNORECASE
+        ):
             parser = TrackParser()
             parsed = parser.parse_filename(title)
             if parsed:
                 title = parsed.title or title
-                if parsed.artist_name and not parsed.artist_name.isdigit() and parsed.artist_name != "Unknown Artist":
+                if (
+                    parsed.artist_name
+                    and not parsed.artist_name.isdigit()
+                    and parsed.artist_name != "Unknown Artist"
+                ):
                     artist = parsed.artist_name
 
         # 3. Clean and sanitize strings through core text normalizers
@@ -403,13 +466,19 @@ class MusicBrainzClient(PluginBase):
         clean_artist = normalize_artist(cleaned_artist_str or artist)
 
         # 3b. Check if track has an AcoustID ID to query MusicBrainz directly
-        acoustid_val = getattr(track, 'acoustid_id', None)
-        if not acoustid_val and isinstance(getattr(track, 'identifiers', None), dict):
-            acoustid_val = track.identifiers.get('acoustid_id') or track.identifiers.get('acoustid')
-        
+        acoustid_val = getattr(track, "acoustid_id", None)
+        if not acoustid_val and isinstance(getattr(track, "identifiers", None), dict):
+            acoustid_val = track.identifiers.get(
+                "acoustid_id"
+            ) or track.identifiers.get("acoustid")
+
         if acoustid_val and isinstance(acoustid_val, str) and len(acoustid_val) > 10:
-            logger.debug(f"[MusicBrainz Client] Trying AcoustID query on MusicBrainz: acoustid:{acoustid_val}")
-            results = self._search_metadata_query(query=f'acoustid:{acoustid_val}', limit=5)
+            logger.debug(
+                f"[MusicBrainz Client] Trying AcoustID query on MusicBrainz: acoustid:{acoustid_val}"
+            )
+            results = self._search_metadata_query(
+                query=f"acoustid:{acoustid_val}", limit=5
+            )
             if results:
                 top = results[0]
                 mbid = top.get("recording_id") or top.get("mbid")
@@ -420,21 +489,40 @@ class MusicBrainzClient(PluginBase):
 
         safe_title = self._escape_lucene(clean_title)
         safe_artist = self._escape_lucene(clean_artist)
-        
+
         is_numeric_artist = clean_artist.isdigit()
-        
+
         # Clean leading year from album name (e.g. "2018 - Album Name" -> "Album Name")
-        clean_album_str = re.sub(r'^\d{4}\s*[-_]\s*', '', album.strip()) if album else ''
-        safe_album = self._escape_lucene(clean_album_str) if clean_album_str else ''
+        clean_album_str = (
+            re.sub(r"^\d{4}\s*[-_]\s*", "", album.strip()) if album else ""
+        )
+        safe_album = self._escape_lucene(clean_album_str) if clean_album_str else ""
 
         # Extract primary artist if multi-artist separators or featuring tags exist
-        raw_artist = (getattr(track, 'artist_name', None) or getattr(track, 'artist', None) or artist or "")
-        primary_artist = re.split(r'[,/;]|\s+(?:feat\.?|ft\.?|&)\s+', raw_artist, flags=re.IGNORECASE)[0].strip() if raw_artist else ""
-        clean_primary = normalize_artist(self._clean_query_artist(primary_artist)) if primary_artist else ""
-        safe_primary = self._escape_lucene(clean_primary) if clean_primary else safe_artist
+        raw_artist = (
+            getattr(track, "artist_name", None)
+            or getattr(track, "artist", None)
+            or artist
+            or ""
+        )
+        primary_artist = (
+            re.split(
+                r"[,/;]|\s+(?:feat\.?|ft\.?|&)\s+", raw_artist, flags=re.IGNORECASE
+            )[0].strip()
+            if raw_artist
+            else ""
+        )
+        clean_primary = (
+            normalize_artist(self._clean_query_artist(primary_artist))
+            if primary_artist
+            else ""
+        )
+        safe_primary = (
+            self._escape_lucene(clean_primary) if clean_primary else safe_artist
+        )
 
         # Strip non-alphanumeric noise and extract individual clean tokens for unquoted token queries
-        tokens = [t for t in re.split(r'\W+', clean_primary or primary_artist) if t]
+        tokens = [t for t in re.split(r"\W+", clean_primary or primary_artist) if t]
         token_query = " ".join(tokens)
 
         results = []
@@ -446,67 +534,107 @@ class MusicBrainzClient(PluginBase):
                 if duration_ms:
                     min_ms = max(0, duration_ms - 5000)
                     max_ms = duration_ms + 5000
-                    logger.debug(f"[MusicBrainz Client] Attempt 1 (Strict with duration): '{strict_query} AND dur:[{min_ms} TO {max_ms}]'")
-                    results = self._search_metadata_query(query=f'{strict_query} AND dur:[{min_ms} TO {max_ms}]', limit=5)
+                    logger.debug(
+                        f"[MusicBrainz Client] Attempt 1 (Strict with duration): '{strict_query} AND dur:[{min_ms} TO {max_ms}]'"
+                    )
+                    results = self._search_metadata_query(
+                        query=f"{strict_query} AND dur:[{min_ms} TO {max_ms}]", limit=5
+                    )
 
                 if not results:
-                    logger.debug(f"[MusicBrainz Client] Attempt 1 (Strict Exact): '{strict_query}'")
+                    logger.debug(
+                        f"[MusicBrainz Client] Attempt 1 (Strict Exact): '{strict_query}'"
+                    )
                     results = self._search_metadata_query(query=strict_query, limit=5)
 
             # Attempt 2 (Primary Artist Exact + Title Exact):
             if not results:
                 attempt2_query = f'artist:"{safe_primary}" AND recording:"{safe_title}"'
-                logger.debug(f"[MusicBrainz Client] Attempt 2 (Primary Artist Exact + Title Exact): '{attempt2_query}'")
+                logger.debug(
+                    f"[MusicBrainz Client] Attempt 2 (Primary Artist Exact + Title Exact): '{attempt2_query}'"
+                )
                 results = self._search_metadata_query(query=attempt2_query, limit=5)
 
             # Attempt 3 (Unquoted Artist Tokens + Title Exact - Matches collaborations like "Madison Mars feat. ..."):
             if not results and token_query:
                 attempt3_query = f'artist:({token_query}) AND recording:"{safe_title}"'
-                logger.debug(f"[MusicBrainz Client] Attempt 3 (Unquoted Artist Tokens + Title Exact): '{attempt3_query}'")
+                logger.debug(
+                    f"[MusicBrainz Client] Attempt 3 (Unquoted Artist Tokens + Title Exact): '{attempt3_query}'"
+                )
                 results = self._search_metadata_query(query=attempt3_query, limit=5)
 
             # Attempt 4 (Artist Wildcard + Title Exact):
             if not results:
-                attempt4_query = f'artist:"{safe_primary}"* AND recording:"{safe_title}"'
-                logger.debug(f"[MusicBrainz Client] Attempt 4 (Artist Wildcard + Title Exact): '{attempt4_query}'")
+                attempt4_query = (
+                    f'artist:"{safe_primary}"* AND recording:"{safe_title}"'
+                )
+                logger.debug(
+                    f"[MusicBrainz Client] Attempt 4 (Artist Wildcard + Title Exact): '{attempt4_query}'"
+                )
                 results = self._search_metadata_query(query=attempt4_query, limit=5)
 
             # Legacy Fallback 1: Strip parenthetical/bracketed phrases from the title and search again
             if not results:
-                fallback_title = re.sub(r'[\(\[\{].*?[\)\]\}]', '', clean_title).strip()
-                fallback_title = re.sub(r'\s+', ' ', fallback_title)
+                fallback_title = re.sub(r"[\(\[\{].*?[\)\]\}]", "", clean_title).strip()
+                fallback_title = re.sub(r"\s+", " ", fallback_title)
                 if fallback_title and fallback_title != clean_title:
                     safe_fallback_title = self._escape_lucene(fallback_title)
-                    logger.debug(f"[MusicBrainz Client] Bracket Stripping Fallback: title='{fallback_title}'")
-                    legacy_query = f'artist:"{safe_primary}" AND recording:"{safe_fallback_title}"'
+                    logger.debug(
+                        f"[MusicBrainz Client] Bracket Stripping Fallback: title='{fallback_title}'"
+                    )
+                    legacy_query = (
+                        f'artist:"{safe_primary}" AND recording:"{safe_fallback_title}"'
+                    )
                     results = self._search_metadata_query(query=legacy_query, limit=5)
 
         # Fallback without artist / Recording Only (Attempt 5)
         if not results and safe_title:
             if safe_album:
-                logger.debug(f"[MusicBrainz Client] Trying Release + Recording fallback: recording='{safe_title}', release='{safe_album}'")
-                results = self._search_metadata_query(query=f'recording:"{safe_title}" AND release:"{safe_album}"', limit=5)
+                logger.debug(
+                    f"[MusicBrainz Client] Trying Release + Recording fallback: recording='{safe_title}', release='{safe_album}'"
+                )
+                results = self._search_metadata_query(
+                    query=f'recording:"{safe_title}" AND release:"{safe_album}"',
+                    limit=5,
+                )
             if not results:
                 attempt5_query = f'recording:"{safe_title}"'
-                logger.debug(f"[MusicBrainz Client] Attempt 5 (Recording Only Fallback with limit=15): '{attempt5_query}'")
+                logger.debug(
+                    f"[MusicBrainz Client] Attempt 5 (Recording Only Fallback with limit=15): '{attempt5_query}'"
+                )
                 results = self._search_metadata_query(query=attempt5_query, limit=15)
 
         if results:
             # Multi-Candidate Evaluation using MatchingEngine
-            from core.matching_engine.scoring_profile import PROFILE_EXACT_SYNC
             from core.matching_engine.matching_engine import WeightedMatchingEngine
+            from core.matching_engine.scoring_profile import PROFILE_EXACT_SYNC
 
-            source_artist_raw = getattr(track, 'artist_name', None) or getattr(track, 'artist', None) or artist or ""
+            source_artist_raw = (
+                getattr(track, "artist_name", None)
+                or getattr(track, "artist", None)
+                or artist
+                or ""
+            )
             source_track = EchosyncTrack(
-                raw_title=clean_title or (track.raw_title if isinstance(track, EchosyncTrack) else title),
+                raw_title=clean_title
+                or (track.raw_title if isinstance(track, EchosyncTrack) else title),
                 artist_name=clean_primary or clean_artist or source_artist_raw,
-                album_title=clean_album_str or (track.album_title if isinstance(track, EchosyncTrack) else album),
-                duration=(getattr(track, 'duration', None) or getattr(track, 'duration_ms', None) or duration_ms),
-                isrc=(getattr(track, 'isrc', None) if isinstance(track, EchosyncTrack) else None)
+                album_title=clean_album_str
+                or (track.album_title if isinstance(track, EchosyncTrack) else album),
+                duration=(
+                    getattr(track, "duration", None)
+                    or getattr(track, "duration_ms", None)
+                    or duration_ms
+                ),
+                isrc=(
+                    getattr(track, "isrc", None)
+                    if isinstance(track, EchosyncTrack)
+                    else None
+                ),
             )
 
             engine = WeightedMatchingEngine(PROFILE_EXACT_SYNC)
-            best_candidate: Optional[EchosyncTrack] = None
+            best_candidate: EchosyncTrack | None = None
             best_score: float = -1.0
 
             seen_mbids = set()
@@ -526,8 +654,20 @@ class MusicBrainzClient(PluginBase):
                     # Create normalized comparison candidate stripping feat/collaborations so
                     # collaborative credits like "Madison Mars feat. Feldz" match "Madison Mars, Feldz" cleanly
                     cand_raw_artist = fetched.artist_name or ""
-                    cand_primary = re.split(r'[,/;]|\s+(?:feat\.?|ft\.?|&)\s+', cand_raw_artist, flags=re.IGNORECASE)[0].strip() if cand_raw_artist else ""
-                    clean_cand_primary = normalize_artist(self._clean_query_artist(cand_primary)) if cand_primary else ""
+                    cand_primary = (
+                        re.split(
+                            r"[,/;]|\s+(?:feat\.?|ft\.?|&)\s+",
+                            cand_raw_artist,
+                            flags=re.IGNORECASE,
+                        )[0].strip()
+                        if cand_raw_artist
+                        else ""
+                    )
+                    clean_cand_primary = (
+                        normalize_artist(self._clean_query_artist(cand_primary))
+                        if cand_primary
+                        else ""
+                    )
 
                     eval_candidate = EchosyncTrack(
                         raw_title=fetched.raw_title,
@@ -535,18 +675,31 @@ class MusicBrainzClient(PluginBase):
                         album_title=fetched.album_title,
                         duration=fetched.duration,
                         isrc=fetched.isrc,
-                        musicbrainz_id=fetched.musicbrainz_id
+                        musicbrainz_id=fetched.musicbrainz_id,
                     )
 
                     match_result_raw = engine.calculate_match(source_track, fetched)
-                    match_result_eval = engine.calculate_match(source_track, eval_candidate)
+                    match_result_eval = engine.calculate_match(
+                        source_track, eval_candidate
+                    )
 
-                    match_result = match_result_eval if (
-                        match_result_eval and (not match_result_raw or match_result_eval.confidence_score >= match_result_raw.confidence_score)
-                    ) else match_result_raw
+                    match_result = (
+                        match_result_eval
+                        if (
+                            match_result_eval
+                            and (
+                                not match_result_raw
+                                or match_result_eval.confidence_score
+                                >= match_result_raw.confidence_score
+                            )
+                        )
+                        else match_result_raw
+                    )
 
                     score = match_result.confidence_score if match_result else 0.0
-                    passed_version = match_result.passed_version_check if match_result else False
+                    passed_version = (
+                        match_result.passed_version_check if match_result else False
+                    )
                     logger.debug(
                         f"[MusicBrainz Client] Candidate '{fetched.title}' by '{fetched.artist_name}' "
                         f"(MBID: {mbid}) scored {score:.1f}% (version_pass={passed_version})"
@@ -561,10 +714,14 @@ class MusicBrainzClient(PluginBase):
                     break
 
             if best_candidate:
-                logger.debug(f"[MusicBrainz Client] Winner selected: {best_candidate.title} by {best_candidate.artist_name} (score: {best_score:.1f}%)")
+                logger.debug(
+                    f"[MusicBrainz Client] Winner selected: {best_candidate.title} by {best_candidate.artist_name} (score: {best_score:.1f}%)"
+                )
                 return best_candidate
         else:
-            logger.debug("[MusicBrainz Client] No search results returned from _search_metadata_query after all fallback attempts")
+            logger.debug(
+                "[MusicBrainz Client] No search results returned from _search_metadata_query after all fallback attempts"
+            )
         return None
 
     def _clean_query_artist(self, artist_str: str) -> str:
@@ -572,10 +729,18 @@ class MusicBrainzClient(PluginBase):
         if not artist_str:
             return ""
         import re
+
         # Strip feat./ft./featuring/with/vs. and trailing periods/ampersands
-        cleaned = re.sub(r'(?i)\s+(?:feat\.?|ft\.?|featuring|with|vs\.?)\s+.*$', '', artist_str).strip()
-        cleaned = re.sub(r'[\(\[]\s*(?:feat\.?|ft\.?|featuring|with)\s+[^()\[\]]*?[\)\]]', '', cleaned, flags=re.IGNORECASE)
-        cleaned = re.sub(r'[\s&.,\-]+$', '', cleaned).strip()
+        cleaned = re.sub(
+            r"(?i)\s+(?:feat\.?|ft\.?|featuring|with|vs\.?)\s+.*$", "", artist_str
+        ).strip()
+        cleaned = re.sub(
+            r"[\(\[]\s*(?:feat\.?|ft\.?|featuring|with)\s+[^()\[\]]*?[\)\]]",
+            "",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
+        cleaned = re.sub(r"[\s&.,\-]+$", "", cleaned).strip()
         return cleaned or artist_str.strip()
 
     def _escape_lucene(self, term: str) -> str:
@@ -587,32 +752,38 @@ class MusicBrainzClient(PluginBase):
         import re
 
         def _escape_unquoted(s: str) -> str:
-            s = re.sub(r'([+\-!(){}\[\]^"~*?:\\/])', r'\\\1', s)
-            s = re.sub(r'(?<!\\)&&', r'\&&', s)
-            s = re.sub(r'(?<!\\)\|\|', r'\|\|', s)
+            s = re.sub(r'([+\-!(){}\[\]^"~*?:\\/])', r"\\\1", s)
+            s = re.sub(r"(?<!\\)&&", r"\&&", s)
+            s = re.sub(r"(?<!\\)\|\|", r"\|\|", s)
             return s
 
         parts = re.split(r'("[^"]*")', term)
         escaped_parts = []
         for part in parts:
             if part.startswith('"') and part.endswith('"') and len(part) >= 2:
-                inner = part[1:-1].replace('\\', '\\\\').replace('"', '\\"')
+                inner = part[1:-1].replace("\\", "\\\\").replace('"', '\\"')
                 escaped_parts.append(f'"{inner}"')
             else:
                 escaped_parts.append(_escape_unquoted(part))
 
         return "".join(escaped_parts).strip()
 
-    async def search_recording_strict(self, artist: str, title: str, immediate: bool = False) -> List[EchosyncTrack]:
+    async def search_recording_strict(
+        self, artist: str, title: str, immediate: bool = False
+    ) -> list[EchosyncTrack]:
         if not artist or not title:
             return []
 
         # 1. Check Cache
         lookup_str = f"{artist}||{title}".lower()
-        lookup_hash = hashlib.sha256(lookup_str.encode('utf-8')).hexdigest()
+        lookup_hash = hashlib.sha256(lookup_str.encode("utf-8")).hexdigest()
 
         with self.sdk.db.get_plugin_session() as session:
-            cached = session.query(PluginMusicbrainzCache).filter_by(lookup_hash=lookup_hash).first()
+            cached = (
+                session.query(PluginMusicbrainzCache)
+                .filter_by(lookup_hash=lookup_hash)
+                .first()
+            )
             if cached:
                 # Convert back to EchosyncTrack objects
                 try:
@@ -629,6 +800,7 @@ class MusicBrainzClient(PluginBase):
             try:
                 loop = asyncio.get_running_loop()
                 import functools
+
                 get_func = functools.partial(
                     self.http.get,
                     f"{self.api_base}/recording",
@@ -637,7 +809,7 @@ class MusicBrainzClient(PluginBase):
                         "query": query,
                         "inc": "releases+artists",
                         "limit": 3,
-                    }
+                    },
                 )
                 response = await loop.run_in_executor(None, get_func)
 
@@ -699,17 +871,23 @@ class MusicBrainzClient(PluginBase):
                 if results:
                     try:
                         with self.sdk.db.get_plugin_session() as session:
-                            if not session.query(PluginMusicbrainzCache).filter_by(lookup_hash=lookup_hash).first():
+                            if (
+                                not session.query(PluginMusicbrainzCache)
+                                .filter_by(lookup_hash=lookup_hash)
+                                .first()
+                            ):
                                 metadata_json = [t.model_dump() for t in results]
                                 cached_entry = PluginMusicbrainzCache(
                                     id=lookup_hash,
                                     lookup_hash=lookup_hash,
                                     mbid=results[0].musicbrainz_id,
-                                    metadata_json=metadata_json
+                                    metadata_json=metadata_json,
                                 )
                                 session.add(cached_entry)
                     except Exception as e:
-                        logger.error(f"Failed to cache immediate MusicBrainz result: {e}")
+                        logger.error(
+                            f"Failed to cache immediate MusicBrainz result: {e}"
+                        )
 
                 return results
 
@@ -756,6 +934,7 @@ class MusicBrainzClient(PluginBase):
             # We run the synchronous http.get in an executor to avoid blocking the event loop
             loop = asyncio.get_running_loop()
             import functools
+
             get_func = functools.partial(
                 self.http.get,
                 f"{self.api_base}/recording",
@@ -763,13 +942,15 @@ class MusicBrainzClient(PluginBase):
                     "fmt": "json",
                     "query": full_query,
                     "inc": "releases+artists",
-                    "limit": len(batch) * 3, # up to 3 per request
-                }
+                    "limit": len(batch) * 3,  # up to 3 per request
+                },
             )
             response = await loop.run_in_executor(None, get_func)
 
             if response.status_code != 200:
-                logger.warning(f"MusicBrainz batch search failed (status={response.status_code})")
+                logger.warning(
+                    f"MusicBrainz batch search failed (status={response.status_code})"
+                )
                 for _, _, _, future in batch:
                     if not future.done():
                         future.set_result([])
@@ -837,13 +1018,17 @@ class MusicBrainzClient(PluginBase):
                     try:
                         with self.sdk.db.get_plugin_session() as session:
                             # Avoid duplicates
-                            if not session.query(PluginMusicbrainzCache).filter_by(lookup_hash=lookup_hash).first():
+                            if (
+                                not session.query(PluginMusicbrainzCache)
+                                .filter_by(lookup_hash=lookup_hash)
+                                .first()
+                            ):
                                 metadata_json = [t.model_dump() for t in best_matches]
                                 cached_entry = PluginMusicbrainzCache(
                                     id=lookup_hash,
                                     lookup_hash=lookup_hash,
                                     mbid=best_matches[0].musicbrainz_id,
-                                    metadata_json=metadata_json
+                                    metadata_json=metadata_json,
                                 )
                                 session.add(cached_entry)
                     except Exception as e:
@@ -855,7 +1040,7 @@ class MusicBrainzClient(PluginBase):
                 if not future.done():
                     future.set_result([])
 
-    def search_by_isrc(self, isrc: str) -> Optional[EchosyncTrack]:
+    def search_by_isrc(self, isrc: str) -> EchosyncTrack | None:
         """Implement PluginBase.search_by_isrc via the MusicBrainz ISRC endpoint."""
         isrc = str(isrc or "").strip().upper()
         if not isrc:
@@ -875,7 +1060,7 @@ class MusicBrainzClient(PluginBase):
 
             recording = recordings[0]
             artist_credit = recording.get("artist-credit") or []
-            artist_parts: List[str] = []
+            artist_parts: list[str] = []
             for entry in artist_credit:
                 if isinstance(entry, dict) and "artist" in entry:
                     artist_parts.append(str(entry.get("name") or ""))
@@ -884,8 +1069,14 @@ class MusicBrainzClient(PluginBase):
 
             releases = recording.get("releases") or []
             first_release = releases[0] if releases else {}
-            release_date = str(first_release.get("date") or recording.get("first-release-date") or "")
-            release_year = int(release_date[:4]) if len(release_date) >= 4 and release_date[:4].isdigit() else None
+            release_date = str(
+                first_release.get("date") or recording.get("first-release-date") or ""
+            )
+            release_year = (
+                int(release_date[:4])
+                if len(release_date) >= 4 and release_date[:4].isdigit()
+                else None
+            )
 
             duration_ms = recording.get("length")
             try:
@@ -907,21 +1098,27 @@ class MusicBrainzClient(PluginBase):
             logger.warning("MusicBrainz search_by_isrc(%s) failed: %s", isrc, exc)
             return None
 
-    def get_metadata(self, mbid: str) -> Optional[Dict[str, Any]]:
+    def get_metadata(self, mbid: str) -> dict[str, Any] | None:
         """Fetch detailed metadata for a recording MBID."""
         mbid = str(mbid or "").strip()
         if not mbid:
             return None
 
         try:
-            logger.debug(f"[MusicBrainz Client] Fetching detailed metadata for mbid='{mbid}' via GET {self.api_base}/recording/{mbid}")
+            logger.debug(
+                f"[MusicBrainz Client] Fetching detailed metadata for mbid='{mbid}' via GET {self.api_base}/recording/{mbid}"
+            )
             response = self.http.get(
                 f"{self.api_base}/recording/{mbid}",
                 params={"fmt": "json", "inc": "artists+releases+isrcs+media"},
             )
-            logger.debug(f"[MusicBrainz Client] get_metadata response: status={response.status_code}")
+            logger.debug(
+                f"[MusicBrainz Client] get_metadata response: status={response.status_code}"
+            )
             if response.status_code != 200:
-                logger.warning(f"MusicBrainz get_metadata failed for mbid={mbid}: status={response.status_code}")
+                logger.warning(
+                    f"MusicBrainz get_metadata failed for mbid={mbid}: status={response.status_code}"
+                )
                 return None
 
             data = response.json() or {}
@@ -948,7 +1145,9 @@ class MusicBrainzClient(PluginBase):
                         name_parts.append(str(credit.get("name") or ""))
                         name_parts.append(str(credit.get("joinphrase") or ""))
                 result["artist"] = "".join(name_parts).strip()
-                if isinstance(credits[0], dict) and isinstance(credits[0].get("artist"), dict):
+                if isinstance(credits[0], dict) and isinstance(
+                    credits[0].get("artist"), dict
+                ):
                     result["artist_id"] = credits[0]["artist"].get("id") or ""
 
             releases = data.get("releases") or []
@@ -967,20 +1166,20 @@ class MusicBrainzClient(PluginBase):
             logger.error(f"Failed to fetch metadata for {mbid}: {exc}")
             return None
 
-    def get_metadata_batch(self, mbids: List[str]) -> Dict[str, Dict[str, Any]]:
+    def get_metadata_batch(self, mbids: list[str]) -> dict[str, dict[str, Any]]:
         """Fetch full metadata for multiple recording MBIDs in batches up to 50."""
         mbids = [str(m).strip() for m in mbids if str(m).strip()]
         if not mbids:
             return {}
-            
+
         results = {}
         # Max limit for search API is 100, we'll chunk by 50 to be safe
         chunk_size = 50
         for i in range(0, len(mbids), chunk_size):
-            chunk = mbids[i:i+chunk_size]
+            chunk = mbids[i : i + chunk_size]
             query_parts = [f"reid:{mbid}" for mbid in chunk]
             full_query = " OR ".join(query_parts)
-            
+
             try:
                 response = self.http.get(
                     f"{self.api_base}/recording",
@@ -988,19 +1187,21 @@ class MusicBrainzClient(PluginBase):
                         "fmt": "json",
                         "query": full_query,
                         "inc": "artists+releases+isrcs+media",
-                        "limit": len(chunk)
-                    }
+                        "limit": len(chunk),
+                    },
                 )
                 if response.status_code != 200:
-                    logger.warning(f"Batch metadata fetch failed: {response.status_code}")
+                    logger.warning(
+                        f"Batch metadata fetch failed: {response.status_code}"
+                    )
                     continue
-                    
+
                 data = response.json() or {}
                 for recording in data.get("recordings", []) or []:
                     rec_id = str(recording.get("id") or "").strip()
                     if not rec_id or rec_id not in chunk:
                         continue
-                        
+
                     result = {
                         "title": recording.get("title"),
                         "recording_id": rec_id,
@@ -1023,7 +1224,9 @@ class MusicBrainzClient(PluginBase):
                                 name_parts.append(str(credit.get("name") or ""))
                                 name_parts.append(str(credit.get("joinphrase") or ""))
                         result["artist"] = "".join(name_parts).strip()
-                        if isinstance(credits[0], dict) and isinstance(credits[0].get("artist"), dict):
+                        if isinstance(credits[0], dict) and isinstance(
+                            credits[0].get("artist"), dict
+                        ):
                             result["artist_id"] = credits[0]["artist"].get("id") or ""
 
                     releases = recording.get("releases") or []
@@ -1039,11 +1242,11 @@ class MusicBrainzClient(PluginBase):
                     results[rec_id] = result
             except Exception as exc:
                 logger.error(f"Failed to fetch batch metadata: {exc}")
-                
+
         return results
 
     @plugin_cache(ttl_seconds=2592000)
-    def get_release(self, release_id: str) -> Optional[Dict[str, Any]]:
+    def get_release(self, release_id: str) -> dict[str, Any] | None:
         """Fetch full release data for the album memory cache in MetadataEnhancerService.
 
         Returns a dict with:
@@ -1074,21 +1277,21 @@ class MusicBrainzClient(PluginBase):
             release_date = str(data.get("date") or "").strip()
             cover_art_url = None
 
-            tracks: List[Dict[str, Any]] = []
+            tracks: list[dict[str, Any]] = []
             for medium in data.get("media", []) or []:
                 disc_number = int(medium.get("position") or 1)
                 for track_entry in medium.get("tracks", []) or []:
                     recording = track_entry.get("recording") or {}
                     raw_pos = track_entry.get("number") or track_entry.get("position")
                     try:
-                        track_number: Optional[int] = int(
+                        track_number: int | None = int(
                             str(raw_pos).split("/")[0].strip()
                         )
                     except (TypeError, ValueError):
                         track_number = None
 
                     artist_credit = recording.get("artist-credit") or []
-                    artist_parts: List[str] = []
+                    artist_parts: list[str] = []
                     for entry in artist_credit:
                         if isinstance(entry, dict):
                             artist_parts.append(str(entry.get("name") or ""))
@@ -1107,33 +1310,43 @@ class MusicBrainzClient(PluginBase):
                     ).strip()
                     duration_ms = recording.get("length")
                     try:
-                        duration_ms = int(duration_ms) if duration_ms is not None else None
+                        duration_ms = (
+                            int(duration_ms) if duration_ms is not None else None
+                        )
                     except (TypeError, ValueError):
                         duration_ms = None
 
                     isrc_list = recording.get("isrcs") or []
                     isrc = str(isrc_list[0]).strip() if isrc_list else None
 
-                    tracks.append({
-                        "title": title,
-                        "artist": artist_str,
-                        "album": album_title,
-                        "track_number": track_number,
-                        "disc_number": disc_number,
-                        "recording_id": recording_id,
-                        "release_id": release_id,
-                        "isrc": isrc,
-                        "duration_ms": duration_ms,
-                        "date": release_date,
-                        "cover_art_url": cover_art_url,
-                    })
+                    tracks.append(
+                        {
+                            "title": title,
+                            "artist": artist_str,
+                            "album": album_title,
+                            "track_number": track_number,
+                            "disc_number": disc_number,
+                            "recording_id": recording_id,
+                            "release_id": release_id,
+                            "isrc": isrc,
+                            "duration_ms": duration_ms,
+                            "date": release_date,
+                            "cover_art_url": cover_art_url,
+                        }
+                    )
 
-            return {"album": album_title, "cover_art_url": cover_art_url, "tracks": tracks}
+            return {
+                "album": album_title,
+                "cover_art_url": cover_art_url,
+                "tracks": tracks,
+            }
         except Exception as exc:
-            logger.warning("MusicBrainzClient.get_release(%s) failed: %s", release_id, exc)
+            logger.warning(
+                "MusicBrainzClient.get_release(%s) failed: %s", release_id, exc
+            )
             return None
 
-    def _get_cover_art(self, release_id: str) -> Optional[str]:  # noqa: ARG002
+    def _get_cover_art(self, release_id: str) -> str | None:
         # Cover art is sourced from the media server (Plex/Jellyfin) during library
         # sync. We never query coverartarchive.org so that the enhancer stays fast
         # and does not consume bandwidth on redirected image HEAD requests.
@@ -1148,17 +1361,19 @@ class MusicBrainzClient(PluginBase):
         query: str,
         type: str = "track",
         limit: int = 10,
-        quality_profile: Optional[Dict[str, Any]] = None,
-    ) -> List[EchosyncTrack]:
+        quality_profile: dict[str, Any] | None = None,
+    ) -> list[EchosyncTrack]:
         if type != "track":
             return []
         return self.get_artist_tracks(query)[:limit]
 
-    def get_track(self, track_id: str) -> Optional[EchosyncTrack]:
+    def get_track(self, track_id: str) -> EchosyncTrack | None:
         logger.debug(f"[MusicBrainz Client] get_track called for track_id={track_id}")
         metadata = self.get_metadata(track_id)
         if not metadata:
-            logger.debug(f"[MusicBrainz Client] No metadata returned for track_id={track_id}")
+            logger.debug(
+                f"[MusicBrainz Client] No metadata returned for track_id={track_id}"
+            )
             return None
         track_obj = self.create_echo_sync_track(
             title=metadata.get("title") or "",
@@ -1169,23 +1384,25 @@ class MusicBrainzClient(PluginBase):
             provider_id=metadata.get("recording_id"),
             source=self.name,
         )
-        logger.debug(f"[MusicBrainz Client] Created EchosyncTrack object: {track_obj.to_dict() if track_obj else None}")
+        logger.debug(
+            f"[MusicBrainz Client] Created EchosyncTrack object: {track_obj.to_dict() if track_obj else None}"
+        )
         return track_obj
 
-    def get_album(self, album_id: str) -> Optional[Dict[str, Any]]:
+    def get_album(self, album_id: str) -> dict[str, Any] | None:
         return None
 
-    def get_artist(self, artist_id: str) -> Optional[Dict[str, Any]]:
+    def get_artist(self, artist_id: str) -> dict[str, Any] | None:
         tracks = self.get_artist_tracks(artist_id)
         return {"id": artist_id, "tracks": tracks}
 
-    def get_user_playlists(self, user_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    def get_user_playlists(self, user_id: str | None = None) -> list[dict[str, Any]]:
         return []
 
-    def get_playlist_tracks(self, playlist_id: str) -> List[EchosyncTrack]:
+    def get_playlist_tracks(self, playlist_id: str) -> list[EchosyncTrack]:
         return []
 
-    def get_active_access_token(self, account_id: Optional[int] = None) -> Optional[str]:
+    def get_active_access_token(self, account_id: int | None = None) -> str | None:
         """Return a decrypted access token for the first (or specified) authenticated account.
 
         Returns None when no authenticated account is available, which means the
@@ -1201,7 +1418,11 @@ class MusicBrainzClient(PluginBase):
             else:
                 # Prefer active + authenticated, fall back to first authenticated
                 target = next(
-                    (a for a in accounts if a.get("is_authenticated") and a.get("is_active")),
+                    (
+                        a
+                        for a in accounts
+                        if a.get("is_authenticated") and a.get("is_active")
+                    ),
                     next((a for a in accounts if a.get("is_authenticated")), None),
                 )
 
@@ -1223,7 +1444,7 @@ class MusicBrainzClient(PluginBase):
             logger.debug(f"Could not load MusicBrainz access token: {e}")
             return None
 
-    def submit_isrc(self, mbid: str, isrc: str, account_id: Optional[int] = None) -> bool:
+    def submit_isrc(self, mbid: str, isrc: str, account_id: int | None = None) -> bool:
         """Submit an ISRC–recording association to MusicBrainz.
 
         Requires the user to have authenticated with the ``submit_isrc`` scope.
@@ -1243,9 +1464,12 @@ class MusicBrainzClient(PluginBase):
         # Opt-in check: only submit if auto_contribute is enabled in settings
         try:
             from core.nexus_framework.plugin_SDK import sdk
-            auto_contribute = sdk.config.get('auto_contribute')
+
+            auto_contribute = sdk.config.get("auto_contribute")
             if not (auto_contribute == "true" or auto_contribute is True):
-                logger.debug("Skipping MusicBrainz ISRC submission: auto_contribute is disabled")
+                logger.debug(
+                    "Skipping MusicBrainz ISRC submission: auto_contribute is disabled"
+                )
                 return False
         except Exception as e:
             logger.debug(f"Could not verify MusicBrainz auto_contribute flag: {e}")
@@ -1253,7 +1477,9 @@ class MusicBrainzClient(PluginBase):
 
         access_token = self.get_active_access_token(account_id)
         if not access_token:
-            logger.warning("MusicBrainz submit_isrc: no authenticated account available")
+            logger.warning(
+                "MusicBrainz submit_isrc: no authenticated account available"
+            )
             return False
 
         xml_body = (
@@ -1261,13 +1487,15 @@ class MusicBrainzClient(PluginBase):
             '<metadata xmlns="http://musicbrainz.org/ns/mmd-2.0#">'
             f'<recording id="{mbid}">'
             '<isrc-list><isrc id="' + isrc + '"/></isrc-list>'
-            '</recording>'
-            '</metadata>'
+            "</recording>"
+            "</metadata>"
         )
         try:
             resp = self.http.post(
                 f"{self.api_base}/recording/{mbid}",
-                params={"client": "Echosync-0.1.0-https://github.com/echosync/echosync"},
+                params={
+                    "client": "Echosync-0.1.0-https://github.com/echosync/echosync"
+                },
                 data=xml_body,
                 headers={
                     "Authorization": f"Bearer {access_token}",
@@ -1277,7 +1505,9 @@ class MusicBrainzClient(PluginBase):
             if resp.status_code in (200, 204):
                 logger.info(f"ISRC {isrc} submitted for MBID {mbid}")
                 return True
-            logger.warning(f"MusicBrainz ISRC submission returned {resp.status_code}: {resp.text[:200]}")
+            logger.warning(
+                f"MusicBrainz ISRC submission returned {resp.status_code}: {resp.text[:200]}"
+            )
             return False
         except Exception as e:
             logger.error(f"MusicBrainz submit_isrc failed: {e}")
@@ -1294,4 +1524,3 @@ class MusicBrainzClient(PluginBase):
 MusicBrainzProvider = MusicBrainzClient
 
 # Ensure plugin loader/runtime registry can resolve this provider class.
-

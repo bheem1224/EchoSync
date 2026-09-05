@@ -1,4 +1,3 @@
-import sqlite3
 from database.music_database import MusicDatabase
 
 

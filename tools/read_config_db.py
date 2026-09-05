@@ -1,9 +1,10 @@
 import sqlite3
 
+
 def main():
     conn = sqlite3.connect("config/config.db")
     cur = conn.cursor()
-    
+
     # List tables
     cur.execute("SELECT name FROM sqlite_master WHERE type='table';")
     tables = [r[0] for r in cur.fetchall()]
@@ -21,6 +22,7 @@ def main():
             print(f"    error: {e}")
         print()
     conn.close()
+
 
 if __name__ == "__main__":
     main()

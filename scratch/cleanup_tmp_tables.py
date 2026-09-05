@@ -1,5 +1,5 @@
-import sqlite3
 import os
+import sqlite3
 
 db_paths = [
     "data/music.db",
@@ -10,7 +10,7 @@ db_paths = [
     "database/config_database.db",
     "music.db",
     "working.db",
-    "config.db"
+    "config.db",
 ]
 
 # Walk workspace to find any .db files
@@ -27,16 +27,16 @@ for path in db_paths:
     try:
         conn = sqlite3.connect(path)
         cursor = conn.cursor()
-        
+
         # Get all tables
         cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
         tables = [row[0] for row in cursor.fetchall()]
-        
+
         for table in tables:
             if table.startswith("_alembic_tmp_"):
                 print(f"Dropping temporary table {table} in {path}")
                 cursor.execute(f"DROP TABLE IF EXISTS {table};")
-        
+
         conn.commit()
         conn.close()
     except Exception as e:

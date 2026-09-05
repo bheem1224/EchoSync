@@ -56,6 +56,7 @@ logger = get_logger("cjk_language_pack")
 # Unicode range helpers
 # ---------------------------------------------------------------------------
 
+
 def _contains_cjk(text: str) -> bool:
     """Return True if *text* contains at least one CJK / Kana / Hangul codepoint."""
     for ch in text:
@@ -86,8 +87,8 @@ def _contains_hangul(text: str) -> bool:
     for ch in text:
         cp = ord(ch)
         if (
-            0xAC00 <= cp <= 0xD7AF   # Hangul Syllables
-            or 0x1100 <= cp <= 0x11FF   # Hangul Jamo
+            0xAC00 <= cp <= 0xD7AF  # Hangul Syllables
+            or 0x1100 <= cp <= 0x11FF  # Hangul Jamo
         ):
             return True
     return False
@@ -98,9 +99,9 @@ def _contains_kana_or_kanji(text: str) -> bool:
     for ch in text:
         cp = ord(ch)
         if (
-            0x3040 <= cp <= 0x30FF   # Hiragana + Katakana
+            0x3040 <= cp <= 0x30FF  # Hiragana + Katakana
             or 0x31F0 <= cp <= 0x31FF  # Katakana Phonetic Extensions
-            or 0x4E00 <= cp <= 0x9FFF   # CJK Unified Ideographs
+            or 0x4E00 <= cp <= 0x9FFF  # CJK Unified Ideographs
             or 0x3400 <= cp <= 0x4DBF
         ):
             return True
@@ -124,6 +125,7 @@ def _contains_hanzi(text: str) -> bool:
 # ---------------------------------------------------------------------------
 # Transliteration filter
 # ---------------------------------------------------------------------------
+
 
 def transliterate_cjk(text: str, **kwargs: Any) -> str:
     """
@@ -158,7 +160,10 @@ def transliterate_cjk(text: str, **kwargs: Any) -> str:
     if _contains_hanzi(result):
         try:
             import opencc as _opencc_raw  # type: ignore[import-untyped]
-            from pypinyin import lazy_pinyin as _pinyin_raw, Style as _Style_raw  # type: ignore[import-untyped]
+            from pypinyin import Style as _Style_raw
+            from pypinyin import (  # type: ignore[import-untyped]
+                lazy_pinyin as _pinyin_raw,
+            )
 
             # Re-bind to Any so Pylance does not cascade Unknown through downstream calls.
             opencc_mod: Any = cast(Any, _opencc_raw)
@@ -175,16 +180,16 @@ def transliterate_cjk(text: str, **kwargs: Any) -> str:
                 cp = ord(ch)
                 if 0x4E00 <= cp <= 0x9FFF or 0x3400 <= cp <= 0x4DBF:
                     # CJK character → convert to tone-stripped pinyin syllable
-                    pinyin_syllables: list[str] = list(lazy_pinyin(ch, style=Style.NORMAL))
+                    pinyin_syllables: list[str] = list(
+                        lazy_pinyin(ch, style=Style.NORMAL)
+                    )
                     parts.extend(pinyin_syllables)
                 else:
                     parts.append(ch)
 
             result = " ".join(parts)
         except Exception as exc:
-            logger.warning(
-                "CJK Language Pack: Chinese transliteration failed: %s", exc
-            )
+            logger.warning("CJK Language Pack: Chinese transliteration failed: %s", exc)
             # Proceed with the previous value of `result`
 
     # ── 2. Japanese: Kanji / Kana → Romaji ────────────────────────────────
@@ -215,8 +220,12 @@ def transliterate_cjk(text: str, **kwargs: Any) -> str:
     # ── 3. Korean: Hangul → Revised Romanization ──────────────────────────
     if _contains_hangul(result):
         try:
-            from hangul_romanize import Transliter as _Transliter_raw  # type: ignore[import-untyped]
-            from hangul_romanize.rule import academic as _academic_raw  # type: ignore[import-untyped]
+            from hangul_romanize import (
+                Transliter as _Transliter_raw,  # type: ignore[import-untyped]
+            )
+            from hangul_romanize.rule import (
+                academic as _academic_raw,  # type: ignore[import-untyped]
+            )
 
             Transliter: Any = cast(Any, _Transliter_raw)
             academic: Any = cast(Any, _academic_raw)
@@ -243,9 +252,7 @@ def transliterate_cjk(text: str, **kwargs: Any) -> str:
             _flush_hangul()
             result = "".join(parts_ko)
         except Exception as exc:
-            logger.warning(
-                "CJK Language Pack: Korean transliteration failed: %s", exc
-            )
+            logger.warning("CJK Language Pack: Korean transliteration failed: %s", exc)
 
     return result
 
@@ -314,9 +321,10 @@ def extract_mb_aliases(db_track: Any, **kwargs: Any) -> Any:
         return db_track
 
     try:
-        from core.nexus_framework.plugin_SDK import sdk
         # (removed get_music_database import)
         from sqlalchemy import text
+
+        from core.nexus_framework.plugin_SDK import sdk
 
         engine = sdk.get_database_connection(write_access=True)
         with engine.begin() as session:
@@ -326,17 +334,25 @@ def extract_mb_aliases(db_track: Any, **kwargs: Any) -> Any:
                 locale_str = str(a.get("locale") or "").strip()
                 if not alias_str:
                     continue
-                
+
                 # Use raw SQL to avoid direct model imports
                 exists = session.execute(
-                    text("SELECT 1 FROM track_aliases WHERE track_id = :tid AND name = :name"),
-                    {"tid": db_track.id, "name": alias_str}
+                    text(
+                        "SELECT 1 FROM track_aliases WHERE track_id = :tid AND name = :name"
+                    ),
+                    {"tid": db_track.id, "name": alias_str},
                 ).fetchone()
 
                 if not exists:
                     session.execute(
-                        text("INSERT INTO track_aliases (track_id, name, locale) VALUES (:tid, :name, :loc)"),
-                        {"tid": db_track.id, "name": alias_str, "loc": locale_str or None}
+                        text(
+                            "INSERT INTO track_aliases (track_id, name, locale) VALUES (:tid, :name, :loc)"
+                        ),
+                        {
+                            "tid": db_track.id,
+                            "name": alias_str,
+                            "loc": locale_str or None,
+                        },
                     )
 
             # ── Artist aliases ────────────────────────────────────────────
@@ -347,14 +363,22 @@ def extract_mb_aliases(db_track: Any, **kwargs: Any) -> Any:
                     continue
 
                 exists = session.execute(
-                    text("SELECT 1 FROM artist_aliases WHERE artist_id = :aid AND name = :name"),
-                    {"aid": db_track.artist_id, "name": alias_str}
+                    text(
+                        "SELECT 1 FROM artist_aliases WHERE artist_id = :aid AND name = :name"
+                    ),
+                    {"aid": db_track.artist_id, "name": alias_str},
                 ).fetchone()
 
                 if not exists:
                     session.execute(
-                        text("INSERT INTO artist_aliases (artist_id, name, locale) VALUES (:aid, :name, :loc)"),
-                        {"aid": db_track.artist_id, "name": alias_str, "loc": locale_str or None}
+                        text(
+                            "INSERT INTO artist_aliases (artist_id, name, locale) VALUES (:aid, :name, :loc)"
+                        ),
+                        {
+                            "aid": db_track.artist_id,
+                            "name": alias_str,
+                            "loc": locale_str or None,
+                        },
                     )
 
         logger.debug(
@@ -373,7 +397,8 @@ def extract_mb_aliases(db_track: Any, **kwargs: Any) -> Any:
 # Plugin entry point
 # ---------------------------------------------------------------------------
 
-def setup(hm: "HookManager") -> None:
+
+def setup(hm: HookManager) -> None:
     """
     Legacy entry point — kept for compatibility with any caller that invokes
     ``module.setup(hook_manager)`` directly.

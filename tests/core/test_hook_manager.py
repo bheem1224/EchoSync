@@ -11,16 +11,15 @@ Key invariants verified:
 """
 
 import asyncio
-import types
 
 import pytest
 
 from core.hook_manager import HookManager
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture()
 def hm():
@@ -31,6 +30,7 @@ def hm():
 # ===========================================================================
 # Basic synchronous behaviour
 # ===========================================================================
+
 
 class TestSyncFilters:
     def test_no_filters_returns_default_value(self, hm):
@@ -62,6 +62,7 @@ class TestSyncFilters:
 # H1 — Async hook poisoning (the core regression test)
 # ===========================================================================
 
+
 class TestAsyncHookGuard:
     """
     Validates the fix from audit finding H1:
@@ -78,6 +79,7 @@ class TestAsyncHookGuard:
         Registering an async hook must not corrupt the return value.
         The returned value must remain the original default, not a coroutine.
         """
+
         async def bad_hook(val):
             return val + "_async_result"
 
@@ -91,6 +93,7 @@ class TestAsyncHookGuard:
 
     def test_async_hook_return_is_not_a_coroutine(self, hm):
         """The final returned value must never be a coroutine object."""
+
         async def bad_hook(val):
             return "async_corrupted"
 
@@ -102,9 +105,7 @@ class TestAsyncHookGuard:
             "It would be silently lost and generate a ResourceWarning."
         )
 
-    def test_async_hook_coroutine_is_closed_no_resource_warning(
-        self, hm, recwarn
-    ):
+    def test_async_hook_coroutine_is_closed_no_resource_warning(self, hm, recwarn):
         """
         The coroutine returned by the async hook must be .close()d by the
         HookManager so Python does not emit a 'coroutine was never awaited'
@@ -150,6 +151,7 @@ class TestAsyncHookGuard:
         The good sync hook must still fire and must receive the original
         (un-poisoned) value, not the async result.
         """
+
         async def bad_hook(val):
             return "ASYNC_POISON"
 
@@ -186,8 +188,12 @@ class TestAsyncHookGuard:
 
     def test_multiple_async_hooks_all_skipped(self, hm):
         """All async hooks in a chain must be skipped; the default is returned intact."""
-        async def a1(v): return v + "_a1"
-        async def a2(v): return v + "_a2"
+
+        async def a1(v):
+            return v + "_a1"
+
+        async def a2(v):
+            return v + "_a2"
 
         hm.add_filter("all_async", a1)
         hm.add_filter("all_async", a2)
@@ -199,6 +205,7 @@ class TestAsyncHookGuard:
 # ===========================================================================
 # Crashing sync hook resilience
 # ===========================================================================
+
 
 class TestCrashingHookResilience:
     """A sync hook that raises must not corrupt the chain."""
@@ -230,6 +237,7 @@ class TestCrashingHookResilience:
 # ===========================================================================
 # add_filter
 # ===========================================================================
+
 
 class TestAddFilter:
     def test_add_filter_creates_new_hook_list(self, hm):

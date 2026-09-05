@@ -1,6 +1,11 @@
 from pathlib import Path
 
-from database.working_database import WorkingDatabase, Account, UserTrackState, UserRating, Account
+from database.working_database import (
+    Account,
+    UserRating,
+    UserTrackState,
+    WorkingDatabase,
+)
 from services.state_listener import StateListenerService
 
 
@@ -18,6 +23,7 @@ class _Bus:
 def _build_working_db(tmp_path: Path) -> WorkingDatabase:
     db = WorkingDatabase(str(tmp_path / "working_state_listener.db"))
     from database.working_database import WorkingBase
+
     WorkingBase.metadata.create_all(db.engine)
     return db
 
@@ -29,6 +35,7 @@ def test_sponsor_rating_removes_from_suggestions_playlist(tmp_path, monkeypatch)
     # Patch lifecycle modules to use this isolated DB.
     from core.suggestion_engine import consensus as consensus_mod
     from core.suggestion_engine import deletion as deletion_mod
+
     monkeypatch.setattr(consensus_mod, "get_working_database", lambda: db)
     monkeypatch.setattr(deletion_mod, "get_working_database", lambda: db)
     monkeypatch.setattr(deletion_mod, "event_bus", bus)
@@ -65,15 +72,23 @@ def test_sponsor_rating_removes_from_suggestions_playlist(tmp_path, monkeypatch)
     )
 
     with db.session_scope() as session:
-        rating = session.query(UserRating).filter(UserRating.sync_id == base_sync_id).first()
-        state = session.query(UserTrackState).filter(UserTrackState.sync_id == base_sync_id).first()
+        rating = (
+            session.query(UserRating).filter(UserRating.sync_id == base_sync_id).first()
+        )
+        state = (
+            session.query(UserTrackState)
+            .filter(UserTrackState.sync_id == base_sync_id)
+            .first()
+        )
 
     assert rating is not None
     assert rating.rating == 4.0
     assert state is not None
     assert state.is_unlinked is True
 
-    suggestion_events = [e for e in bus.events if e.get("event") == "SUGGESTION_PLAYLIST_REMOVE_INTENT"]
+    suggestion_events = [
+        e for e in bus.events if e.get("event") == "SUGGESTION_PLAYLIST_REMOVE_INTENT"
+    ]
     assert len(suggestion_events) == 1
     assert suggestion_events[0]["playlist_name"] == "Suggestions for You"
     assert suggestion_events[0]["sync_id"] == base_sync_id

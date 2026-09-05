@@ -1,12 +1,10 @@
-import json
-import sqlite3
 import contextlib
 import os
+import sqlite3
 from pathlib import Path
+
 from core.settings import config_manager
 from core.tiered_logger import get_logger
-from core.security import decrypt_string, encrypt_string
-from database.config_database import get_config_database
 
 logger = get_logger("migrations")
 
@@ -16,43 +14,46 @@ _MIN_SQLITE_RENAME_COLUMN = (3, 25, 0)
 # Global flag to track if v2.1.0 migration was triggered during this session
 _v2_1_migration_triggered = False
 
+
 def was_v2_1_migration_triggered() -> bool:
     """Check if v2.1.0 hard reset migration was triggered in this session."""
     global _v2_1_migration_triggered
     return _v2_1_migration_triggered
+
 
 def acknowledge_v2_1_migration() -> None:
     """Mark the v2.1.0 migration flag as acknowledged by the frontend."""
     global _v2_1_migration_triggered
     _v2_1_migration_triggered = False
 
+
 def _handle_v2_1_0_migration() -> bool:
     """
     v2.1.0 Hard Reset Migration:
     Detect if we're upgrading from v2.0.x by checking if music_database.db exists but working.db doesn't.
     If detected, safely delete music_database.db and allow natural recreation with new schemas.
-    
+
     Returns:
         bool: True if migration was triggered, False otherwise
     """
     global _v2_1_migration_triggered
-    
+
     data_dir = os.getenv("ECHOSYNC_DATA_DIR")
     if data_dir:
         base_path = Path(data_dir)
     else:
         base_path = Path("data")
-    
+
     music_db = base_path / "music_library.db"
     working_db = base_path / "working.db"
-    
+
     # Check if we need to perform v2.1.0 migration
     if music_db.exists() and not working_db.exists():
         logger.warning(
-            f"Detected v2.0.x upgrade to v2.1.0: music_library.db exists but working.db does not. "
-            f"Performing hard reset of music database..."
+            "Detected v2.0.x upgrade to v2.1.0: music_library.db exists but working.db does not. "
+            "Performing hard reset of music database..."
         )
-        
+
         try:
             # Safely delete the old music database
             music_db.unlink()
@@ -60,10 +61,12 @@ def _handle_v2_1_0_migration() -> bool:
             _v2_1_migration_triggered = True
             return True
         except Exception as e:
-            logger.error(f"Failed to delete music_library.db during v2.1.0 migration: {e}")
+            logger.error(
+                f"Failed to delete music_library.db during v2.1.0 migration: {e}"
+            )
             # Don't raise - allow app to continue and try to proceed
             return False
-    
+
     return False
 
 
@@ -76,7 +79,7 @@ def run_migrations() -> None:
     """
     # First: Handle v2.1.0 migration (hard reset if upgrading from v2.0.x)
     _handle_v2_1_0_migration()
-    
+
     db_path = str(config_manager.database_path)
     if not os.path.exists(db_path):
         logger.info("Config database does not exist yet. No config migration needed.")
@@ -114,12 +117,15 @@ def _engine_for_env(env: str):
     """Return the live SQLAlchemy engine for the given Alembic environment name."""
     if env == "alembic:working":
         from database.working_database import get_working_database
+
         return get_working_database().engine
     if env == "alembic:music":
         from database.music_database import get_database
+
         return get_database().engine
     if env == "alembic:config":
         from sqlalchemy import create_engine as _ce
+
         return _ce(f"sqlite:///{config_manager.database_path}")
     return None
 
@@ -135,8 +141,8 @@ def _engine_for_env(env: str):
 #                    possible for that environment.
 _ENV_LEGACY_BASELINE = {
     # (sentinel_table, baseline_rev, v2_4_0_sentinel, v2_4_0_rev)
-    "alembic:working": ("downloads", "0560a1c7fa89", None,            None),
-    "alembic:music":   ("artists",   "7b7461716632", "track_aliases", "7b7461716632"),
+    "alembic:working": ("downloads", "0560a1c7fa89", None, None),
+    "alembic:music": ("artists", "7b7461716632", "track_aliases", "7b7461716632"),
     # alembic:config has no application tables — no legacy adoption needed.
 }
 
@@ -194,7 +200,7 @@ def run_auto_migrations() -> None:
 
         alembic_cfg = Config(str(alembic_cfg_path))
         # Prevent Alembic from resetting our tiered logger configuration.
-        alembic_cfg.attributes['configure_logger'] = False
+        alembic_cfg.attributes["configure_logger"] = False
         # Override the active section: our alembic.ini uses [alembic:*] sections
         # instead of the default [alembic].
         alembic_cfg.set_main_option(
@@ -204,23 +210,28 @@ def run_auto_migrations() -> None:
 
         # ── Smart Inspector ───────────────────────────────────────────────────
         if env in _ENV_LEGACY_BASELINE:
-            sentinel_table, baseline_rev, v2_4_0_sentinel, v2_4_0_rev = _ENV_LEGACY_BASELINE[env]
+            sentinel_table, baseline_rev, v2_4_0_sentinel, v2_4_0_rev = (
+                _ENV_LEGACY_BASELINE[env]
+            )
             engine = _engine_for_env(env)
 
             if engine is not None:
-                inspector         = sa_inspect(engine)
-                has_alembic       = inspector.has_table("alembic_version")
-                
+                inspector = sa_inspect(engine)
+                has_alembic = inspector.has_table("alembic_version")
+
                 # Verify if alembic_version has actually been populated
                 is_stamped = False
                 if has_alembic:
                     with engine.connect() as conn:
                         from sqlalchemy import text
-                        res = conn.execute(text("SELECT version_num FROM alembic_version")).fetchone()
+
+                        res = conn.execute(
+                            text("SELECT version_num FROM alembic_version")
+                        ).fetchone()
                         if res:
                             is_stamped = True
 
-                has_legacy_table  = inspector.has_table(sentinel_table)
+                has_legacy_table = inspector.has_table(sentinel_table)
 
                 if has_alembic and is_stamped:
                     # ── Case 1: Normal flow ───────────────────────────────────
@@ -238,7 +249,8 @@ def run_auto_migrations() -> None:
                 elif not has_legacy_table:
                     # ── Case 2: Fresh install ─────────────────────────────────
                     logger.info(
-                        "%s: fresh database (no tables) — running full upgrade to head.", env
+                        "%s: fresh database (no tables) — running full upgrade to head.",
+                        env,
                     )
                     try:
                         command.upgrade(alembic_cfg, "head")
@@ -272,7 +284,9 @@ def run_auto_migrations() -> None:
                             "%s: partial upgrade detected (table '%s' exists, "
                             "alembic_version absent) — stamping at v2.4.0 baseline %s, "
                             "then upgrading to head.",
-                            env, v2_4_0_sentinel, v2_4_0_rev or "head",
+                            env,
+                            v2_4_0_sentinel,
+                            v2_4_0_rev or "head",
                         )
                         try:
                             stamp_rev = v2_4_0_rev if v2_4_0_rev else "head"
@@ -280,7 +294,11 @@ def run_auto_migrations() -> None:
                             logger.info("%s stamped at %s.", env, stamp_rev)
                         except Exception as e:
                             logger.error(
-                                "Failed to stamp %s at %s: %s", env, stamp_rev, e, exc_info=True
+                                "Failed to stamp %s at %s: %s",
+                                env,
+                                stamp_rev,
+                                e,
+                                exc_info=True,
                             )
                             raise
                         if v2_4_0_rev:
@@ -289,7 +307,9 @@ def run_auto_migrations() -> None:
                                 command.upgrade(alembic_cfg, "head")
                                 logger.info("Successfully migrated %s to head.", env)
                             except Exception as e:
-                                logger.error("Failed to migrate %s: %s", env, e, exc_info=True)
+                                logger.error(
+                                    "Failed to migrate %s: %s", env, e, exc_info=True
+                                )
                                 raise
 
                     else:
@@ -301,14 +321,19 @@ def run_auto_migrations() -> None:
                             "%s: legacy database detected (table '%s' exists, "
                             "alembic_version absent) — stamping at v2.3.0 baseline %s, "
                             "then upgrading to head.",
-                            env, sentinel_table, baseline_rev,
+                            env,
+                            sentinel_table,
+                            baseline_rev,
                         )
                         try:
                             command.stamp(alembic_cfg, baseline_rev)
                             logger.info("%s stamped at %s.", env, baseline_rev)
                         except Exception as e:
                             logger.error(
-                                "Failed to stamp %s at baseline %s: %s", env, baseline_rev, e,
+                                "Failed to stamp %s at baseline %s: %s",
+                                env,
+                                baseline_rev,
+                                e,
                                 exc_info=True,
                             )
                             raise
@@ -316,7 +341,9 @@ def run_auto_migrations() -> None:
                             command.upgrade(alembic_cfg, "head")
                             logger.info("Successfully migrated %s to head.", env)
                         except Exception as e:
-                            logger.error("Failed to migrate %s: %s", env, e, exc_info=True)
+                            logger.error(
+                                "Failed to migrate %s: %s", env, e, exc_info=True
+                            )
                             raise
 
                     continue
@@ -336,17 +363,24 @@ def trigger_post_migration_database_update():
     This is called after databases have been initialized.
     """
     global _v2_1_migration_triggered
-    
+
     if not _v2_1_migration_triggered:
-        logger.debug("No v2.1.0 migration was triggered; skipping automatic database update")
+        logger.debug(
+            "No v2.1.0 migration was triggered; skipping automatic database update"
+        )
         return
-    
+
     try:
-        logger.info("v2.1.0 migration detected: triggering immediate database update job...")
+        logger.info(
+            "v2.1.0 migration detected: triggering immediate database update job..."
+        )
         from core.job_queue import job_queue
-        
+
         # Trigger the database_update job immediately
         job_queue.enqueue_job("database_update")
         logger.info("Database update job enqueued successfully")
     except Exception as e:
-        logger.error(f"Failed to trigger database update after v2.1.0 migration: {e}", exc_info=True)
+        logger.error(
+            f"Failed to trigger database update after v2.1.0 migration: {e}",
+            exc_info=True,
+        )

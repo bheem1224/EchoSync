@@ -2,8 +2,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from plugins.EchoSync.slskd.client import SlskdProvider
 from core.db.echo_sync_track import EchosyncTrack
+from plugins.EchoSync.slskd.client import SlskdProvider
 from services.download_manager import DownloadManager
 
 
@@ -41,7 +41,9 @@ class TestSlskdPreFiltering:
             }
         }
 
-        tracks = provider._process_search_responses(responses_data, quality_profile=quality_profile)
+        tracks = provider._process_search_responses(
+            responses_data, quality_profile=quality_profile
+        )
         filenames = [t.filename for t in tracks]
 
         assert len(tracks) == 1
@@ -120,7 +122,9 @@ class TestDownloadManagerMatchingAndFallback:
             def __exit__(self, exc_type, exc, tb):
                 return False
 
-        manager.work_db = SimpleNamespace(session_scope=lambda: FakeSessionScope(queued_download))
+        manager.work_db = SimpleNamespace(
+            session_scope=lambda: FakeSessionScope(queued_download)
+        )
         manager._track_exists_in_library = lambda *args, **kwargs: False
         manager._get_quality_profile = lambda requested_profile_id: {
             "formats": [{"type": "flac", "priority": 1, "min_bitrate": 320}],
@@ -129,7 +133,11 @@ class TestDownloadManagerMatchingAndFallback:
         manager._extract_allowed_formats = lambda profile: ["flac"]
         manager._get_min_bitrate = lambda profile: 320
         manager._generate_search_strategies = lambda track, tolerance: [
-            {"query": "Artist Song", "duration_tolerance_ms": tolerance, "name": "artist+title"}
+            {
+                "query": "Artist Song",
+                "duration_tolerance_ms": tolerance,
+                "name": "artist+title",
+            }
         ]
         manager._get_priority_tiers = lambda profile: [(1, ["flac"])]
         manager._filter_by_formats = lambda candidates, formats: candidates
@@ -145,15 +153,22 @@ class TestDownloadManagerMatchingAndFallback:
         manager._get_matching_engine = lambda profile=None: FakeMatcher()
 
         status_updates = []
-        manager._update_status = lambda download_id, status, provider_id=None: status_updates.append((download_id, status, provider_id))
+        manager._update_status = lambda download_id, status, provider_id=None: (
+            status_updates.append((download_id, status, provider_id))
+        )
 
         from core.db.echo_sync_track import EchosyncMedia
+
         candidate = EchosyncTrack(
             raw_title="Song",
             artist_name="Artist",
             album_title="Album",
             quality_tags="flac",
-            media=[EchosyncMedia(file_format="flac", bitrate=1000, file_size_bytes=50_000_000)],
+            media=[
+                EchosyncMedia(
+                    file_format="flac", bitrate=1000, file_size_bytes=50_000_000
+                )
+            ],
         )
         candidate.identifiers["username"] = "peerA"
         candidate.identifiers["plugin_item_id"] = "Artist/Album/01 - Song.flac"
@@ -164,9 +179,15 @@ class TestDownloadManagerMatchingAndFallback:
         candidate.identifiers["queue_length"] = 0
 
         async def fake_search(
-            provider, query, strategy_filters, quality_profile,
-            target_track=None, strategy_name="", perfect_match_threshold=90,
-            includes=None, excludes=None,
+            provider,
+            query,
+            strategy_filters,
+            quality_profile,
+            target_track=None,
+            strategy_name="",
+            perfect_match_threshold=90,
+            includes=None,
+            excludes=None,
         ):
             return [candidate], False
 
@@ -225,7 +246,9 @@ class TestDownloadManagerMatchingAndFallback:
             def __exit__(self, exc_type, exc, tb):
                 return False
 
-        manager.work_db = SimpleNamespace(session_scope=lambda: FakeSessionScope(queued_download))
+        manager.work_db = SimpleNamespace(
+            session_scope=lambda: FakeSessionScope(queued_download)
+        )
         manager._track_exists_in_library = lambda *args, **kwargs: False
         manager._get_quality_profile = lambda requested_profile_id: {
             "formats": [{"type": "flac", "priority": 1, "min_bitrate": 320}],
@@ -234,7 +257,11 @@ class TestDownloadManagerMatchingAndFallback:
         manager._extract_allowed_formats = lambda profile: ["flac"]
         manager._get_min_bitrate = lambda profile: 320
         manager._generate_search_strategies = lambda track, tolerance: [
-            {"query": "Artist Song", "duration_tolerance_ms": tolerance, "name": "artist+title"}
+            {
+                "query": "Artist Song",
+                "duration_tolerance_ms": tolerance,
+                "name": "artist+title",
+            }
         ]
         manager._get_priority_tiers = lambda profile: [(1, ["flac"])]
         manager._filter_by_formats = lambda candidates, formats: candidates
@@ -252,15 +279,22 @@ class TestDownloadManagerMatchingAndFallback:
         manager._get_matching_engine = lambda profile=None: FakeMatcher()
 
         status_updates = []
-        manager._update_status = lambda download_id, status, provider_id=None: status_updates.append((download_id, status, provider_id))
+        manager._update_status = lambda download_id, status, provider_id=None: (
+            status_updates.append((download_id, status, provider_id))
+        )
 
         from core.db.echo_sync_track import EchosyncMedia
+
         candidateA = EchosyncTrack(
             raw_title="Song A",
             artist_name="Artist",
             album_title="Album",
             quality_tags="flac",
-            media=[EchosyncMedia(file_format="flac", bitrate=1000, file_size_bytes=50_000_000)],
+            media=[
+                EchosyncMedia(
+                    file_format="flac", bitrate=1000, file_size_bytes=50_000_000
+                )
+            ],
         )
         candidateA.identifiers["username"] = "peerA"
         candidateA.identifiers["plugin_item_id"] = "Artist/Album/01 - Song A.flac"
@@ -271,16 +305,26 @@ class TestDownloadManagerMatchingAndFallback:
             artist_name="Artist",
             album_title="Album",
             quality_tags="flac",
-            media=[EchosyncMedia(file_format="flac", bitrate=1000, file_size_bytes=45_000_000)],
+            media=[
+                EchosyncMedia(
+                    file_format="flac", bitrate=1000, file_size_bytes=45_000_000
+                )
+            ],
         )
         candidateB.identifiers["username"] = "peerB"
         candidateB.identifiers["plugin_item_id"] = "Artist/Album/01 - Song B.flac"
         candidateB.identifiers["size"] = 45_000_000
 
         async def fake_search(
-            provider, query, strategy_filters, quality_profile,
-            target_track=None, strategy_name="", perfect_match_threshold=90,
-            includes=None, excludes=None,
+            provider,
+            query,
+            strategy_filters,
+            quality_profile,
+            target_track=None,
+            strategy_name="",
+            perfect_match_threshold=90,
+            includes=None,
+            excludes=None,
         ):
             return [candidateA, candidateB], False
 

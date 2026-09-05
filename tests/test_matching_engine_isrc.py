@@ -1,11 +1,15 @@
-from core.matching_engine.matching_engine import WeightedMatchingEngine
 from core.db.echo_sync_track import EchosyncTrack
+from core.matching_engine.matching_engine import WeightedMatchingEngine
 from core.matching_engine.scoring_profile import PROFILE_DOWNLOAD_SEARCH
 
 
 def make_track(isrc=None, **kwargs):
-    tr = EchosyncTrack(raw_title=kwargs.get('raw_title','T'), artist_name=kwargs.get('artist_name','A'), album_title=kwargs.get('album_title','B'))
-    tr.duration = kwargs.get('duration', 180000)
+    tr = EchosyncTrack(
+        raw_title=kwargs.get("raw_title", "T"),
+        artist_name=kwargs.get("artist_name", "A"),
+        album_title=kwargs.get("album_title", "B"),
+    )
+    tr.duration = kwargs.get("duration", 180000)
     if isrc is not None:
         tr.isrc = isrc
     return tr
@@ -13,27 +17,27 @@ def make_track(isrc=None, **kwargs):
 
 def test_isrc_validity():
     engine = WeightedMatchingEngine(PROFILE_DOWNLOAD_SEARCH)
-    assert engine.is_valid_isrc('USRC17607839')
-    assert not engine.is_valid_isrc('foo')
-    assert not engine.is_valid_isrc('')
+    assert engine.is_valid_isrc("USRC17607839")
+    assert not engine.is_valid_isrc("foo")
+    assert not engine.is_valid_isrc("")
 
 
 def test_isrc_mismatch_auto_fail():
     engine = WeightedMatchingEngine(PROFILE_DOWNLOAD_SEARCH)
-    src = make_track(isrc='USRC17607839')
-    cand = make_track(isrc='USRC17607840')
+    src = make_track(isrc="USRC17607839")
+    cand = make_track(isrc="USRC17607840")
     res = engine.calculate_match(src, cand)
     assert res.confidence_score == 0.0
-    assert 'ISRC mismatch' in res.reasoning
+    assert "ISRC mismatch" in res.reasoning
 
 
 def test_isrc_match_instant():
     engine = WeightedMatchingEngine(PROFILE_DOWNLOAD_SEARCH)
-    src = make_track(isrc='USRC17607839')
-    cand = make_track(isrc='USRC17607839')
+    src = make_track(isrc="USRC17607839")
+    cand = make_track(isrc="USRC17607839")
     res = engine.calculate_match(src, cand)
     assert res.confidence_score == 100.0
-    assert 'ISRC match' in res.reasoning
+    assert "ISRC match" in res.reasoning
 
 
 def test_missing_isrc_ignored():
@@ -46,10 +50,20 @@ def test_missing_isrc_ignored():
 
 
 def test_echosync_track_isrc_validation_valid():
-    track = EchosyncTrack(raw_title="Title", artist_name="Artist", album_title="Album", isrc="US-RC1-76-07839")
+    track = EchosyncTrack(
+        raw_title="Title",
+        artist_name="Artist",
+        album_title="Album",
+        isrc="US-RC1-76-07839",
+    )
     assert track.isrc == "USRC17607839"
 
 
 def test_echosync_track_isrc_validation_invalid():
-    track = EchosyncTrack(raw_title="Title", artist_name="Artist", album_title="Album", isrc="TamilKey.com")
+    track = EchosyncTrack(
+        raw_title="Title",
+        artist_name="Artist",
+        album_title="Album",
+        isrc="TamilKey.com",
+    )
     assert track.isrc is None

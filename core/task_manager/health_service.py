@@ -1,12 +1,14 @@
-from core.task_manager.health import health_check_registry
-from core.settings import config_manager
-from typing import Dict, Any
 import logging
+from typing import Any
+
+from core.settings import config_manager
+from core.task_manager.health import health_check_registry
 
 # Ensure logger is set up
 logger = logging.getLogger("health_check")
 
-def get_system_health() -> Dict[str, Any]:
+
+def get_system_health() -> dict[str, Any]:
     """
     Calculate overall system health, total services, and operational services.
 
@@ -27,6 +29,7 @@ def get_system_health() -> Dict[str, Any]:
     core_message = "Database connection failed"
     try:
         from database import get_database
+
         db = get_database()
         # Simple query to check connection
         # db.session_scope() handles session creation/closing
@@ -37,16 +40,18 @@ def get_system_health() -> Dict[str, Any]:
     except NameError:
         # Fallback if 'text' is not imported, though SQLAlchemy usually requires it for raw strings
         try:
-             from sqlalchemy import text
-             from database import get_database
-             db = get_database()
-             with db.session_scope() as session:
+            from sqlalchemy import text
+
+            from database import get_database
+
+            db = get_database()
+            with db.session_scope() as session:
                 session.execute(text("SELECT 1"))
-             core_healthy = True
-             core_message = "Core services operational"
+            core_healthy = True
+            core_message = "Core services operational"
         except Exception as e:
-             logger.error(f"Core health check failed (fallback): {e}")
-             core_message = str(e)
+            logger.error(f"Core health check failed (fallback): {e}")
+            core_message = str(e)
     except Exception as e:
         logger.error(f"Core health check failed: {e}")
         core_message = str(e)
@@ -59,36 +64,43 @@ def get_system_health() -> Dict[str, Any]:
     enabled_providers_count = 0
 
     from database.config_database import get_config_database
+
     config_db = get_config_database()
 
     active_services = []
     try:
         with config_db._get_connection() as conn:
             c = conn.cursor()
-            c.execute("SELECT name FROM services WHERE is_active = 1 AND name != 'system'")
-            active_services = [row['name'] for row in c.fetchall()]
+            c.execute(
+                "SELECT name FROM services WHERE is_active = 1 AND name != 'system'"
+            )
+            active_services = [row["name"] for row in c.fetchall()]
     except Exception as e:
         logger.error(f"Failed to fetch active services for health check: {e}")
 
-    from core.nexus_framework.plugin_loader import PluginRegistry
     for svc_name in active_services:
-        clean_name = svc_name.split('.')[-1].split('@')[0].lower()
+        clean_name = svc_name.split(".")[-1].split("@")[0].lower()
         if clean_name in disabled_set or svc_name.lower() in disabled_set:
             continue
 
         try:
-            from core.nexus_framework.plugin_loader import generate_plugin_id, get_plugin_capabilities
+            from core.nexus_framework.plugin_loader import (
+                generate_plugin_id,
+                get_plugin_capabilities,
+            )
+
             p_id = generate_plugin_id(svc_name.lower())
             caps = get_plugin_capabilities(p_id)
-            
-            if caps and getattr(caps, 'requires_user_auth', False):
+
+            if caps and getattr(caps, "requires_user_auth", False):
                 from services.storage_service import get_storage_service
+
                 storage = get_storage_service()
                 if storage.list_accounts(clean_name):
                     enabled_providers_count += 1
             else:
                 enabled_providers_count += 1
-        except Exception as e:
+        except Exception:
             pass
 
     # 3. Calculate Operational Services
@@ -101,7 +113,7 @@ def get_system_health() -> Dict[str, Any]:
     # So if a provider is enabled but failed to start, it might not be in results, or it might be there with 'unhealthy'.
 
     for res in results.values():
-        if res.status == 'healthy':
+        if res.status == "healthy":
             operational_count += 1
 
     # 4. Construct Results Dictionary
@@ -111,7 +123,7 @@ def get_system_health() -> Dict[str, Any]:
             "message": core_message,
             "details": {"component": "database"},
             "timestamp": None,
-            "response_time_ms": 0
+            "response_time_ms": 0,
         }
     }
 
@@ -122,7 +134,7 @@ def get_system_health() -> Dict[str, Any]:
             "message": result.message,
             "details": result.details,
             "timestamp": result.timestamp.isoformat() if result.timestamp else None,
-            "response_time_ms": result.response_time_ms
+            "response_time_ms": result.response_time_ms,
         }
 
     # 5. Determine Overall Status
@@ -146,17 +158,19 @@ def get_system_health() -> Dict[str, Any]:
     library_data = {}
     try:
         from database.music_database import get_database
+
         db = get_database()
         tracks = db.count_tracks()
         files = db.count_files()
         albums = db.count_albums()
         storage_bytes = db.get_total_storage_used()
-        
+
         # Format storage
         if storage_bytes <= 0:
             storage_str = "0 B"
         else:
             import math
+
             units = ("B", "KB", "MB", "GB", "TB")
             i = int(math.floor(math.log(storage_bytes, 1024)))
             p = math.pow(1024, i)
@@ -167,7 +181,7 @@ def get_system_health() -> Dict[str, Any]:
             "total_tracks": tracks,
             "total_files": files,
             "total_albums": albums,
-            "storage_used": storage_str
+            "storage_used": storage_str,
         }
     except Exception as e:
         logger.error(f"Failed to get library stats for health check: {e}")
@@ -176,9 +190,6 @@ def get_system_health() -> Dict[str, Any]:
         "status": overall_status,
         "results": results_dict,
         "timestamp": None,
-        "summary": {
-            "total": total_services,
-            "operational": operational_count
-        },
-        "library": library_data
+        "summary": {"total": total_services, "operational": operational_count},
+        "library": library_data,
     }

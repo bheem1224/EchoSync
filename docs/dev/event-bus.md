@@ -25,13 +25,13 @@ Example payload:
 ```python
 {
     "event": "DOWNLOAD_INTENT",
-    "sync_id": spotify_id or spotify_track.identifiers.get('provider_id'),
+    "sync_id": spotify_id or spotify_track.identifiers.get("provider_id"),
     "track": full_track,
     "fallback_metadata": full_track,
     "duration_ms": full_track.get("duration_ms"),
     "isrc": full_track.get("isrc"),
     "timestamp": utc_isoformat(utc_now()),
-    "source": "playlist_sync"
+    "source": "playlist_sync",
 }
 ```
 

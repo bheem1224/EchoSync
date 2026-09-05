@@ -1,20 +1,16 @@
 import time
-import pytest
-from unittest.mock import patch, MagicMock, ANY
+from unittest.mock import ANY, patch
 
+from core.nexus_framework.plugin_loader import PluginBase, PluginRegistry
 from core.task_manager import (
-    job_queue,
     JobQueue,
-    TaskCategory,
-    TaskState,
-    ScheduledJob,
-    plugin_state_manager,
-    PluginLifecycleState,
-    supervisor,
-    ProcessOwner,
     OwnerType,
+    PluginLifecycleState,
+    ProcessOwner,
+    TaskState,
+    plugin_state_manager,
+    supervisor,
 )
-from core.nexus_framework.plugin_loader import PluginRegistry, PluginBase
 
 
 def test_task_queue_gating_initializing_and_error(monkeypatch):
@@ -23,6 +19,7 @@ def test_task_queue_gating_initializing_and_error(monkeypatch):
     plugin_id = "plugin.test_gating"
 
     executed = []
+
     def dummy_task():
         executed.append(True)
 
@@ -31,13 +28,15 @@ def test_task_queue_gating_initializing_and_error(monkeypatch):
         func=dummy_task,
         interval_seconds=1.0,
         start_after=0.0,
-        plugin=plugin_id
+        plugin=plugin_id,
     )
 
     # 1. State INITIALIZING -> can_execute returns False, state set to PENDING_BLOCKED
-    plugin_state_manager.set_state(plugin_id, PluginLifecycleState.INITIALIZING, "Loading dependencies")
+    plugin_state_manager.set_state(
+        plugin_id, PluginLifecycleState.INITIALIZING, "Loading dependencies"
+    )
     job = test_queue._jobs["test_gated_job"]
-    
+
     assert not test_queue.can_execute(job)
     assert job.state == TaskState.PENDING_BLOCKED
     assert job.next_run > time.time() + 5.0  # Deferred by 10 seconds
@@ -48,7 +47,9 @@ def test_task_queue_gating_initializing_and_error(monkeypatch):
     assert job.state == TaskState.PENDING_BLOCKED
 
     # 3. State READY -> can_execute returns True
-    plugin_state_manager.set_state(plugin_id, PluginLifecycleState.READY, "Service ready")
+    plugin_state_manager.set_state(
+        plugin_id, PluginLifecycleState.READY, "Service ready"
+    )
     assert test_queue.can_execute(job)
 
 
@@ -58,13 +59,12 @@ def test_task_queue_log_damping(caplog):
     plugin_id = "plugin.log_damp_test"
 
     test_queue.register_job(
-        name="damp_job",
-        func=lambda: None,
-        interval_seconds=1.0,
-        plugin=plugin_id
+        name="damp_job", func=lambda: None, interval_seconds=1.0, plugin=plugin_id
     )
     job = test_queue._jobs["damp_job"]
-    plugin_state_manager.set_state(plugin_id, PluginLifecycleState.ERROR, "Gating error")
+    plugin_state_manager.set_state(
+        plugin_id, PluginLifecycleState.ERROR, "Gating error"
+    )
 
     # First call -> state transitions from PENDING to PENDING_BLOCKED (logs warning)
     job.state = TaskState.PENDING
@@ -82,6 +82,7 @@ def test_task_queue_log_damping(caplog):
 
 def test_disable_plugin_terminates_supervisor_processes():
     """Verify disabling a plugin terminates its registered PIDs in ProcessSupervisor."""
+
     class DummyPlugin(PluginBase):
         name = "EchoSync.DummyGating"
 
@@ -93,7 +94,7 @@ def test_disable_plugin_terminates_supervisor_processes():
         owner_id=plugin_id_str,
         owner_type=OwnerType.PLUGIN,
         pid=8888,
-        task_name="dummy_process"
+        task_name="dummy_process",
     )
     reg_id = supervisor.register_process(owner)
     assert len(supervisor.get_active_processes(plugin_id_str)) == 1

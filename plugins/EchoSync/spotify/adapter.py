@@ -7,12 +7,13 @@ attaches PluginRef, and progressively enriches available fields.
 Adapters NEVER own data; all operations go through MusicDatabase.
 """
 
-from typing import List, Optional, Dict, Any
-from core.tiered_logger import get_logger
 from core.models import Track
+
 from core.file_handling.storage import get_storage_service
+from core.tiered_logger import get_logger
 
 logger = get_logger("spotify_adapter")
+
 
 # SpotifyAdapter class deprecated - use convert_spotify_track_to_echosync instead
 class SpotifyAdapter:
@@ -23,7 +24,7 @@ class SpotifyAdapter:
         self.spotify = spotify_client
 
     # Field contracts
-    def get_provides_fields(self) -> List[str]:
+    def get_provides_fields(self) -> list[str]:
         return [
             "title",
             "artists",
@@ -32,7 +33,7 @@ class SpotifyAdapter:
             "isrc",
         ]
 
-    def get_consumes_fields(self) -> List[str]:
+    def get_consumes_fields(self) -> list[str]:
         # Playlist ingestion does not require prior fields
         return []
 
@@ -40,7 +41,7 @@ class SpotifyAdapter:
         return True
 
     # High-level operations
-    def ingest_playlist(self, playlist_id: str) -> List[Track]:
+    def ingest_playlist(self, playlist_id: str) -> list[Track]:
         """Create Track stubs for each Spotify track in a playlist."""
         if not self.spotify:
             logger.warning("Spotify client not provided; cannot ingest playlist")
@@ -48,7 +49,7 @@ class SpotifyAdapter:
         playlist = self.spotify.get_playlist_by_id(playlist_id)
         if not playlist:
             return []
-        created: List[Track] = []
+        created: list[Track] = []
         for sp_track in playlist.tracks:
             initial = {
                 "title": sp_track.name,
@@ -70,10 +71,12 @@ class SpotifyAdapter:
             created_track = self.db.get_track(track_id)
             if created_track:
                 created.append(created_track)
-        logger.info(f"Ingested {len(created)} tracks from Spotify playlist {playlist_id}")
+        logger.info(
+            f"Ingested {len(created)} tracks from Spotify playlist {playlist_id}"
+        )
         return created
 
-    def ingest_saved_tracks(self, limit: Optional[int] = None) -> List[Track]:
+    def ingest_saved_tracks(self, limit: int | None = None) -> list[Track]:
         """Create Track stubs from user's saved tracks."""
         if not self.spotify:
             logger.warning("Spotify client not provided; cannot ingest saved tracks")
@@ -81,7 +84,7 @@ class SpotifyAdapter:
         saved = self.spotify.get_saved_tracks()
         if limit is not None:
             saved = saved[:limit]
-        created: List[Track] = []
+        created: list[Track] = []
         for sp_track in saved:
             initial = {
                 "title": sp_track.name,
@@ -105,9 +108,16 @@ class SpotifyAdapter:
         logger.info(f"Ingested {len(created)} saved tracks from Spotify")
         return created
 
+
 # Register adapter in plugin system (declaration only; instance created by services)
 try:
-    from plugins.plugin_system import PluginType, PluginScope, PluginDeclaration, register_plugin
+    from plugins.plugin_system import (
+        PluginDeclaration,
+        PluginScope,
+        PluginType,
+        register_plugin,
+    )
+
     decl = PluginDeclaration(
         name="spotify_adapter",
         plugin_type=PluginType.PLAYLIST_PROVIDER,

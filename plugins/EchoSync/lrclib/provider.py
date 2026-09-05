@@ -3,10 +3,12 @@ LRClib Metadata Provider
 Inherits from PluginBase with enable/disable support
 """
 
-from typing import List, Dict, Optional, Any
-from core.tiered_logger import get_logger
+from typing import Any
+
 from core.nexus_framework.plugin_SDK import PluginBase
 from core.settings import get_setting, set_setting
+from core.tiered_logger import get_logger
+
 from .client import LRCLibClient
 
 logger = get_logger("lrclib_provider")
@@ -23,9 +25,7 @@ class LRCLibProvider(PluginBase):
     supports_downloads = False
 
     # Track field contracts
-    provides_fields = [
-        "lyrics_sidecar"
-    ]
+    provides_fields = ["lyrics_sidecar"]
 
     # Capabilities
     supports_lyrics = True
@@ -36,7 +36,7 @@ class LRCLibProvider(PluginBase):
         """Initialize LRClib provider"""
         self.client = LRCLibClient()
         self._enabled = self._load_enabled_state()
-        
+
         logger.info(f"✅ LRClib provider initialized (enabled={self._enabled})")
 
     def _load_enabled_state(self) -> bool:
@@ -55,27 +55,29 @@ class LRCLibProvider(PluginBase):
         """LRClib doesn't require authentication"""
         return self.client.api is not None
 
-    def search(self, query: str, type: str = "track", limit: int = 10) -> List[Dict[str, Any]]:
+    def search(
+        self, query: str, type: str = "track", limit: int = 10
+    ) -> list[dict[str, Any]]:
         """LRClib doesn't support search"""
         return []
 
-    def get_track(self, track_id: str) -> Optional[Dict[str, Any]]:
+    def get_track(self, track_id: str) -> dict[str, Any] | None:
         """Not implemented for LRClib"""
         return None
 
-    def get_album(self, album_id: str) -> Optional[Dict[str, Any]]:
+    def get_album(self, album_id: str) -> dict[str, Any] | None:
         """Not implemented for LRClib"""
         return None
 
-    def get_artist(self, artist_id: str) -> Optional[Dict[str, Any]]:
+    def get_artist(self, artist_id: str) -> dict[str, Any] | None:
         """Not implemented for LRClib"""
         return None
 
-    def get_user_playlists(self, user_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    def get_user_playlists(self, user_id: str | None = None) -> list[dict[str, Any]]:
         """Not applicable for LRClib"""
         return []
 
-    def get_playlist_tracks(self, playlist_id: str) -> List[Dict[str, Any]]:
+    def get_playlist_tracks(self, playlist_id: str) -> list[dict[str, Any]]:
         """Not applicable for LRClib"""
         return []
 
@@ -109,8 +111,14 @@ class LRCLibProvider(PluginBase):
         """Check if provider is enabled"""
         return self._enabled
 
-    def create_lyrics_file(self, audio_file_path: str, track_name: str, artist_name: str,
-                          album_name: str = None, duration_seconds: int = None) -> bool:
+    def create_lyrics_file(
+        self,
+        audio_file_path: str,
+        track_name: str,
+        artist_name: str,
+        album_name: str = None,
+        duration_seconds: int = None,
+    ) -> bool:
         """
         Create .lrc lyrics sidecar file for audio track.
 
@@ -133,7 +141,7 @@ class LRCLibProvider(PluginBase):
             track_name=track_name,
             artist_name=artist_name,
             album_name=album_name,
-            duration_seconds=duration_seconds
+            duration_seconds=duration_seconds,
         )
 
 

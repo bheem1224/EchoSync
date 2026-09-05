@@ -1,18 +1,17 @@
-import os
-import sys
 import threading
-from typing import Optional
 import urllib.parse
-from flask import Flask, request, redirect
+
+from flask import Flask, redirect, request
 from werkzeug.serving import make_server
 
-from core.tiered_logger import get_logger
-from core.oauth.cert_manager import ensure_ssl_certs
 from core.network_utils import get_lan_ip, get_main_app_port
+from core.oauth.cert_manager import ensure_ssl_certs
+from core.tiered_logger import get_logger
 
 logger = get_logger("oauth_sidecar")
 
 app = Flask("oauth_sidecar")
+
 
 @app.route("/api/oauth/callback/<provider_name>")
 @app.route("/api/oauth/callback/plugins/<provider_name>")
@@ -25,33 +24,44 @@ def oauth_callback(provider_name: str):
     main_port = get_main_app_port()
 
     clean_provider = urllib.parse.quote(provider_name.strip())
-    if request.path.startswith('/api/oauth/callback/plugins/'):
+    if request.path.startswith("/api/oauth/callback/plugins/"):
         try:
             import binascii
+
             from core.nexus_framework.plugin_loader import PluginRegistry
+
             plugin_cls = PluginRegistry.get_plugin_class(provider_name)
-            if plugin_cls and hasattr(plugin_cls, 'name') and plugin_cls.name:
-                clean_provider = str(binascii.crc32(plugin_cls.name.lower().encode('utf-8')) & 0xFFFFFFFF)
+            if plugin_cls and hasattr(plugin_cls, "name") and plugin_cls.name:
+                clean_provider = str(
+                    binascii.crc32(plugin_cls.name.lower().encode("utf-8")) & 0xFFFFFFFF
+                )
             else:
                 from database.config_database import get_config_database
+
                 db = get_config_database()
                 conn = db._open_connection()
                 try:
                     c = conn.cursor()
-                    c.execute("SELECT plugin_id FROM services WHERE LOWER(name) LIKE ?", ('%' + clean_provider.lower(),))
+                    c.execute(
+                        "SELECT plugin_id FROM services WHERE LOWER(name) LIKE ?",
+                        ("%" + clean_provider.lower(),),
+                    )
                     row = c.fetchone()
                     if row and row[0]:
                         clean_provider = urllib.parse.quote(str(row[0]))
                 finally:
                     conn.close()
         except Exception:
-            logger.debug(f"Unable to resolve plugin provider '{provider_name}' to canonical plugin ID from DB", exc_info=True)
+            logger.debug(
+                f"Unable to resolve plugin provider '{provider_name}' to canonical plugin ID from DB",
+                exc_info=True,
+            )
 
         target_path = f"/api/plugins/{clean_provider}/callback"
     else:
         target_path = f"/api/{clean_provider}/callback"
 
-    query_string = request.query_string.decode('utf-8') if request.query_string else ""
+    query_string = request.query_string.decode("utf-8") if request.query_string else ""
     redirect_url = f"http://{lan_ip}:{main_port}{target_path}"
     if query_string:
         redirect_url += f"?{query_string}"
@@ -61,7 +71,9 @@ def oauth_callback(provider_name: str):
     if parsed.netloc != f"{lan_ip}:{main_port}":
         return ("Invalid redirect destination", 400)
 
-    logger.info(f"OAuth sidecar proxying callback for {clean_provider} to {redirect_url}")
+    logger.info(
+        f"OAuth sidecar proxying callback for {clean_provider} to {redirect_url}"
+    )
     return redirect(redirect_url, code=302)
 
 
@@ -76,31 +88,38 @@ class SidecarServerThread(threading.Thread):
 
     def run(self):
         try:
-             # use_reloader=False and threaded=True to prevent issues with main app
-             self.server = make_server(
-                 self.host,
-                 self.port,
-                 app,
-                 threaded=True,
-                 ssl_context=(self.cert_path, self.key_path)
-             )
-             logger.info(f"OAuth sidecar listening securely on https://{self.host}:{self.port}")
-             self.server.serve_forever()
+            # use_reloader=False and threaded=True to prevent issues with main app
+            self.server = make_server(
+                self.host,
+                self.port,
+                app,
+                threaded=True,
+                ssl_context=(self.cert_path, self.key_path),
+            )
+            logger.info(
+                f"OAuth sidecar listening securely on https://{self.host}:{self.port}"
+            )
+            self.server.serve_forever()
         except OSError as e:
-             if e.errno == 98: # Address already in use
-                  logger.error(f"CRITICAL: OAuth sidecar port {self.port} is already in use. OAuth redirects will fail. Please kill any lingering processes.")
-             else:
-                  logger.error(f"Failed to start OAuth sidecar on port {self.port}: {e}")
+            if e.errno == 98:  # Address already in use
+                logger.error(
+                    f"CRITICAL: OAuth sidecar port {self.port} is already in use. OAuth redirects will fail. Please kill any lingering processes."
+                )
+            else:
+                logger.error(f"Failed to start OAuth sidecar on port {self.port}: {e}")
         except Exception as e:
-             logger.error(f"Unexpected error starting OAuth sidecar: {e}", exc_info=True)
+            logger.error(f"Unexpected error starting OAuth sidecar: {e}", exc_info=True)
 
-def start_oauth_sidecar(host: str = "0.0.0.0", port: int = 5001, data_dir: str = "data"):
+
+def start_oauth_sidecar(
+    host: str = "0.0.0.0", port: int = 5001, data_dir: str = "data"
+):
     """
     Initializes SSL certificates and starts the sidecar Flask app in a daemonized thread.
     """
     try:
-         cert_path, key_path = ensure_ssl_certs(data_dir)
-         sidecar_thread = SidecarServerThread(host, port, cert_path, key_path)
-         sidecar_thread.start()
+        cert_path, key_path = ensure_ssl_certs(data_dir)
+        sidecar_thread = SidecarServerThread(host, port, cert_path, key_path)
+        sidecar_thread.start()
     except Exception as e:
-         logger.error(f"Could not start OAuth sidecar: {e}", exc_info=True)
+        logger.error(f"Could not start OAuth sidecar: {e}", exc_info=True)

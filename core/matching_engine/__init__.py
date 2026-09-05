@@ -11,53 +11,51 @@ Main components:
 """
 
 from ..db.echo_sync_track import EchosyncTrack, QualityTag
-from .track_parser import TrackParser, ParseConfig, parse_file
-from .matching_engine import WeightedMatchingEngine, MatchResult
+from .fingerprinting import FingerprintMatcher
+from .matching_engine import MatchResult, WeightedMatchingEngine
 from .scoring_profile import (
+    PROFILE_DOWNLOAD_SEARCH,
+    PROFILE_EXACT_SYNC,
+    PROFILE_LIBRARY_IMPORT,
+    ProfileFactory,
+    ProfileType,
     ScoringProfile,
     ScoringWeights,
-    ProfileType,
-    ProfileFactory,
-    PROFILE_EXACT_SYNC,
-    PROFILE_DOWNLOAD_SEARCH,
-    PROFILE_LIBRARY_IMPORT,
 )
-from .fingerprinting import FingerprintMatcher
+from .track_parser import ParseConfig, TrackParser, parse_file
 
 __all__ = [
     # Data models
-    'EchosyncTrack',
-    'QualityTag',
-    
+    "EchosyncTrack",
+    "QualityTag",
     # Parsing
-    'TrackParser',
-    'ParseConfig',
-    'parse_file',
-    
+    "TrackParser",
+    "ParseConfig",
+    "parse_file",
     # Matching engine
-    'WeightedMatchingEngine',
-    'MatchResult',
-    
+    "WeightedMatchingEngine",
+    "MatchResult",
     # Scoring profiles
-    'ScoringProfile',
-    'ScoringWeights',
-    'ProfileType',
-    'ProfileFactory',
-    'PROFILE_EXACT_SYNC',
-    'PROFILE_DOWNLOAD_SEARCH',
-    'PROFILE_LIBRARY_IMPORT',
-    
+    "ScoringProfile",
+    "ScoringWeights",
+    "ProfileType",
+    "ProfileFactory",
+    "PROFILE_EXACT_SYNC",
+    "PROFILE_DOWNLOAD_SEARCH",
+    "PROFILE_LIBRARY_IMPORT",
     # Fingerprinting
-    'FingerprintMatcher',
+    "FingerprintMatcher",
 ]
 
 from typing import Any, Tuple
+
 
 class MusicMatchingEngine:
     """
     Placeholder for the MusicMatchingEngine class.
     This should be implemented with the actual logic from the legacy module.
     """
+
     def __init__(self, *args: Any, **kwargs: Any):
         pass
 
@@ -73,6 +71,8 @@ class MusicMatchingEngine:
         """Clean a title string (placeholder)."""
         return title.lower().split("(")[0].strip()
 
-    def calculate_match_confidence(self, *args: Any, **kwargs: Any) -> Tuple[float, str]:
+    def calculate_match_confidence(
+        self, *args: Any, **kwargs: Any
+    ) -> tuple[float, str]:
         """Calculate match confidence (placeholder)."""
         return 0.9, "match"

@@ -1,8 +1,7 @@
-import pytest
-from database.music_database import get_database, Track, LocalMedia
-from core.db.echo_sync_track import EchosyncTrack, EchosyncMedia
-from core.database.repositories.track_repo import TrackRepository, bulk_upsert_tracks
+from core.database.repositories.track_repo import bulk_upsert_tracks
+from core.db.echo_sync_track import EchosyncMedia, EchosyncTrack
 from core.orchestrator.ingestion import IngestionOrchestrator
+from database.music_database import Track, get_database
 
 
 def test_echosync_track_model():
@@ -17,7 +16,7 @@ def test_echosync_track_model():
                 sample_rate=96000,
                 bit_depth=24,
             )
-        ]
+        ],
     )
     assert track.title == "Testing Phase 4"
     assert track.artist_name == "Audiophile Engineer"
@@ -28,6 +27,7 @@ def test_echosync_track_model():
 def test_bulk_upsert_tracks_sqlalchemy2():
     db = get_database()
     from database.music_database import Base
+
     Base.metadata.drop_all(db.engine)
     Base.metadata.create_all(db.engine)
 
@@ -47,7 +47,7 @@ def test_bulk_upsert_tracks_sqlalchemy2():
                     sample_rate=44100,
                     bit_depth=16,
                 )
-            ]
+            ],
         )
         t2 = EchosyncTrack(
             sync_id="test_sync_002",
@@ -60,7 +60,7 @@ def test_bulk_upsert_tracks_sqlalchemy2():
                     file_path="/media/test2.m4a",
                     file_format="ALAC",
                 )
-            ]
+            ],
         )
 
         rows = bulk_upsert_tracks(session, [t1, t2])
@@ -84,7 +84,7 @@ def test_bulk_upsert_tracks_sqlalchemy2():
                     file_path="/media/test1.flac",
                     file_format="FLAC",
                 )
-            ]
+            ],
         )
         bulk_upsert_tracks(session, [t1_updated])
         session.commit()
@@ -109,7 +109,7 @@ def test_ingestion_orchestration():
             "artist": "Batch Artist",
             "duration_ms": 200000 + i,
             "codec": "FLAC",
-            "file_path": f"/media/batch_{i}.flac"
+            "file_path": f"/media/batch_{i}.flac",
         }
         for i in range(12)
     ]

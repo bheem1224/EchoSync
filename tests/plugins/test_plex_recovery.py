@@ -1,9 +1,16 @@
-import pytest
 from unittest.mock import MagicMock
-from core.db.echo_sync_track import EchosyncTrack, EchosyncMedia
-from plugins.EchoSync.plex.client import PlexClient, verify_plex_candidate
-from database.music_database import MusicDatabase, Track, Artist, LocalMedia, ExternalIdentifier, Base
+
 from core.database.repositories.track_repo import TrackRepository
+from core.db.echo_sync_track import EchosyncMedia, EchosyncTrack
+from database.music_database import (
+    Artist,
+    Base,
+    ExternalIdentifier,
+    LocalMedia,
+    MusicDatabase,
+    Track,
+)
+from plugins.EchoSync.plex.client import PlexClient, verify_plex_candidate
 
 
 class DummyPart:
@@ -62,7 +69,9 @@ def test_plex_fast_path_returns_cached_item(monkeypatch):
     client.music_library = MagicMock()
     client.ensure_connection = MagicMock(return_value=True)
 
-    dummy_item = DummyPlexTrack("12345", "Alone", "Alan Walker", 161000, "/music/Alone.flac")
+    dummy_item = DummyPlexTrack(
+        "12345", "Alone", "Alan Walker", 161000, "/music/Alone.flac"
+    )
     client.server.fetchItem.return_value = dummy_item
 
     meta = EchosyncTrack(
@@ -89,8 +98,12 @@ def test_plex_404_triggers_recovery_matrix(monkeypatch):
     client.server.fetchItem.side_effect = Exception("(404) not_found")
 
     # Live search candidates: candidate 1 is a mismatch, candidate 2 matches duration & filename
-    cand_wrong = DummyPlexTrack("99001", "Alone (Club Mix)", "Alan Walker", 240000, "/music/Alone (Club).flac")
-    cand_correct = DummyPlexTrack("99002", "Alone", "Alan Walker", 161200, "/plex_container/music/Alone.flac")
+    cand_wrong = DummyPlexTrack(
+        "99001", "Alone (Club Mix)", "Alan Walker", 240000, "/music/Alone (Club).flac"
+    )
+    cand_correct = DummyPlexTrack(
+        "99002", "Alone", "Alan Walker", 161200, "/plex_container/music/Alone.flac"
+    )
     client.music_library.search.return_value = [cand_wrong, cand_correct]
 
     meta = EchosyncTrack(
@@ -105,8 +118,10 @@ def test_plex_404_triggers_recovery_matrix(monkeypatch):
 
     assert item == cand_correct
     assert is_recovered is True
-    assert getattr(item, "ratingKey") == "99002"
-    client.music_library.search.assert_called_once_with("Alone", libtype="track", maxresults=50)
+    assert item.ratingKey == "99002"
+    client.music_library.search.assert_called_once_with(
+        "Alone", libtype="track", maxresults=50
+    )
 
 
 def test_plex_recovery_rejects_version_mismatch(monkeypatch):
@@ -118,7 +133,9 @@ def test_plex_recovery_rejects_version_mismatch(monkeypatch):
     client.server.fetchItem.side_effect = Exception("(404) not_found")
 
     # Search only returns versions with duration delta > 3000ms
-    cand_mismatch = DummyPlexTrack("99001", "Alone (Extended)", "Alan Walker", 210000, "/music/Alone_ext.flac")
+    cand_mismatch = DummyPlexTrack(
+        "99001", "Alone (Extended)", "Alan Walker", 210000, "/music/Alone_ext.flac"
+    )
     client.music_library.search.return_value = [cand_mismatch]
 
     meta = EchosyncTrack(
@@ -146,16 +163,25 @@ def test_track_repo_update_external_identifiers(tmp_path):
         session.add(artist)
         session.flush()
 
-        track = Track(sync_id="track_sync_01", title="Alone", normalized_title="alone", artist_id=artist.id)
+        track = Track(
+            sync_id="track_sync_01",
+            title="Alone",
+            normalized_title="alone",
+            artist_id=artist.id,
+        )
         session.add(track)
         session.flush()
 
-        media = LocalMedia(media_id="nanoid_media_01", track_id=track.id, file_path="/music/Alone.flac")
+        media = LocalMedia(
+            media_id="nanoid_media_01", track_id=track.id, file_path="/music/Alone.flac"
+        )
         session.add(media)
         session.flush()
 
         # Initial external identifier with old rating key
-        ext = ExternalIdentifier(media_id=media.media_id, plugin_source="plex", plugin_item_id="146900")
+        ext = ExternalIdentifier(
+            media_id=media.media_id, plugin_source="plex", plugin_item_id="146900"
+        )
         session.add(ext)
         session.commit()
 
@@ -167,7 +193,11 @@ def test_track_repo_update_external_identifiers(tmp_path):
         )
         assert updated == 1
 
-        refreshed_ext = session.query(ExternalIdentifier).filter_by(media_id=media.media_id, plugin_source="plex").first()
+        refreshed_ext = (
+            session.query(ExternalIdentifier)
+            .filter_by(media_id=media.media_id, plugin_source="plex")
+            .first()
+        )
         assert refreshed_ext is not None
         assert refreshed_ext.plugin_item_id == "99002"
         assert refreshed_ext.raw_data.get("recovered_at") is not None

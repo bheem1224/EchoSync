@@ -12,8 +12,9 @@ Tests cover:
 """
 
 import pytest
-from core.matching_engine.track_parser import TrackParser, ParseConfig
-from core.matching_engine import EchosyncTrack, QualityTag
+
+from core.matching_engine import QualityTag
+from core.matching_engine.track_parser import ParseConfig, TrackParser
 
 
 class TestTrackParserBasic:
@@ -42,7 +43,10 @@ class TestTrackParserBasic:
         track = self.parser.parse_filename("Dua Lipa - Don't Start Now.mp3")
         assert track is not None
         assert "dua lipa" in track.artist_name.lower()
-        assert "don't start now" in track.title.lower() or "dont start now" in track.title.lower()
+        assert (
+            "don't start now" in track.title.lower()
+            or "dont start now" in track.title.lower()
+        )
 
     def test_with_brackets_junk(self):
         """Test removal of bracketed junk"""
@@ -124,7 +128,10 @@ class TestTrackParserQuality:
         """Test FLAC 16-bit detection"""
         track = self.parser.parse_filename("Steely Dan - Deacon Blues [FLAC]")
         assert track is not None
-        assert QualityTag.FLAC_16BIT.value in track.quality_tags or QualityTag.FLAC_24BIT.value in track.quality_tags
+        assert (
+            QualityTag.FLAC_16BIT.value in track.quality_tags
+            or QualityTag.FLAC_24BIT.value in track.quality_tags
+        )
 
     def test_mp3_320kbps_detection(self):
         """Test MP3 320kbps detection"""
@@ -221,7 +228,9 @@ class TestTrackParserFeatured:
 
     def test_ft_artist(self):
         """Test 'ft.' extraction"""
-        track = self.parser.parse_filename("Childish Gambino ft. Chance the Rapper - This is America")
+        track = self.parser.parse_filename(
+            "Childish Gambino ft. Chance the Rapper - This is America"
+        )
         assert track is not None
         assert track.title is not None
 
@@ -317,14 +326,18 @@ class TestTrackParserIntegration:
 
     def test_beatport_format(self):
         """Test Beatport-style filename"""
-        track = self.parser.parse_filename("Disclosure - Latch (Mark Ronson Remix) [Edited]")
+        track = self.parser.parse_filename(
+            "Disclosure - Latch (Mark Ronson Remix) [Edited]"
+        )
         assert track is not None
         assert track.artist_name is not None
         assert track.title is not None
 
     def test_soulseek_format(self):
         """Test typical SoulSeek download format"""
-        track = self.parser.parse_filename("01 - Artist - Track Title (Remix) [FLAC] [2024]")
+        track = self.parser.parse_filename(
+            "01 - Artist - Track Title (Remix) [FLAC] [2024]"
+        )
         assert track is not None
         # Should extract artist and title despite track number
 
@@ -336,13 +349,17 @@ class TestTrackParserIntegration:
 
     def test_compilation_album_format(self):
         """Test compilation album track"""
-        track = self.parser.parse_filename("01. Artist Name - Song Title (Remix Version) [WAV]")
+        track = self.parser.parse_filename(
+            "01. Artist Name - Song Title (Remix Version) [WAV]"
+        )
         assert track is not None
         assert track.artist_name is not None
 
     def test_hierarchical_path_three_levels(self):
         """Test path with Music/Artist/Album/01 - Title.flac"""
-        track = self.parser.parse_filename(r"Music\Jonas Blue\By Your Side\01 - By Your Side.flac")
+        track = self.parser.parse_filename(
+            r"Music\Jonas Blue\By Your Side\01 - By Your Side.flac"
+        )
         assert track is not None
         assert "jonas blue" in track.artist_name.lower()
         assert "by your side" in track.title.lower()

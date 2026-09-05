@@ -1,24 +1,27 @@
-import time
-from datetime import datetime, timezone, timedelta
+from datetime import timedelta
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-from database.working_database import DownloadQueue, ReviewTask
-from database.music_database import Track, Artist
+
 from core.db.echo_sync_track import EchosyncTrack
-from core.event_bus import event_bus
-from time_utils import utc_now
-from services.download_manager import DownloadManager
+from database.music_database import Artist, Track
+from database.working_database import DownloadQueue, ReviewTask
 from services.auto_importer import AutoImportService
-from services.library_watcher import suppress_path, is_path_suppressed, _is_path_ignored
+from services.download_manager import DownloadManager
+from services.library_watcher import _is_path_ignored, is_path_suppressed, suppress_path
+from time_utils import utc_now
 
 
 @pytest.fixture()
 def dm(mock_db, mock_work_db):
     DownloadManager._instance = None
-    with patch("services.download_manager.get_database", return_value=mock_db), \
-         patch("services.download_manager.get_working_database", return_value=mock_work_db):
+    with (
+        patch("services.download_manager.get_database", return_value=mock_db),
+        patch(
+            "services.download_manager.get_working_database", return_value=mock_work_db
+        ),
+    ):
         mgr = DownloadManager.get_instance()
     mgr.db = mock_db
     mgr.work_db = mock_work_db
@@ -45,6 +48,7 @@ def test_recover_stuck_items_resets_searching_and_downloading(dm, mock_work_db):
         session.add_all([item1, item2])
 
     import asyncio
+
     asyncio.run(dm._recover_stuck_items())
 
     with mock_work_db.session_scope() as session:
@@ -109,8 +113,17 @@ def test_auto_importer_compound_eviction_and_orphan_deletion(mock_work_db, tmp_p
         task1 = ReviewTask(
             status="pending",
             file_path=str(orphan_file),
-            detected_metadata={"isrc": "USRC12345678", "artist": "Daft Punk", "title": "Get Lucky"},
-            track_data={"isrc": "USRC12345678", "artist": "Daft Punk", "title": "Get Lucky", "duration_ms": 240000},
+            detected_metadata={
+                "isrc": "USRC12345678",
+                "artist": "Daft Punk",
+                "title": "Get Lucky",
+            },
+            track_data={
+                "isrc": "USRC12345678",
+                "artist": "Daft Punk",
+                "title": "Get Lucky",
+                "duration_ms": 240000,
+            },
         )
         # Task 2: matches by Artist + Title + Duration within 2000ms
         task2 = ReviewTask(
@@ -121,19 +134,23 @@ def test_auto_importer_compound_eviction_and_orphan_deletion(mock_work_db, tmp_p
         )
         session.add_all([task1, task2])
 
-    with patch("services.auto_importer.get_working_database", return_value=mock_work_db):
+    with patch(
+        "services.auto_importer.get_working_database", return_value=mock_work_db
+    ):
         AutoImportService._instance = None
         service = AutoImportService.get_instance()
 
         # Directly invoke _on_track_imported for Daft Punk track
-        service._on_track_imported({
-            "track": {
-                "isrc": "USRC12345678",
-                "artist_name": "Daft Punk",
-                "title": "Get Lucky",
-                "duration_ms": 240000,
+        service._on_track_imported(
+            {
+                "track": {
+                    "isrc": "USRC12345678",
+                    "artist_name": "Daft Punk",
+                    "title": "Get Lucky",
+                    "duration_ms": 240000,
+                }
             }
-        })
+        )
 
         with mock_work_db.session_scope() as session:
             t1 = session.query(ReviewTask).filter_by(id=task1.id).first()
@@ -141,13 +158,15 @@ def test_auto_importer_compound_eviction_and_orphan_deletion(mock_work_db, tmp_p
             assert not orphan_file.exists()
 
         # Directly invoke _on_track_imported for Justice track (duration 231000ms, within 2000ms of 230000ms)
-        service._on_track_imported({
-            "track": {
-                "artist_name": "Justice",
-                "title": "Genesis",
-                "duration_ms": 231000,
+        service._on_track_imported(
+            {
+                "track": {
+                    "artist_name": "Justice",
+                    "title": "Genesis",
+                    "duration_ms": 231000,
+                }
             }
-        })
+        )
 
         with mock_work_db.session_scope() as session:
             t2 = session.query(ReviewTask).filter_by(id=task2.id).first()
@@ -197,6 +216,7 @@ def test_jit_in_library_check_transitions_to_completed(dm, mock_db, mock_work_db
         item_id = item.id
 
     import asyncio
+
     asyncio.run(dm._process_queued_items())
 
     with mock_work_db.session_scope() as session:
@@ -222,8 +242,7 @@ def test_normalize_track_comparison_fields():
     from core.matching_engine.text_utils import normalize_track_comparison_fields
 
     title, artist = normalize_track_comparison_fields(
-        "One More Time (Radio Edit) [Remastered]",
-        "Daft Punk feat. Romanthony"
+        "One More Time (Radio Edit) [Remastered]", "Daft Punk feat. Romanthony"
     )
     assert title == "One More Time"
     assert artist == "Daft Punk"
@@ -232,7 +251,6 @@ def test_normalize_track_comparison_fields():
 def test_raw_matching_score_evaluation():
     from core.matching_engine.matching_engine import WeightedMatchingEngine
     from core.matching_engine.scoring_profile import PROFILE_DOWNLOAD_SEARCH
-    from core.db.echo_sync_track import EchosyncTrack
 
     target = EchosyncTrack(
         raw_title="Around the World",
@@ -254,17 +272,21 @@ def test_raw_matching_score_evaluation():
 
 def test_acoustid_first_class_ingestion_promotes_confidence(monkeypatch):
     from services.metadata_enhancer import RetroactiveEnhancer
+
     enhancer = RetroactiveEnhancer()
 
     # Mock FingerprintGenerator
-    monkeypatch.setattr("core.matching_engine.fingerprinting.FingerprintGenerator.generate", lambda p: "test_fingerprint_123")
+    monkeypatch.setattr(
+        "core.matching_engine.fingerprinting.FingerprintGenerator.generate",
+        lambda p: "test_fingerprint_123",
+    )
 
     # Mock fingerprint provider returning MBID
     mock_fp_prov = MagicMock()
     mock_fp_prov.resolve_fingerprint_details.return_value = {
         "acoustid_id": "acoustid_uuid_123",
         "mbids": ["mbid_rec_456"],
-        "score": 0.99
+        "score": 0.99,
     }
 
     # Mock metadata provider returning metadata
@@ -274,11 +296,12 @@ def test_acoustid_first_class_ingestion_promotes_confidence(monkeypatch):
         "artist": "Daft Punk",
         "album": "Homework",
         "length": 239000,
-        "duration_ms": 239000
+        "duration_ms": 239000,
     }
 
     def _get_plugin_mock(cap, **kwargs):
         from core.enums import Capability
+
         if cap == Capability.RESOLVE_FINGERPRINT:
             return mock_fp_prov
         elif cap == Capability.FETCH_METADATA:
@@ -286,17 +309,20 @@ def test_acoustid_first_class_ingestion_promotes_confidence(monkeypatch):
         return None
 
     monkeypatch.setattr(enhancer, "_get_plugin", _get_plugin_mock)
-    monkeypatch.setattr("echosync_core.extract_metadata", lambda p: {
-        "title": "Around the World (Radio Edit)",
-        "artist": "Daft Punk feat. Somebody",
-        "duration_ms": 240000 # 1000ms delta <= 2000ms
-    })
+    monkeypatch.setattr(
+        "echosync_core.extract_metadata",
+        lambda p: {
+            "title": "Around the World (Radio Edit)",
+            "artist": "Daft Punk feat. Somebody",
+            "duration_ms": 240000,  # 1000ms delta <= 2000ms
+        },
+    )
 
-    metadata, confidence = enhancer.identify_file(Path("/data/downloads/Around The World.mp3"))
+    metadata, confidence = enhancer.identify_file(
+        Path("/data/downloads/Around The World.mp3")
+    )
 
     assert metadata is not None
     assert confidence >= 0.90
     assert metadata.get("musicbrainz_id") == "mbid_rec_456"
     assert metadata.get("acoustid_id") == "acoustid_uuid_123"
-
-

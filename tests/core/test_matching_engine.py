@@ -1,18 +1,16 @@
-import pytest
+from core.db.echo_sync_track import EchosyncTrack
 from core.matching_engine.matching_engine import (
     WeightedMatchingEngine,
     calculate_duration_score,
-    evaluate_version_compatibility,
 )
 from core.matching_engine.scoring_profile import ExactSyncProfile
-from core.db.echo_sync_track import EchosyncTrack
 
 
 def test_polynomial_duration_penalty_decay_standard_mode():
     """Verify standard mode polynomial decay (T=5000, Limit=6000, k=6)."""
     assert calculate_duration_score(0, strict=False) == 1.0
     assert calculate_duration_score(5000, strict=False) == 1.0
-    
+
     # 5050ms has negligible decay (k=6 buffer) -> score > 0.99
     score_5050 = calculate_duration_score(5050, strict=False)
     assert score_5050 > 0.99
@@ -113,7 +111,9 @@ def test_deluxe_isolation_to_tier3_fallback():
         edition="Deluxe",
         duration=255000,  # 13000ms delta > 10000ms
     )
-    res_t3_long = engine.calculate_match(source, candidate_deluxe_long, context="tier3_fallback")
+    res_t3_long = engine.calculate_match(
+        source, candidate_deluxe_long, context="tier3_fallback"
+    )
     assert res_t3_long.passed_version_check is False
     assert res_t3_long.confidence_score == 0.0
 
@@ -160,4 +160,6 @@ def test_non_destructive_album_bonus():
 
     # Matching album gets the +2.0 boost (clamped to 100.0)
     assert res_match.confidence_score >= res_diff.confidence_score
-    assert any("Non-destructive album bonus" in r for r in res_match.reasoning.split(" | "))
+    assert any(
+        "Non-destructive album bonus" in r for r in res_match.reasoning.split(" | ")
+    )

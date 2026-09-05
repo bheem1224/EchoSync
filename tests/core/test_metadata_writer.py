@@ -1,10 +1,11 @@
 import struct
-import pytest
 from pathlib import Path
-from unittest.mock import patch
 
 import echosync_core
-from services.metadata_enhancer import RetroactiveEnhancer, MetadataWriteVerificationError
+
+from services.metadata_enhancer import (
+    RetroactiveEnhancer,
+)
 
 
 def _create_minimal_wav_file(path: Path) -> Path:
@@ -66,6 +67,7 @@ def _create_minimal_mp3_file(path: Path) -> Path:
 
 def _create_minimal_m4a_file(path: Path) -> Path:
     """Create a minimal, valid ISO BMFF MP4/M4A audio file."""
+
     def box(box_type: bytes, payload: bytes) -> bytes:
         return struct.pack(">I4s", len(payload) + 8, box_type) + payload
 
@@ -102,8 +104,14 @@ def _create_minimal_m4a_file(path: Path) -> Path:
         + b"\x40\x00\x00\x00"
         + b"\x00" * 8,
     )
-    mdhd = box(b"mdhd", b"\x00" * 12 + struct.pack(">II", 44100, 44100) + struct.pack(">HH", 0x55C4, 0))
-    hdlr = box(b"hdlr", b"\x00" * 4 + b"\x00" * 4 + b"soun" + b"\x00" * 12 + b"SoundHandler\x00")
+    mdhd = box(
+        b"mdhd",
+        b"\x00" * 12 + struct.pack(">II", 44100, 44100) + struct.pack(">HH", 0x55C4, 0),
+    )
+    hdlr = box(
+        b"hdlr",
+        b"\x00" * 4 + b"\x00" * 4 + b"soun" + b"\x00" * 12 + b"SoundHandler\x00",
+    )
     smhd = box(b"smhd", b"\x00" * 8)
     url_box = box(b"url ", b"\x00\x00\x00\x01")
     dref = box(b"dref", b"\x00" * 4 + struct.pack(">I", 1) + url_box)
@@ -118,8 +126,12 @@ def _create_minimal_m4a_file(path: Path) -> Path:
         + struct.pack(">I", 44100 << 16),
     )
     stsd = box(b"stsd", b"\x00" * 4 + struct.pack(">I", 1) + mp4a)
-    stts = box(b"stts", b"\x00" * 4 + struct.pack(">I", 1) + struct.pack(">II", 1, 44100))
-    stsc = box(b"stsc", b"\x00" * 4 + struct.pack(">I", 1) + struct.pack(">III", 1, 1, 1))
+    stts = box(
+        b"stts", b"\x00" * 4 + struct.pack(">I", 1) + struct.pack(">II", 1, 44100)
+    )
+    stsc = box(
+        b"stsc", b"\x00" * 4 + struct.pack(">I", 1) + struct.pack(">III", 1, 1, 1)
+    )
     stsz = box(b"stsz", b"\x00" * 4 + struct.pack(">I", 16) + struct.pack(">I", 1))
     stco = box(b"stco", b"\x00" * 4 + struct.pack(">I", 1) + struct.pack(">I", 0))
 
@@ -324,11 +336,26 @@ def test_wav_corrupt_legacy_riff_info_recovery(tmp_path):
     bits_per_sample = 16
     byte_rate = sample_rate * num_channels * bits_per_sample // 8
     block_align = num_channels * bits_per_sample // 8
-    fmt_chunk = struct.pack("<4sIHHIIHH", b"fmt ", 16, 1, num_channels, sample_rate, byte_rate, block_align, bits_per_sample)
+    fmt_chunk = struct.pack(
+        "<4sIHHIIHH",
+        b"fmt ",
+        16,
+        1,
+        num_channels,
+        sample_rate,
+        byte_rate,
+        block_align,
+        bits_per_sample,
+    )
 
     # Invalid non-ASCII RIFF INFO chunk
     invalid_subchunk = b"\x00\x01\x02\x03" + struct.pack("<I", 4) + b"test"
-    list_info_chunk = b"LIST" + struct.pack("<I", 4 + len(invalid_subchunk)) + b"INFO" + invalid_subchunk
+    list_info_chunk = (
+        b"LIST"
+        + struct.pack("<I", 4 + len(invalid_subchunk))
+        + b"INFO"
+        + invalid_subchunk
+    )
 
     data = b"\x00" * 1000
     data_chunk = b"data" + struct.pack("<I", len(data)) + data
@@ -350,5 +377,3 @@ def test_wav_corrupt_legacy_riff_info_recovery(tmp_path):
     verified = enhancer.tag_file_verified(corrupt_wav_path, metadata)
     assert verified.get("title") == "Open Sore"
     assert verified.get("artist") == "Skinny Puppy"
-
-

@@ -15,21 +15,25 @@ Core methods:
 """
 
 import logging
-from typing import List, Optional, Dict, Tuple
-from enum import Enum
 from dataclasses import dataclass
+from enum import Enum
 
+from core.caching import get_cache
 from core.db.echo_sync_track import EchosyncTrack
+from core.matching_engine.matching_engine import MatchResult, WeightedMatchingEngine
+from core.matching_engine.scoring_profile import (
+    ProfileFactory,
+    ProfileType,
+    ScoringProfile,
+)
 from core.matching_engine.track_parser import TrackParser
-from core.matching_engine.matching_engine import WeightedMatchingEngine, MatchResult
-from core.matching_engine.scoring_profile import ProfileFactory, ProfileType, ScoringProfile
-from core.caching import plugin_cache, get_cache
 
 logger = logging.getLogger(__name__)
 
 
 class MatchContext(Enum):
     """Context for match requests - determines profile selection"""
+
     EXACT_SYNC = "exact_sync"  # Watchlists, validation - strict
     DOWNLOAD_SEARCH = "download_search"  # SoulSeek, Tidal - tolerant
     LIBRARY_IMPORT = "library_import"  # Local files - fingerprint-first
@@ -38,6 +42,7 @@ class MatchContext(Enum):
 @dataclass
 class MatchcandiDate:
     """Represents a match candidate with result"""
+
     candidate_track: EchosyncTrack
     confidence_score: float
     match_result: MatchResult
@@ -58,9 +63,9 @@ class MatchService:
     def find_best_match(
         self,
         target: EchosyncTrack,
-        candidates: List[EchosyncTrack],
+        candidates: list[EchosyncTrack],
         context: MatchContext = MatchContext.DOWNLOAD_SEARCH,
-    ) -> Optional[MatchcandiDate]:
+    ) -> MatchcandiDate | None:
         """
         Find the best matching track from a list of candidates
 
@@ -78,7 +83,9 @@ class MatchService:
             return None
 
         # Check if fingerprints are available (for LIBRARY_IMPORT fallback logic)
-        has_fingerprints = bool(target.fingerprint) or any(bool(c.fingerprint) for c in candidates if c)
+        has_fingerprints = bool(target.fingerprint) or any(
+            bool(c.fingerprint) for c in candidates if c
+        )
 
         # Select profile based on context and fingerprint availability
         profile = self._select_profile(context, has_fingerprints)
@@ -126,11 +133,11 @@ class MatchService:
     def find_top_matches(
         self,
         target: EchosyncTrack,
-        candidates: List[EchosyncTrack],
+        candidates: list[EchosyncTrack],
         context: MatchContext = MatchContext.DOWNLOAD_SEARCH,
         top_n: int = 5,
         min_confidence: float = 70.0,
-    ) -> List[MatchcandiDate]:
+    ) -> list[MatchcandiDate]:
         """
         Find top N matching tracks from a list of candidates
 
@@ -149,7 +156,9 @@ class MatchService:
             return []
 
         # Check if fingerprints available
-        has_fingerprints = bool(target.fingerprint) or any(bool(c.fingerprint) for c in candidates if c)
+        has_fingerprints = bool(target.fingerprint) or any(
+            bool(c.fingerprint) for c in candidates if c
+        )
 
         # Select profile
         profile = self._select_profile(context, has_fingerprints)
@@ -202,7 +211,7 @@ class MatchService:
         matcher = WeightedMatchingEngine(profile)
         return matcher.calculate_match(track_a, track_b)
 
-    def parse_filename(self, raw_string: str) -> Optional[EchosyncTrack]:
+    def parse_filename(self, raw_string: str) -> EchosyncTrack | None:
         """
         Parse a raw filename into EchosyncTrack (cached)
 
@@ -213,6 +222,7 @@ class MatchService:
             Parsed EchosyncTrack or None
         """
         import hashlib
+
         key_str = f"parse|{raw_string}"
         cache_key = hashlib.md5(key_str.encode(), usedforsecurity=False).hexdigest()
 
@@ -234,9 +244,9 @@ class MatchService:
     def parse_and_match(
         self,
         raw_string: str,
-        candidates: List[EchosyncTrack],
+        candidates: list[EchosyncTrack],
         context: MatchContext = MatchContext.DOWNLOAD_SEARCH,
-    ) -> Optional[MatchcandiDate]:
+    ) -> MatchcandiDate | None:
         """
         Parse a raw filename and find the best match
 
@@ -272,9 +282,9 @@ class MatchService:
     def get_match_stats(
         self,
         target: EchosyncTrack,
-        candidates: List[EchosyncTrack],
+        candidates: list[EchosyncTrack],
         context: MatchContext = MatchContext.DOWNLOAD_SEARCH,
-    ) -> Dict:
+    ) -> dict:
         """
         Get detailed statistics about matching results
 
@@ -290,7 +300,9 @@ class MatchService:
         if not candidates:
             return {"total_candidates": 0, "matches_found": 0}
 
-        matches = self.find_top_matches(target, candidates, context, top_n=len(candidates))
+        matches = self.find_top_matches(
+            target, candidates, context, top_n=len(candidates)
+        )
 
         if not matches:
             return {
@@ -306,7 +318,11 @@ class MatchService:
         median = 0.0
         if scores:
             mid = len(scores) // 2
-            median = scores[mid] if len(scores) % 2 != 0 else (scores[mid-1] + scores[mid]) / 2
+            median = (
+                scores[mid]
+                if len(scores) % 2 != 0
+                else (scores[mid - 1] + scores[mid]) / 2
+            )
 
         return {
             "total_candidates": len(candidates),
@@ -319,7 +335,9 @@ class MatchService:
             "matches_above_90": len([s for s in scores if s >= 90]),
         }
 
-    def _select_profile(self, context: MatchContext, has_fingerprint: bool = False) -> ScoringProfile:
+    def _select_profile(
+        self, context: MatchContext, has_fingerprint: bool = False
+    ) -> ScoringProfile:
         """
         Select scoring profile based on context and fingerprint availability
 
@@ -351,17 +369,23 @@ class MatchService:
         profile_type = profile_type_map.get(context, ProfileType.DOWNLOAD_SEARCH)
         return self.profile_factory.create(profile_type)
 
-    def get_cache_info(self) -> Dict:
+    def get_cache_info(self) -> dict:
         """Get information about cache usage"""
         return {
             "cache_enabled": True,
             "cache_implementation": "music_library.db (parsed_tracks table)",
-            "cache_operations_available": ["get", "set", "delete", "clear_all", "clear_expired"],
+            "cache_operations_available": [
+                "get",
+                "set",
+                "delete",
+                "clear_all",
+                "clear_expired",
+            ],
         }
 
 
 # Global MatchService instance
-_match_service: Optional[MatchService] = None
+_match_service: MatchService | None = None
 
 
 def get_match_service() -> MatchService:
@@ -374,9 +398,9 @@ def get_match_service() -> MatchService:
 
 def find_best_match(
     target: EchosyncTrack,
-    candidates: List[EchosyncTrack],
+    candidates: list[EchosyncTrack],
     context: MatchContext = MatchContext.DOWNLOAD_SEARCH,
-) -> Optional[MatchcandiDate]:
+) -> MatchcandiDate | None:
     """Convenience function using global MatchService"""
     service = get_match_service()
     return service.find_best_match(target, candidates, context)
@@ -384,9 +408,9 @@ def find_best_match(
 
 def parse_and_match(
     raw_string: str,
-    candidates: List[EchosyncTrack],
+    candidates: list[EchosyncTrack],
     context: MatchContext = MatchContext.DOWNLOAD_SEARCH,
-) -> Optional[MatchcandiDate]:
+) -> MatchcandiDate | None:
     """Convenience function using global MatchService"""
     service = get_match_service()
     return service.parse_and_match(raw_string, candidates, context)

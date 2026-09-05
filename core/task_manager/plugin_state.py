@@ -1,8 +1,8 @@
-from datetime import datetime, timezone
 import threading
-from typing import Dict
-from core.tiered_logger import get_logger
+from datetime import UTC, datetime
+
 from core.task_manager.models import PluginLifecycleState, PluginStatus
+from core.tiered_logger import get_logger
 
 logger = get_logger("plugin_state_manager")
 
@@ -14,9 +14,11 @@ class PluginStateManager:
 
     def __init__(self):
         self._lock = threading.RLock()
-        self._states: Dict[str, PluginStatus] = {}
+        self._states: dict[str, PluginStatus] = {}
 
-    def set_state(self, plugin_id: str, state: PluginLifecycleState, message: str = "") -> None:
+    def set_state(
+        self, plugin_id: str, state: PluginLifecycleState, message: str = ""
+    ) -> None:
         """
         Updates the lifecycle state of a plugin and logs state transitions.
 
@@ -25,15 +27,15 @@ class PluginStateManager:
             state: Target PluginLifecycleState.
             message: Optional detail message explaining the transition or error.
         """
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         with self._lock:
             old_status = self._states.get(plugin_id)
-            old_state = old_status.state if old_status else PluginLifecycleState.UNCONFIGURED
+            old_state = (
+                old_status.state if old_status else PluginLifecycleState.UNCONFIGURED
+            )
 
             new_status = PluginStatus(
-                state=state,
-                message=message,
-                last_health_check=now
+                state=state, message=message, last_health_check=now
             )
             self._states[plugin_id] = new_status
 
@@ -61,7 +63,7 @@ class PluginStateManager:
                 return PluginStatus(
                     state=PluginLifecycleState.UNCONFIGURED,
                     message="Plugin state not initialized",
-                    last_health_check=None
+                    last_health_check=None,
                 )
             return status
 
@@ -77,7 +79,10 @@ class PluginStateManager:
             bool: Whether the plugin is capable of processing requests.
         """
         status = self.get_state(plugin_id)
-        return status.state in (PluginLifecycleState.READY, PluginLifecycleState.DEGRADED)
+        return status.state in (
+            PluginLifecycleState.READY,
+            PluginLifecycleState.DEGRADED,
+        )
 
 
 # Global PluginStateManager singleton

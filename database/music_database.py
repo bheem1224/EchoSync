@@ -1,51 +1,48 @@
 #!/usr/bin/env python3
 
 """Track-centric SQLAlchemy database models and helper class."""
+
 from __future__ import annotations
 
 import os
+import secrets
+import string
+from collections.abc import Generator
 from contextlib import contextmanager
-from datetime import datetime, date
+from datetime import date, datetime
+from enum import Enum
 from pathlib import Path
-from typing import Dict, Generator, List, Optional, Tuple
-
-from time_utils import UTCDateTime, utc_now
-from sqlalchemy.orm import joinedload, selectinload
-import re
-from sqlalchemy import or_
 
 from sqlalchemy import (
+    JSON,
     BigInteger,
     Boolean,
     Date,
-    DateTime,
     Float,
     ForeignKey,
     Integer,
-    JSON,
     String,
     UniqueConstraint,
     create_engine,
     event,
+    or_,
 )
-from sqlalchemy.pool import NullPool
 from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.orm import (
     DeclarativeBase,
     Mapped,
     Session,
+    joinedload,
     mapped_column,
     relationship,
-    sessionmaker,
     scoped_session,
+    selectinload,
+    sessionmaker,
     validates,
 )
+from sqlalchemy.pool import NullPool
 
-
-
-from enum import Enum
-import string
-import secrets
+from time_utils import UTCDateTime
 
 
 class ReleaseType(str, Enum):
@@ -55,9 +52,11 @@ class ReleaseType(str, Enum):
     COMPILATION = "compilation"
     STANDALONE = "standalone"
 
+
 def generate_nanoid(size=8) -> str:
     alphabet = string.ascii_letters + string.digits
-    return ''.join(secrets.choice(alphabet) for _ in range(size))
+    return "".join(secrets.choice(alphabet) for _ in range(size))
+
 
 def _safe_parse_date(release_date) -> date:
     if not release_date:
@@ -83,6 +82,7 @@ def _safe_parse_date(release_date) -> date:
                 pass
     return date.min
 
+
 def _safe_int(val, default: int = 0) -> int:
     if val is None:
         return default
@@ -107,8 +107,8 @@ def _safe_int(val, default: int = 0) -> int:
                 return int("".join(digits))
     return default
 
-class Base(DeclarativeBase):
 
+class Base(DeclarativeBase):
     """Base metadata class for SQLAlchemy models."""
 
 
@@ -118,30 +118,32 @@ class Artist(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String, nullable=False, index=True)
     normalized_name: Mapped[str] = mapped_column(String, index=True, server_default="")
-    sort_name: Mapped[Optional[str]] = mapped_column(String)
-    musicbrainz_id: Mapped[Optional[str]] = mapped_column(String, unique=True, index=True)
-    image_url: Mapped[Optional[str]] = mapped_column(String)
-    metadata_status: Mapped[Optional[dict]] = mapped_column(JSON, default=dict, server_default='{}')
-    parent_artist_id: Mapped[Optional[int]] = mapped_column(
+    sort_name: Mapped[str | None] = mapped_column(String)
+    musicbrainz_id: Mapped[str | None] = mapped_column(String, unique=True, index=True)
+    image_url: Mapped[str | None] = mapped_column(String)
+    metadata_status: Mapped[dict | None] = mapped_column(
+        JSON, default=dict, server_default="{}"
+    )
+    parent_artist_id: Mapped[int | None] = mapped_column(
         ForeignKey("artists.id", ondelete="SET NULL"), nullable=True, index=True
     )
 
-    albums: Mapped[List["Album"]] = relationship(
+    albums: Mapped[list[Album]] = relationship(
         back_populates="artist", cascade="all, delete-orphan"
     )
-    tracks: Mapped[List["Track"]] = relationship(
+    tracks: Mapped[list[Track]] = relationship(
         back_populates="artist", cascade="all, delete-orphan"
     )
-    track_associations: Mapped[List["TrackArtist"]] = relationship(
+    track_associations: Mapped[list[TrackArtist]] = relationship(
         back_populates="artist", cascade="all, delete-orphan"
     )
-    aliases: Mapped[List["ArtistAlias"]] = relationship(
+    aliases: Mapped[list[ArtistAlias]] = relationship(
         back_populates="artist", cascade="all, delete-orphan"
     )
-    parent_artist: Mapped[Optional["Artist"]] = relationship(
+    parent_artist: Mapped[Artist | None] = relationship(
         "Artist", remote_side=[id], back_populates="sub_artists"
     )
-    sub_artists: Mapped[List["Artist"]] = relationship(
+    sub_artists: Mapped[list[Artist]] = relationship(
         "Artist", back_populates="parent_artist"
     )
 
@@ -149,8 +151,10 @@ class Artist(Base):
     def validate_name(self, key, value):
         if value:
             import re
+
             from core.matching_engine.text_utils import normalize_artist
-            clean_name = re.sub(r'\s+', ' ', str(value)).strip()
+
+            clean_name = re.sub(r"\s+", " ", str(value)).strip()
             self.normalized_name = normalize_artist(clean_name)
             return clean_name
         return value
@@ -165,15 +169,15 @@ class Album(Base):
     artist_id: Mapped[int] = mapped_column(
         ForeignKey("artists.id", ondelete="CASCADE"), nullable=False
     )
-    release_date: Mapped[Optional[date]] = mapped_column(Date)
-    cover_image_url: Mapped[Optional[str]] = mapped_column(String)
-    release_group_id: Mapped[Optional[str]] = mapped_column(String)
-    mb_release_id: Mapped[Optional[str]] = mapped_column(String)
-    original_release_date: Mapped[Optional[date]] = mapped_column(Date)
-    album_type: Mapped[Optional[str]] = mapped_column(String)
+    release_date: Mapped[date | None] = mapped_column(Date)
+    cover_image_url: Mapped[str | None] = mapped_column(String)
+    release_group_id: Mapped[str | None] = mapped_column(String)
+    mb_release_id: Mapped[str | None] = mapped_column(String)
+    original_release_date: Mapped[date | None] = mapped_column(Date)
+    album_type: Mapped[str | None] = mapped_column(String)
 
     artist: Mapped[Artist] = relationship(back_populates="albums")
-    tracks: Mapped[List["Track"]] = relationship(
+    tracks: Mapped[list[Track]] = relationship(
         back_populates="album", cascade="all, delete-orphan"
     )
 
@@ -181,8 +185,10 @@ class Album(Base):
     def validate_title(self, key, value):
         if value:
             import re
+
             from core.matching_engine.text_utils import normalize_title
-            clean_title = re.sub(r'\s+', ' ', str(value)).strip()
+
+            clean_title = re.sub(r"\s+", " ", str(value)).strip()
             self.normalized_title = normalize_title(clean_title)
             return clean_title
         return value
@@ -194,52 +200,58 @@ class Track(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     title: Mapped[str] = mapped_column(String, nullable=False, index=True)
     normalized_title: Mapped[str] = mapped_column(String, index=True, server_default="")
-    sort_title: Mapped[Optional[str]] = mapped_column(String)
-    edition: Mapped[Optional[str]] = mapped_column(String)  # remaster, live, remix, deluxe, acoustic, etc.
-    album_id: Mapped[Optional[int]] = mapped_column(
+    sort_title: Mapped[str | None] = mapped_column(String)
+    edition: Mapped[str | None] = mapped_column(
+        String
+    )  # remaster, live, remix, deluxe, acoustic, etc.
+    album_id: Mapped[int | None] = mapped_column(
         ForeignKey("albums.id", ondelete="CASCADE")
     )
     artist_id: Mapped[int] = mapped_column(
         ForeignKey("artists.id", ondelete="CASCADE"), nullable=False
     )
 
-    duration: Mapped[Optional[int]] = mapped_column()  # milliseconds
-    track_number: Mapped[Optional[int]] = mapped_column()
-    disc_number: Mapped[Optional[int]] = mapped_column()
-    added_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime())
+    duration: Mapped[int | None] = mapped_column()  # milliseconds
+    track_number: Mapped[int | None] = mapped_column()
+    disc_number: Mapped[int | None] = mapped_column()
+    added_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
 
-    musicbrainz_id: Mapped[Optional[str]] = mapped_column(String, index=True)
-    isrc: Mapped[Optional[str]] = mapped_column(String)
-    sync_id: Mapped[str] = mapped_column(String, unique=True, index=True, nullable=False, default=generate_nanoid)
-    release_type: Mapped[Optional[str]] = mapped_column(String, index=True, default="album", server_default="album")
-    global_rating: Mapped[Optional[float]] = mapped_column(Float)
-    metadata_status: Mapped[Optional[dict]] = mapped_column(JSON, default=dict, server_default='{}')
-
-    __table_args__ = (
-        UniqueConstraint("sync_id", name="uq_tracks_sync_id"),
+    musicbrainz_id: Mapped[str | None] = mapped_column(String, index=True)
+    isrc: Mapped[str | None] = mapped_column(String)
+    sync_id: Mapped[str] = mapped_column(
+        String, unique=True, index=True, nullable=False, default=generate_nanoid
+    )
+    release_type: Mapped[str | None] = mapped_column(
+        String, index=True, default="album", server_default="album"
+    )
+    global_rating: Mapped[float | None] = mapped_column(Float)
+    metadata_status: Mapped[dict | None] = mapped_column(
+        JSON, default=dict, server_default="{}"
     )
 
-    album: Mapped[Optional[Album]] = relationship(back_populates="tracks")
+    __table_args__ = (UniqueConstraint("sync_id", name="uq_tracks_sync_id"),)
+
+    album: Mapped[Album | None] = relationship(back_populates="tracks")
     artist: Mapped[Artist] = relationship(back_populates="tracks")
-    artist_associations: Mapped[List["TrackArtist"]] = relationship(
+    artist_associations: Mapped[list[TrackArtist]] = relationship(
         "TrackArtist",
         back_populates="track",
         cascade="all, delete-orphan",
         order_by="TrackArtist.position",
     )
-    all_artists: Mapped[List["Artist"]] = relationship(
+    all_artists: Mapped[list[Artist]] = relationship(
         "Artist",
         secondary="track_artists",
         order_by="TrackArtist.position",
         viewonly=True,
     )
-    aliases: Mapped[List["TrackAlias"]] = relationship(
+    aliases: Mapped[list[TrackAlias]] = relationship(
         back_populates="track", cascade="all, delete-orphan"
     )
-    media_files: Mapped[List["LocalMedia"]] = relationship(
+    media_files: Mapped[list[LocalMedia]] = relationship(
         back_populates="track", cascade="all, delete-orphan"
     )
-    external_identifiers: Mapped[List["ExternalIdentifier"]] = relationship(
+    external_identifiers: Mapped[list[ExternalIdentifier]] = relationship(
         "ExternalIdentifier",
         secondary="local_media",
         primaryjoin="Track.id == LocalMedia.track_id",
@@ -248,36 +260,37 @@ class Track(Base):
     )
 
     @property
-    def file_path(self) -> Optional[str]:
+    def file_path(self) -> str | None:
         return self.media_files[0].file_path if self.media_files else None
 
     @property
-    def file_format(self) -> Optional[str]:
+    def file_format(self) -> str | None:
         return self.media_files[0].file_format if self.media_files else None
 
     @property
-    def bitrate(self) -> Optional[int]:
+    def bitrate(self) -> int | None:
         return self.media_files[0].bitrate if self.media_files else None
 
     @property
-    def sample_rate(self) -> Optional[int]:
+    def sample_rate(self) -> int | None:
         return self.media_files[0].sample_rate if self.media_files else None
 
     @property
-    def bit_depth(self) -> Optional[int]:
+    def bit_depth(self) -> int | None:
         return self.media_files[0].bit_depth if self.media_files else None
 
     @property
-    def channels(self) -> Optional[int]:
+    def channels(self) -> int | None:
         return self.media_files[0].channels if self.media_files else None
 
     @property
-    def file_size_bytes(self) -> Optional[int]:
+    def file_size_bytes(self) -> int | None:
         return self.media_files[0].file_size_bytes if self.media_files else None
 
 
 class TrackArtist(Base):
     """Junction table capturing all collaborating artists for a track with roles and position."""
+
     __tablename__ = "track_artists"
     __table_args__ = (
         UniqueConstraint("track_id", "artist_id", "role", name="uq_track_artist_role"),
@@ -293,41 +306,43 @@ class TrackArtist(Base):
     role: Mapped[str] = mapped_column(String, default="primary", nullable=False)
     position: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
-    track: Mapped["Track"] = relationship(back_populates="artist_associations")
-    artist: Mapped["Artist"] = relationship(back_populates="track_associations")
+    track: Mapped[Track] = relationship(back_populates="artist_associations")
+    artist: Mapped[Artist] = relationship(back_populates="track_associations")
 
-    def get_best_media(self) -> Optional["LocalMedia"]:
+    def get_best_media(self) -> LocalMedia | None:
         """Return the highest-quality LocalMedia file attached to this track."""
         if not self.media_files:
             return None
-        _LOSSLESS = {'flac', 'alac', 'wav', 'dsd', 'dsf', 'dff', 'ape'}
-        def _quality_key(m: "LocalMedia"):
-            fmt = (m.file_format or '').lower()
+        _LOSSLESS = {"flac", "alac", "wav", "dsd", "dsf", "dff", "ape"}
+
+        def _quality_key(m: LocalMedia):
+            fmt = (m.file_format or "").lower()
             is_lossless = 1 if fmt in _LOSSLESS else 0
             return (is_lossless, m.bitrate or 0, m.sample_rate or 0, m.bit_depth or 0)
+
         return max(self.media_files, key=_quality_key)
 
     @property
-    def media(self) -> List["LocalMedia"]:
+    def media(self) -> list[LocalMedia]:
         """Backwards-compatible accessor. Returns all attached media files."""
         return self.media_files
 
     @property
-    def file_path(self) -> Optional[str]:
+    def file_path(self) -> str | None:
         """Backwards-compatible accessor. Returns best media's file_path."""
         best = self.get_best_media()
         return best.file_path if best else None
 
     @property
-    def artist_name(self) -> Optional[str]:
+    def artist_name(self) -> str | None:
         return self.artist.name if self.artist else None
 
     @property
-    def album_title(self) -> Optional[str]:
+    def album_title(self) -> str | None:
         return self.album.title if self.album else None
 
     @property
-    def media_ids(self) -> List[str]:
+    def media_ids(self) -> list[str]:
         return [m.media_id for m in self.media_files if m.media_id]
 
     @property
@@ -348,36 +363,41 @@ class TrackArtist(Base):
     def validate_title(self, key, value):
         if value:
             import re
+
             from core.matching_engine.text_utils import normalize_title
-            clean_title = re.sub(r'\s+', ' ', str(value)).strip()
+
+            clean_title = re.sub(r"\s+", " ", str(value)).strip()
             self.normalized_title = normalize_title(clean_title)
             return clean_title
         return value
+
 
 class LocalMedia(Base):
     __tablename__ = "local_media"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    media_id: Mapped[str] = mapped_column(String(8), unique=True, index=True, nullable=False, default=generate_nanoid)
+    media_id: Mapped[str] = mapped_column(
+        String(8), unique=True, index=True, nullable=False, default=generate_nanoid
+    )
     track_id: Mapped[int] = mapped_column(
         ForeignKey("tracks.id", ondelete="CASCADE"), nullable=False, index=True
     )
     file_path: Mapped[str] = mapped_column(String, unique=True, nullable=False)
-    file_format: Mapped[Optional[str]] = mapped_column(String)
-    bitrate: Mapped[Optional[int]] = mapped_column(Integer)
-    sample_rate: Mapped[Optional[int]] = mapped_column(Integer)
-    bit_depth: Mapped[Optional[int]] = mapped_column(Integer)
-    channels: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    file_size_bytes: Mapped[Optional[int]] = mapped_column(BigInteger)
-    inode: Mapped[Optional[int]] = mapped_column(BigInteger, index=True)
-    mtime: Mapped[Optional[float]] = mapped_column(Float)
-    added_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime())
+    file_format: Mapped[str | None] = mapped_column(String)
+    bitrate: Mapped[int | None] = mapped_column(Integer)
+    sample_rate: Mapped[int | None] = mapped_column(Integer)
+    bit_depth: Mapped[int | None] = mapped_column(Integer)
+    channels: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    file_size_bytes: Mapped[int | None] = mapped_column(BigInteger)
+    inode: Mapped[int | None] = mapped_column(BigInteger, index=True)
+    mtime: Mapped[float | None] = mapped_column(Float)
+    added_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
 
     track: Mapped[Track] = relationship(back_populates="media_files")
-    audio_fingerprints: Mapped[List["AudioFingerprint"]] = relationship(
+    audio_fingerprints: Mapped[list[AudioFingerprint]] = relationship(
         back_populates="media", cascade="all, delete-orphan"
     )
-    external_identifiers: Mapped[List["ExternalIdentifier"]] = relationship(
+    external_identifiers: Mapped[list[ExternalIdentifier]] = relationship(
         back_populates="media", cascade="all, delete-orphan"
     )
 
@@ -390,11 +410,13 @@ class ExternalIdentifier(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     media_id: Mapped[str] = mapped_column(
-        ForeignKey("local_media.media_id", ondelete="CASCADE"), nullable=False, index=True
+        ForeignKey("local_media.media_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
     )
     plugin_source: Mapped[str] = mapped_column(String, nullable=False, index=True)
     plugin_item_id: Mapped[str] = mapped_column(String, nullable=False)
-    raw_data: Mapped[Optional[dict]] = mapped_column(JSON)
+    raw_data: Mapped[dict | None] = mapped_column(JSON)
 
     media: Mapped[LocalMedia] = relationship(back_populates="external_identifiers")
 
@@ -407,20 +429,23 @@ class AudioFingerprint(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     media_id: Mapped[str] = mapped_column(
-        ForeignKey("local_media.media_id", ondelete="CASCADE"), nullable=False, index=True
+        ForeignKey("local_media.media_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
     )
     # chromaprint: raw locally-generated Chromaprint string (AcoustID algorithm output).
     # acoustid_id: the AcoustID service's confirmed UUID for this recording (returned after lookup).
     # These are deliberately separate — chromaprint is our local computation; acoustid_id is
     # the external service's canonical identifier.
     chromaprint: Mapped[str] = mapped_column(String, index=True, nullable=False)
-    acoustid_id: Mapped[Optional[str]] = mapped_column(String)
+    acoustid_id: Mapped[str | None] = mapped_column(String)
 
     media: Mapped[LocalMedia] = relationship(back_populates="audio_fingerprints")
 
 
 class TrackAlias(Base):
     """Localised / transliterated names for a track (e.g. Romaji, Pinyin)."""
+
     __tablename__ = "track_aliases"
     __table_args__ = (
         UniqueConstraint("track_id", "locale", "script", "name", name="uq_track_alias"),
@@ -431,18 +456,25 @@ class TrackAlias(Base):
         ForeignKey("tracks.id", ondelete="CASCADE"), nullable=False, index=True
     )
     name: Mapped[str] = mapped_column(String, nullable=False)
-    locale: Mapped[Optional[str]] = mapped_column(String)   # e.g. 'en', 'zh', 'ja'
-    script: Mapped[Optional[str]] = mapped_column(String)   # e.g. 'Latn', 'Hant', 'Hans', 'Hrkt'
-    is_primary_for_locale: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    locale: Mapped[str | None] = mapped_column(String)  # e.g. 'en', 'zh', 'ja'
+    script: Mapped[str | None] = mapped_column(
+        String
+    )  # e.g. 'Latn', 'Hant', 'Hans', 'Hrkt'
+    is_primary_for_locale: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="0"
+    )
 
-    track: Mapped["Track"] = relationship(back_populates="aliases")
+    track: Mapped[Track] = relationship(back_populates="aliases")
 
 
 class ArtistAlias(Base):
     """Localised / transliterated names for an artist."""
+
     __tablename__ = "artist_aliases"
     __table_args__ = (
-        UniqueConstraint("artist_id", "locale", "script", "name", name="uq_artist_alias"),
+        UniqueConstraint(
+            "artist_id", "locale", "script", "name", name="uq_artist_alias"
+        ),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -450,22 +482,24 @@ class ArtistAlias(Base):
         ForeignKey("artists.id", ondelete="CASCADE"), nullable=False, index=True
     )
     name: Mapped[str] = mapped_column(String, nullable=False)
-    locale: Mapped[Optional[str]] = mapped_column(String)
-    script: Mapped[Optional[str]] = mapped_column(String)
-    is_primary_for_locale: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    locale: Mapped[str | None] = mapped_column(String)
+    script: Mapped[str | None] = mapped_column(String)
+    is_primary_for_locale: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="0"
+    )
 
-    artist: Mapped["Artist"] = relationship(back_populates="aliases")
+    artist: Mapped[Artist] = relationship(back_populates="aliases")
 
 
 class TrackAudioFeatures(Base):
     __tablename__ = "track_audio_features"
 
     sync_id: Mapped[str] = mapped_column(String, primary_key=True)
-    tempo: Mapped[Optional[float]] = mapped_column(Float)
-    energy: Mapped[Optional[float]] = mapped_column(Float)
-    valence: Mapped[Optional[float]] = mapped_column(Float)
-    danceability: Mapped[Optional[float]] = mapped_column(Float)
-    acousticness: Mapped[Optional[float]] = mapped_column(Float)
+    tempo: Mapped[float | None] = mapped_column(Float)
+    energy: Mapped[float | None] = mapped_column(Float)
+    valence: Mapped[float | None] = mapped_column(Float)
+    danceability: Mapped[float | None] = mapped_column(Float)
+    acousticness: Mapped[float | None] = mapped_column(Float)
 
 
 def _sqlite_pragmas(dbapi_connection, _connection_record) -> None:
@@ -501,7 +535,7 @@ def _sqlite_pragmas(dbapi_connection, _connection_record) -> None:
 class MusicDatabase:
     """Helper for creating the engine/session and managing the schema."""
 
-    def __init__(self, database_path: Optional[str] = None) -> None:
+    def __init__(self, database_path: str | None = None) -> None:
         from core.settings import config_manager
 
         uri = config_manager.get("database.music_uri")
@@ -520,7 +554,11 @@ class MusicDatabase:
             self.database_path.parent.mkdir(parents=True, exist_ok=True)
             engine_url = f"sqlite:///{self.database_path}"
 
-        connect_args = {"timeout": 30.0, "check_same_thread": False} if engine_url.startswith("sqlite") else {}
+        connect_args = (
+            {"timeout": 30.0, "check_same_thread": False}
+            if engine_url.startswith("sqlite")
+            else {}
+        )
 
         self.engine = create_engine(
             engine_url,
@@ -531,7 +569,9 @@ class MusicDatabase:
         )
         if engine_url.startswith("sqlite"):
             event.listen(self.engine, "connect", _sqlite_pragmas)
-        self.SessionLocal = sessionmaker(bind=self.engine, expire_on_commit=False, future=True)
+        self.SessionLocal = sessionmaker(
+            bind=self.engine, expire_on_commit=False, future=True
+        )
         self._sanitize_existing_metadata()
 
     def _sanitize_existing_metadata(self) -> None:
@@ -539,27 +579,49 @@ class MusicDatabase:
         try:
             with self.session_scope() as session:
                 import re
-                from core.matching_engine.text_utils import normalize_title, normalize_artist
+
+                from core.matching_engine.text_utils import (
+                    normalize_title,
+                )
+
                 # Fix double spaces in tracks
-                double_space_tracks = session.query(Track).filter(
-                    (Track.title.like("%  %")) | (Track.normalized_title.like("%  %"))
-                ).all()
+                double_space_tracks = (
+                    session.query(Track)
+                    .filter(
+                        (Track.title.like("%  %"))
+                        | (Track.normalized_title.like("%  %"))
+                    )
+                    .all()
+                )
                 for t in double_space_tracks:
                     if t.title:
-                        t.title = re.sub(r'\s+', ' ', t.title).strip()
+                        t.title = re.sub(r"\s+", " ", t.title).strip()
                         t.normalized_title = normalize_title(t.title)
                         if t.sort_title:
-                            t.sort_title = re.sub(r'\s+', ' ', t.sort_title).strip()
+                            t.sort_title = re.sub(r"\s+", " ", t.sort_title).strip()
 
                 # Backfill edition for tracks where edition is NULL but media filename indicates Remix/Edit/Live
-                null_ed_tracks = session.query(Track).join(LocalMedia).filter(
-                    Track.edition.is_(None),
-                    (LocalMedia.file_path.ilike("%remix%") | LocalMedia.file_path.ilike("%acoustic%") | LocalMedia.file_path.ilike("%live%"))
-                ).all()
+                null_ed_tracks = (
+                    session.query(Track)
+                    .join(LocalMedia)
+                    .filter(
+                        Track.edition.is_(None),
+                        (
+                            LocalMedia.file_path.ilike("%remix%")
+                            | LocalMedia.file_path.ilike("%acoustic%")
+                            | LocalMedia.file_path.ilike("%live%")
+                        ),
+                    )
+                    .all()
+                )
                 for t in null_ed_tracks:
                     for m in t.media_files:
                         if m.file_path:
-                            m_ed = re.search(r'[\(\[]([^\]\)]*(?:remix|mix|edit|version|live|acoustic|instrumental|remaster)[^\]\)]*)[\)\]]', m.file_path, re.IGNORECASE)
+                            m_ed = re.search(
+                                r"[\(\[]([^\]\)]*(?:remix|mix|edit|version|live|acoustic|instrumental|remaster)[^\]\)]*)[\)\]]",
+                                m.file_path,
+                                re.IGNORECASE,
+                            )
                             if m_ed:
                                 t.edition = m_ed.group(1).strip()
                                 break
@@ -592,13 +654,9 @@ class MusicDatabase:
         finally:
             session.close()
 
-    def search_library(self, query: str) -> Dict[str, List[Dict]]:
+    def search_library(self, query: str) -> dict[str, list[dict]]:
         """Search across Artists, Albums, and Tracks."""
-        results = {
-            "artists": [],
-            "albums": [],
-            "tracks": []
-        }
+        results = {"artists": [], "albums": [], "tracks": []}
 
         if not query:
             return results
@@ -609,55 +667,79 @@ class MusicDatabase:
             # OPTIMIZATION: joinedload eliminates N+1 lazy loading queries
 
             # Search Artists
-            artists = session.query(Artist).filter(Artist.name.ilike(search_term)).limit(20).all()
+            artists = (
+                session.query(Artist)
+                .filter(Artist.name.ilike(search_term))
+                .limit(20)
+                .all()
+            )
             for artist in artists:
-                results["artists"].append({
-                    "id": artist.id,
-                    "name": artist.name,
-                    "image_url": artist.image_url
-                })
+                results["artists"].append(
+                    {
+                        "id": artist.id,
+                        "name": artist.name,
+                        "image_url": artist.image_url,
+                    }
+                )
 
             # Search Albums
-            albums = session.query(Album).options(
-                joinedload(Album.artist)
-            ).join(Artist).filter(
-                (Album.title.ilike(search_term)) |
-                (Artist.name.ilike(search_term))
-            ).limit(20).all()
+            albums = (
+                session.query(Album)
+                .options(joinedload(Album.artist))
+                .join(Artist)
+                .filter(
+                    (Album.title.ilike(search_term)) | (Artist.name.ilike(search_term))
+                )
+                .limit(20)
+                .all()
+            )
             for album in albums:
-                results["albums"].append({
-                    "id": album.id,
-                    "title": album.title,
-                    "artist_id": album.artist_id,
-                    "artist_name": album.artist.name,
-                    "cover_image_url": album.cover_image_url,
-                    "year": album.release_date.year if album.release_date else None
-                })
+                results["albums"].append(
+                    {
+                        "id": album.id,
+                        "title": album.title,
+                        "artist_id": album.artist_id,
+                        "artist_name": album.artist.name,
+                        "cover_image_url": album.cover_image_url,
+                        "year": album.release_date.year if album.release_date else None,
+                    }
+                )
 
             # Search Tracks
-            tracks = session.query(Track).options(
-                joinedload(Track.artist),
-                joinedload(Track.album)
-            ).join(Artist).join(Album, isouter=True).filter(
-                (Track.title.ilike(search_term)) |
-                (Artist.name.ilike(search_term)) |
-                (Album.title.ilike(search_term))
-            ).limit(50).all()
+            tracks = (
+                session.query(Track)
+                .options(joinedload(Track.artist), joinedload(Track.album))
+                .join(Artist)
+                .join(Album, isouter=True)
+                .filter(
+                    (Track.title.ilike(search_term))
+                    | (Artist.name.ilike(search_term))
+                    | (Album.title.ilike(search_term))
+                )
+                .limit(50)
+                .all()
+            )
 
             for track in tracks:
-                results["tracks"].append({
-                    "id": track.id,
-                    "title": track.title,
-                    "artist_id": track.artist_id,
-                    "artist_name": track.artist.name,
-                    "album_id": track.album_id,
-                    "album_title": track.album.title if track.album else "Unknown Album",
-                    "duration": track.duration
-                })
+                results["tracks"].append(
+                    {
+                        "id": track.id,
+                        "title": track.title,
+                        "artist_id": track.artist_id,
+                        "artist_name": track.artist.name,
+                        "album_id": track.album_id,
+                        "album_title": track.album.title
+                        if track.album
+                        else "Unknown Album",
+                        "duration": track.duration,
+                    }
+                )
 
         return results
 
-    def search_canonical_fuzzy(self, title: str, artist: Optional[str] = None, limit: int = 10) -> List:
+    def search_canonical_fuzzy(
+        self, title: str, artist: str | None = None, limit: int = 10
+    ) -> list:
         """Fuzzy search canonical tracks by title and optional artist substring.
 
         Returns a list of ``EchosyncTrack`` objects (each has a ``to_dict()`` method).
@@ -671,7 +753,7 @@ class MusicDatabase:
                 .options(
                     joinedload(Track.artist),
                     joinedload(Track.album),
-                    selectinload(Track.audio_fingerprints)
+                    selectinload(Track.audio_fingerprints),
                 )
                 .join(Artist)
                 .join(Album, isouter=True)
@@ -682,28 +764,38 @@ class MusicDatabase:
             tracks = query.limit(limit).all()
             for t in tracks:
                 from core.db.echo_sync_track import EchosyncTrack
-                results.append(EchosyncTrack(
-                    raw_title=t.title,
-                    artist_name=t.artist.name,
-                    album_title=t.album.title if t.album else "",
-                    duration=t.duration,
-                    track_number=t.track_number,
-                    disc_number=t.disc_number,
-                    bitrate=t.bitrate,
-                    file_path=t.file_path,
-                    file_format=t.file_format,
-                    musicbrainz_id=t.musicbrainz_id,
-                    isrc=t.isrc,
-                    acoustid_id=next((fp.acoustid_id for fp in t.audio_fingerprints if fp.acoustid_id), None),
-                ))
+
+                results.append(
+                    EchosyncTrack(
+                        raw_title=t.title,
+                        artist_name=t.artist.name,
+                        album_title=t.album.title if t.album else "",
+                        duration=t.duration,
+                        track_number=t.track_number,
+                        disc_number=t.disc_number,
+                        bitrate=t.bitrate,
+                        file_path=t.file_path,
+                        file_format=t.file_format,
+                        musicbrainz_id=t.musicbrainz_id,
+                        isrc=t.isrc,
+                        acoustid_id=next(
+                            (
+                                fp.acoustid_id
+                                for fp in t.audio_fingerprints
+                                if fp.acoustid_id
+                            ),
+                            None,
+                        ),
+                    )
+                )
         return results
 
     def search_canonical_by_ids(
         self,
-        isrc: Optional[str] = None,
-        musicbrainz_recording_id: Optional[str] = None,
-        acoustid: Optional[str] = None,
-    ) -> List:
+        isrc: str | None = None,
+        musicbrainz_recording_id: str | None = None,
+        acoustid: str | None = None,
+    ) -> list:
         """Search canonical tracks by global identifiers (ISRC, MBID, AcoustID).
 
         The ``acoustid`` parameter filters via the ``audio_fingerprints`` table.
@@ -731,23 +823,35 @@ class MusicDatabase:
             )
             for t in tracks:
                 from core.db.echo_sync_track import EchosyncTrack
-                results.append(EchosyncTrack(
-                    raw_title=t.title,
-                    artist_name=t.artist.name,
-                    album_title=t.album.title if t.album else "",
-                    duration=t.duration,
-                    track_number=t.track_number,
-                    disc_number=t.disc_number,
-                    bitrate=t.bitrate,
-                    file_path=t.file_path,
-                    file_format=t.file_format,
-                    musicbrainz_id=t.musicbrainz_id,
-                    isrc=t.isrc,
-                    acoustid_id=next((fp.acoustid_id for fp in t.audio_fingerprints if fp.acoustid_id), None),
-                ))
+
+                results.append(
+                    EchosyncTrack(
+                        raw_title=t.title,
+                        artist_name=t.artist.name,
+                        album_title=t.album.title if t.album else "",
+                        duration=t.duration,
+                        track_number=t.track_number,
+                        disc_number=t.disc_number,
+                        bitrate=t.bitrate,
+                        file_path=t.file_path,
+                        file_format=t.file_format,
+                        musicbrainz_id=t.musicbrainz_id,
+                        isrc=t.isrc,
+                        acoustid_id=next(
+                            (
+                                fp.acoustid_id
+                                for fp in t.audio_fingerprints
+                                if fp.acoustid_id
+                            ),
+                            None,
+                        ),
+                    )
+                )
         return results
 
-    def get_external_identifier_map(self, plugin_source: str, track_ids: List[int]) -> Dict[int, str]:
+    def get_external_identifier_map(
+        self, plugin_source: str, track_ids: list[int]
+    ) -> dict[int, str]:
         if not track_ids:
             return {}
 
@@ -785,7 +889,15 @@ class MusicDatabase:
     def count_lossless_files(self) -> int:
         """Return total lossless physical media files stored."""
         with self.session_scope() as session:
-            return session.query(LocalMedia).filter(LocalMedia.file_format.in_({'flac', 'alac', 'wav', 'dsd', 'dsf', 'dff', 'ape'})).count()
+            return (
+                session.query(LocalMedia)
+                .filter(
+                    LocalMedia.file_format.in_(
+                        {"flac", "alac", "wav", "dsd", "dsf", "dff", "ape"}
+                    )
+                )
+                .count()
+            )
 
     def count_files(self) -> int:
         """Return total physical media files stored.
@@ -795,14 +907,21 @@ class MusicDatabase:
         number of files on disk. Virtual placeholder paths are excluded.
         """
         from sqlalchemy import func as sqla_func
+
         with self.session_scope() as session:
-            result = session.query(
-                sqla_func.count(sqla_func.distinct(sqla_func.lower(LocalMedia.file_path)))
-            ).filter(
-                LocalMedia.file_path.isnot(None),
-                LocalMedia.file_path != '',
-                ~LocalMedia.file_path.like('virtual://%')
-            ).scalar()
+            result = (
+                session.query(
+                    sqla_func.count(
+                        sqla_func.distinct(sqla_func.lower(LocalMedia.file_path))
+                    )
+                )
+                .filter(
+                    LocalMedia.file_path.isnot(None),
+                    LocalMedia.file_path != "",
+                    ~LocalMedia.file_path.like("virtual://%"),
+                )
+                .scalar()
+            )
             return int(result or 0)
 
     def get_total_storage_used(self) -> int:
@@ -813,16 +932,17 @@ class MusicDatabase:
         don't inflate the total. Virtual placeholder paths are excluded.
         """
         from sqlalchemy import func as sqla_func
+
         with self.session_scope() as session:
             # Sub-query: one row per distinct file_path with the best size
             subq = (
                 session.query(
-                    sqla_func.max(LocalMedia.file_size_bytes).label('best_size')
+                    sqla_func.max(LocalMedia.file_size_bytes).label("best_size")
                 )
                 .filter(
                     LocalMedia.file_path.isnot(None),
-                    LocalMedia.file_path != '',
-                    ~LocalMedia.file_path.like('virtual://%')
+                    LocalMedia.file_path != "",
+                    ~LocalMedia.file_path.like("virtual://%"),
                 )
                 .group_by(sqla_func.lower(LocalMedia.file_path))
                 .subquery()
@@ -830,7 +950,7 @@ class MusicDatabase:
             result = session.query(sqla_func.sum(subq.c.best_size)).scalar()
             return int(result or 0)
 
-    def get_library_hierarchy(self) -> List[Dict]:
+    def get_library_hierarchy(self) -> list[dict]:
         """Fetch the entire library hierarchy (Artist -> Album -> Track)."""
         with self.session_scope() as session:
             # Use selectinload (separate SELECT per relationship) rather than joinedload
@@ -845,8 +965,7 @@ class MusicDatabase:
                     selectinload(Artist.albums)
                     .selectinload(Album.tracks)
                     .selectinload(Track.media_files),
-                    selectinload(Artist.tracks)
-                    .selectinload(Track.media_files)
+                    selectinload(Artist.tracks).selectinload(Track.media_files),
                 )
                 .filter(Artist.tracks.any(Track.media_files.any()))
                 .order_by(Artist.name)
@@ -858,11 +977,15 @@ class MusicDatabase:
                     "id": artist.id,
                     "name": artist.name,
                     "image_url": artist.image_url,
-                    "albums": []
+                    "albums": [],
                 }
 
                 # Sort albums by release date or title using safe date parser
-                sorted_albums = sorted(artist.albums, key=lambda a: _safe_parse_date(a.release_date), reverse=True)
+                sorted_albums = sorted(
+                    artist.albums,
+                    key=lambda a: _safe_parse_date(a.release_date),
+                    reverse=True,
+                )
 
                 for album in sorted_albums:
                     # Filter tracks that actually have local files attached to them
@@ -876,51 +999,73 @@ class MusicDatabase:
                         "title": album.title,
                         "cover_image_url": album.cover_image_url,
                         "year": parsed_date.year if parsed_date != date.min else None,
-                        "tracks": []
+                        "tracks": [],
                     }
 
                     # Sort tracks by disc number and track number safely
-                    sorted_tracks = sorted(album_tracks, key=lambda t: (_safe_int(t.disc_number, 1), _safe_int(t.track_number, 0)))
+                    sorted_tracks = sorted(
+                        album_tracks,
+                        key=lambda t: (
+                            _safe_int(t.disc_number, 1),
+                            _safe_int(t.track_number, 0),
+                        ),
+                    )
 
                     for track in sorted_tracks:
-                        album_data["tracks"].append({
-                            "id": track.id,
-                            "sync_id": track.sync_id,
-                            "title": track.title,
-                            "duration": track.duration,
-                            "track_number": track.track_number,
-                            "disc_number": track.disc_number,
-                            "media_ids": [m.media_id for m in track.media_files if getattr(m, 'media_id', None)]
-                        })
+                        album_data["tracks"].append(
+                            {
+                                "id": track.id,
+                                "sync_id": track.sync_id,
+                                "title": track.title,
+                                "duration": track.duration,
+                                "track_number": track.track_number,
+                                "disc_number": track.disc_number,
+                                "media_ids": [
+                                    m.media_id
+                                    for m in track.media_files
+                                    if getattr(m, "media_id", None)
+                                ],
+                            }
+                        )
 
                     artist_data["albums"].append(album_data)
 
                 # Handle loose tracks without an album
-                loose_tracks = [t for t in artist.tracks if t.album_id is None and t.media_files]
+                loose_tracks = [
+                    t for t in artist.tracks if t.album_id is None and t.media_files
+                ]
                 if loose_tracks:
                     album_data = {
                         "id": "unknown_" + str(artist.id),
                         "title": "Unknown Album",
                         "cover_image_url": None,
                         "year": None,
-                        "tracks": []
+                        "tracks": [],
                     }
-                    sorted_tracks = sorted(loose_tracks, key=lambda t: (_safe_int(t.disc_number, 1), _safe_int(t.track_number, 0)))
+                    sorted_tracks = sorted(
+                        loose_tracks,
+                        key=lambda t: (
+                            _safe_int(t.disc_number, 1),
+                            _safe_int(t.track_number, 0),
+                        ),
+                    )
                     for track in sorted_tracks:
-                        album_data["tracks"].append({
-                            "id": track.id,
-                            "title": track.title,
-                            "duration": track.duration,
-                            "track_number": track.track_number,
-                            "disc_number": track.disc_number
-                        })
+                        album_data["tracks"].append(
+                            {
+                                "id": track.id,
+                                "title": track.title,
+                                "duration": track.duration,
+                                "track_number": track.track_number,
+                                "disc_number": track.disc_number,
+                            }
+                        )
                     artist_data["albums"].append(album_data)
 
                 hierarchy.append(artist_data)
 
             return hierarchy
 
-    def get_track_path(self, track_id: int) -> Optional[str]:
+    def get_track_path(self, track_id: int) -> str | None:
         """Fetch the local file path for a track ID."""
         with self.session_scope() as session:
             track = session.query(Track).filter(Track.id == track_id).first()
@@ -946,7 +1091,9 @@ class MusicDatabase:
             )
             if track_ids:
                 ids = [t[0] for t in track_ids]
-                session.query(Track).filter(Track.id.in_(ids)).delete(synchronize_session=False)
+                session.query(Track).filter(Track.id.in_(ids)).delete(
+                    synchronize_session=False
+                )
 
             # remove identifiers themselves
             session.query(ExternalIdentifier).filter(
@@ -954,10 +1101,14 @@ class MusicDatabase:
             ).delete(synchronize_session=False)
 
             # clean up albums with no remaining tracks
-            session.query(Album).filter(~Album.tracks.any()).delete(synchronize_session=False)
+            session.query(Album).filter(~Album.tracks.any()).delete(
+                synchronize_session=False
+            )
 
             # clean up artists with no remaining tracks
-            session.query(Artist).filter(~Artist.tracks.any()).delete(synchronize_session=False)
+            session.query(Artist).filter(~Artist.tracks.any()).delete(
+                synchronize_session=False
+            )
 
     def get_session(self) -> Session:
         """Return a new SQLAlchemy Session instance."""
@@ -967,10 +1118,10 @@ class MusicDatabase:
         self.engine.dispose()
 
 
-_db_instance: Optional[MusicDatabase] = None
+_db_instance: MusicDatabase | None = None
 
 
-def get_database(database_path: Optional[str] = None) -> MusicDatabase:
+def get_database(database_path: str | None = None) -> MusicDatabase:
     global _db_instance
     if _db_instance is None:
         _db_instance = MusicDatabase(database_path)
@@ -988,18 +1139,18 @@ music_session_registry = scoped_session(lambda: get_database().SessionLocal)
 
 
 __all__ = [
-    "Base",
-    "Artist",
     "Album",
-    "Track",
-    "TrackArtist",
-    "ExternalIdentifier",
-    "AudioFingerprint",
-    "TrackAudioFeatures",
-    "TrackAlias",
+    "Artist",
     "ArtistAlias",
+    "AudioFingerprint",
+    "Base",
+    "ExternalIdentifier",
     "MusicDatabase",
-    "get_database",
+    "Track",
+    "TrackAlias",
+    "TrackArtist",
+    "TrackAudioFeatures",
     "close_database",
+    "get_database",
     "music_session_registry",
 ]

@@ -1,8 +1,7 @@
-from services.user_history_service import UserHistoryService
 from core.user_history import UserTrackInteraction
-from core.matching_engine.text_utils import generate_deterministic_id
-from database.music_database import Artist, Track, ExternalIdentifier, LocalMedia
+from database.music_database import Artist, ExternalIdentifier, LocalMedia, Track
 from database.working_database import Account, UserRating
+from services.user_history_service import UserHistoryService
 
 
 def _test_sync_active_plex_users_to_working_db_creates_day1_users(mock_work_db):
@@ -35,7 +34,9 @@ def _test_sync_active_plex_users_to_working_db_creates_day1_users(mock_work_db):
         assert [u.provider_identifier for u in users] == ["plex-user-1", "plex-user-2"]
 
 
-def test_process_interactions_bulk_upserts_existing_and_new_ratings(mock_db, mock_work_db):
+def test_process_interactions_bulk_upserts_existing_and_new_ratings(
+    mock_db, mock_work_db
+):
     service = UserHistoryService()
     service.music_db = mock_db
     service.working_db = mock_work_db
@@ -44,29 +45,52 @@ def test_process_interactions_bulk_upserts_existing_and_new_ratings(mock_db, moc
         artist = Artist(name="Artist A")
         music_session.add(artist)
         music_session.flush()
-        music_session.add_all([
-            Track(sync_id="s1o2n3g1", title="Song One", artist=artist),
-            Track(sync_id="s2o2n3g2", title="Song Two", artist=artist),
-        ])
+        music_session.add_all(
+            [
+                Track(sync_id="s1o2n3g1", title="Song One", artist=artist),
+                Track(sync_id="s2o2n3g2", title="Song Two", artist=artist),
+            ]
+        )
 
     with mock_work_db.session_scope() as work_session:
         user = Account(username="listener", remote_account_id="plex", plugin_id=1)
         work_session.add(user)
         work_session.flush()
         existing_sync_id = "s1o2n3g1"
-        work_session.add(UserRating(account_id=user.id, sync_id=existing_sync_id, rating=2.0))
+        work_session.add(
+            UserRating(account_id=user.id, sync_id=existing_sync_id, rating=2.0)
+        )
         user_id = user.id
 
     stats = {"ratings_imported": 0}
     interactions = [
-        UserTrackInteraction(plugin_item_id="1", artist_name="Artist A", track_title="Song One", rating=4.5, play_count=7),
-        UserTrackInteraction(plugin_item_id="2", artist_name="Artist A", track_title="Song Two", rating=3.0, play_count=3),
-        UserTrackInteraction(plugin_item_id="3", artist_name="Artist A", track_title="Missing Song", rating=5.0),
+        UserTrackInteraction(
+            plugin_item_id="1",
+            artist_name="Artist A",
+            track_title="Song One",
+            rating=4.5,
+            play_count=7,
+        ),
+        UserTrackInteraction(
+            plugin_item_id="2",
+            artist_name="Artist A",
+            track_title="Song Two",
+            rating=3.0,
+            play_count=3,
+        ),
+        UserTrackInteraction(
+            plugin_item_id="3",
+            artist_name="Artist A",
+            track_title="Missing Song",
+            rating=5.0,
+        ),
     ]
 
     stats["listen_count_imported"] = 0
 
-    matched_count = service._process_interactions(user_id, interactions, stats, plugin_source="plex")
+    matched_count = service._process_interactions(
+        user_id, interactions, stats, plugin_source="plex"
+    )
 
     assert matched_count == 2
     assert stats["ratings_imported"] == 2
@@ -75,7 +99,9 @@ def test_process_interactions_bulk_upserts_existing_and_new_ratings(mock_db, moc
     with mock_work_db.session_scope() as work_session:
         ratings = {
             rating.sync_id: (rating.rating, rating.play_count)
-            for rating in work_session.query(UserRating).filter(UserRating.account_id == user_id).all()
+            for rating in work_session.query(UserRating)
+            .filter(UserRating.account_id == user_id)
+            .all()
         }
 
     assert ratings[existing_sync_id] == (4.5, 7)
@@ -84,7 +110,9 @@ def test_process_interactions_bulk_upserts_existing_and_new_ratings(mock_db, moc
     assert len(ratings) == 2
 
 
-def test_process_interactions_persists_listen_count_without_rating(mock_db, mock_work_db):
+def test_process_interactions_persists_listen_count_without_rating(
+    mock_db, mock_work_db
+):
     service = UserHistoryService()
     service.music_db = mock_db
     service.working_db = mock_work_db
@@ -93,7 +121,9 @@ def test_process_interactions_persists_listen_count_without_rating(mock_db, mock
         artist = Artist(name="Artist B")
         music_session.add(artist)
         music_session.flush()
-        track_playcount = Track(sync_id="p1a2y3c4", title="Playcount Only", artist=artist)
+        track_playcount = Track(
+            sync_id="p1a2y3c4", title="Playcount Only", artist=artist
+        )
         music_session.add(track_playcount)
 
     with mock_work_db.session_scope() as work_session:
@@ -113,7 +143,9 @@ def test_process_interactions_persists_listen_count_without_rating(mock_db, mock
         )
     ]
 
-    matched_count = service._process_interactions(user_id, interactions, stats, plugin_source="plex")
+    matched_count = service._process_interactions(
+        user_id, interactions, stats, plugin_source="plex"
+    )
 
     assert matched_count == 1
     assert stats["ratings_imported"] == 0
@@ -121,12 +153,18 @@ def test_process_interactions_persists_listen_count_without_rating(mock_db, mock
 
     sync_id = "p1a2y3c4"
     with mock_work_db.session_scope() as work_session:
-        row = work_session.query(UserRating).filter(UserRating.account_id == user_id, UserRating.sync_id == sync_id).one()
+        row = (
+            work_session.query(UserRating)
+            .filter(UserRating.account_id == user_id, UserRating.sync_id == sync_id)
+            .one()
+        )
         assert row.play_count == 12
         assert row.rating is None
 
 
-def test_process_interactions_matches_plex_metadata_uri_to_external_identifier(mock_db, mock_work_db):
+def test_process_interactions_matches_plex_metadata_uri_to_external_identifier(
+    mock_db, mock_work_db
+):
     service = UserHistoryService()
     service.music_db = mock_db
     service.working_db = mock_work_db
@@ -170,7 +208,9 @@ def test_process_interactions_matches_plex_metadata_uri_to_external_identifier(m
         )
     ]
 
-    matched_count = service._process_interactions(user_id, interactions, stats, plugin_source="plex")
+    matched_count = service._process_interactions(
+        user_id, interactions, stats, plugin_source="plex"
+    )
 
     assert matched_count == 1
     assert stats["ratings_imported"] == 1
@@ -178,12 +218,20 @@ def test_process_interactions_matches_plex_metadata_uri_to_external_identifier(m
 
     expected_sync_id = "g1p2r3d4"
     with mock_work_db.session_scope() as work_session:
-        row = work_session.query(UserRating).filter(UserRating.account_id == user_id, UserRating.sync_id == expected_sync_id).one()
+        row = (
+            work_session.query(UserRating)
+            .filter(
+                UserRating.account_id == user_id, UserRating.sync_id == expected_sync_id
+            )
+            .one()
+        )
         assert row.rating == 4.0
         assert row.play_count == 2
 
 
-def test_process_interactions_extracts_provider_ids_from_legacy_fields(mock_db, mock_work_db):
+def test_process_interactions_extracts_provider_ids_from_legacy_fields(
+    mock_db, mock_work_db
+):
     service = UserHistoryService()
     service.music_db = mock_db
     service.working_db = mock_work_db
@@ -240,7 +288,7 @@ def test_process_interactions_extracts_provider_ids_from_legacy_fields(mock_db, 
         user_id,
         [legacy_id_interaction, dict_id_interaction],
         stats,
-        plugin_source="plex"
+        plugin_source="plex",
     )
 
     assert matched_count == 2
@@ -249,6 +297,12 @@ def test_process_interactions_extracts_provider_ids_from_legacy_fields(mock_db, 
 
     expected_sync_id = "g1p2r3d4"
     with mock_work_db.session_scope() as work_session:
-        row = work_session.query(UserRating).filter(UserRating.account_id == user_id, UserRating.sync_id == expected_sync_id).one()
+        row = (
+            work_session.query(UserRating)
+            .filter(
+                UserRating.account_id == user_id, UserRating.sync_id == expected_sync_id
+            )
+            .one()
+        )
         assert row.rating == 4.0
         assert row.play_count == 2

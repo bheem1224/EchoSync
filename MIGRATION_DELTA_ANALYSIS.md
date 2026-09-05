@@ -24,7 +24,9 @@ Currently, `music_database.py` accounts for virtual media via string parsing (`~
 class VirtualTrackCache(WorkingBase):
     __tablename__ = "virtual_track_cache"
     id: Mapped[int] = mapped_column(primary_key=True)
-    provider_id: Mapped[int] = mapped_column(nullable=False, index=True) # CRC32 of provider
+    provider_id: Mapped[int] = mapped_column(
+        nullable=False, index=True
+    )  # CRC32 of provider
     external_uri: Mapped[str] = mapped_column(String, nullable=False, index=True)
     raw_metadata: Mapped[dict] = mapped_column(JSON, nullable=False)
     last_seen_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
@@ -39,6 +41,7 @@ To avoid Pydantic serialization overhead, the Rust `echosync_core` extension wil
 ```python
 from typing import TypedDict, List
 
+
 class RawTrackMetadata(TypedDict):
     title: str
     artist_name: str
@@ -51,9 +54,11 @@ class RawTrackMetadata(TypedDict):
     file_format: str
     file_size_bytes: int
 
+
 class TrackTagPayload(TypedDict):
     file_path: str
     tags: dict[str, str]
+
 
 # Rust Interface Definition
 def scan_directory(path: str) -> List[RawTrackMetadata]: ...
@@ -66,6 +71,7 @@ Replacing `database_update_worker.py` logic:
 import echosync_core
 from database.music_database import music_session_registry, Track, LocalMedia
 from sqlalchemy.dialects.sqlite import insert
+
 
 def ingest_directory(directory_path: str):
     # 1. Rust engine multi-threaded walk (takes ~1-2s for 50k files)

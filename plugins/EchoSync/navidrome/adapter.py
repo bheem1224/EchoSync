@@ -7,13 +7,14 @@ ISRC, MusicBrainz IDs, and audio quality information.
 Adheres to Track-centric architecture.
 """
 
-from typing import List, Optional, Dict, Any
-from core.tiered_logger import get_logger
+from typing import Any
+
+from core.db.echo_sync_track import EchosyncTrack
 from core.db.echo_sync_track import EchosyncTrack as Track
-from core.nexus_framework.plugin_SDK import sdk
+
 # (removed get_music_database import)
 from core.nexus_framework.plugin_SDK import PluginBase
-from core.db.echo_sync_track import EchosyncTrack
+from core.tiered_logger import get_logger
 
 
 def _safe_getattr(obj: Any, attr: str, default: Any = None) -> Any:
@@ -25,97 +26,126 @@ def _safe_getattr(obj: Any, attr: str, default: Any = None) -> Any:
             return default
     return default
 
+
 logger = get_logger("navidrome_adapter")
 
 
-def convert_navidrome_track_to_echosync(navidrome_track) -> Optional[EchosyncTrack]:
+def convert_navidrome_track_to_echosync(navidrome_track) -> EchosyncTrack | None:
     """
     Convert Navidrome track object to EchosyncTrack.
-    
+
     Extracts Navidrome metadata including ISRC, MusicBrainz IDs, and audio quality.
-    
+
     Args:
         navidrome_track: Navidrome track object or wrapper (NavidromeTrack)
-        
+
     Returns:
         EchosyncTrack with all available metadata, or None if conversion fails
     """
     try:
         # Get raw data dict if this is a wrapper object
-        raw_data = navidrome_track._data if hasattr(navidrome_track, '_data') else navidrome_track
-        
+        raw_data = (
+            navidrome_track._data
+            if hasattr(navidrome_track, "_data")
+            else navidrome_track
+        )
+
         # Extract basic metadata from raw data dict
-        title = raw_data.get('title') if isinstance(raw_data, dict) else _safe_getattr(navidrome_track, 'title', None)
-        artist = raw_data.get('artist') if isinstance(raw_data, dict) else _safe_getattr(navidrome_track, 'artist', None)
-        album = raw_data.get('album') if isinstance(raw_data, dict) else _safe_getattr(navidrome_track, 'album', None)
-        
+        title = (
+            raw_data.get("title")
+            if isinstance(raw_data, dict)
+            else _safe_getattr(navidrome_track, "title", None)
+        )
+        artist = (
+            raw_data.get("artist")
+            if isinstance(raw_data, dict)
+            else _safe_getattr(navidrome_track, "artist", None)
+        )
+        album = (
+            raw_data.get("album")
+            if isinstance(raw_data, dict)
+            else _safe_getattr(navidrome_track, "album", None)
+        )
+
         if not title or not artist:
-            logger.warning(f"Navidrome track missing title or artist: {title} / {artist}")
+            logger.warning(
+                f"Navidrome track missing title or artist: {title} / {artist}"
+            )
             return None
-        
+
         # Duration - Navidrome uses seconds, we need milliseconds
         duration_ms = None
         if isinstance(raw_data, dict):
-            duration_raw = raw_data.get('duration')
+            duration_raw = raw_data.get("duration")
             if duration_raw:
                 try:
                     duration_ms = int(duration_raw) * 1000  # Convert seconds to ms
                 except (ValueError, TypeError):
                     pass
         else:
-            duration_ms = _safe_getattr(navidrome_track, 'duration', None)
-        
-        track_number = raw_data.get('track') if isinstance(raw_data, dict) else _safe_getattr(navidrome_track, 'trackNumber', None)
+            duration_ms = _safe_getattr(navidrome_track, "duration", None)
+
+        track_number = (
+            raw_data.get("track")
+            if isinstance(raw_data, dict)
+            else _safe_getattr(navidrome_track, "trackNumber", None)
+        )
         if track_number:
             try:
                 track_number = int(track_number)
             except (ValueError, TypeError):
                 pass
-        
-        disc_number = raw_data.get('discNumber') if isinstance(raw_data, dict) else None
+
+        disc_number = raw_data.get("discNumber") if isinstance(raw_data, dict) else None
         if disc_number:
             try:
                 disc_number = int(disc_number)
             except (ValueError, TypeError):
                 pass
-        
+
         # Audio quality metadata
-        bitrate = raw_data.get('bitRate') if isinstance(raw_data, dict) else None
+        bitrate = raw_data.get("bitRate") if isinstance(raw_data, dict) else None
         if bitrate:
             try:
                 bitrate = int(bitrate)
             except (ValueError, TypeError):
                 pass
-        
-        sample_rate = raw_data.get('sampleRate') if isinstance(raw_data, dict) else None
+
+        sample_rate = raw_data.get("sampleRate") if isinstance(raw_data, dict) else None
         if sample_rate:
             try:
                 sample_rate = int(sample_rate)
             except (ValueError, TypeError):
                 pass
-        
-        bit_depth = raw_data.get('bitsPerSample') if isinstance(raw_data, dict) else None
+
+        bit_depth = (
+            raw_data.get("bitsPerSample") if isinstance(raw_data, dict) else None
+        )
         if bit_depth:
             try:
                 bit_depth = int(bit_depth)
             except (ValueError, TypeError):
                 pass
-        
+
         # File format and path
-        file_format = raw_data.get('suffix') if isinstance(raw_data, dict) else None
+        file_format = raw_data.get("suffix") if isinstance(raw_data, dict) else None
         if file_format:
             file_format = file_format.lower()
-        
-        file_path = raw_data.get('path') if isinstance(raw_data, dict) else None
-        
+
+        file_path = raw_data.get("path") if isinstance(raw_data, dict) else None
+
         # Extract ISRC and MusicBrainz IDs
-        isrc = raw_data.get('isrc') if isinstance(raw_data, dict) else None
-        musicbrainz_id = raw_data.get('mbRecordingID') if isinstance(raw_data, dict) else None
-        musicbrainz_album_id = raw_data.get('mbAlbumID') if isinstance(raw_data, dict) else None
-        
+        isrc = raw_data.get("isrc") if isinstance(raw_data, dict) else None
+        musicbrainz_id = (
+            raw_data.get("mbRecordingID") if isinstance(raw_data, dict) else None
+        )
+        musicbrainz_album_id = (
+            raw_data.get("mbAlbumID") if isinstance(raw_data, dict) else None
+        )
+
         year = None
         if isinstance(raw_data, dict):
-            year_val = raw_data.get('year')
+            year_val = raw_data.get("year")
             if year_val:
                 try:
                     # If it's a date string, extract just the year
@@ -127,8 +157,8 @@ def convert_navidrome_track_to_echosync(navidrome_track) -> Optional[EchosyncTra
                 except (ValueError, TypeError):
                     year = None
         else:
-            year = _safe_getattr(navidrome_track, 'year', None)
-        
+            year = _safe_getattr(navidrome_track, "year", None)
+
         # Use PluginBase factory method for normalization
         return PluginBase.create_echo_sync_track(
             title=title,
@@ -146,23 +176,25 @@ def convert_navidrome_track_to_echosync(navidrome_track) -> Optional[EchosyncTra
             sample_rate=sample_rate,
             bit_depth=bit_depth,
             file_path=file_path,
-            source='navidrome'
+            source="navidrome",
         )
-    
+
     except Exception as e:
-        logger.error(f"Error converting Navidrome track to EchosyncTrack: {e}", exc_info=True)
+        logger.error(
+            f"Error converting Navidrome track to EchosyncTrack: {e}", exc_info=True
+        )
         return None
 
 
 class NavidromeAdapter:
     def __init__(self, navidrome_client=None):
-        
-        db = None # deprecated
+
+        db = None  # deprecated
         super().__init__(db=db, provider_type="navidrome")
         self.navidrome = navidrome_client
 
     # Field contracts
-    def get_provides_fields(self) -> List[str]:
+    def get_provides_fields(self) -> list[str]:
         return [
             "title",
             "artists",
@@ -172,19 +204,19 @@ class NavidromeAdapter:
             "release_year",
         ]
 
-    def get_consumes_fields(self) -> List[str]:
+    def get_consumes_fields(self) -> list[str]:
         # Library ingestion does not require prior fields
         return []
 
     def requires_auth(self) -> bool:
         return True
 
-    def ingest_library(self, limit: Optional[int] = None) -> List[Track]:
+    def ingest_library(self, limit: int | None = None) -> list[Track]:
         """Traverse Navidrome library and create Track stubs.
 
         Iterates artists → albums → tracks for reasonable coverage.
         """
-        created: List[Track] = []
+        created: list[Track] = []
         if not self.navidrome:
             logger.warning("Navidrome client not provided; cannot ingest library")
             return created
@@ -193,11 +225,25 @@ class NavidromeAdapter:
             artists = self.navidrome.get_all_artists() or []
             count = 0
             for artist in artists:
-                albums = self.navidrome.get_albums_for_artist(_safe_getattr(artist, "ratingKey", "")) or []
+                albums = (
+                    self.navidrome.get_albums_for_artist(
+                        _safe_getattr(artist, "ratingKey", "")
+                    )
+                    or []
+                )
                 for album in albums:
-                    tracks = self.navidrome.get_tracks_for_album(_safe_getattr(album, "ratingKey", "")) or []
+                    tracks = (
+                        self.navidrome.get_tracks_for_album(
+                            _safe_getattr(album, "ratingKey", "")
+                        )
+                        or []
+                    )
                     for item in tracks:
-                        provider_id = str(_safe_getattr(item, "ratingKey", _safe_getattr(item, "id", "")))
+                        provider_id = str(
+                            _safe_getattr(
+                                item, "ratingKey", _safe_getattr(item, "id", "")
+                            )
+                        )
                         title = _safe_getattr(item, "title", None)
                         # Resolve artist/album names via helpers
                         artist_obj = None
@@ -213,7 +259,11 @@ class NavidromeAdapter:
                         artists_list = []
                         if artist_obj and _safe_getattr(artist_obj, "title", None):
                             artists_list = [_safe_getattr(artist_obj, "title")]
-                        album_title = _safe_getattr(album_obj, "title", None) if album_obj else None
+                        album_title = (
+                            _safe_getattr(album_obj, "title", None)
+                            if album_obj
+                            else None
+                        )
                         duration_ms = _safe_getattr(item, "duration", None)
                         track_number = _safe_getattr(item, "trackNumber", None)
                         release_year = _safe_getattr(item, "year", None)
@@ -243,13 +293,27 @@ class NavidromeAdapter:
             logger.error(f"Error ingesting Navidrome library: {e}")
         return created
 
+
 # Register adapter in plugin system (declaration only; instance created by services)
 try:
-    from plugins.plugin_system import PluginType, PluginScope, PluginDeclaration, register_plugin
+    from plugins.plugin_system import (
+        PluginDeclaration,
+        PluginScope,
+        PluginType,
+        register_plugin,
+    )
+
     decl = PluginDeclaration(
         name="navidrome_adapter",
         plugin_type=PluginType.LIBRARY_PROVIDER,
-        provides_fields=["title", "artists", "album", "duration_ms", "track_number", "release_year"],
+        provides_fields=[
+            "title",
+            "artists",
+            "album",
+            "duration_ms",
+            "track_number",
+            "release_year",
+        ],
         consumes_fields=[],
         requires_auth=True,
         supports_streaming=True,

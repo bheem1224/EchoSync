@@ -4,18 +4,18 @@ Caching module exports
 
 from .plugin_cache import (
     PluginCache,
-    plugin_cache,
+    cleanup_expired_cache,
+    clear_cache,
     get_cache,
     invalidate_cache_for,
-    clear_cache,
-    cleanup_expired_cache,
+    plugin_cache,
 )
 
 __all__ = [
-    'PluginCache',
-    'plugin_cache',
-    'get_cache',
-    'invalidate_cache_for',
-    'clear_cache',
-    'cleanup_expired_cache',
+    "PluginCache",
+    "cleanup_expired_cache",
+    "clear_cache",
+    "get_cache",
+    "invalidate_cache_for",
+    "plugin_cache",
 ]

@@ -1,6 +1,6 @@
 import os
 import sqlite3
-from pathlib import Path
+
 
 def inspect_db(db_path):
     print(f"inspecting: {db_path} ({os.path.getsize(db_path)} bytes)")
@@ -22,6 +22,7 @@ def inspect_db(db_path):
         print(f"  error connecting: {e}")
     print()
 
+
 def main():
     # search for .db files in workspace
     for root, dirs, files in os.walk("."):
@@ -30,6 +31,7 @@ def main():
         for f in files:
             if f.endswith(".db"):
                 inspect_db(os.path.join(root, f))
+
 
 if __name__ == "__main__":
     main()
