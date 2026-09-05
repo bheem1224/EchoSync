@@ -161,7 +161,7 @@ async def test_ghost_transfer_fallback_and_blacklist(mock_work_db, mock_db):
 
             # Verify DB record updated: status="searching", blacklist updated
             with mock_work_db.session_scope() as session:
-                refreshed = session.query(DownloadQueue).get(db_id)
+                refreshed = session.get(DownloadQueue, db_id)
                 assert refreshed is not None
                 assert refreshed.status == "searching"
                 assert refreshed.provider_id is None
