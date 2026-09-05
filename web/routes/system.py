@@ -11,7 +11,9 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from core.backup_manager import backup_manager
 from core.settings import config_manager
 from core.tiered_logger import get_logger
+from database.config_database import ConfigDatabase
 from web.auth import require_auth
+from web.dependencies import get_config_db
 
 logger = get_logger("system_route")
 router = APIRouter(prefix="/api/v1/system", tags=["System"])
@@ -326,17 +328,15 @@ _SETTINGS_ALLOWLIST: frozenset = frozenset(
 
 
 @router.get("/accounts", dependencies=[Depends(require_auth)])
-def get_all_system_accounts():
+def get_all_system_accounts(config_db: ConfigDatabase = Depends(get_config_db)):
     """Returns music accounts and media server users for the manager UI.
 
     Mapping data is now read from config.db (account_mappings table) using
     agnostic relational account IDs.
     """
-    from database.config_database import get_config_database
     from web.services.plugin_registry import list_plugins
 
     try:
-        config_db = get_config_database()
         from core.nexus_framework.plugin_loader import PluginRegistry
 
         active_servers = PluginRegistry.get_active_services_by_type("media_server")
@@ -461,7 +461,9 @@ def get_all_system_accounts():
 
 
 @router.post("/accounts/map", dependencies=[Depends(require_auth)])
-async def map_system_accounts(request: Request):
+async def map_system_accounts(
+    request: Request, config_db: ConfigDatabase = Depends(get_config_db)
+):
     """Save the mapping between a media server user and music service accounts.
 
     Accepts:
@@ -477,10 +479,6 @@ async def map_system_accounts(request: Request):
         account_ids = [int(aid) for aid in payload.get("account_ids", [])]
         if source_account_id is None:
             return {"error": "user_id (Account ID) is required"}
-
-        from database.config_database import get_config_database
-
-        config_db = get_config_database()
 
         # Clear existing mappings for this account
         config_db.delete_account_mappings_for_account(int(source_account_id))

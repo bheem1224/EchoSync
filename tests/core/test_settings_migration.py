@@ -319,3 +319,63 @@ def test_path_formatter_reads_hot_db(monkeypatch, temp_dirs):
     root, pattern = get_library_preferences()
     assert root == "/custom/music/path"
     assert pattern == "{Artist} - {Album}/{Track} {Title}.{ext}"
+
+
+def test_stage5_metadata_settings_patch_and_persistence(monkeypatch, temp_dirs):
+    """Verify PATCH /api/v1/system/settings saves prefer_canonical_studio_album and singles_pattern to config.db."""
+    config_dir, data_dir = temp_dirs
+    monkeypatch.setenv("ECHOSYNC_CONFIG_DIR", str(config_dir))
+    monkeypatch.setenv("ECHOSYNC_DATA_DIR", str(data_dir))
+
+    db = ConfigDatabase(db_path=config_dir / "config.db")
+    monkeypatch.setattr("database.config_database._config_db", db)
+    monkeypatch.setattr(
+        "database.config_database.get_config_database", lambda db_path=None: db
+    )
+
+    cm = ConfigManager()
+    monkeypatch.setattr(system_route_module, "config_manager", cm)
+    monkeypatch.setattr("core.settings.config_manager", cm)
+
+    app = FastAPI()
+    app.include_router(system_route_module.router)
+    app.dependency_overrides[require_auth] = lambda: True
+    client = TestClient(app)
+
+    # Initial check
+    from core.path_formatter import (
+        get_prefer_canonical_studio_album,
+        get_singles_pattern,
+    )
+
+    assert get_prefer_canonical_studio_album() is True
+
+    # Send PATCH payload matching WebUI Save All action
+    patch_payload = {
+        "metadata_enhancement": {
+            "auto_import": True,
+            "conflict_resolution": "keep_both",
+            "naming_template": "{Artist}/{Album}/{Track} - {Title}.{ext}",
+            "prefer_canonical_studio_album": False,
+        },
+        "library_import": {
+            "singles_pattern": "{Artist}/Standalone/{Title}.{ext}",
+        },
+    }
+    resp = client.patch("/api/v1/system/settings", json=patch_payload)
+    assert resp.status_code == 200, resp.text
+    assert resp.json().get("success") is True
+
+    # Verify persisted in config.db
+    assert (
+        db.get_system_setting("metadata_enhancement.prefer_canonical_studio_album")
+        is False
+    )
+    assert (
+        db.get_system_setting("library_import.singles_pattern")
+        == "{Artist}/Standalone/{Title}.{ext}"
+    )
+
+    # Verify PathFormatter immediately reflects hot config.db values
+    assert get_prefer_canonical_studio_album() is False
+    assert get_singles_pattern() == "{Artist}/Standalone/{Title}.{ext}"
