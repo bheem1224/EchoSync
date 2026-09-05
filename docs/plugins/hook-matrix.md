@@ -1,8 +1,8 @@
-# EchoSync Lifecycle Hook Matrix
+# EchoSync Lifecycle Hook Matrix & Frontend Web Component Integration
 
 ## 1. Overview & Execution Model
 
-EchoSync uses `HookManager` (`core/hook_manager.py`) to manage hook registration and filter pipeline execution.
+EchoSync uses `HookManager` (`core/hook_manager.py`) to manage hook registration, filter pipeline execution, and UI Web Component extension loading.
 
 Hooks operate in two modes:
 1. **Filters (`apply_filters(hook_name, default_value, *args, **kwargs)`):** Pass a value sequentially through registered subscriber callbacks, allowing plugins to inspect, mutate, or override data structures.
@@ -56,3 +56,60 @@ Hooks operate in two modes:
 | `ON_SUGGESTION_READY` | Filter | `pending_tracks: list, account_id: str` | `list` | Filters or re-ranks generated track suggestions before UI return. | `web/routes/suggestions.py` |
 | `GENERATE_DYNAMIC_PLAYLIST` | Filter | `playlist_type: str, limit: int` | `Optional[list]` | Generates dynamic playlist track entries from external providers. | `core/personalized_playlists.py` |
 | `ON_PLAYLIST_SAVED` | Action | `playlist_name: str, target: str, synced_count: int` | `None` | Fired when a playlist is exported or synced to a media server. | `web/routes/playlists.py` |
+
+---
+
+## 6. Dynamic Frontend UI Integration (`customElement: true`)
+
+Plugins can extend the SvelteKit 2 host shell interface by registering Custom Elements.
+
+### Compilation Requirement
+Plugin UI components must be compiled using Svelte with `customElement: true`:
+```javascript
+// svelte.config.js in plugin UI package
+export default {
+  compilerOptions: {
+    customElement: true
+  }
+};
+```
+
+### Manifest UI Registration
+In `manifest.json`:
+```json
+{
+  "ui_components": [
+    {
+      "tag_name": "echosync-slskd-status",
+      "script_url": "/api/v1/plugins/community.slskd/bundle.js",
+      "slot": "dashboard_widget"
+    }
+  ]
+}
+```
+
+### Host Rendering via `DynamicPluginLoader.svelte`
+The host UI uses `webui/src/components/DynamicPluginLoader.svelte` to fetch the registered UI manifest, inject the ES module script tag (`<script type="module">`), and dynamically instantiate the custom web element into the host DOM slot:
+
+```svelte
+<!-- DynamicPluginLoader.svelte -->
+<script>
+  import { onMount } from 'svelte';
+  export let slot = 'dashboard_widget';
+  let components = [];
+
+  onMount(async () => {
+    const res = await fetch(`/api/v1/ui/components?slot=${slot}`);
+    components = await res.json();
+    for (const comp of components) {
+      if (!customElements.get(comp.tag_name)) {
+        await import(/* @vite-ignore */ comp.script_url);
+      }
+    }
+  });
+</script>
+
+{#each components as comp}
+  <svelte:element this={comp.tag_name} />
+{/each}
+```
