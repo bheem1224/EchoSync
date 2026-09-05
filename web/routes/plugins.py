@@ -1,3 +1,4 @@
+import hashlib
 import json
 from contextlib import contextmanager
 from pathlib import Path
@@ -799,16 +800,19 @@ def _match_plex_user_for_account(plex_user_map: dict, account_name: str):
 def list_all_plugins(request: Request):
     """List all available plugins with their metadata and capabilities."""
     try:
-        plugins_list = list_plugins()
+        from fastapi.responses import JSONResponse
 
-        content_json = json.dumps(plugins_list, sort_keys=True).encode("utf-8")
+        plugins_resp = list_plugins()
+        plugins_dict = plugins_resp.model_dump()
+
+        content_json = json.dumps(plugins_dict, sort_keys=True).encode("utf-8")
         etag = hashlib.md5(content_json, usedforsecurity=False).hexdigest()
 
         if request.headers.get("If-None-Match") == etag:
             return Response(status_code=304)
 
         return JSONResponse(
-            content=plugins_list,
+            content=plugins_dict,
             headers={
                 "ETag": etag,
                 "Cache-Control": "public, max-age=0, must-revalidate",

@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 
 class TrackSchema(BaseModel):
@@ -35,5 +35,4 @@ class TrackPatchRequest(BaseModel):
     isrc: str | None = None
     global_rating: float | None = None
 
-    class Config:
-        extra = "allow"
+    model_config = ConfigDict(extra="allow")

@@ -44,7 +44,7 @@ def generate_plugin_id(name: str) -> int:
 def get_relative_entry_path(url_or_path: str) -> str:
     """
     Extracts the relative path within the plugin's install directory from
-    absolute paths, relative paths, or URL paths (e.g. `/api/system/plugins/spotify/static/bundle.js` -> `static/bundle.js`).
+    absolute paths, relative paths, or URL paths (e.g. `/api/v1/system/plugins/spotify/static/bundle.js` -> `static/bundle.js`).
     """
     if not url_or_path:
         return ""
@@ -55,18 +55,27 @@ def get_relative_entry_path(url_or_path: str) -> str:
     normalized = url_or_path.replace("\\", "/").lstrip("/")
     parts = normalized.split("/")
 
-    # 1. Check for /api/system/plugins/<plugin_id>/<relative_path>
+    # 1. Check for /api/v1/system/plugins/<plugin_id>/<relative_path>
     if (
+        len(parts) >= 5
+        and parts[0] == "api"
+        and parts[1] == "v1"
+        and parts[2] == "system"
+        and parts[3] == "plugins"
+    ):
+        return "/".join(parts[5:])
+    # 2. Check for /api/system/plugins/<plugin_id>/<relative_path>
+    elif (
         len(parts) >= 4
         and parts[0] == "api"
         and parts[1] == "system"
         and parts[2] == "plugins"
     ):
         return "/".join(parts[4:])
-    # 2. Check for /api/plugins/<plugin_id>/<relative_path>
+    # 3. Check for /api/plugins/<plugin_id>/<relative_path>
     elif len(parts) >= 3 and parts[0] == "api" and parts[1] == "plugins":
         return "/".join(parts[3:])
-    # 3. Check for /plugins/<plugin_id>/<relative_path>
+    # 4. Check for /plugins/<plugin_id>/<relative_path>
     elif len(parts) >= 2 and parts[0] == "plugins":
         return "/".join(parts[2:])
 

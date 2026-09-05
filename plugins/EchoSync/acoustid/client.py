@@ -115,11 +115,11 @@ class AcoustIDProvider(PluginBase):
         api_key = self._get_api_key()
         if not api_key:
             logger.warning("AcoustID API key not configured")
-            return {"acoustid_id": None, "mbids": [], "score": None}
+            return {"acoustid_id": None, "mbids": [], "score": None, "match_status": "UNRESOLVED"}
 
         if not fingerprint or not fingerprint.strip():
             logger.warning("Empty fingerprint provided")
-            return {"acoustid_id": None, "mbids": [], "score": None}
+            return {"acoustid_id": None, "mbids": [], "score": None, "match_status": "UNRESOLVED"}
 
         try:
             duration_val = float(duration)
@@ -138,7 +138,7 @@ class AcoustIDProvider(PluginBase):
             logger.warning(
                 "[system] - Aborting AcoustID lookup: Invalid track duration (0s) detected."
             )
-            return {"acoustid_id": None, "mbids": [], "score": None}
+            return {"acoustid_id": None, "mbids": [], "score": None, "match_status": "UNRESOLVED"}
         payload = {
             "client": api_key,
             "meta": "recordingids",
@@ -161,12 +161,12 @@ class AcoustIDProvider(PluginBase):
                     logger.error(
                         f"AcoustID API error: {response.status_code} - {response.text[:200]}"
                     )
-                return {"acoustid_id": None, "mbids": [], "score": None}
+                return {"acoustid_id": None, "mbids": [], "score": None, "match_status": "UNRESOLVED"}
 
             data = response.json()
             if data.get("status") != "ok":
                 logger.error(f"AcoustID API returned error status: {data}")
-                return {"acoustid_id": None, "mbids": [], "score": None}
+                return {"acoustid_id": None, "mbids": [], "score": None, "match_status": "UNRESOLVED"}
 
             results = data.get("results") or []
             if not results:
@@ -205,14 +205,16 @@ class AcoustIDProvider(PluginBase):
                 if result_id:
                     acoustid_id = result_id
 
+            match_status = "MATCHED" if (acoustid_id or mbids) else "UNRESOLVED"
             return {
                 "acoustid_id": acoustid_id,
                 "mbids": mbids,
                 "score": best_score if best_score >= 0.0 else None,
+                "match_status": match_status,
             }
         except Exception as e:
             logger.error(f"Failed to resolve fingerprint: {e}")
-            return {"acoustid_id": None, "mbids": [], "score": None}
+            return {"acoustid_id": None, "mbids": [], "score": None, "match_status": "UNRESOLVED"}
 
     def resolve_fingerprint(self, fingerprint: str, duration: int) -> list[str]:
         """
