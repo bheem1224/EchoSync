@@ -1719,7 +1719,6 @@ class ConfigDatabase:
         """Seed canonical default settings if they are not already populated."""
         defaults = {
             "library_import.renaming_pattern": "{Artist}/{Album}/{Track} - {Title}.{ext}",
-            "library_import.group_singles": True,
             "library_import.singles_pattern": "{Artist}/Singles/{Track} - {Title}.{ext}",
             "metadata_enhancement.prefer_canonical_studio_album": True,
             "storage_locations.library": "/data/library",

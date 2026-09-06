@@ -50,7 +50,7 @@ def get_singles_pattern() -> str:
     except Exception:
         pass
 
-    return DEFAULT_SINGLES_PATTERN
+
 def get_group_singles() -> bool:
     """Query preference for grouping standalone singles into a dedicated Singles folder."""
     try:
@@ -239,20 +239,20 @@ def build_destination_path(
         )
     )
 
-    if is_single:
     if group_singles is None:
         group_singles = get_group_singles()
 
     if is_single and group_singles:
         meta["album"] = "Singles"
         album = "Singles"
-        working_pattern = singles_pattern or get_singles_pattern()
         working_pattern = singles_pattern or pattern
     else:
-        album = sanitize_path_segment(raw_album) if raw_album else "Singles"
-        album = sanitize_path_segment(raw_album) if raw_album else ("Singles" if is_single else "Unknown Album")
+        album = (
+            sanitize_path_segment(raw_album)
+            if raw_album
+            else ("Singles" if is_single else "Unknown Album")
+        )
         if not album:
-            album = "Singles"
             album = "Singles" if is_single else "Unknown Album"
         working_pattern = pattern
 
@@ -267,8 +267,6 @@ def build_destination_path(
     title = sanitize_path_segment(raw_title) or "Unknown Track"
 
     # Resolve track & year
-    track_num = extract_track_token(meta)
-    if is_single and track_num in ("00", "0"):
     raw_track_val = (
         meta.get("track_number")
         if meta.get("track_number") is not None
