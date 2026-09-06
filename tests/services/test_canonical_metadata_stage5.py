@@ -122,6 +122,32 @@ def test_singles_normalization_path(tmp_path):
     expected_p2 = lib_root / "Daft Punk" / "Singles" / "Get Lucky.mp3"
     assert p2 == expected_p2
 
+    # Test 3: Automatically derived singles path from primary album pattern (no singles_pattern provided)
+    p3 = build_destination_path(
+        base_library_path=str(lib_root),
+        pattern=album_pattern,
+        meta=normalized1,
+        ext="flac",
+    )
+    assert p3 == expected_p1
+
+    # Test 4: Disable singles grouping (group_singles=False)
+    p4 = build_destination_path(
+        base_library_path=str(lib_root),
+        pattern=album_pattern,
+        meta={
+            "artist": "Martin Garrix",
+            "title": "Animals",
+            "album": "Animals - Single",
+            "release_type": "single",
+            "track_number": None,
+        },
+        ext="flac",
+        group_singles=False,
+    )
+    expected_p4 = lib_root / "Martin Garrix" / "Animals - Single" / "Animals.flac"
+    assert p4 == expected_p4
+
 
 def test_band_member_album_artist_preservation(tmp_path):
     """

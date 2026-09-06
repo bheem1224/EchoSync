@@ -51,6 +51,32 @@ def get_singles_pattern() -> str:
         pass
 
     return DEFAULT_SINGLES_PATTERN
+def get_group_singles() -> bool:
+    """Query preference for grouping standalone singles into a dedicated Singles folder."""
+    try:
+        from database.config_database import get_config_database
+
+        db = get_config_database()
+        val = db.get_system_setting("library_import.group_singles")
+        if val is not None:
+            if isinstance(val, bool):
+                return val
+            return str(val).strip().lower() in ("1", "true", "yes", "on")
+    except Exception:
+        pass
+
+    try:
+        from core.settings import config_manager
+
+        val = config_manager.get("library_import.group_singles")
+        if val is not None:
+            if isinstance(val, bool):
+                return val
+            return str(val).strip().lower() in ("1", "true", "yes", "on")
+    except Exception:
+        pass
+
+    return True
 
 
 def get_prefer_canonical_studio_album() -> bool:
@@ -176,6 +202,7 @@ def build_destination_path(
     meta: dict[str, Any],
     ext: str,
     singles_pattern: str | None = None,
+    group_singles: bool | None = None,
 ) -> Path:
     """
     Interpolate dynamic tokens into destination library path.
@@ -213,12 +240,20 @@ def build_destination_path(
     )
 
     if is_single:
+    if group_singles is None:
+        group_singles = get_group_singles()
+
+    if is_single and group_singles:
+        meta["album"] = "Singles"
         album = "Singles"
         working_pattern = singles_pattern or get_singles_pattern()
+        working_pattern = singles_pattern or pattern
     else:
         album = sanitize_path_segment(raw_album) if raw_album else "Singles"
+        album = sanitize_path_segment(raw_album) if raw_album else ("Singles" if is_single else "Unknown Album")
         if not album:
             album = "Singles"
+            album = "Singles" if is_single else "Unknown Album"
         working_pattern = pattern
 
     # Resolve title and version injection
@@ -234,10 +269,28 @@ def build_destination_path(
     # Resolve track & year
     track_num = extract_track_token(meta)
     if is_single and track_num in ("00", "0"):
+    raw_track_val = (
+        meta.get("track_number")
+        if meta.get("track_number") is not None
+        else (
+            meta.get("track_no")
+            if meta.get("track_no") is not None
+            else meta.get("track")
+        )
+    )
+    if is_single and (
+        raw_track_val is None
+        or raw_track_val == 0
+        or str(raw_track_val).strip() in ("", "0", "00")
+    ):
         track_num = ""
+    else:
+        track_num = extract_track_token(meta)
+
     year = extract_year_token(meta)
     if not track_num:
         working_pattern = re.sub(r"\{Track\}\s*[-_.]\s*", "", working_pattern)
+        working_pattern = re.sub(r"\s*[-_.]\s*\{Track\}", "", working_pattern)
         working_pattern = working_pattern.replace("{Track}", "")
 
     if not year:

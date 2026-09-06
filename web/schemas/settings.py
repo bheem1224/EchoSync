@@ -5,6 +5,10 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class LibraryImportSettings(BaseModel):
+    group_singles: bool | None = Field(
+        default=True,
+        description="Consolidate non-album tracks into an artist 'Singles' directory",
+    )
     singles_pattern: str | None = Field(
         default="{Artist}/Singles/{Track} - {Title}.{ext}",
         description="Renaming pattern for standalone singles/recordings",

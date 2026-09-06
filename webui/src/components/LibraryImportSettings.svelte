@@ -6,6 +6,7 @@
     auto_import_enabled: false,
     renaming_template: "{Artist}/{Album}/{Track} - {Title}.{ext}",
     singles_pattern: "{Artist}/Singles/{Track} - {Title}.{ext}",
+    group_singles: true,
     prefer_canonical_studio_album: true,
   });
 
@@ -55,6 +56,7 @@
       renaming_template:
         metaConfig.naming_template ??
         "{Artist}/{Album}/{Track} - {Title}.{ext}",
+      group_singles: importConfig.group_singles ?? true,
       prefer_canonical_studio_album:
         metaConfig.prefer_canonical_studio_album ?? true,
       singles_pattern:
@@ -81,6 +83,7 @@
       },
       library_import: {
         singles_pattern: data.singles_pattern,
+        group_singles: data.group_singles,
       },
     };
     await settings.save(patch);
@@ -92,6 +95,7 @@
 
   export function getCurrentSinglesPattern() {
     return data.singles_pattern;
+    return data.renaming_template;
   }
 </script>
 
@@ -155,31 +159,66 @@
               onclick={() => addSinglesToken(token)}>{token}</button
             >
           {/each}
-        </div>
+          <!-- Invariant Toggles -->
+          <div class="toggles-group">
+            <!-- Row 3: Group Standalone Singles -->
+            <div class="row-toggle">
+              <div class="toggle-info">
+                <span class="label-bold">Group Standalone Singles</span>
+                <p class="description-text">
+                  Consolidate non-album singles and standalone recordings into a
+                  dedicated 'Singles' directory under each artist.
+                </p>
+              </div>
+              <label class="switch">
+                <input type="checkbox" bind:checked={data.group_singles} />
+                <span class="slider round"></span>
+              </label>
+            </div>
 
-        <div class="preview-terminal">
-          <span class="preview-text">Preview: {singlesPreview}</span>
+            <div class="preview-terminal">
+              <span class="preview-text">Preview: {singlesPreview}</span>
+              <!-- Row 4: Prefer Canonical Studio Album -->
+              <div class="row-toggle">
+                <div class="toggle-info">
+                  <span class="label-bold">Prefer Canonical Studio Album</span>
+                  <p class="description-text">
+                    Realign tracks sourced from multi-artist compilations and
+                    repacks to their original canonical studio albums,
+                    preserving compilation provenance in custom tags.
+                  </p>
+                </div>
+                <label class="switch">
+                  <input
+                    type="checkbox"
+                    bind:checked={data.prefer_canonical_studio_album}
+                  />
+                  <span class="slider round"></span>
+                </label>
+              </div>
+            </div>
+
+            <!-- Row 4: Prefer Canonical Studio Album -->
+            <div class="row-canonical-album">
+              <div class="toggle-info">
+                <span class="label-bold">Prefer Canonical Studio Album</span>
+                <p class="description-text">
+                  Realign tracks sourced from multi-artist compilations and
+                  repacks to their original canonical studio albums, preserving
+                  compilation provenance in custom tags.
+                </p>
+              </div>
+              <label class="switch">
+                <input
+                  type="checkbox"
+                  bind:checked={data.prefer_canonical_studio_album}
+                />
+                <span class="slider round"></span>
+              </label>
+            </div>
+          </div>
         </div>
       </div>
-    </div>
-
-    <!-- Row 4: Prefer Canonical Studio Album -->
-    <div class="row-canonical-album">
-      <div class="toggle-info">
-        <span class="label-bold">Prefer Canonical Studio Album</span>
-        <p class="description-text">
-          Realign tracks sourced from multi-artist compilations and repacks to
-          their original canonical studio albums, preserving compilation
-          provenance in custom tags.
-        </p>
-      </div>
-      <label class="switch">
-        <input
-          type="checkbox"
-          bind:checked={data.prefer_canonical_studio_album}
-        />
-        <span class="slider round"></span>
-      </label>
     </div>
   </div>
 </section>
@@ -323,12 +362,22 @@
 
   /* Row 4: Prefer Canonical Studio Album */
   .row-canonical-album {
+  /* Invariant Toggles */
+  .toggles-group {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-direction: column;
+    gap: 16px;
+    padding-top: 12px;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+  }
+
+  .row-toggle {
     display: flex;
     justify-content: space-between;
     align-items: center;
     gap: 16px;
-    padding-top: 12px;
-    border-top: 1px solid rgba(255, 255, 255, 0.08);
   }
   .toggle-info {
     display: flex;
