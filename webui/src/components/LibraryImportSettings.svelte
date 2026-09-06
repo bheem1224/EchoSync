@@ -1,13 +1,13 @@
 <script>
-  import { onMount, onDestroy } from "svelte";
+  import { onMount } from "svelte";
   import { settings } from "../stores/settings";
 
-  let data = {
+  let data = $state({
     auto_import_enabled: false,
     renaming_template: "{Artist}/{Album}/{Track} - {Title}.{ext}",
     singles_pattern: "{Artist}/Singles/{Track} - {Title}.{ext}",
     prefer_canonical_studio_album: true,
-  };
+  });
 
   const tokens = ["Artist", "Album", "Title", "Year", "Track", "Format"];
   const singlesTokens = ["Artist", "Title", "Track", "Format"];
@@ -30,23 +30,26 @@
     ext: "flac",
   };
 
-  let preview = "";
-  let singlesPreview = "";
-
-  // subscribe to settings store to read current values
-  let current;
-  const unsub = settings.subscribe((v) => {
-    current = v;
+  let preview = $derived.by(() => {
+    let p = data.renaming_template || "";
+    for (const [key, val] of Object.entries(previewData)) {
+      p = p.replace(new RegExp(`{${key}}`, "g"), val);
+    }
+    return "/Music/" + p;
   });
 
-  onDestroy(() => {
-    if (unsub) unsub();
+  let singlesPreview = $derived.by(() => {
+    let sp = data.singles_pattern || "";
+    for (const [key, val] of Object.entries(singlesPreviewData)) {
+      sp = sp.replace(new RegExp(`{${key}}`, "g"), val);
+    }
+    return (sp.startsWith("/") ? "" : "/data/library/") + sp;
   });
 
   onMount(async () => {
     await settings.load();
-    const metaConfig = current?.data?.metadata_enhancement || {};
-    const importConfig = current?.data?.library_import || {};
+    const metaConfig = $settings?.data?.metadata_enhancement || {};
+    const importConfig = $settings?.data?.library_import || {};
     data = {
       auto_import_enabled: metaConfig.auto_import ?? false,
       renaming_template:
@@ -59,22 +62,6 @@
         "{Artist}/Singles/{Track} - {Title}.{ext}",
     };
   });
-
-  $: {
-    let p = data.renaming_template || "";
-    for (const [key, val] of Object.entries(previewData)) {
-      p = p.replace(new RegExp(`{${key}}`, "g"), val);
-    }
-    preview = "/Music/" + p;
-  }
-
-  $: {
-    let sp = data.singles_pattern || "";
-    for (const [key, val] of Object.entries(singlesPreviewData)) {
-      sp = sp.replace(new RegExp(`{${key}}`, "g"), val);
-    }
-    singlesPreview = (sp.startsWith("/") ? "" : "/data/library/") + sp;
-  }
 
   function addToken(token) {
     data.renaming_template += `{${token}}`;
@@ -138,7 +125,7 @@
             <button
               type="button"
               class="token-btn active:scale-95 transition-all duration-200"
-              on:click={() => addToken(token)}>{token}</button
+              onclick={() => addToken(token)}>{token}</button
             >
           {/each}
         </div>
@@ -157,7 +144,7 @@
           class="dark-input input"
           type="text"
           bind:value={data.singles_pattern}
-          placeholder="{Artist}/Singles/{Track} - {Title}.{ext}"
+          placeholder={"{Artist}/Singles/{Track} - {Title}.{ext}"}
         />
 
         <div class="tokens">
@@ -165,7 +152,7 @@
             <button
               type="button"
               class="token-btn active:scale-95 transition-all duration-200"
-              on:click={() => addSinglesToken(token)}>{token}</button
+              onclick={() => addSinglesToken(token)}>{token}</button
             >
           {/each}
         </div>
