@@ -11,9 +11,11 @@ Verifies:
 7. Connection self-healing: SERVICE_DEGRADED triggers reconnect_server with backoff.
 """
 
+import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import yaml
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -192,11 +194,18 @@ def test_slskd_webhook_dispatches_verifying_state(webhook_client, mock_work_db):
 
     from plugins.EchoSync.slskd.plugin import on_webhook_received
     from core.plugins.sdk import _WEBHOOK_HANDLERS, compute_plugin_crc32
-    _WEBHOOK_HANDLERS.setdefault(compute_plugin_crc32("EchoSync.slskd"), []).append(on_webhook_received)
-    with patch(
-        "database.working_database.get_working_database", return_value=mock_work_db
-    ), patch(
-        "web.routes.webhooks.lookup_registered_endpoint", return_value={"secret": secret}
+
+    _WEBHOOK_HANDLERS.setdefault(compute_plugin_crc32("EchoSync.slskd"), []).append(
+        on_webhook_received
+    )
+    with (
+        patch(
+            "database.working_database.get_working_database", return_value=mock_work_db
+        ),
+        patch(
+            "web.routes.webhooks.lookup_registered_endpoint",
+            return_value={"secret": secret},
+        ),
     ):
         resp = webhook_client.post(
             f"/api/v1/webhooks/EchoSync.slskd/download_status?secret={secret}",
@@ -205,6 +214,7 @@ def test_slskd_webhook_dispatches_verifying_state(webhook_client, mock_work_db):
         assert resp.status_code == 200
 
     import time
+
     time.sleep(0.1)
     # Verify state transitioned to VERIFYING
     with mock_work_db.session_scope() as session:
@@ -276,3 +286,156 @@ async def test_slskd_auto_reconnect_on_degraded():
             }
         )
         mock_provider.reconnect_server.assert_awaited_once()
+
+
+def test_slskd_yaml_generation_syntax():
+    """Verifies that registered SLSKD webhook outputs plural 'integrations', lifecycle events, and X-EchoSync-Secret."""
+    reg = sdk.webhooks.register_endpoint("download_status", namespace="EchoSync.slskd")
+    template = reg.get("yaml_template", "")
+    assert template, "yaml_template should not be empty"
+
+    parsed = yaml.safe_load(template)
+    assert "integrations" in parsed, "Root key must be plural 'integrations'"
+    assert "integration" not in parsed, (
+        "Legacy singular 'integration' root key must not be present"
+    )
+
+    webhook_config = parsed["integrations"]["webhooks"]["echosync_downloads"]
+    events = webhook_config.get("on") or webhook_config.get(True)
+    expected_events = [
+        "DownloadFileComplete",
+        "DownloadFileFailed",
+        "SoulseekClientConnected",
+        "SoulseekClientDisconnected",
+    ]
+    for ev in expected_events:
+        assert ev in events, f"Event {ev} must be present in webhook triggers"
+
+    call_config = webhook_config["call"]
+    assert call_config["url"] == reg["url"]
+    assert "?secret=" not in call_config["url"]
+    assert call_config["timeout"] == 10000
+    assert call_config["retry"]["attempts"] == 3
+
+    headers = call_config.get("headers", [])
+    assert any(
+        h.get("name") == "X-EchoSync-Secret" and h.get("value") == reg["secret"]
+        for h in headers
+    ), "X-EchoSync-Secret header must be configured with the generated secret"
+
+
+def test_webhook_auth_via_header(webhook_client):
+    """Verifies authentication via X-EchoSync-Secret and Authorization: Bearer <secret>."""
+    namespace = "EchoSync.auth_header_test"
+    slug = "status"
+    secret = "sk_header_secret_123"
+
+    sdk.webhooks.register_endpoint(
+        slug=slug,
+        secret=secret,
+        allow_unauthenticated=False,
+        namespace=namespace,
+    )
+
+    # 1. Standard X-EchoSync-Secret
+    resp = webhook_client.post(
+        f"/api/v1/webhooks/{namespace}/{slug}",
+        headers={"X-EchoSync-Secret": secret},
+        json={"event": "test"},
+    )
+    assert resp.status_code == 200
+
+    # 2. Authorization: Bearer <secret>
+    resp_bearer = webhook_client.post(
+        f"/api/v1/webhooks/{namespace}/{slug}",
+        headers={"Authorization": f"Bearer {secret}"},
+        json={"event": "test"},
+    )
+    assert resp_bearer.status_code == 200
+
+    # 3. Invalid header secret
+    resp_invalid = webhook_client.post(
+        f"/api/v1/webhooks/{namespace}/{slug}",
+        headers={"X-EchoSync-Secret": "wrong_key"},
+        json={"event": "test"},
+    )
+    assert resp_invalid.status_code == 401
+
+
+def test_webhook_auth_via_query_fallback(webhook_client, caplog):
+    """Verifies query param ?secret= authenticates but emits a deprecation warning."""
+    namespace = "EchoSync.auth_query_test"
+    slug = "status"
+    secret = "sk_query_secret_456"
+
+    sdk.webhooks.register_endpoint(
+        slug=slug,
+        secret=secret,
+        allow_unauthenticated=False,
+        namespace=namespace,
+    )
+
+    with caplog.at_level(logging.WARNING):
+        resp = webhook_client.post(
+            f"/api/v1/webhooks/{namespace}/{slug}?secret={secret}",
+            json={"event": "test"},
+        )
+    assert resp.status_code == 200
+    assert any(
+        "deprecated" in record.message.lower()
+        and "query parameter" in record.message.lower()
+        for record in caplog.records
+    ), "Deprecation warning must be logged when passing secret via query parameter"
+
+
+@pytest.mark.asyncio
+async def test_slskd_lifecycle_webhook_events():
+    """Verifies SoulseekClientConnected and SoulseekClientDisconnected event bus dispatches."""
+    import plugins.EchoSync.slskd.plugin as slskd_plugin
+    from plugins.EchoSync.slskd.plugin import on_webhook_received
+
+    healthy_events = []
+    degraded_events = []
+
+    def on_healthy(payload):
+        healthy_events.append(payload)
+
+    def on_degraded(payload):
+        degraded_events.append(payload)
+
+    event_bus.subscribe("SERVICE_HEALTHY", on_healthy)
+    event_bus.subscribe("SERVICE_DEGRADED", on_degraded)
+
+    # Set reconnect attempts to non-zero before testing connected
+    slskd_plugin._RECONNECT_ATTEMPTS = 5
+
+    mock_provider = MagicMock()
+    mock_provider.reconnect_server = AsyncMock(return_value=True)
+
+    with (
+        patch(
+            "plugins.EchoSync.slskd.plugin._get_slskd_provider",
+            return_value=mock_provider,
+        ),
+        patch("plugins.EchoSync.slskd.plugin.asyncio.sleep", AsyncMock()),
+    ):
+        # 1. Connected event
+        await on_webhook_received(
+            "download_status",
+            {"event": "SoulseekClientConnected", "state": "connected"},
+        )
+        import time
+
+        time.sleep(0.05)
+        assert len(healthy_events) >= 1
+        assert healthy_events[-1].get("service") == "EchoSync.slskd"
+        assert slskd_plugin._RECONNECT_ATTEMPTS == 0
+
+        # 2. Disconnected event
+        await on_webhook_received(
+            "download_status",
+            {"event": "SoulseekClientDisconnected", "reason": "socket closed"},
+        )
+        time.sleep(0.05)
+        assert len(degraded_events) >= 1
+        assert degraded_events[-1].get("service") == "EchoSync.slskd"

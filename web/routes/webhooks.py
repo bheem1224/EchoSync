@@ -97,10 +97,27 @@ async def handle_plugin_ingress_webhook(
     if not allow_unauth:
         expected_secret = endpoint_meta.get("secret")
         if expected_secret:
-            # Check X-EchoSync-Webhook-Secret header or ?secret= query parameter
+            # Priority 1: Header X-EchoSync-Secret (or X-EchoSync-Webhook-Secret)
             provided_secret = request.headers.get(
-                "X-EchoSync-Webhook-Secret"
-            ) or request.query_params.get("secret")
+                "X-EchoSync-Secret"
+            ) or request.headers.get("X-EchoSync-Webhook-Secret")
+
+            # Priority 2: Header Authorization: Bearer <token>
+            if not provided_secret:
+                auth_header = request.headers.get("Authorization", "").strip()
+                if auth_header.lower().startswith("bearer "):
+                    provided_secret = auth_header[7:].strip()
+
+            # Priority 3: Query parameter ?secret=<token> (deprecated fallback)
+            if not provided_secret:
+                query_secret = request.query_params.get("secret")
+                if query_secret:
+                    provided_secret = query_secret
+                    logger.warning(
+                        "Webhook authentication via query parameter '?secret=' is deprecated. "
+                        "Please configure headers with 'X-EchoSync-Secret'."
+                    )
+
             if not provided_secret or not hmac.compare_digest(
                 str(provided_secret), str(expected_secret)
             ):

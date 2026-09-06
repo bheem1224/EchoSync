@@ -12,6 +12,7 @@ Handles:
 from __future__ import annotations
 
 import asyncio
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -243,6 +244,34 @@ async def on_webhook_received(slug: str, payload: dict[str, Any]) -> None:
                     "Failed to handle verification failure for %s: %s", task_id, e
                 )
 
+    elif event_str.lower() in [
+        "soulseekclientconnected",
+        "connected",
+    ]:
+        global _RECONNECT_ATTEMPTS
+        _RECONNECT_ATTEMPTS = 0
+        logger.info("SoulseekClientConnected matched: client connected.")
+        event_bus.publish(
+            {
+                "event": "SERVICE_HEALTHY",
+                "service": PLUGIN_NAMESPACE,
+                "payload": payload,
+            }
+        )
+
+    elif event_str.lower() in [
+        "soulseekclientdisconnected",
+        "disconnected",
+    ]:
+        logger.warning("SoulseekClientDisconnected matched: client disconnected.")
+        event_bus.publish(
+            {
+                "event": "SERVICE_DEGRADED",
+                "service": PLUGIN_NAMESPACE,
+                "payload": payload,
+            }
+        )
+
 
 async def _on_download_completed_or_failed(event_data: dict[str, Any]) -> None:
     """Evict completed or failed transfers from daemon memory to prevent memory leaks."""
@@ -335,21 +364,30 @@ def initialize_plugin() -> None:
                 loop = asyncio.get_running_loop()
                 loop.create_task(_on_download_completed_or_failed(data))
             except RuntimeError:
-                asyncio.run(_on_download_completed_or_failed(data))
+                threading.Thread(
+                    target=lambda: asyncio.run(_on_download_completed_or_failed(data)),
+                    daemon=True,
+                ).start()
 
         def _handle_failed(data: dict):
             try:
                 loop = asyncio.get_running_loop()
                 loop.create_task(_on_download_completed_or_failed(data))
             except RuntimeError:
-                asyncio.run(_on_download_completed_or_failed(data))
+                threading.Thread(
+                    target=lambda: asyncio.run(_on_download_completed_or_failed(data)),
+                    daemon=True,
+                ).start()
 
         def _handle_degraded(data: dict):
             try:
                 loop = asyncio.get_running_loop()
                 loop.create_task(_on_service_degraded(data))
             except RuntimeError:
-                asyncio.run(_on_service_degraded(data))
+                threading.Thread(
+                    target=lambda: asyncio.run(_on_service_degraded(data)),
+                    daemon=True,
+                ).start()
 
         event_bus.subscribe("DOWNLOAD_COMPLETED", _handle_completed)
         event_bus.subscribe("DOWNLOAD_FAILED", _handle_failed)

@@ -183,19 +183,30 @@ class _WebhooksSDKFacade:
 
         base_url = get_base_url()
         canonical_url = f"{base_url}/api/v1/webhooks/{ns}/{slug}"
-        call_url_with_secret = (
-            f"{canonical_url}?secret={secret}" if secret else canonical_url
-        )
+
+        headers_yaml = ""
+        if secret:
+            headers_yaml = (
+                f"        headers:\n"
+                f'          - name: "X-EchoSync-Secret"\n'
+                f'            value: "{secret}"\n'
+            )
 
         yaml_template = (
-            f"integration:\n"
+            f"integrations:\n"
             f"  webhooks:\n"
             f"    echosync_downloads:\n"
             f"      on:\n"
             f"        - DownloadFileComplete\n"
             f"        - DownloadFileFailed\n"
+            f"        - SoulseekClientConnected\n"
+            f"        - SoulseekClientDisconnected\n"
             f"      call:\n"
-            f'        url: "{call_url_with_secret}"\n'
+            f'        url: "{canonical_url}"\n'
+            f"{headers_yaml}"
+            f"        timeout: 10000\n"
+            f"        retry:\n"
+            f"          attempts: 3\n"
         )
 
         registration_data = {
