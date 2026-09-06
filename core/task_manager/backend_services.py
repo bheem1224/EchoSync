@@ -118,6 +118,11 @@ async def start_services() -> None:
 
     auto_importer = get_auto_importer()
 
+    # Start deduplicator service (listens for TRACK_IMPORTED events)
+    from services.deduplicator import get_deduplicator
+
+    get_deduplicator()
+
     # Keep services alive indefinitely
     try:
         shutdown_event = asyncio.Event()

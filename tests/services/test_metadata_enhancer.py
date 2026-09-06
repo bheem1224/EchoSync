@@ -348,7 +348,14 @@ def test_retroactive_enhancer_falls_back_to_text_on_acoustid_miss(
 def test_get_tracks_for_enhancement_prioritizes_bad_metadata(tmp_path, monkeypatch):
     """Verify TrackRepository.get_tracks_for_enhancement prioritizes Unknown Artist / Unknown Album over normal tracks."""
     from core.hook_manager import hook_manager
-    monkeypatch.setattr(hook_manager, "apply_filters", lambda event, initial, *args, **kwargs: [] if event == "register_metadata_requirements" else initial)
+
+    monkeypatch.setattr(
+        hook_manager,
+        "apply_filters",
+        lambda event, initial, *args, **kwargs: (
+            [] if event == "register_metadata_requirements" else initial
+        ),
+    )
     from core.database.repositories.track_repo import TrackRepository
     from database.music_database import (
         Album,
@@ -722,3 +729,261 @@ def test_enhance_library_metadata_bad_metadata_with_mbid_does_not_pass_trust_gat
         assert t.album.title == "ODDINARY"
         assert t.isrc == "KRA382200001"
         assert t.artist.name != "Unknown Artist"
+
+
+def test_retroactive_enhancer_short_circuits_via_local_fingerprint(
+    monkeypatch, tmp_path, caplog
+):
+    """Verify that a track sharing a chromaprint with an already-enhanced track adopts metadata
+
+    locally without calling MusicBrainzClient.search_recording or AcoustID APIs.
+    """
+    import logging
+    from core.nexus_framework.plugin_loader import PluginRegistry
+    from database.music_database import (
+        Album,
+        Artist,
+        AudioFingerprint,
+        Base,
+        LocalMedia,
+        MusicDatabase,
+        Track,
+    )
+
+    db_path = str(tmp_path / "test_short_circuit.db")
+    db = MusicDatabase(db_path)
+    Base.metadata.create_all(db.engine)
+
+    # Physical files on disk
+    f_enhanced = tmp_path / "daft_punk_track_a.flac"
+    f_unenhanced = tmp_path / "daft_punk_track_b.flac"
+    f_enhanced.write_bytes(b"dummy audio a")
+    f_unenhanced.write_bytes(b"dummy audio b")
+
+    import datetime
+
+    shared_chromaprint = "shared_chromaprint_daft_punk_get_lucky_12345"
+
+    with db.session_scope() as session:
+        artist = Artist(name="Daft Punk")
+        session.add(artist)
+        session.flush()
+
+        album = Album(
+            title="Random Access Memories",
+            artist_id=artist.id,
+            release_date=datetime.date(2013, 5, 17),
+            mb_release_id="mb-release-ram-123",
+        )
+        session.add(album)
+        session.flush()
+
+        # Track A: Already enhanced with valid MusicBrainz ID and canonical metadata
+        track_a = Track(
+            title="Get Lucky",
+            artist_id=artist.id,
+            album_id=album.id,
+            duration=248000,
+            musicbrainz_id="mbid-get-lucky-daft-punk",
+            isrc="US1234567890",
+            metadata_status={"enhanced": True},
+        )
+        session.add(track_a)
+        session.flush()
+
+        media_a = LocalMedia(
+            track_id=track_a.id,
+            file_path=str(f_enhanced),
+            file_format="flac",
+            media_id="media_dp_a",
+        )
+        session.add(media_a)
+        session.flush()
+
+        afp_a = AudioFingerprint(
+            media_id=media_a.media_id,
+            chromaprint=shared_chromaprint,
+            acoustid_id="aid-get-lucky-1234",
+        )
+        session.add(afp_a)
+
+        # Track B: Needs enhancement (missing MBID), but shares the identical chromaprint
+        artist_unknown = Artist(name="Unknown Artist")
+        session.add(artist_unknown)
+        session.flush()
+
+        track_b = Track(
+            title="Get Lucky (Radio Version)",
+            artist_id=artist_unknown.id,
+            album_id=None,
+            duration=248000,
+            musicbrainz_id=None,
+        )
+        session.add(track_b)
+        session.flush()
+
+        media_b = LocalMedia(
+            track_id=track_b.id,
+            file_path=str(f_unenhanced),
+            file_format="flac",
+            media_id="media_dp_b",
+        )
+        session.add(media_b)
+        session.flush()
+
+        afp_b = AudioFingerprint(
+            media_id=media_b.media_id,
+            chromaprint=shared_chromaprint,
+        )
+        session.add(afp_b)
+
+    monkeypatch.setattr("database.music_database.get_database", lambda: db)
+    monkeypatch.setattr("database.get_database", lambda: db)
+
+    # Intercept tagging writes
+    written_tags = []
+
+    def fake_tagging_write(file_path, tags):
+        written_tags.append((str(file_path), tags))
+
+    monkeypatch.setattr("services.metadata_enhancer._tagging_write", fake_tagging_write)
+
+    # Mock echosync_core extract_metadata
+    import echosync_core
+
+    monkeypatch.setattr(
+        echosync_core,
+        "extract_metadata",
+        lambda p: {"title": "Get Lucky (Radio Version)", "artist": "Daft Punk"},
+    )
+
+    # Mock MusicBrainzClient with spy/mock methods that should NOT be called
+    mock_mb_client = MagicMock()
+    mock_mb_client.capabilities = type("Caps", (), {"supports_batching": False})()
+    mock_mb_client.search_recording = MagicMock()
+    mock_mb_client.search_recording_strict = MagicMock()
+    mock_mb_client.search_metadata = MagicMock()
+    mock_mb_client.get_metadata = MagicMock()
+
+    monkeypatch.setattr(
+        PluginRegistry,
+        "get_plugin",
+        lambda name: mock_mb_client,
+    )
+
+    # Mock AcoustID provider which should NOT be called
+    mock_fp_provider = MagicMock()
+    mock_fp_provider.resolve_fingerprint_details = MagicMock()
+
+    enhancer = RetroactiveEnhancer()
+    monkeypatch.setattr(enhancer, "_get_plugin", lambda cap, **kwargs: mock_fp_provider)
+
+    from core.matching_engine.fingerprinting import FingerprintGenerator
+
+    monkeypatch.setattr(FingerprintGenerator, "generate", lambda p: shared_chromaprint)
+
+    # Run enhancement pass
+    with caplog.at_level(logging.INFO):
+        enhancer.enhance_library_metadata(batch_size=10, check_all_files=True)
+
+    # Verification:
+    # 1. External APIs were NEVER called (bypassed via short-circuit)
+    assert not mock_mb_client.search_recording.called
+    assert not mock_mb_client.search_recording_strict.called
+    assert not mock_mb_client.search_metadata.called
+    assert not mock_fp_provider.resolve_fingerprint_details.called
+
+    # 2. Track B adopted Track A's canonical tags and MBID
+    with db.session_scope() as session:
+        t_b = session.query(Track).filter(Track.id == track_b.id).first()
+        assert t_b.musicbrainz_id == "mbid-get-lucky-daft-punk"
+        assert t_b.title == "Get Lucky"
+        assert t_b.isrc == "US1234567890"
+        assert t_b.metadata_status.get("enhanced") is True
+
+    # 3. Log was generated
+    assert any(
+        "Metadata resolved via local chromaprint cache" in rec.message
+        for rec in caplog.records
+    )
+
+
+def test_retroactive_enhancer_backfill_missing_fingerprints_telemetry(
+    monkeypatch, tmp_path
+):
+    """Verify backfill_missing_fingerprints computes chromaprints and emits job_progress telemetry."""
+    from core.event_bus import event_bus
+    from database.music_database import (
+        Artist,
+        AudioFingerprint,
+        Base,
+        LocalMedia,
+        MusicDatabase,
+        Track,
+    )
+
+    db_path = str(tmp_path / "test_backfill.db")
+    db = MusicDatabase(db_path)
+    Base.metadata.create_all(db.engine)
+
+    f1 = tmp_path / "song1.flac"
+    f2 = tmp_path / "song2.flac"
+    f1.write_bytes(b"dummy song 1")
+    f2.write_bytes(b"dummy song 2")
+
+    with db.session_scope() as session:
+        artist = Artist(name="Test Artist")
+        session.add(artist)
+        session.flush()
+
+        t1 = Track(title="Song 1", artist_id=artist.id)
+        t2 = Track(title="Song 2", artist_id=artist.id)
+        session.add_all([t1, t2])
+        session.flush()
+
+        m1 = LocalMedia(
+            track_id=t1.id, file_path=str(f1), file_format="flac", media_id="m1"
+        )
+        m2 = LocalMedia(
+            track_id=t2.id, file_path=str(f2), file_format="flac", media_id="m2"
+        )
+        session.add_all([m1, m2])
+
+    monkeypatch.setattr("database.music_database.get_database", lambda: db)
+    monkeypatch.setattr("database.get_database", lambda: db)
+
+    # Track event_bus progress events
+    progress_events = []
+
+    def on_progress(payload):
+        if (
+            isinstance(payload, dict)
+            and payload.get("job_name") == "retroactive_metadata_enhancement"
+        ):
+            progress_events.append(payload)
+
+    event_bus.subscribe("job_progress", on_progress)
+
+    enhancer = RetroactiveEnhancer()
+    # Mock fingerprinting
+    import echosync_core
+
+    monkeypatch.setattr(
+        echosync_core,
+        "fingerprint_audio",
+        lambda p, trim_silence=True: (f"cp_{Path(p).stem}", 120),
+    )
+
+    count = enhancer.backfill_missing_fingerprints(batch_size=1)
+    assert count == 2
+
+    with db.session_scope() as session:
+        fps = session.query(AudioFingerprint).all()
+        assert len(fps) == 2
+        fp_map = {fp.media_id: fp.chromaprint for fp in fps}
+        assert fp_map["m1"] == "cp_song1"
+        assert fp_map["m2"] == "cp_song2"
+
+    assert len(progress_events) >= 2
+    assert progress_events[-1]["current"] == 2
+    assert progress_events[-1]["percentage"] == 100.0

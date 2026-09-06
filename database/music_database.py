@@ -260,6 +260,19 @@ class Track(Base):
     )
 
     @property
+    def musicbrainz_track_id(self) -> str | None:
+        return self.musicbrainz_id
+
+    @property
+    def year(self) -> int | None:
+        if self.album and self.album.release_date:
+            try:
+                return int(str(self.album.release_date)[:4])
+            except Exception:
+                pass
+        return None
+
+    @property
     def file_path(self) -> str | None:
         return self.media_files[0].file_path if self.media_files else None
 
@@ -286,28 +299,6 @@ class Track(Base):
     @property
     def file_size_bytes(self) -> int | None:
         return self.media_files[0].file_size_bytes if self.media_files else None
-
-
-class TrackArtist(Base):
-    """Junction table capturing all collaborating artists for a track with roles and position."""
-
-    __tablename__ = "track_artists"
-    __table_args__ = (
-        UniqueConstraint("track_id", "artist_id", "role", name="uq_track_artist_role"),
-    )
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    track_id: Mapped[int] = mapped_column(
-        ForeignKey("tracks.id", ondelete="CASCADE"), nullable=False, index=True
-    )
-    artist_id: Mapped[int] = mapped_column(
-        ForeignKey("artists.id", ondelete="CASCADE"), nullable=False, index=True
-    )
-    role: Mapped[str] = mapped_column(String, default="primary", nullable=False)
-    position: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-
-    track: Mapped[Track] = relationship(back_populates="artist_associations")
-    artist: Mapped[Artist] = relationship(back_populates="track_associations")
 
     def get_best_media(self) -> LocalMedia | None:
         """Return the highest-quality LocalMedia file attached to this track."""
@@ -370,6 +361,28 @@ class TrackArtist(Base):
             self.normalized_title = normalize_title(clean_title)
             return clean_title
         return value
+
+
+class TrackArtist(Base):
+    """Junction table capturing all collaborating artists for a track with roles and position."""
+
+    __tablename__ = "track_artists"
+    __table_args__ = (
+        UniqueConstraint("track_id", "artist_id", "role", name="uq_track_artist_role"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    track_id: Mapped[int] = mapped_column(
+        ForeignKey("tracks.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    artist_id: Mapped[int] = mapped_column(
+        ForeignKey("artists.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    role: Mapped[str] = mapped_column(String, default="primary", nullable=False)
+    position: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    track: Mapped[Track] = relationship(back_populates="artist_associations")
+    artist: Mapped[Artist] = relationship(back_populates="track_associations")
 
 
 class LocalMedia(Base):

@@ -396,6 +396,279 @@ def apply_ensemble_disambiguation(track: Any, parent_ensemble_name: str) -> Any:
 class RetroactiveEnhancer:
     """Background service for library-wide batch metadata enhancement."""
 
+    def __init__(self):
+        self._local_chromaprint_cache: dict[str, dict[str, Any]] = {}
+
+    def backfill_missing_fingerprints(
+        self,
+        batch_size: int = 50,
+        progress_callback: Any | None = None,
+        max_items: int | None = None,
+    ) -> int:
+        """Scan LocalMedia records lacking an AudioFingerprint and backfill using fast-path native Rust fingerprinting.
+
+        Commits in batches of 50 to avoid SQLite lock contention and reports progress over event_bus.
+        """
+        import os
+        import uuid
+        from core.event_bus import event_bus
+        from core.matching_engine.fingerprinting import FingerprintGenerator
+        from core.utils import PathMapper
+        from database.music_database import AudioFingerprint, LocalMedia, get_database
+
+        db = get_database()
+        generated_count = 0
+
+        try:
+            with db.session_scope() as session:
+                unfingerprinted_ids = [
+                    row[0]
+                    for row in session.query(LocalMedia.id)
+                    .outerjoin(
+                        AudioFingerprint,
+                        LocalMedia.media_id == AudioFingerprint.media_id,
+                    )
+                    .filter(
+                        (AudioFingerprint.id.is_(None))
+                        | (AudioFingerprint.chromaprint.is_(None))
+                        | (AudioFingerprint.chromaprint == "")
+                    )
+                    .all()
+                ]
+
+            if not unfingerprinted_ids:
+                return 0
+
+            if max_items:
+                unfingerprinted_ids = unfingerprinted_ids[:max_items]
+
+            total = len(unfingerprinted_ids)
+            logger.info(
+                "[enhancer] Native Fingerprinting Pre-Pass: Found %d media file(s) missing fingerprints. Computing in batches of %d...",
+                total,
+                batch_size,
+            )
+
+            processed = 0
+            for i in range(0, total, batch_size):
+                batch_ids = unfingerprinted_ids[i : i + batch_size]
+                with db.session_scope() as session:
+                    media_batch = (
+                        session.query(LocalMedia)
+                        .filter(LocalMedia.id.in_(batch_ids))
+                        .all()
+                    )
+                    for media in media_batch:
+                        fpath = media.file_path
+                        if not fpath:
+                            continue
+                        local_path = (
+                            PathMapper.to_local(fpath)
+                            if (os.path.isabs(fpath) or not os.path.exists(fpath))
+                            else fpath
+                        )
+                        if not os.path.exists(local_path):
+                            local_path = PathMapper.to_local(fpath)
+                        if not local_path or not os.path.exists(local_path):
+                            continue
+
+                        fp = None
+                        # Fast-path: native Rust audio fingerprinting (~10ms per track)
+                        try:
+                            import echosync_core
+
+                            if hasattr(echosync_core, "fingerprint_audio"):
+                                res = echosync_core.fingerprint_audio(
+                                    str(local_path), trim_silence=True
+                                )
+                                if res:
+                                    fp = (
+                                        res[0]
+                                        if isinstance(res, (tuple, list))
+                                        else res
+                                    )
+                        except Exception as rust_err:
+                            logger.debug(
+                                "Native fingerprint_audio failed for %s: %s",
+                                local_path,
+                                rust_err,
+                            )
+
+                        # Fallback to FingerprintGenerator if native Rust extension threw or returned None
+                        if not fp:
+                            try:
+                                fp = FingerprintGenerator.generate(str(local_path))
+                            except Exception as fp_err:
+                                logger.debug(
+                                    "Fallback FingerprintGenerator failed for %s: %s",
+                                    local_path,
+                                    fp_err,
+                                )
+
+                        if fp:
+                            if not media.media_id:
+                                media.media_id = f"med_{uuid.uuid4().hex[:12]}"
+
+                            existing_afp = (
+                                session.query(AudioFingerprint)
+                                .filter_by(media_id=media.media_id)
+                                .first()
+                            )
+                            if existing_afp:
+                                existing_afp.chromaprint = fp
+                            else:
+                                session.add(
+                                    AudioFingerprint(
+                                        media_id=media.media_id,
+                                        chromaprint=fp,
+                                    )
+                                )
+                            generated_count += 1
+
+                processed += len(batch_ids)
+                status_msg = f"Fingerprinted {processed}/{total} audio files ({round((processed / total) * 100, 1)}%)"
+                if progress_callback:
+                    try:
+                        progress_callback(processed, total, status_msg)
+                    except Exception:
+                        pass
+                try:
+                    event_bus.publish(
+                        "job_progress",
+                        {
+                            "job_name": "retroactive_metadata_enhancement",
+                            "phase": "fingerprinting",
+                            "current": processed,
+                            "total": total,
+                            "status": status_msg,
+                            "percentage": (
+                                round((processed / total) * 100, 1) if total > 0 else 0
+                            ),
+                        },
+                    )
+                except Exception as eb_err:
+                    logger.debug("Failed to publish job_progress: %s", eb_err)
+
+            logger.info(
+                "[enhancer] Native fingerprinting pre-pass complete: backfilled %d fingerprints.",
+                generated_count,
+            )
+            return generated_count
+        except Exception as e:
+            logger.error(
+                "[enhancer] Error during native fingerprinting pre-pass: %s",
+                e,
+                exc_info=True,
+            )
+            return generated_count
+
+    def resolve_canonical_from_chromaprint(
+        self,
+        session: Any | None = None,
+        chromaprint: str = "",
+        current_track_id: int | None = None,
+        exclude_track_id: int | None = None,
+    ) -> dict[str, Any] | None:
+        """Inspect in-memory cache and query music.db for peer tracks sharing the exact chromaprint.
+
+        Adopts canonical metadata from already-enhanced tracks with valid MusicBrainz IDs to short-circuit
+        external network requests.
+        """
+        # Handle parameter flexibility: resolve_canonical_from_chromaprint(session, chromaprint, current_track_id)
+        # or resolve_canonical_from_chromaprint(chromaprint, exclude_track_id=...)
+        if isinstance(session, str):
+            chromaprint = session
+            session = None
+
+        if not chromaprint:
+            return None
+
+        target_track_id = (
+            current_track_id if current_track_id is not None else exclude_track_id
+        )
+
+        # 1. Check in-memory session cache first
+        if chromaprint in self._local_chromaprint_cache:
+            cached = self._local_chromaprint_cache[chromaprint]
+            logger.info(
+                "[enhancer] Metadata resolved via local chromaprint cache for track %s",
+                target_track_id,
+            )
+            return cached
+
+        from database.music_database import (
+            AudioFingerprint,
+            LocalMedia,
+            Track,
+            get_database,
+        )
+
+        def _do_lookup(sess):
+            query = (
+                sess.query(Track)
+                .join(LocalMedia, LocalMedia.track_id == Track.id)
+                .join(
+                    AudioFingerprint, AudioFingerprint.media_id == LocalMedia.media_id
+                )
+                .filter(
+                    AudioFingerprint.chromaprint == chromaprint,
+                    Track.musicbrainz_id.isnot(None),
+                    Track.musicbrainz_id != "",
+                    Track.musicbrainz_id != "NOT_FOUND",
+                )
+            )
+            if target_track_id is not None:
+                query = query.filter(Track.id != target_track_id)
+
+            # Prefer tracks with non-empty titles
+            query = query.filter(Track.title.isnot(None), Track.title != "")
+            return query.first()
+
+        def _extract_meta(peer_track):
+            if not peer_track:
+                return None
+            artist_name = peer_track.artist.name if peer_track.artist else None
+            album_title = peer_track.album.title if peer_track.album else None
+            release_mbid = peer_track.album.mb_release_id if peer_track.album else None
+            year = peer_track.year
+
+            return {
+                "title": peer_track.title,
+                "artist": artist_name,
+                "artist_name": artist_name,
+                "album": album_title,
+                "album_title": album_title,
+                "year": year,
+                "isrc": peer_track.isrc,
+                "musicbrainz_id": peer_track.musicbrainz_id,
+                "musicbrainz_track_id": peer_track.musicbrainz_id,
+                "recording_id": peer_track.musicbrainz_id,
+                "release_mbid": release_mbid,
+                "track_number": peer_track.track_number,
+                "disc_number": peer_track.disc_number,
+                "duration": peer_track.duration,
+            }
+
+        result = None
+        if session is not None:
+            peer_track = _do_lookup(session)
+            result = _extract_meta(peer_track)
+        else:
+            db = get_database()
+            with db.session_scope() as sess:
+                peer_track = _do_lookup(sess)
+                result = _extract_meta(peer_track)
+
+        if result:
+            logger.info(
+                "[enhancer] Metadata resolved via local chromaprint cache for track %s",
+                target_track_id,
+            )
+            self._local_chromaprint_cache[chromaprint] = result
+            return result
+
+        return None
+
     def generate_preview_path(
         self, template: str, sample_data: dict[str, Any] | None = None
     ) -> str:
@@ -617,6 +890,17 @@ class RetroactiveEnhancer:
                 logger.debug(
                     f"Fingerprint generation failed for {file_path.name}: {fp_err}"
                 )
+
+            # Local Chromaprint cache check before outbound network requests
+            if fingerprint:
+                cached = self.resolve_canonical_from_chromaprint(
+                    chromaprint=fingerprint
+                )
+                if cached:
+                    logger.info(
+                        f"[enhancer] Metadata resolved via local chromaprint cache: {file_path.name} → MBID: {cached.get('musicbrainz_id')}"
+                    )
+                    return cached, 0.95
 
             if fingerprint and duration_sec and fingerprint_provider:
                 duration_sec_int = int(round(float(duration_sec)))
@@ -1986,8 +2270,59 @@ class RetroactiveEnhancer:
                             if not t_track.fingerprint:
                                 t_track.fingerprint = existing_fp
 
+                    # 0. Local Chromaprint Cache Resolution (Fast-Path Short-Circuit)
+                    target_cp = t_track.fingerprint
+                    if not target_cp:
+                        for mid, fp_info in item.get("fingerprints", {}).items():
+                            if fp_info.get("chromaprint"):
+                                target_cp = fp_info["chromaprint"]
+                                break
+                    if not target_cp:
+                        for mid, fp_info in item.get("new_fingerprints", {}).items():
+                            if fp_info.get("chromaprint"):
+                                target_cp = fp_info["chromaprint"]
+                                break
+
+                    resolved_from_cache = False
+                    if target_cp:
+                        cached_meta = self.resolve_canonical_from_chromaprint(
+                            chromaprint=target_cp, current_track_id=item["id"]
+                        )
+                        if cached_meta:
+                            new_musicbrainz_id = cached_meta.get(
+                                "musicbrainz_id"
+                            ) or cached_meta.get("musicbrainz_track_id")
+                            if cached_meta.get("title"):
+                                t_track.title = cached_meta["title"]
+                            if cached_meta.get("artist") or cached_meta.get(
+                                "artist_name"
+                            ):
+                                t_track.artist_name = cached_meta.get(
+                                    "artist"
+                                ) or cached_meta.get("artist_name")
+                            if cached_meta.get("album") or cached_meta.get(
+                                "album_title"
+                            ):
+                                t_track.album_title = cached_meta.get(
+                                    "album"
+                                ) or cached_meta.get("album_title")
+                            if cached_meta.get("year"):
+                                t_track.release_year = cached_meta["year"]
+                            if cached_meta.get("isrc") and not t_track.isrc:
+                                t_track.isrc = cached_meta["isrc"]
+                            if cached_meta.get("acoustid_id"):
+                                t_track.acoustid_id = cached_meta["acoustid_id"]
+                                for mid, fp_val in item["new_fingerprints"].items():
+                                    fp_val["acoustid_id"] = cached_meta["acoustid_id"]
+                            resolved_from_cache = True
+
                     # 1. Acoustic Fingerprint Resolution
-                    if fingerprint_provider and t_track.fingerprint and duration:
+                    if (
+                        not new_musicbrainz_id
+                        and fingerprint_provider
+                        and t_track.fingerprint
+                        and duration
+                    ):
                         try:
                             duration_secs = (
                                 int(duration / 1000) if duration > 10000 else duration
@@ -2059,13 +2394,28 @@ class RetroactiveEnhancer:
                             t_track.title,
                             new_musicbrainz_id,
                         )
-                        if mb_client and not resolved_meta:
+                        if mb_client and not resolved_meta and not resolved_from_cache:
                             try:
                                 meta = mb_client.get_metadata(new_musicbrainz_id)
                                 if meta and not t_track.isrc and meta.get("isrc"):
                                     t_track.isrc = meta.get("isrc")
                             except Exception:
                                 pass
+
+                        if target_cp and not resolved_from_cache:
+                            self._local_chromaprint_cache[target_cp] = {
+                                "title": t_track.title,
+                                "artist": t_track.artist_name,
+                                "artist_name": t_track.artist_name,
+                                "album": t_track.album_title,
+                                "album_title": t_track.album_title,
+                                "year": t_track.release_year,
+                                "isrc": t_track.isrc,
+                                "musicbrainz_id": new_musicbrainz_id,
+                                "musicbrainz_track_id": new_musicbrainz_id,
+                                "recording_id": new_musicbrainz_id,
+                                "acoustid_id": t_track.acoustid_id,
+                            }
 
                         update_tags = {
                             "musicbrainz_id": new_musicbrainz_id,
@@ -2238,3 +2588,21 @@ def register_metadata_enhancer_service():
     """Kept for compatibility, though it no longer registers background jobs."""
     get_metadata_enhancer()
     logger.info("Metadata Enhancer Service initialized")
+
+
+def run_retroactive_enhancement(
+    batch_size: int = 100,
+    check_all_files: bool = False,
+    limit: int | None = None,
+    progress_callback: Any | None = None,
+) -> None:
+    """Execute full retroactive metadata enhancement with fast-path native Rust fingerprinting."""
+    enhancer = RetroactiveEnhancer()
+    enhancer.backfill_missing_fingerprints(
+        batch_size=50, progress_callback=progress_callback
+    )
+    enhancer.enhance_library_metadata(
+        batch_size=batch_size,
+        check_all_files=check_all_files,
+        limit=limit,
+    )

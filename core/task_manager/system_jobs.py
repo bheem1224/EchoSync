@@ -728,17 +728,48 @@ def register_duplicate_scan_job(interval_seconds: int = 86400, enabled: bool = T
     def run_duplicate_scan(auto_resolve: bool = False, **kwargs):
         try:
             logger.info("Starting duplicate scan job")
+            from core.event_bus import event_bus
+
             service = DuplicateHygieneService()
-            result = service.find_duplicates()
+
+            def update_progress(current: int, total: int, status: str = ""):
+                event_bus.publish(
+                    "job_progress",
+                    {
+                        "job_name": "duplicate_scan_job",
+                        "current": current,
+                        "total": total,
+                        "status": status,
+                        "percentage": round((current / total) * 100, 1)
+                        if total > 0
+                        else 0,
+                    },
+                )
+
+            # Step 1: Asynchronous fingerprint backfill with progress reporting
+            service.backfill_missing_fingerprints(progress_callback=update_progress)
+
+            # Step 2: Multi-tier duplicate detection
+            result = service.find_duplicates(backfill=False)
             auto_count = len((result or {}).get("auto_resolve", []))
             manual_count = len((result or {}).get("manual_review", []))
             total = auto_count + manual_count
             if total:
+                subtypes = {}
+                for g in (result or {}).get("auto_resolve", []) + (result or {}).get(
+                    "manual_review", []
+                ):
+                    st = g.get("subtype", "unknown")
+                    subtypes[st] = subtypes.get(st, 0) + 1
+                subtype_summary = ", ".join(
+                    f"{cnt} {st}" for st, cnt in subtypes.items()
+                )
                 logger.info(
-                    "Duplicate scan complete: %d group(s) queued for manual review "
-                    "(%d quality-ranked, %d metadata-conflict). "
+                    "Duplicate scan complete: %d group(s) detected (%s) - "
+                    "%d auto-resolvable, %d requiring manual review. "
                     "Review at Library > Manager > Duplicate Resolution.",
                     total,
+                    subtype_summary,
                     auto_count,
                     manual_count,
                 )
@@ -944,6 +975,7 @@ def register_retroactive_metadata_enhancement_job(
     ):
         def _worker(batch_size, check_all_files, limit):
             try:
+                from core.event_bus import event_bus
                 from core.tiered_logger import get_logger
                 from services.metadata_enhancer import RetroactiveEnhancer
 
@@ -951,7 +983,32 @@ def register_retroactive_metadata_enhancement_job(
                 logger.info(
                     "Starting scheduled retroactive metadata enhancement job (child process)"
                 )
-                RetroactiveEnhancer().enhance_library_metadata(
+
+                def update_progress(current: int, total: int, status: str = ""):
+                    event_bus.publish(
+                        "job_progress",
+                        {
+                            "job_name": "retroactive_metadata_enhancement",
+                            "phase": "fingerprinting",
+                            "current": current,
+                            "total": total,
+                            "status": status,
+                            "percentage": (
+                                round((current / total) * 100, 1) if total > 0 else 0
+                            ),
+                        },
+                    )
+
+                enhancer = RetroactiveEnhancer()
+                # Phase 1: Native Rust audio fingerprinting pre-pass
+                logger.info("Executing Phase 1: Native Rust fingerprinting pre-pass...")
+                enhancer.backfill_missing_fingerprints(
+                    batch_size=50, progress_callback=update_progress
+                )
+
+                # Phase 2: Metadata enhancement with local cache resolution
+                logger.info("Executing Phase 2: Metadata enhancement...")
+                enhancer.enhance_library_metadata(
                     batch_size=batch_size, check_all_files=check_all_files, limit=limit
                 )
                 logger.info("Retroactive metadata enhancement job complete")

@@ -140,7 +140,11 @@ class DeduplicationService:
         with self.db.session_scope() as session:
             track = (
                 session.query(Track)
-                .options(selectinload(Track.media_files), joinedload(Track.artist))
+                .options(
+                    selectinload(Track.media_files),
+                    joinedload(Track.artist),
+                    joinedload(Track.album),
+                )
                 .filter(Track.id == track_id)
                 .first()
             )
@@ -153,7 +157,27 @@ class DeduplicationService:
             br_str = str(winner.bitrate or 0)
             reason_str = f"1:N Duplicate Media for '{track.title}': keeping best quality media {winner.media_id} ({br_str}kbps), pruning {len(losers)} inferior copies."
 
+            tracks_payload = [
+                {
+                    "id": track.id,
+                    "title": track.title,
+                    "artist": track.artist.name if track.artist else "Unknown Artist",
+                    "album": track.album.title if track.album else "Unknown Album",
+                    "duration": track.duration,
+                    "media_id": m.media_id,
+                    "path": m.file_path,
+                    "bitrate": m.bitrate,
+                    "format": m.file_format,
+                    "sample_rate": m.sample_rate,
+                    "bit_depth": m.bit_depth,
+                    "is_kept": (m.media_id == winner.media_id),
+                }
+                for m in media_candidates
+            ]
+
             payload = {
+                "type": "Duplicate Resolution",
+                "originator": "System",
                 "event": "system_duplicate",
                 "event_type": "system_duplicate",
                 "subtype": "relational_duplicate",
@@ -166,6 +190,7 @@ class DeduplicationService:
                 "confidence_score": 100.0,
                 "requires_manual_review": False,
                 "reason": reason_str,
+                "tracks": tracks_payload,
             }
 
             event_bus.publish(payload)
@@ -232,16 +257,43 @@ class DeduplicationService:
             details_str = ", ".join(reasoning_parts)
             reason_str = f"Acoustic duplicate for '{winner.title}'. Confidence: {score_formatted}%. Details: {details_str}"
 
+            tracks_payload = [
+                {
+                    "id": t.id,
+                    "title": t.title,
+                    "artist": t.artist.name if t.artist else "Unknown Artist",
+                    "album": t.album.title if t.album else "Unknown Album",
+                    "duration": t.duration,
+                    "path": t.file_path,
+                    "media_id": t.get_best_media().media_id
+                    if t.get_best_media()
+                    else None,
+                    "bitrate": t.get_best_media().bitrate
+                    if t.get_best_media()
+                    else None,
+                    "format": t.get_best_media().file_format
+                    if t.get_best_media()
+                    else None,
+                    "is_kept": (t.id == winner.id),
+                }
+                for t in tracks
+            ]
+
             payload = {
+                "type": "Duplicate Resolution",
+                "originator": "System",
                 "event": "system_duplicate",
                 "event_type": "system_duplicate",
                 "subtype": "acoustic_duplicate",
+                "title": winner.title,
+                "artist": winner.artist.name if winner.artist else "Unknown Artist",
                 "keep_id": winner.id,
                 "sync_id": winner.sync_id,
                 "delete_ids": [t.id for t in losers],
                 "confidence_score": min_confidence,
                 "requires_manual_review": requires_manual_review,
                 "reason": reason_str,
+                "tracks": tracks_payload,
             }
 
             event_bus.publish(payload)
@@ -259,6 +311,16 @@ class DeduplicationService:
 
     def scan_library_duplicates(self) -> dict[str, Any]:
         """Full scan of music database for both 1:N relational duplicates and cross-track acoustic duplicates."""
+        from services.library_hygiene import LibraryHygieneService
+
+        try:
+            hygiene = LibraryHygieneService(self.db)
+            hygiene.backfill_missing_fingerprints()
+        except Exception as e:
+            logger.warning(
+                f"Failed to backfill missing fingerprints during deduplication scan: {e}"
+            )
+
         results = {
             "relational_duplicates": [],
             "acoustic_duplicates": [],
