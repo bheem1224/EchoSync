@@ -762,7 +762,9 @@ def test_retroactive_enhancer_short_circuits_via_local_fingerprint(
 
     import datetime
 
-    shared_chromaprint = "shared_chromaprint_daft_punk_get_lucky_12345"
+    shared_chromaprint = (
+        "shared_chromaprint_daft_punk_get_lucky_1234567890_canonical_sample"
+    )
 
     with db.session_scope() as session:
         artist = Artist(name="Daft Punk")
@@ -987,3 +989,265 @@ def test_retroactive_enhancer_backfill_missing_fingerprints_telemetry(
     assert len(progress_events) >= 2
     assert progress_events[-1]["current"] == 2
     assert progress_events[-1]["percentage"] == 100.0
+
+
+def test_trust_gate_rejects_divergent_candidate(tmp_path, monkeypatch):
+    """Verify that a candidate with divergent title is rejected, not written, and staged for manual review."""
+    from core.nexus_framework.plugin_loader import PluginRegistry
+    from database.music_database import (
+        Album,
+        Artist,
+        Base,
+        LocalMedia,
+        MusicDatabase,
+        Track,
+    )
+    from database.working_database import (
+        SuggestionStagingQueue,
+        WorkingBase,
+        WorkingDatabase,
+    )
+    from services.metadata_enhancer import RetroactiveEnhancer
+
+    music_db = MusicDatabase(tmp_path / "music.db")
+    Base.metadata.create_all(music_db.engine)
+
+    working_db = WorkingDatabase(tmp_path / "working.db")
+    WorkingBase.metadata.create_all(working_db.engine)
+
+    audio_file = tmp_path / "00 - My Way.flac"
+    audio_file.write_bytes(b"dummy audio data for my way")
+
+    with music_db.session_scope() as session:
+        artist = Artist(name="Calvin Harris", normalized_name="calvin harris")
+        album = Album(
+            title="Unknown Album",
+            normalized_title="unknown album",
+            artist=artist,
+        )
+        session.add_all([artist, album])
+        session.flush()
+
+        track = Track(
+            title="My Way",
+            normalized_title="my way",
+            sync_id="sync_calvin_harris_my_way",
+            musicbrainz_id="mbid-my-way-initial",
+            artist=artist,
+            album=album,
+        )
+        session.add(track)
+        session.flush()
+
+        media = LocalMedia(
+            track_id=track.id,
+            file_path=str(audio_file),
+            file_format="flac",
+            media_id="media_my_way_01",
+        )
+        session.add(media)
+
+    monkeypatch.setattr("database.music_database.get_database", lambda: music_db)
+    monkeypatch.setattr("database.get_database", lambda: music_db)
+    monkeypatch.setattr(
+        "database.working_database.get_working_database", lambda: working_db
+    )
+
+    written_tags = []
+    monkeypatch.setattr(
+        "services.metadata_enhancer._tagging_write",
+        lambda p, tags: written_tags.append((p, tags)),
+    )
+
+    import echosync_core
+
+    monkeypatch.setattr(
+        echosync_core,
+        "extract_metadata",
+        lambda p: {
+            "title": "My Way",
+            "artist": "Calvin Harris",
+            "album": "Unknown Album",
+            "mbid": "mbid-my-way-initial",
+        },
+    )
+
+    # Candidate incorrectly returns "We Found Love"
+    mock_mb = MagicMock()
+    mock_mb.capabilities = type("Caps", (), {"supports_batching": False})()
+    mock_mb.get_metadata.return_value = {
+        "title": "We Found Love",
+        "artist": "Calvin Harris",
+        "album": "18 Months",
+        "year": 2011,
+        "isrc": "GBARL1101234",
+    }
+    monkeypatch.setattr(
+        PluginRegistry,
+        "get_plugin",
+        lambda name: mock_mb,
+    )
+
+    enhancer = RetroactiveEnhancer()
+    enhancer.enhance_library_metadata(batch_size=1, limit=1, check_all_files=False)
+
+    # 1. Tags were NOT written to disk
+    assert len(written_tags) == 0
+
+    # 2. File still exists at its original path (not moved to downloads)
+    assert audio_file.exists()
+
+    # 3. Track in music.db did not adopt the divergent title
+    with music_db.session_scope() as session:
+        t = session.query(Track).filter_by(sync_id="sync_calvin_harris_my_way").first()
+        assert t.title == "My Way"
+        assert t.title != "We Found Love"
+        assert t.metadata_status.get("trust_gate_rejected") is True
+
+    # 4. Staged in SuggestionStagingQueue as MANUAL_REVIEW / METADATA_DIVERGENCE
+    with working_db.session_scope() as w_session:
+        staged = (
+            w_session.query(SuggestionStagingQueue)
+            .filter_by(
+                sync_id="sync_calvin_harris_my_way",
+                reason="METADATA_DIVERGENCE",
+            )
+            .first()
+        )
+        assert staged is not None
+        assert staged.status == "MANUAL_REVIEW"
+        assert staged.context_data["candidate_metadata"]["title"] == "We Found Love"
+
+
+def test_force_refresh_includes_enhanced_tracks(tmp_path, monkeypatch):
+    """Verify force_refresh includes tracks with enhanced == True."""
+    from database.music_database import (
+        Album,
+        Artist,
+        Base,
+        LocalMedia,
+        MusicDatabase,
+        Track,
+    )
+    from services.metadata_enhancer import RetroactiveEnhancer
+
+    db = MusicDatabase(tmp_path / "test_force_refresh.db")
+    Base.metadata.create_all(db.engine)
+
+    with db.session_scope() as session:
+        artist = Artist(name="Artist A")
+        album = Album(title="Album A", artist=artist)
+        session.add_all([artist, album])
+        session.flush()
+
+        # Track already marked as enhanced
+        t_enhanced = Track(
+            title="Song Enhanced",
+            artist=artist,
+            album=album,
+            musicbrainz_id="mbid-enhanced-1",
+            metadata_status={"enhanced": True},
+        )
+        session.add(t_enhanced)
+        session.flush()
+
+        media = LocalMedia(
+            track_id=t_enhanced.id,
+            file_path=str(tmp_path / "song.flac"),
+            file_format="flac",
+            media_id="m_enhanced_1",
+        )
+        session.add(media)
+
+    monkeypatch.setattr("database.music_database.get_database", lambda: db)
+    monkeypatch.setattr("database.get_database", lambda: db)
+
+    enhancer = RetroactiveEnhancer()
+
+    # Without force_refresh, enhanced tracks are skipped
+    with db.session_scope() as session:
+        tracks_normal = enhancer.get_tracks_for_enhancement(
+            session=session, force_refresh=False
+        )
+        assert len(tracks_normal) == 0
+
+        # With force_refresh=True, enhanced track is included
+        tracks_forced = enhancer.get_tracks_for_enhancement(
+            session=session, force_refresh=True
+        )
+        assert len(tracks_forced) == 1
+        assert tracks_forced[0].title == "Song Enhanced"
+
+
+def test_revert_track_metadata_from_disk(tmp_path, monkeypatch):
+    """Verify revert_track_metadata_from_disk restores track metadata from physical file tags."""
+    from database.music_database import (
+        Album,
+        Artist,
+        Base,
+        LocalMedia,
+        MusicDatabase,
+        Track,
+    )
+    from services.metadata_enhancer import revert_track_metadata_from_disk
+
+    db = MusicDatabase(tmp_path / "test_revert.db")
+    Base.metadata.create_all(db.engine)
+
+    flac_path = tmp_path / "00 - My Way.flac"
+    flac_path.write_bytes(b"dummy flac data")
+
+    with db.session_scope() as session:
+        artist = Artist(name="Corrupted Artist")
+        album = Album(title="Corrupted Album", artist=artist)
+        session.add_all([artist, album])
+        session.flush()
+
+        # Track was falsely overwritten with wrong title, mbid, and marked enhanced
+        track = Track(
+            title="We Found Love",
+            normalized_title="we found love",
+            musicbrainz_id="erroneous-mbid-12345",
+            isrc="ERRONEOUS_ISRC_999",
+            metadata_status={"enhanced": True},
+            artist=artist,
+            album=album,
+        )
+        session.add(track)
+        session.flush()
+
+        media = LocalMedia(
+            track_id=track.id,
+            file_path=str(flac_path),
+            file_format="flac",
+            media_id="media_my_way_revert",
+        )
+        session.add(media)
+        track_id = track.id
+
+    monkeypatch.setattr("database.music_database.get_database", lambda: db)
+    monkeypatch.setattr("database.get_database", lambda: db)
+
+    import echosync_core
+
+    monkeypatch.setattr(
+        echosync_core,
+        "extract_metadata",
+        lambda p: {
+            "title": "My Way",
+            "artist": "Calvin Harris",
+            "album": "Chilled House",
+        },
+    )
+
+    success = revert_track_metadata_from_disk(track_id)
+    assert success is True
+
+    with db.session_scope() as session:
+        t = session.get(Track, track_id)
+        assert t.title == "My Way"
+        assert t.normalized_title == "my way"
+        assert t.musicbrainz_id is None
+        assert t.isrc is None
+        assert t.metadata_status.get("enhanced") is False
+        assert t.metadata_status.get("reverted_from_disk") is True

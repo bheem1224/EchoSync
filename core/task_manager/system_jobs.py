@@ -964,6 +964,7 @@ def register_retroactive_metadata_enhancement_job(
     batch_size: int = 100,
     check_all_files: bool = False,
     limit: int | None = None,
+    force_refresh: bool = False,
 ):
     """Register a daily job to fill in missing MusicBrainz IDs for library tracks."""
 
@@ -971,9 +972,10 @@ def register_retroactive_metadata_enhancement_job(
         batch_size: int = 100,
         check_all_files: bool = False,
         limit: int | None = None,
+        force_refresh: bool = False,
         **kwargs,
     ):
-        def _worker(batch_size, check_all_files, limit):
+        def _worker(batch_size, check_all_files, limit, force_refresh):
             try:
                 from core.event_bus import event_bus
                 from core.tiered_logger import get_logger
@@ -1009,7 +1011,10 @@ def register_retroactive_metadata_enhancement_job(
                 # Phase 2: Metadata enhancement with local cache resolution
                 logger.info("Executing Phase 2: Metadata enhancement...")
                 enhancer.enhance_library_metadata(
-                    batch_size=batch_size, check_all_files=check_all_files, limit=limit
+                    batch_size=batch_size,
+                    check_all_files=check_all_files,
+                    limit=limit,
+                    force_refresh=force_refresh,
                 )
                 logger.info("Retroactive metadata enhancement job complete")
             except Exception as e:
@@ -1026,7 +1031,9 @@ def register_retroactive_metadata_enhancement_job(
             from core.task_manager.supervisor import supervisor
 
             p = multiprocessing.Process(
-                target=_worker, args=(batch_size, check_all_files, limit), daemon=True
+                target=_worker,
+                args=(batch_size, check_all_files, limit, force_refresh),
+                daemon=True,
             )
             p.start()
 

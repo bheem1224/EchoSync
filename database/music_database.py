@@ -229,6 +229,34 @@ class Track(Base):
         JSON, default=dict, server_default="{}"
     )
 
+    @hybrid_property
+    def enhanced(self) -> bool:
+        if self.metadata_status and isinstance(self.metadata_status, dict):
+            return bool(self.metadata_status.get("enhanced"))
+        return False
+
+    @enhanced.setter
+    def enhanced(self, value: bool) -> None:
+        if not self.metadata_status or not isinstance(self.metadata_status, dict):
+            self.metadata_status = {}
+        self.metadata_status["enhanced"] = bool(value)
+        try:
+            from sqlalchemy.orm.attributes import flag_modified
+
+            flag_modified(self, "metadata_status")
+        except Exception:
+            pass
+
+    @enhanced.expression
+    def enhanced(cls):
+        from sqlalchemy import func, or_
+
+        return or_(
+            func.json_extract(cls.metadata_status, "$.enhanced") == True,
+            func.json_extract(cls.metadata_status, "$.enhanced") == "true",
+            func.json_extract(cls.metadata_status, "$.enhanced") == 1,
+        )
+
     __table_args__ = (UniqueConstraint("sync_id", name="uq_tracks_sync_id"),)
 
     album: Mapped[Album | None] = relationship(back_populates="tracks")
