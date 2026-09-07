@@ -15,6 +15,7 @@ import random
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 import requests
 from requests import Response
@@ -125,8 +126,26 @@ class RequestManager:
             return True
         return False
 
-    def _backoff_sleep(self, attempt: int):
-        """Apply exponential backoff with jitter."""
+    def _backoff_sleep(self, attempt: int, resp: Response | None = None):
+        """Apply exponential backoff with jitter, respecting Retry-After header if present."""
+        if resp is not None:
+            retry_after = resp.headers.get("Retry-After")
+            if retry_after:
+                try:
+                    delay = float(retry_after)
+                    time.sleep(max(0.0, delay))
+                    return
+                except (ValueError, TypeError):
+                    try:
+                        from email.utils import parsedate_to_datetime
+
+                        dt = parsedate_to_datetime(retry_after)
+                        delay = (dt - datetime.now(timezone.utc)).total_seconds()
+                        if delay > 0:
+                            time.sleep(min(delay, self.retry.max_backoff))
+                            return
+                    except Exception:
+                        pass
         back = min(
             self.retry.base_backoff * (2 ** (attempt - 1)), self.retry.max_backoff
         )
@@ -151,14 +170,14 @@ class RequestManager:
         attempt = 0
         last_exc: Exception | None = None
         last_resp: Response | None = None
+        timeout = kwargs.get("timeout", 15)
+        req_kwargs = {k: v for k, v in kwargs.items() if k != "timeout"}
 
         while True:
             attempt += 1
             try:
                 self._apply_rate_limit(url)
-                resp = self._session.request(
-                    method, url, timeout=kwargs.pop("timeout", 15), **kwargs
-                )
+                resp = self._session.request(method, url, timeout=timeout, **req_kwargs)
                 if not self._should_retry(resp, None, attempt):
                     if resp.status_code >= 400:
                         raise HttpError(
@@ -175,7 +194,7 @@ class RequestManager:
                         raise e
                     raise HttpError(f"HTTP error for {url}: {e}")
 
-            self._backoff_sleep(attempt)
+            self._backoff_sleep(attempt, resp=last_resp)
 
     def get(self, url: str, **kwargs) -> Response:
         """Make a GET request."""

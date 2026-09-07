@@ -1,19 +1,20 @@
 <script>
-  import { onMount, tick } from 'svelte';
-  import { page } from '$app/stores';
-  import apiClient from '../../api/client';
-  import { player } from '../../stores/player';
-  import TrackRow from '$lib/components/TrackRow.svelte';
-  import Omnibar from '$lib/components/Omnibar.svelte';
-  import MetadataReviewModal from '$lib/components/MetadataReviewModal.svelte';
+  import { onMount, tick } from "svelte";
+  import { page } from "$app/stores";
+  import { goto } from "$app/navigation";
+  import apiClient from "../../api/client";
+  import { player } from "../../stores/player";
+  import TrackRow from "$lib/components/TrackRow.svelte";
+  import Omnibar from "$lib/components/Omnibar.svelte";
+  import MetadataReviewModal from "$lib/components/MetadataReviewModal.svelte";
 
   // Collection Data
   let libraryIndex = $state([]);
   let loading = $state(true);
-  let error = $state('');
+  let error = $state("");
 
   // UI State
-  let viewMode = $state('grid'); // 'grid' | 'detail'
+  let viewMode = $state("grid"); // 'grid' | 'detail'
   let selectedArtist = $state(null);
 
   // Metadata Review Modal State
@@ -27,7 +28,7 @@
   async function loadLibrary() {
     loading = true;
     try {
-      const res = await apiClient.get('/core/library/index');
+      const res = await apiClient.get("/core/library/index");
       libraryIndex = res.data || [];
     } catch (err) {
       error = err.message;
@@ -42,453 +43,549 @@
 
   // Reactive deep linking logic
   $effect(() => {
-    const artistId = $page.url.searchParams.get('artist_id');
-    if (libraryIndex.length > 0 && artistId && (artistId !== handledDeepLinkArtistId || viewMode !== 'detail')) {
+    const artistId = $page.url.searchParams.get("artist_id");
+    if (!artistId) {
+      handledDeepLinkArtistId = null;
+      return;
+    }
+    if (libraryIndex.length > 0 && artistId !== handledDeepLinkArtistId) {
       handledDeepLinkArtistId = artistId;
       handleDeepLinks();
     }
   });
 
   async function handleDeepLinks() {
-      const artistId = $page.url.searchParams.get('artist_id');
-      const highlightTrackId = $page.url.searchParams.get('highlight_track');
-      const highlightAlbumId = $page.url.searchParams.get('highlight_album');
+    const artistId = $page.url.searchParams.get("artist_id");
+    const highlightTrackId = $page.url.searchParams.get("highlight_track");
+    const highlightAlbumId = $page.url.searchParams.get("highlight_album");
 
-      if (artistId) {
-          const artistIndex = libraryIndex.findIndex(a => String(a.id) === String(artistId));
-          if (artistIndex !== -1) {
-              const artist = libraryIndex[artistIndex];
+    if (artistId) {
+      const artistIndex = libraryIndex.findIndex(
+        (a) => String(a.id) === String(artistId),
+      );
+      if (artistIndex !== -1) {
+        const artist = libraryIndex[artistIndex];
 
-              if (artistIndex >= visibleCount) {
-                  visibleCount = artistIndex + PAGE_SIZE;
-              }
+        if (artistIndex >= visibleCount) {
+          visibleCount = artistIndex + PAGE_SIZE;
+        }
 
-              await selectArtist(artist);
-              await tick();
+        await selectArtist(artist);
+        await tick();
 
-              let targetId = null;
-              if (highlightTrackId) targetId = `track-${highlightTrackId}`;
-              else if (highlightAlbumId) targetId = `album-${highlightAlbumId}`;
+        let targetId = null;
+        if (highlightTrackId) targetId = `track-${highlightTrackId}`;
+        else if (highlightAlbumId) targetId = `album-${highlightAlbumId}`;
 
-              if (targetId) {
-                  const element = document.getElementById(targetId);
-                  if (element) {
-                      element.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                      element.classList.add('flash-highlight');
-                      setTimeout(() => element.classList.remove('flash-highlight'), 2000);
-                  }
-              }
+        if (targetId) {
+          const element = document.getElementById(targetId);
+          if (element) {
+            element.scrollIntoView({ behavior: "smooth", block: "center" });
+            element.classList.add("flash-highlight");
+            setTimeout(() => element.classList.remove("flash-highlight"), 2000);
           }
+        }
       }
+    }
   }
 
   const visibleArtists = $derived(libraryIndex.slice(0, visibleCount));
 
   function loadMore() {
-      if (visibleCount < libraryIndex.length) {
-          visibleCount += PAGE_SIZE;
-      }
+    if (visibleCount < libraryIndex.length) {
+      visibleCount += PAGE_SIZE;
+    }
   }
 
   async function selectArtist(artist) {
-      selectedArtist = artist;
-      viewMode = 'detail';
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+    selectedArtist = artist;
+    viewMode = "detail";
+    window.scrollTo({ top: 0, behavior: "smooth" });
 
-      // Parent-driven JIT bulk hydration for all tracks under this artist
-      const allTracks = artist.albums.flatMap(a => a.tracks);
-      const tracksNeedingHydration = allTracks.filter(t => !hydratedSyncIds.has(t.sync_id) && (!t.media || t.media.length === 0) && t.sync_id);
-      
-      if (tracksNeedingHydration.length > 0) {
-          // Immediately mark sync IDs to avoid duplicate in-flight or re-triggered requests
-          tracksNeedingHydration.forEach(t => hydratedSyncIds.add(t.sync_id));
-          const syncIds = tracksNeedingHydration.map(t => t.sync_id).join(',');
-          try {
-              const res = await apiClient.get(`/core/tracks?detail=true&ids=${encodeURIComponent(syncIds)}`);
-              if (res.data && res.data.items) {
-                  const detailedTracksMap = new Map(res.data.items.map(dt => [dt.sync_id, dt]));
-                  // Update tracks in-place
-                  for (const album of artist.albums) {
-                      album.tracks = album.tracks.map(t => {
-                          if (detailedTracksMap.has(t.sync_id)) {
-                              return { ...t, media: detailedTracksMap.get(t.sync_id).media };
-                          }
-                          return t;
-                      });
-                  }
-                  // Force Svelte 5 state reactivity
-                  selectedArtist = { ...selectedArtist };
+    // Parent-driven JIT bulk hydration for all tracks under this artist
+    const allTracks = artist.albums.flatMap((a) => a.tracks);
+    const tracksNeedingHydration = allTracks.filter(
+      (t) =>
+        !hydratedSyncIds.has(t.sync_id) &&
+        (!t.media || t.media.length === 0) &&
+        t.sync_id,
+    );
+
+    if (tracksNeedingHydration.length > 0) {
+      // Immediately mark sync IDs to avoid duplicate in-flight or re-triggered requests
+      tracksNeedingHydration.forEach((t) => hydratedSyncIds.add(t.sync_id));
+      const syncIds = tracksNeedingHydration.map((t) => t.sync_id).join(",");
+      try {
+        const res = await apiClient.get(
+          `/core/tracks?detail=true&ids=${encodeURIComponent(syncIds)}`,
+        );
+        if (res.data && res.data.items) {
+          const detailedTracksMap = new Map(
+            res.data.items.map((dt) => [dt.sync_id, dt]),
+          );
+          // Update tracks in-place
+          for (const album of artist.albums) {
+            album.tracks = album.tracks.map((t) => {
+              if (detailedTracksMap.has(t.sync_id)) {
+                return { ...t, media: detailedTracksMap.get(t.sync_id).media };
               }
-          } catch (err) {
-              console.error("Bulk hydration failed:", err);
+              return t;
+            });
           }
+          // Force Svelte 5 state reactivity
+          selectedArtist = { ...selectedArtist };
+        }
+      } catch (err) {
+        console.error("Bulk hydration failed:", err);
       }
+    }
   }
 
-  function backToGrid() {
-      selectedArtist = null;
-      viewMode = 'grid';
-      handledDeepLinkArtistId = null;
-      const url = new URL(window.location);
-      url.search = '';
-      window.history.pushState({}, '', url);
+  async function backToGrid() {
+    selectedArtist = null;
+    viewMode = "grid";
+    handledDeepLinkArtistId = null;
+    if ($page.url.search) {
+      await goto("/library", {
+        replaceState: true,
+        noScroll: true,
+        keepFocus: true,
+      });
+    }
   }
 
   function playTrack(track, artist, album) {
-      player.play({
-          ...track,
-          artist: artist.name,
-          album: album.title,
-          cover: album.cover_image_url || artist.image_url
-      });
+    player.play({
+      ...track,
+      artist: artist.name,
+      album: album.title,
+      cover: album.cover_image_url || artist.image_url,
+    });
   }
 
   async function deleteTrack(trackId, album) {
-      if (!confirm("Are you sure you want to delete this track? This action cannot be undone.")) return;
-      try {
-          await apiClient.delete(`/core/library/${trackId}`);
-          updateLocalStateAfterDelete(trackId, album);
-      } catch (err) {
-          alert(`Failed to delete: ${err.message}`);
-      }
+    if (
+      !confirm(
+        "Are you sure you want to delete this track? This action cannot be undone.",
+      )
+    )
+      return;
+    try {
+      await apiClient.delete(`/core/library/${trackId}`);
+      updateLocalStateAfterDelete(trackId, album);
+    } catch (err) {
+      alert(`Failed to delete: ${err.message}`);
+    }
   }
 
   async function forceDeleteTrack(trackId, album) {
-      if (!confirm("⚠️ FORCE DELETE: This will set the system flag to DELETE (0.1). Continue?")) return;
-      try {
-          await apiClient.post(`/system/manager/track/${trackId}/override`, { action: 'delete' });
-          updateLocalStateAfterDelete(trackId, album);
-      } catch (err) {
-          alert(`Failed to force delete: ${err.message}`);
-      }
+    if (
+      !confirm(
+        "⚠️ FORCE DELETE: This will set the system flag to DELETE (0.1). Continue?",
+      )
+    )
+      return;
+    try {
+      await apiClient.post(`/system/manager/track/${trackId}/override`, {
+        action: "delete",
+      });
+      updateLocalStateAfterDelete(trackId, album);
+    } catch (err) {
+      alert(`Failed to force delete: ${err.message}`);
+    }
   }
 
   function updateLocalStateAfterDelete(trackId, album) {
-      album.tracks = album.tracks.filter(t => t.id !== trackId);
-      if (album.tracks.length === 0) {
-           selectedArtist.albums = selectedArtist.albums.filter(a => a.id !== album.id);
-      }
-      // Re-assign to trigger Svelte 5 state update if needed (though mutation in $state is often fine)
-      libraryIndex = [...libraryIndex];
-      if (selectedArtist) selectedArtist = {...selectedArtist};
+    album.tracks = album.tracks.filter((t) => t.id !== trackId);
+    if (album.tracks.length === 0) {
+      selectedArtist.albums = selectedArtist.albums.filter(
+        (a) => a.id !== album.id,
+      );
+    }
+    // Re-assign to trigger Svelte 5 state update if needed (though mutation in $state is often fine)
+    libraryIndex = [...libraryIndex];
+    if (selectedArtist) selectedArtist = { ...selectedArtist };
   }
 
   async function forceUpgradeTrack(trackId) {
-      if (!confirm("Force Upgrade? This will mark the track as needing an upgrade.")) return;
-      try {
-          await apiClient.post(`/system/manager/track/${trackId}/override`, { action: 'upgrade' });
-          alert("Marked for upgrade.");
-      } catch (err) {
-          alert(`Failed: ${err.message}`);
-      }
+    if (
+      !confirm("Force Upgrade? This will mark the track as needing an upgrade.")
+    )
+      return;
+    try {
+      await apiClient.post(`/system/manager/track/${trackId}/override`, {
+        action: "upgrade",
+      });
+      alert("Marked for upgrade.");
+    } catch (err) {
+      alert(`Failed: ${err.message}`);
+    }
   }
 
   async function fetchMetadata(trackId) {
-      try {
-          const res = await apiClient.post(`/system/manager/track/${trackId}/fetch_metadata`);
-          if (res.data && res.data.task) {
-              reviewTask = res.data.task;
-              showReviewModal = true;
-          } else {
-              alert(res.data?.error || 'Failed to initialize metadata editor for this track.');
-          }
-      } catch (err) {
-          alert(`Failed to fetch metadata: ${err.message}`);
+    try {
+      const res = await apiClient.post(
+        `/system/manager/track/${trackId}/fetch_metadata`,
+      );
+      if (res.data && res.data.task) {
+        reviewTask = res.data.task;
+        showReviewModal = true;
+      } else {
+        alert(
+          res.data?.error ||
+            "Failed to initialize metadata editor for this track.",
+        );
       }
+    } catch (err) {
+      alert(`Failed to fetch metadata: ${err.message}`);
+    }
   }
 
   function handleReviewClose() {
-      showReviewModal = false;
-      reviewTask = null;
+    showReviewModal = false;
+    reviewTask = null;
   }
 
   async function handleReviewApproved() {
-      showReviewModal = false;
-      reviewTask = null;
-      await loadLibrary();
+    showReviewModal = false;
+    reviewTask = null;
+    await loadLibrary();
   }
 
   onMount(loadLibrary);
 </script>
 
 {#if loading}
-    <div class="empty-state">
-        <div class="spinner"></div>
-        <p>Loading library index...</p>
-    </div>
+  <div class="empty-state">
+    <div class="spinner"></div>
+    <p>Loading library index...</p>
+  </div>
 {:else if error}
-    <div class="error-msg text-center p-12">{error}</div>
+  <div class="error-msg text-center p-12">{error}</div>
 {:else}
+  <!-- GRID VIEW -->
+  {#if viewMode === "grid"}
+    <div class="mb-6">
+      <Omnibar
+        forcedPrefix="# "
+        placeholder="Search your local library for artists, albums, or tracks..."
+        mode="inline"
+      />
+    </div>
 
-    <!-- GRID VIEW -->
-    {#if viewMode === 'grid'}
-        <div class="mb-6">
-            <Omnibar forcedPrefix="# " placeholder="Search your local library for artists, albums, or tracks..." mode="inline" />
+    <div class="artist-grid">
+      {#each visibleArtists as artist (artist.id)}
+        <div
+          class="card artist-card"
+          on:click={() => selectArtist(artist)}
+          on:keydown={(e) => e.key === "Enter" && selectArtist(artist)}
+          role="button"
+          tabindex="0"
+        >
+          <div class="card-image">
+            {#if artist.image_url}
+              <img src={artist.image_url} alt={artist.name} loading="lazy" />
+            {:else}
+              <span class="placeholder">👤</span>
+            {/if}
+          </div>
+          <div class="card-info">
+            <h3>{artist.name}</h3>
+            <span class="sub">{artist.albums.length} Albums</span>
+          </div>
         </div>
+      {/each}
+    </div>
 
-        <div class="artist-grid">
-            {#each visibleArtists as artist (artist.id)}
-                <div
-                    class="card artist-card"
-                    on:click={() => selectArtist(artist)}
-                    on:keydown={(e) => e.key === 'Enter' && selectArtist(artist)}
-                    role="button"
-                    tabindex="0"
-                >
-                    <div class="card-image">
-                        {#if artist.image_url}
-                            <img src={artist.image_url} alt={artist.name} loading="lazy" />
-                        {:else}
-                            <span class="placeholder">👤</span>
-                        {/if}
-                    </div>
-                    <div class="card-info">
-                        <h3>{artist.name}</h3>
-                        <span class="sub">{artist.albums.length} Albums</span>
-                    </div>
-                </div>
-            {/each}
-        </div>
+    {#if visibleCount < libraryIndex.length}
+      <div class="text-center mt-10">
+        <button
+          class="btn active:scale-95 transition-all duration-200"
+          on:click={loadMore}
+        >
+          Load More
+        </button>
+      </div>
+    {/if}
 
-        {#if visibleCount < libraryIndex.length}
-            <div class="text-center mt-10">
-                <button
-                    class="btn active:scale-95 transition-all duration-200"
-                    on:click={loadMore}
-                >
-                    Load More
-                </button>
-            </div>
-        {/if}
-
-        {#if libraryIndex.length === 0}
-            <div class="empty-state">
-                <p>No artists found.</p>
-            </div>
-        {/if}
+    {#if libraryIndex.length === 0}
+      <div class="empty-state">
+        <p>No artists found.</p>
+      </div>
+    {/if}
 
     <!-- DETAIL VIEW -->
-    {:else if viewMode === 'detail' && selectedArtist}
-        <div class="animate-fade-in">
-            <button class="btn btn-link mb-6 active:scale-95 transition-all duration-200" on:click={backToGrid}>
-                ← Back to Artists
-            </button>
+  {:else if viewMode === "detail" && selectedArtist}
+    <div class="animate-fade-in">
+      <button
+        class="btn btn-link mb-6 active:scale-95 transition-all duration-200"
+        on:click={backToGrid}
+      >
+        ← Back to Artists
+      </button>
 
-            <div class="artist-header card">
-                <img
-                    src={selectedArtist.image_url || ''}
-                    alt={selectedArtist.name}
-                    class="artist-hero-img"
-                    on:error={(e) => e.target.style.display='none'}
-                />
-                <div>
-                    <h2>{selectedArtist.name}</h2>
-                    <p class="sub">{selectedArtist.albums.reduce((acc, a) => acc + a.tracks.length, 0)} Tracks</p>
-                </div>
-            </div>
-
-            <div class="space-y-8 mt-8">
-                {#each selectedArtist.albums as album (album.id)}
-                    <div class="card album-card-container" id="album-{album.id}">
-                        <div class="album-header">
-                            <div class="album-cover-container">
-                                {#if album.cover_image_url}
-                                    <img src={album.cover_image_url} alt={album.title} class="album-cover"/>
-                                {:else}
-                                    <span class="placeholder-icon">💿</span>
-                                {/if}
-                            </div>
-                            <div>
-                                <h3>{album.title}</h3>
-                                <span class="sub">{album.year || 'Unknown Year'}</span>
-                            </div>
-                        </div>
-
-                        <div class="tracks-list">
-                            {#each album.tracks as track}
-                                <div id="track-{track.id}">
-                                    <TrackRow
-                                        {track}
-                                        artist={selectedArtist}
-                                        {album}
-                                        onPlay={playTrack}
-                                        onDelete={deleteTrack}
-                                        onFetchMetadata={fetchMetadata}
-                                        onForceUpgrade={forceUpgradeTrack}
-                                        onForceDelete={forceDeleteTrack}
-                                    />
-                                </div>
-                            {/each}
-                        </div>
-                    </div>
-                {/each}
-            </div>
+      <div class="artist-header card">
+        <img
+          src={selectedArtist.image_url || ""}
+          alt={selectedArtist.name}
+          class="artist-hero-img"
+          on:error={(e) => (e.target.style.display = "none")}
+        />
+        <div>
+          <h2>{selectedArtist.name}</h2>
+          <p class="sub">
+            {selectedArtist.albums.reduce((acc, a) => acc + a.tracks.length, 0)}
+            Tracks
+          </p>
         </div>
-    {/if}
+      </div>
+
+      <div class="space-y-8 mt-8">
+        {#each selectedArtist.albums as album (album.id)}
+          <div class="card album-card-container" id="album-{album.id}">
+            <div class="album-header">
+              <div class="album-cover-container">
+                {#if album.cover_image_url}
+                  <img
+                    src={album.cover_image_url}
+                    alt={album.title}
+                    class="album-cover"
+                  />
+                {:else}
+                  <span class="placeholder-icon">💿</span>
+                {/if}
+              </div>
+              <div>
+                <h3>{album.title}</h3>
+                <span class="sub">{album.year || "Unknown Year"}</span>
+              </div>
+            </div>
+
+            <div class="tracks-list">
+              {#each album.tracks as track}
+                <div id="track-{track.id}">
+                  <TrackRow
+                    {track}
+                    artist={selectedArtist}
+                    {album}
+                    onPlay={playTrack}
+                    onDelete={deleteTrack}
+                    onFetchMetadata={fetchMetadata}
+                    onForceUpgrade={forceUpgradeTrack}
+                    onForceDelete={forceDeleteTrack}
+                  />
+                </div>
+              {/each}
+            </div>
+          </div>
+        {/each}
+      </div>
+    </div>
+  {/if}
 {/if}
 
 {#if showReviewModal && reviewTask}
-    <MetadataReviewModal
-        task={reviewTask}
-        on:close={handleReviewClose}
-        on:approved={handleReviewApproved}
-        on:saved={() => loadLibrary()}
-    />
+  <MetadataReviewModal
+    task={reviewTask}
+    on:close={handleReviewClose}
+    on:approved={handleReviewApproved}
+    on:saved={() => loadLibrary()}
+  />
 {/if}
 
 <style>
-    .artist-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-        gap: 16px;
+  .artist-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 16px;
+  }
+
+  .card {
+    background: var(--glass);
+    border: 1px solid var(--glass-border);
+    border-radius: 12px;
+    overflow: hidden;
+    transition: transform 0.2s;
+  }
+
+  .album-card-container {
+    overflow: visible !important;
+  }
+
+  .artist-card {
+    padding: 16px;
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+  }
+
+  .artist-card:hover {
+    background: rgba(255, 255, 255, 0.05);
+    transform: translateY(-2px);
+  }
+
+  .card-image {
+    width: 100%;
+    aspect-ratio: 1;
+    border-radius: 50%;
+    background: #000;
+    margin-bottom: 12px;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  }
+
+  .card-image img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+
+  .placeholder {
+    font-size: 32px;
+    opacity: 0.5;
+  }
+
+  .card-info h3 {
+    font-size: 14px;
+    font-weight: 600;
+    margin: 0;
+    color: var(--text);
+    width: 100%;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .sub {
+    font-size: 12px;
+    color: var(--muted);
+  }
+
+  .btn {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: var(--text);
+    padding: 8px 16px;
+    border-radius: 99px;
+    cursor: pointer;
+    font-size: 13px;
+  }
+  .btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+  }
+
+  .btn-link {
+    background: none;
+    border: none;
+    padding: 0;
+    color: var(--accent);
+    font-weight: 600;
+  }
+
+  /* Detail View */
+  .artist-header {
+    padding: 24px;
+    display: flex;
+    align-items: center;
+    gap: 24px;
+    background: linear-gradient(
+      to right,
+      rgba(255, 255, 255, 0.03),
+      transparent
+    );
+  }
+
+  .artist-hero-img {
+    width: 100px;
+    height: 100px;
+    border-radius: 50%;
+    object-fit: cover;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  }
+
+  .artist-header h2 {
+    font-size: 28px;
+    margin: 0;
+    color: var(--text);
+  }
+
+  .album-header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 16px;
+    border-bottom: 1px solid var(--glass-border);
+    background: rgba(0, 0, 0, 0.2);
+  }
+
+  .album-cover-container {
+    width: 50px;
+    height: 50px;
+    background: #000;
+    border-radius: 4px;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .album-cover {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  .placeholder-icon {
+    font-size: 20px;
+  }
+
+  .album-header h3 {
+    margin: 0;
+    font-size: 16px;
+    color: var(--text);
+  }
+
+  .tracks-list {
+    padding: 4px 0;
+  }
+
+  .empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 60px;
+    color: var(--muted);
+  }
+  .spinner {
+    width: 30px;
+    height: 30px;
+    border: 3px solid rgba(255, 255, 255, 0.1);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    margin-bottom: 16px;
+  }
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
     }
+  }
 
-    .card {
-        background: var(--glass);
-        border: 1px solid var(--glass-border);
-        border-radius: 12px;
-        overflow: hidden;
-        transition: transform 0.2s;
+  .flash-highlight {
+    animation: flash 1s ease-out;
+  }
+
+  @keyframes flash {
+    0% {
+      background-color: rgba(15, 239, 136, 0.3);
     }
-
-    .album-card-container {
-        overflow: visible !important;
+    100% {
+      background-color: transparent;
     }
-
-    .artist-card {
-        padding: 16px;
-        cursor: pointer;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        text-align: center;
-    }
-
-    .artist-card:hover {
-        background: rgba(255,255,255,0.05);
-        transform: translateY(-2px);
-    }
-
-    .card-image {
-        width: 100%;
-        aspect-ratio: 1;
-        border-radius: 50%;
-        background: #000;
-        margin-bottom: 12px;
-        overflow: hidden;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-    }
-
-    .card-image img {
-        width: 100%;
-        height: 100%;
-        object-fit: cover;
-    }
-
-    .placeholder { font-size: 32px; opacity: 0.5; }
-
-    .card-info h3 {
-        font-size: 14px;
-        font-weight: 600;
-        margin: 0;
-        color: var(--text);
-        width: 100%;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-    }
-
-    .sub { font-size: 12px; color: var(--muted); }
-
-    .btn {
-        background: rgba(255,255,255,0.05);
-        border: 1px solid rgba(255,255,255,0.1);
-        color: var(--text);
-        padding: 8px 16px;
-        border-radius: 99px;
-        cursor: pointer;
-        font-size: 13px;
-    }
-    .btn:hover { background: rgba(255,255,255,0.1); }
-
-    .btn-link {
-        background: none; border: none; padding: 0;
-        color: var(--accent); font-weight: 600;
-    }
-
-    /* Detail View */
-    .artist-header {
-        padding: 24px;
-        display: flex;
-        align-items: center;
-        gap: 24px;
-        background: linear-gradient(to right, rgba(255,255,255,0.03), transparent);
-    }
-
-    .artist-hero-img {
-        width: 100px;
-        height: 100px;
-        border-radius: 50%;
-        object-fit: cover;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.4);
-    }
-
-    .artist-header h2 { font-size: 28px; margin: 0; color: var(--text); }
-
-    .album-header {
-        display: flex;
-        align-items: center;
-        gap: 16px;
-        padding: 16px;
-        border-bottom: 1px solid var(--glass-border);
-        background: rgba(0,0,0,0.2);
-    }
-
-    .album-cover-container {
-        width: 50px;
-        height: 50px;
-        background: #000;
-        border-radius: 4px;
-        overflow: hidden;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-    }
-
-    .album-cover { width: 100%; height: 100%; object-fit: cover; }
-    .placeholder-icon { font-size: 20px; }
-
-    .album-header h3 { margin: 0; font-size: 16px; color: var(--text); }
-
-    .tracks-list { padding: 4px 0; }
-
-    .empty-state {
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        padding: 60px;
-        color: var(--muted);
-    }
-    .spinner {
-        width: 30px; height: 30px;
-        border: 3px solid rgba(255,255,255,0.1);
-        border-top-color: var(--accent);
-        border-radius: 50%;
-        animation: spin 1s linear infinite;
-        margin-bottom: 16px;
-    }
-    @keyframes spin { to { transform: rotate(360deg); } }
-
-    .flash-highlight {
-        animation: flash 1s ease-out;
-    }
-
-    @keyframes flash {
-        0% { background-color: rgba(15, 239, 136, 0.3); }
-        100% { background-color: transparent; }
-    }
+  }
 </style>

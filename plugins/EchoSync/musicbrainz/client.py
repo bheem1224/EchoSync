@@ -16,7 +16,7 @@ from core.nexus_framework.plugin_SDK import (
     ProviderCapabilities,
     SearchCapabilities,
 )
-from core.request_manager import RateLimitConfig
+from core.request_manager import HttpError, RateLimitConfig, RetryConfig
 from core.tiered_logger import get_logger
 
 from .models import PluginMusicbrainzCache
@@ -64,6 +64,12 @@ class MusicBrainzClient(PluginBase):
     def __init__(self):
         super().__init__()
         self.http.rate = RateLimitConfig(requests_per_second=1.0)
+        self.http.retry = RetryConfig(
+            max_retries=4,
+            base_backoff=1.5,
+            max_backoff=15.0,
+            jitter=0.2,
+        )
         self.http._session.headers.update(
             {
                 "User-Agent": "Echosync/0.1.0 ( https://github.com/echosync/echosync )",
@@ -100,15 +106,27 @@ class MusicBrainzClient(PluginBase):
                     query = f"arid:{artist_name}"
                 else:
                     query = f'artist:"{artist_name}"'
-                response = self.http.get(
-                    f"{self.api_base}/recording",
-                    params={
-                        "fmt": "json",
-                        "query": query,
-                        "limit": limit,
-                        "offset": offset,
-                    },
-                )
+                try:
+                    response = self.http.get(
+                        f"{self.api_base}/recording",
+                        params={
+                            "fmt": "json",
+                            "query": query,
+                            "limit": limit,
+                            "offset": offset,
+                        },
+                    )
+                except HttpError as http_err:
+                    if http_err.status in (429, 503):
+                        logger.warning(
+                            "MusicBrainz service unavailable or rate limited (%s) for artist '%s' (offset %d). Returning %d accumulated tracks.",
+                            http_err.status,
+                            artist_name,
+                            offset,
+                            len(raw),
+                        )
+                        break
+                    raise
 
                 if response.status_code != 200:
                     logger.warning(
@@ -169,6 +187,12 @@ class MusicBrainzClient(PluginBase):
                     break
                 offset += limit
 
+        except HttpError as exc:
+            logger.warning(
+                "MusicBrainz HTTP error while fetching tracks for '%s': %s",
+                artist_name,
+                exc,
+            )
         except Exception as exc:
             logger.error(
                 "Failed to fetch artist tracks for '%s': %s",
@@ -889,8 +913,9 @@ class MusicBrainzClient(PluginBase):
                             f"Failed to cache immediate MusicBrainz result: {e}"
                         )
 
-                return results
-
+            except HttpError as exc:
+                logger.warning(f"MusicBrainz immediate search HTTP error: {exc}")
+                return []
             except Exception as e:
                 logger.error(f"Exception during immediate MusicBrainz search: {e}")
                 return []
@@ -1040,6 +1065,11 @@ class MusicBrainzClient(PluginBase):
                     except Exception as e:
                         logger.error(f"Failed to cache MusicBrainz batch result: {e}")
 
+        except HttpError as exc:
+            logger.warning(f"MusicBrainz batch search HTTP error: {exc}")
+            for _, _, _, future in batch:
+                if not future.done():
+                    future.set_result([])
         except Exception as e:
             logger.error(f"Exception during MusicBrainz batch processing: {e}")
             for _, _, _, future in batch:
@@ -1168,6 +1198,9 @@ class MusicBrainzClient(PluginBase):
 
             return result
 
+        except HttpError as exc:
+            logger.warning(f"MusicBrainz get_metadata HTTP error for {mbid}: {exc}")
+            return None
         except Exception as exc:
             logger.error(f"Failed to fetch metadata for {mbid}: {exc}")
             return None
@@ -1245,7 +1278,9 @@ class MusicBrainzClient(PluginBase):
                     if isrcs:
                         result["isrc"] = isrcs[0]
 
-                    results[rec_id] = result
+            except HttpError as exc:
+                logger.warning(f"MusicBrainz batch metadata HTTP error: {exc}")
+                continue
             except Exception as exc:
                 logger.error(f"Failed to fetch batch metadata: {exc}")
 
