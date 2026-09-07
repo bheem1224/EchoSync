@@ -154,7 +154,10 @@ class EventBus:
 
         # Handle Transitional API: publish(event_name, payload_dict)
         if len(args) == 2 and isinstance(args[0], str) and isinstance(args[1], dict):
-            return self.publish_lightweight(args[1])
+            payload = args[1]
+            if "event" not in payload:
+                payload["event"] = args[0]
+            return self.publish_lightweight(payload)
 
         # Handle Legacy API: publish(channel, event_type, data)
         if len(args) >= 2 and isinstance(args[0], str) and isinstance(args[1], str):

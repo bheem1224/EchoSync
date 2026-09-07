@@ -1,29 +1,51 @@
 # Architectural Invariant Violation Ledger
 
-*Last Audited: 2026-05-27 18:30:00 UTC*
+*Last Audited: 2026-05-27 19:15:00 UTC*
 
 | Violation Type | File Path | Line Number | Observed Pattern | Architectural Remediation |
 | :--- | :--- | :--- | :--- | :--- |
 | Ungated File Move | `services/library_sync_service.py` | 321 | `shutil.move(file_path, dest_path)` | Route through `Gatekeeper.authorize_and_execute` / `echosync_core.safe_move_file` |
 | Ungated File Move | `services/download_manager.py` | 2424 | `shutil.move(str(src), str(dest))` | Route through `Gatekeeper.authorize_and_execute` / `echosync_core.safe_move_file` |
-| Ungated File Deletion | `services/media_manager.py` | 283 | `os.remove(file_path)` | Route through `Gatekeeper.authorize_and_execute` / `echosync_core.delete_file` |
+| Ungated File Deletion | `services/media_manager.py` | 242 | `os.remove(file_path)` | Route through `Gatekeeper.authorize_and_execute` / `echosync_core.delete_file` |
+| Ungated File Deletion | `services/auto_importer.py` | 177 | `file_p.unlink(missing_ok=True)` | Route through `Gatekeeper.authorize_and_execute` / `echosync_core.delete_file` |
 | Ungated File Deletion | `web/routes/metadata_review.py` | 1092 | `os.unlink(str(resolved_file))` | Route through `Gatekeeper.authorize_and_execute` / `echosync_core.delete_file` |
-| Ungated File Deletion | `web/routes/system.py` | 180 | `os.remove(tmp_path)` | Route through `Gatekeeper.authorize_and_execute` |
-| Ungated DB Deletion | `web/routes/system.py` | 1017 | `os.remove(db_path)` | Route through `Gatekeeper.authorize_and_execute` |
-| Direct SQLite Connection | `core/matching_engine/fingerprinting.py` | 349 | `sqlite3.connect(self.db_path, timeout=30.0)` | Refactor to use DatabaseGateway scoped ORM sessions (`session_scope()`) |
-| Direct SQLite Connection | `core/matching_engine/fingerprinting.py` | 381 | `sqlite3.connect(self.db_path, timeout=30.0)` | Refactor to use DatabaseGateway scoped ORM sessions (`session_scope()`) |
-| Direct SQLite Connection | `core/matching_engine/fingerprinting.py` | 418 | `sqlite3.connect(self.db_path, timeout=30.0)` | Refactor to use DatabaseGateway scoped ORM sessions (`session_scope()`) |
-| Direct SQLite Connection | `core/matching_engine/fingerprinting.py` | 445 | `sqlite3.connect(self.db_path, timeout=30.0)` | Refactor to use DatabaseGateway scoped ORM sessions (`session_scope()`) |
+| Ungated File Deletion | `web/routes/system.py` | 180 | `os.remove(tmp_path)` | Route through `Gatekeeper.authorize_and_execute` / `echosync_core.delete_file` |
+| Ungated File Deletion | `web/routes/system.py` | 1017 | `os.remove(db_path)` | Route through `Gatekeeper.authorize_and_execute` / `echosync_core.delete_file` |
+| Ungated File Deletion | `core/task_manager/system_jobs.py` | 1247 | `os.remove(db_file)` | Route through `Gatekeeper.authorize_and_execute` / `echosync_core.delete_file` |
+| Ungated File Rename | `core/tiered_logger.py` | 73 | `os.rename(sfn, dfn)` | Route through managed file logger handlers / Gatekeeper |
+| Ungated File Rename | `core/tiered_logger.py` | 89 | `os.rename(self.baseFilename, dfn)` | Route through managed file logger handlers / Gatekeeper |
+| Ungated File Deletion | `core/tiered_logger.py` | 69 | `os.remove(dfn)` | Route through managed file logger handlers / Gatekeeper |
+| Ungated File Deletion | `core/tiered_logger.py` | 84 | `os.remove(dfn)` | Route through managed file logger handlers / Gatekeeper |
+| Direct SQLite Connection | `core/matching_engine/fingerprinting.py` | 349 | `sqlite3.connect(self.db_path, timeout=30.0)` | Refactor to DatabaseGateway scoped ORM sessions (`session_scope()`) |
+| Direct SQLite Connection | `core/matching_engine/fingerprinting.py` | 381 | `sqlite3.connect(self.db_path, timeout=30.0)` | Refactor to DatabaseGateway scoped ORM sessions (`session_scope()`) |
+| Direct SQLite Connection | `core/matching_engine/fingerprinting.py` | 418 | `sqlite3.connect(self.db_path, timeout=30.0)` | Refactor to DatabaseGateway scoped ORM sessions (`session_scope()`) |
+| Direct SQLite Connection | `core/matching_engine/fingerprinting.py` | 445 | `sqlite3.connect(self.db_path, timeout=30.0)` | Refactor to DatabaseGateway scoped ORM sessions (`session_scope()`) |
 | Direct SQLite Connection | `core/db/migrations.py` | 89 | `sqlite3.connect(db_path, timeout=30.0)` | Use Alembic / DatabaseGateway connection abstraction |
 | Direct SQLite Connection | `core/backup_manager.py` | 31 | `sqlite3.connect(str(source_path))` | Wrap backup operations in DatabaseGateway / SQLite Online Backup API |
+| Direct SQLite Connection | `core/backup_manager.py` | 32 | `sqlite3.connect(str(target_path))` | Wrap backup operations in DatabaseGateway / SQLite Online Backup API |
 | Direct SQLite Connection | `database/engine.py` | 37 | `sqlite3.connect(self.db_path, timeout=60.0)` | Encapsulate inside SQLAlchemy engine setup |
 | Direct SQLite Connection | `database/config_database.py` | 59 | `sqlite3.connect(str(self.database_path), timeout=30.0)` | Refactor to use ConfigDatabase SQLAlchemy session scope |
 | Direct SQLite Connection | `database/config_database.py` | 126 | `sqlite3.connect(str(self.database_path), timeout=60.0)` | Refactor to use ConfigDatabase SQLAlchemy session scope |
 | Direct SQLite Connection | `services/state_listener.py` | 16 | `get_working_database().SessionLocal` | Use DatabaseGateway `session_scope()` context manager |
-| Ungated Directory Removal | `core/nexus_framework/plugin_loader.py` | 955 | `shutil.rmtree(author_item, ignore_errors=True)` | Route through `Gatekeeper` filesystem purge methods |
-| Ungated File Rename | `core/nexus_framework/plugin_store.py` | 1094 | `os.rename(str(target_dir), str(backup_dir))` | Route through `Gatekeeper` atomic move routines |
-| Ungated Directory Copy | `core/nexus_framework/plugin_store.py` | 1070 | `shutil.copy2(sandbox_db_path, sandbox_backup_path)` | Use SQLite ATTACH DATABASE or migration scripts instead of raw DB file copies |
-| Ungated File Deletion | `core/tiered_logger.py` | 69 | `os.remove(dfn)` | Route log rotations through managed file logger handlers |
+| Ungated Directory Removal | `core/backup_manager.py` | 105 | `shutil.rmtree(staging_dir, ignore_errors=True)` | Route through `Gatekeeper` directory cleanup methods |
+| Ungated Directory Removal | `core/backup_manager.py` | 175 | `shutil.rmtree(staging_dir, ignore_errors=True)` | Route through `Gatekeeper` directory cleanup methods |
+| Ungated Directory Removal | `core/nexus_framework/plugin_loader.py` | 955 | `shutil.rmtree(author_item, ignore_errors=True)` | Route through `Gatekeeper` directory cleanup methods |
+| Ungated File Rename | `core/nexus_framework/plugin_store.py` | 1094 | `os.rename(str(target_dir), str(backup_dir))` | Route through `Gatekeeper.authorize_and_execute` / atomic move routines |
+| Ungated File Rename | `core/nexus_framework/plugin_store.py` | 1110 | `os.rename(str(tmp_dir), str(target_dir))` | Route through `Gatekeeper.authorize_and_execute` / atomic move routines |
+| Ungated File Rename | `core/nexus_framework/plugin_store.py` | 1123 | `os.rename(str(backup_dir), str(target_dir))` | Route through `Gatekeeper.authorize_and_execute` / atomic move routines |
+| Ungated File Rename | `core/nexus_framework/plugin_store.py` | 1282 | `os.rename(str(backup_dir), str(target_dir))` | Route through `Gatekeeper.authorize_and_execute` / atomic move routines |
+| Ungated File Deletion | `core/nexus_framework/plugin_store.py` | 1478 | `os.remove(tmp_zip_path)` | Route through `Gatekeeper.authorize_and_execute` / `echosync_core.delete_file` |
+| Ungated Directory Removal | `core/nexus_framework/plugin_store.py` | 730 | `shutil.rmtree(tmp_dir, ignore_errors=True)` | Route through `Gatekeeper` directory cleanup methods |
+| Ungated Directory Removal | `core/nexus_framework/plugin_store.py` | 908 | `shutil.rmtree(tmp_dir, ignore_errors=True)` | Route through `Gatekeeper` directory cleanup methods |
+| Ungated Directory Removal | `core/nexus_framework/plugin_store.py` | 1086 | `shutil.rmtree(beta_dir, ignore_errors=True)` | Route through `Gatekeeper` directory cleanup methods |
+| Ungated Directory Removal | `core/nexus_framework/plugin_store.py` | 1092 | `shutil.rmtree(backup_dir, ignore_errors=True)` | Route through `Gatekeeper` directory cleanup methods |
+| Ungated Directory Removal | `core/nexus_framework/plugin_store.py` | 1104 | `shutil.rmtree(target_dir, ignore_errors=True)` | Route through `Gatekeeper` directory cleanup methods |
+| Ungated Directory Removal | `core/nexus_framework/plugin_store.py` | 1115 | `shutil.rmtree(backup_dir, ignore_errors=True)` | Route through `Gatekeeper` directory cleanup methods |
+| Ungated Directory Removal | `core/nexus_framework/plugin_store.py` | 1281 | `shutil.rmtree(target_dir, ignore_errors=True)` | Route through `Gatekeeper` directory cleanup methods |
+| Ungated Directory Removal | `core/nexus_framework/plugin_store.py` | 1480 | `shutil.rmtree(tmp_dir, ignore_errors=True)` | Route through `Gatekeeper` directory cleanup methods |
+| Ungated Directory Removal | `core/nexus_framework/plugin_store.py` | 1496 | `shutil.rmtree(beta_path, ignore_errors=True)` | Route through `Gatekeeper` directory cleanup methods |
+| Ungated Directory Removal | `core/nexus_framework/plugin_store.py` | 1825 | `shutil.rmtree(dest_dir, ignore_errors=True)` | Route through `Gatekeeper` directory cleanup methods |
+| Ungated Directory Copy | `core/nexus_framework/plugin_store.py` | 942 | `shutil.copy2(stable_db_path, beta_db_path)` | Use SQLite ATTACH DATABASE or migration scripts instead of raw DB file copies |
 | Rate Limiter Instance Evasion | `core/request_manager.py` | 79 | `self._last_call_ts = 0.0` (Instance-level rate state) | Centralize rate limiting state per provider in shared global map |
 | Session Resource Leak | `core/request_manager.py` | 76 | `self._session = requests.Session()` without context manager | Implement `__enter__`/`__exit__` context manager or global connection pool |
 | Unlocked Async Rate Limiter | `core/rate_limiter.py` | 37 | Missing `asyncio.Lock` around timestamp queue mutations | Wrap timestamp modifications in `asyncio.Lock` to prevent concurrent bursting |

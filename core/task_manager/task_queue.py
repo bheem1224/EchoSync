@@ -60,6 +60,7 @@ class ScheduledJob:
     plugin: str | None = field(default=None, compare=False)
     manual_next_run: float | None = field(default=None, compare=False)
     params: dict[str, Any] | None = field(default=None, compare=False)
+    progress: dict[str, Any] | None = field(default=None, compare=False)
 
     def __post_init__(self):
         self.sort_index = id(self)
@@ -92,6 +93,7 @@ class ScheduledJob:
             "last_started": self.last_started,
             "last_finished": self.last_finished,
             "duration_seconds": duration_s,
+            "progress": self.progress,
         }
 
 
@@ -110,6 +112,25 @@ class JobQueue:
         self._is_running: dict[str, bool] = {}
         self._active_threads: dict[str, threading.Thread] = {}
         self._active_processes: dict[str, Any] = {}
+
+        try:
+            from core.event_bus import event_bus
+
+            event_bus.subscribe("job_progress", self._on_job_progress)
+        except Exception:
+            pass
+
+    def _on_job_progress(self, payload: dict[str, Any]) -> None:
+        if isinstance(payload, dict):
+            job_name = payload.get("job_name")
+            if job_name:
+                self.update_job_progress(job_name, payload)
+
+    def update_job_progress(self, name: str, progress: dict[str, Any]) -> None:
+        with self._lock:
+            job = self._jobs.get(name)
+            if job:
+                job.progress = progress
 
     def _release_worker_resources(self):
         try:
@@ -246,6 +267,7 @@ class JobQueue:
         if job.state != TaskState.CANCELLED:
             job.state = TaskState.COMPLETED if not job.last_error else TaskState.FAILED
         job.params = None
+        job.progress = None
         self._is_running[job.name] = False
         self._active_threads.pop(job.name, None)
 

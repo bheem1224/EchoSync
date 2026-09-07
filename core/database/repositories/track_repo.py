@@ -157,7 +157,11 @@ class TrackRepository:
 
     @classmethod
     def get_tracks_for_enhancement(
-        cls, session: Session, batch_size: int = 100, check_all_files: bool = False
+        cls,
+        session: Session,
+        batch_size: int = 100,
+        check_all_files: bool = False,
+        force_refresh: bool = False,
     ) -> list[Track]:
         from sqlalchemy import case
 
@@ -227,65 +231,77 @@ class TrackRepository:
             else_=7,
         )
 
-        if not check_all_files:
-            from core.hook_manager import hook_manager
-
-            required_keys = hook_manager.apply_filters(
-                "register_metadata_requirements", []
+        if not force_refresh:
+            query = query.filter(
+                or_(
+                    func.json_extract(Track.metadata_status, "$.enhanced").is_(None),
+                    func.json_extract(Track.metadata_status, "$.enhanced") == False,
+                    func.json_extract(Track.metadata_status, "$.enhanced") == 0,
+                    func.json_extract(Track.metadata_status, "$.enhanced") == "false",
+                )
             )
+            if not check_all_files:
+                from core.hook_manager import hook_manager
 
-            MAX_REATTEMPTS = 5
-            needs_identification = or_(
-                Track.musicbrainz_id.is_(None),
-                and_(
-                    Track.musicbrainz_id == "NOT_FOUND",
-                    func.coalesce(
-                        func.json_extract(
-                            Track.metadata_status, "$.enhancement_attempts"
-                        ),
-                        0,
-                    ).cast(Integer)
-                    < MAX_REATTEMPTS,
-                ),
-            )
-            conditions = [
-                needs_identification,
-                Artist.name.ilike("unknown%"),
-                Artist.normalized_name.ilike("unknown%"),
-                Track.artist_id.is_(None),
-                Artist.name.is_(None),
-                Album.title.ilike("unknown%"),
-                Album.normalized_title.ilike("unknown%"),
-                Track.album_id.is_(None),
-                Album.title.is_(None),
-                Track.title.ilike("unknown%"),
-                Track.normalized_title.ilike("unknown%"),
-                Track.title.is_(None),
-                Track.title == "",
-            ]
-            for key in required_keys:
+                required_keys = hook_manager.apply_filters(
+                    "register_metadata_requirements", []
+                )
+
+                MAX_REATTEMPTS = 5
+                needs_identification = or_(
+                    Track.musicbrainz_id.is_(None),
+                    and_(
+                        Track.musicbrainz_id == "NOT_FOUND",
+                        func.coalesce(
+                            func.json_extract(
+                                Track.metadata_status, "$.enhancement_attempts"
+                            ),
+                            0,
+                        ).cast(Integer)
+                        < MAX_REATTEMPTS,
+                    ),
+                )
+                conditions = [
+                    needs_identification,
+                    Artist.name.ilike("unknown%"),
+                    Artist.normalized_name.ilike("unknown%"),
+                    Track.artist_id.is_(None),
+                    Artist.name.is_(None),
+                    Album.title.ilike("unknown%"),
+                    Album.normalized_title.ilike("unknown%"),
+                    Track.album_id.is_(None),
+                    Album.title.is_(None),
+                    Track.title.ilike("unknown%"),
+                    Track.normalized_title.ilike("unknown%"),
+                    Track.title.is_(None),
+                    Track.title == "",
+                ]
+                for key in required_keys:
+                    conditions.append(
+                        and_(
+                            Track.musicbrainz_id.isnot(None),
+                            Track.musicbrainz_id != "NOT_FOUND",
+                            func.json_extract(Track.metadata_status, f"$.{key}").is_(
+                                None
+                            ),
+                        )
+                    )
+
                 conditions.append(
                     and_(
-                        Track.musicbrainz_id.isnot(None),
-                        Track.musicbrainz_id != "NOT_FOUND",
-                        func.json_extract(Track.metadata_status, f"$.{key}").is_(None),
+                        Artist.name.ilike("various artist%"),
+                        func.coalesce(
+                            func.json_extract(
+                                Track.metadata_status,
+                                "$.compilation_performer_resolved",
+                            ),
+                            0,
+                        ).cast(Integer)
+                        == 0,
                     )
                 )
 
-            conditions.append(
-                and_(
-                    Artist.name.ilike("various artist%"),
-                    func.coalesce(
-                        func.json_extract(
-                            Track.metadata_status, "$.compilation_performer_resolved"
-                        ),
-                        0,
-                    ).cast(Integer)
-                    == 0,
-                )
-            )
-
-            query = query.filter(or_(*conditions))
+                query = query.filter(or_(*conditions))
 
         return (
             query.order_by(priority_case.asc(), Track.id.asc()).limit(batch_size).all()

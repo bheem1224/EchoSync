@@ -911,6 +911,12 @@ class MusicBrainzClient(PluginBase):
             logger.error(f"Error awaiting batched result: {e}")
             return []
 
+    async def search_recording(
+        self, artist: str, title: str, immediate: bool = False
+    ) -> list[EchosyncTrack]:
+        """Search recordings matching artist and title (alias to search_recording_strict)."""
+        return await self.search_recording_strict(artist, title, immediate=immediate)
+
     async def _process_batch(self):
         await asyncio.sleep(0.1)  # 100ms debounce
 

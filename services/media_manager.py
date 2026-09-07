@@ -127,6 +127,19 @@ class MediaManagerService:
             intent_type = intent_map.get(event_type, "SYSTEM_DELETE_SUGGESTION")
             system_user_id = db.get_system_user_id()
 
+            existing = (
+                session.query(SuggestionStagingQueue)
+                .filter(
+                    SuggestionStagingQueue.account_id == system_user_id,
+                    SuggestionStagingQueue.sync_id == sync_id,
+                    SuggestionStagingQueue.reason == reason,
+                )
+                .first()
+            )
+            if existing:
+                existing.context_data = payload
+                return
+
             staging = SuggestionStagingQueue(
                 account_id=system_user_id,
                 sync_id=sync_id,

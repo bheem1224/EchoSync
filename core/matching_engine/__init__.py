@@ -45,7 +45,12 @@ __all__ = [
     "PROFILE_LIBRARY_IMPORT",
     # Fingerprinting
     "FingerprintMatcher",
+    # Trust Gate
+    "sanitize_title_from_filename",
+    "verify_title_trust_gate",
 ]
+
+from .trust_gate import sanitize_title_from_filename, verify_title_trust_gate
 
 from typing import Any, Tuple
 
