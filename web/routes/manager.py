@@ -1004,25 +1004,47 @@ def get_suggestion_queue(_=Depends(require_auth)):
                 .filter(SuggestionStagingQueue.status == "pending")
                 .all()
             )
+            suggestions = []
+            for item in items:
+                ctx = item.context_data or {}
+                suggestions.append(
+                    {
+                        "sync_id": getattr(item, "sync_id", None),
+                        "type": getattr(
+                            item,
+                            "reason",
+                            getattr(item, "intent_type", "SUGGESTION"),
+                        ),
+                        "intent_type": getattr(
+                            item, "intent_type", getattr(item, "reason", None)
+                        ),
+                        "originator": ctx.get("originator", "Consensus Engine"),
+                        "title": getattr(item, "ui_label", None)
+                        or ctx.get("title")
+                        or "Unknown",
+                        "artist": ctx.get("artist", ctx.get("artist_name")),
+                        "album": ctx.get("album"),
+                        "score": ctx.get("score"),
+                        "status": getattr(item, "status", "pending"),
+                        "track_id": getattr(
+                            item,
+                            "track_id",
+                            getattr(
+                                item,
+                                "matched_track_id",
+                                ctx.get("track_id", ctx.get("music_db_track_id")),
+                            ),
+                        ),
+                        "action_needed": ctx.get("action_needed", "SUGGESTION"),
+                        "user_id": getattr(
+                            item, "user_id", getattr(item, "account_id", None)
+                        ),
+                        "account_id": getattr(item, "account_id", None),
+                    }
+                )
             return {
                 "success": True,
-                "suggestions": [
-                    {
-                        "sync_id": item.sync_id,
-                        "type": item.reason,
-                        "originator": (item.context_data or {}).get(
-                            "originator", "Consensus Engine"
-                        ),
-                        "title": item.ui_label,
-                        "track_id": item.music_db_track_id,
-                        "action_needed": (item.context_data or {}).get(
-                            "action_needed", "SUGGESTION"
-                        ),
-                        "user_id": item.user_id,
-                        "account_id": item.account_id,
-                    }
-                    for item in items
-                ],
+                "suggestions": suggestions,
             }
     except Exception as e:
         logger.error(f"Error getting suggestion queue: {e}", exc_info=True)

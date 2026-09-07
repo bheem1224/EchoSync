@@ -550,7 +550,7 @@ class _NetworkSDKFacade:
 
 
 class _HealthCheckSDKFacade:
-    def __init__(self, plugin_id: str):
+    def __init__(self, plugin_id: str | None = None):
         self.plugin_id = plugin_id
 
     def register(self, url_or_func, interval_seconds: float = 300.0):
@@ -563,7 +563,8 @@ class _HealthCheckSDKFacade:
         """
         from core.health_check import HealthCheckResult, health_check_registry
 
-        service_name = self.plugin_id.split(".")[-1].split("@")[0]
+        plugin_id = self.plugin_id or sdk._get_plugin_id()
+        service_name = plugin_id.split(".")[-1].split("@")[0]
 
         if isinstance(url_or_func, str):
             url = url_or_func
@@ -572,7 +573,7 @@ class _HealthCheckSDKFacade:
                 try:
                     from core.request_manager import RequestManager
 
-                    manager = RequestManager(provider=self.plugin_id)
+                    manager = RequestManager(provider=plugin_id)
                     response = manager.get(url, timeout=10.0)
                     if 200 <= response.status_code < 400:
                         return HealthCheckResult(
@@ -625,7 +626,7 @@ class _HealthCheckSDKFacade:
             service_name=service_name,
             check_func=wrapped_check_func,
             interval_seconds=interval_seconds,
-            plugin=self.plugin_id,
+            plugin=plugin_id,
         )
 
 
@@ -646,10 +647,12 @@ class _SDK:
         # We don't know the plugin_id here yet as it's a global singleton,
         # but facade methods will verify caller.
         self._accounts = _AccountsSDKFacade()
-        self._db = _DatabaseFacade(self._get_plugin_id())
         self.plugins = _PluginsSDKFacade()
         self.file = _FileSDKFacade()
-        self.health = _HealthCheckSDKFacade(self._get_plugin_id())
+
+    @property
+    def health(self):
+        return _HealthCheckSDKFacade(self._get_plugin_id())
 
     @property
     def config(self):
