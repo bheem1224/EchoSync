@@ -48,8 +48,8 @@
 | Ungated Directory Copy | `core/nexus_framework/plugin_store.py` | 942 | `shutil.copy2(stable_db_path, beta_db_path)` | Use SQLite ATTACH DATABASE or migration scripts instead of raw DB file copies |
 | Rate Limiter Instance Evasion | `core/request_manager.py` | 79 | `self._last_call_ts = 0.0` (Instance-level rate state) | Centralize rate limiting state per provider in shared global map |
 | Session Resource Leak | `core/request_manager.py` | 76 | `self._session = requests.Session()` without context manager | Implement `__enter__`/`__exit__` context manager or global connection pool |
-| Unlocked Async Rate Limiter | `core/rate_limiter.py` | 45 | Missing `asyncio.Lock` around timestamp queue mutations | Wrap timestamp modifications in `asyncio.Lock` to prevent concurrent bursting |
-| Incomplete Module Purge | `core/nexus_framework/plugin_loader.py` | 218 | `del sys.modules[m]` without `__teardown__` hook | Implement mandatory plugin `__teardown__` hooks and explicit GC collection |
+| Unlocked Async Rate Limiter | `core/rate_limiter.py` | 37 | Missing `asyncio.Lock` around timestamp queue mutations | Wrap timestamp modifications in `asyncio.Lock` to prevent concurrent bursting |
+| Incomplete Module Purge | `core/nexus_framework/plugin_loader.py` | 215 | `del sys.modules[m]` without `__teardown__` hook | Implement mandatory plugin `__teardown__` hooks and explicit GC collection |
 | Sandbox CPU Bloat | `core/nexus_framework/plugin_loader.py` | 147 | Overzealous AST Node Traversal on all method calls | Refactor to `sys.meta_path` import hooks or Python audit hooks |
 | Sync I/O in Async Context | `core/nexus_framework/plugin_loader.py` | 586 | Synchronous `py_file.read_text()` during plugin scans | Offload plugin scanning to `asyncio.to_thread()` threadpool |
 | Swallowed Dependency Error | `core/nexus_framework/plugin_SDK.py` | 341 | `except ImportError: pass` on missing `wasmtime` | Log explicit warning and mark WASM plugin state as disabled/unsupported |
