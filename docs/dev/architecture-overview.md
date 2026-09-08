@@ -1,17 +1,15 @@
-# EchoSync High-Level System Architecture
+# EchoSync High-Level System Architecture & Technical Overview
 
 ## 1. Technical Documentation Index
 
-Detailed architectural specifications are organized into the following topic-scoped reference manuals:
+Detailed architectural specifications and component guides are organized into the following topic-scoped reference manuals:
 
 * **[Codebase Locator & Symbol Map](codebase-map.md):** Precise mapping of system responsibilities to code paths across Python, Rust, and Svelte layers.
-* **[API Reference Specification](api-reference.md):** Complete REST endpoint paths, payload contracts, parameters, and HTTP response codes.
-* **[Event Bus Dictionary](event-bus.md):** Asynchronous channel dictionary, event schemas, and lightweight UUID event payload models.
-* **[Matching & Suggestion Engines](matching-and-suggestions.md):** Mathematical scoring formulas, fuzzy text matching algorithms, vibe vector profiler, and automated library pruning.
-* **[Download Lifecycle & Metadata Pipeline](download-pipeline.md):** Candidate ranking state machine, waterfall metadata resolution, and stream integrity verification.
+* **[Architectural Rule Violations Ledger](rule-violations.md):** Live audit matrix of ungated I/O operations, direct DB connections, and remediations.
 * **[Database Evolution & 3-DB Split](database-evolution.md):** Physical partitioning model (`config.db`, `working.db`, `library.db`), entity promotion lifecycle, and PostgreSQL migration roadmap.
 * **[Native Rust FFI Engine](rust-ffi-engine.md):** `echosync_core` crate architecture, lofty tag parsing/writing, callback batching, and path traversal security.
-* **[Architectural Rule Violations Ledger](rule-violations.md):** Live audit matrix of ungated I/O operations, direct DB connections, and remediations.
+* **[Plugin SDK Quickstart](../plugins/sdk-quickstart.md):** Developer guide for building EchoSync plugins.
+* **[Plugin Hook Matrix](../plugins/hook-matrix.md):** Hook filter/action lifecycle catalog and custom element frontend integration.
 
 ---
 
@@ -47,24 +45,37 @@ EchoSync is an asynchronous hybrid monolith built on **Python 3.12 (FastAPI / SQ
 
 ---
 
-## 3. Core Subsystems
+## 3. Core Subsystems & Operational Pipelines
 
 ### 3.1 Backend Orchestration & Task Manager
 - Managed via `TaskManager` (`core/task_manager/task_manager.py`).
-- Manages background thread pools and job scheduling without custom locks inside Rust FFI.
+- Manages background thread pools and job scheduling without custom thread locks inside Rust FFI.
 
 ### 3.2 Native Rust FFI Engine (`echosync_core`)
 - High-speed directory traversal (`walkdir` in `src/file_handling/scanner.rs`).
-- Audio tagging reading/writing via `lofty` in `src/metadata/extractor.rs` and `writer.rs`.
-- Zero-trust safe file operations (`safe_move_file`, `delete_file` in `src/file_handling/fs_ops.rs`).
+- Audio tagging reading/writing strictly via `lofty` in `src/metadata/extractor.rs` and `writer.rs`.
+- Zero-trust safe file operations (`safe_move_file`, `copy_file`, `delete_file` in `src/file_handling/fs_ops.rs`).
 - Detailed specification: **[rust-ffi-engine.md](rust-ffi-engine.md)**.
 
-### 3.3 Nexus Plugin Framework & AST Sandbox
+### 3.3 Nexus Plugin Framework & Sandbox Security
 - Zero-trust execution boundary for community plugins (`core/nexus_framework/`).
-- Restricts direct OS/file calls via `PluginSecurityScanner`.
-- Serves dynamic UI extensions as Svelte Web Components.
-- Plugin specifications: **[docs/plugins/sdk-quickstart.md](../plugins/sdk-quickstart.md)** and **[docs/plugins/sandbox-security.md](../plugins/sandbox-security.md)**.
+- Enforces AST checks (`PluginSecurityScanner`) and path traversal sandboxing.
+- Serves dynamic UI extensions as Svelte Web Components (`customElement: true`).
 
 ### 3.4 Three-Database Data Architecture
-- Isolated database files (`config.db`, `working.db`, `library.db`) enforcing separation of secrets, ephemeral jobs, and canonical media graphs.
+- Isolated database files (`config.db`, `working.db`, `library.db`) enforcing strict separation between credentials, ephemeral task states, and the canonical music entity graph.
 - Detailed specification: **[database-evolution.md](database-evolution.md)**.
+
+### 3.5 Event Bus & Lightweight Identity Dispatch
+- Event dispatcher located in `core/event_bus.py`.
+- Modern API (`EventBus.publish(payload)`) transmits lightweight entity identifiers (`sync_id`, `media_id`), avoiding monolithic serialized track payloads.
+- State serialization is performed before queueing to prevent race conditions.
+
+### 3.6 Matching & Suggestion Pipelines
+- Tier 1 weighted metadata scoring (`WeightedMatchingEngine`) combined with Tier 2 exact title + strict duration fallback.
+- Chromaprint fingerprinting via `FingerprintService` (`core/matching_engine/fingerprinting.py`).
+- Automated suggestion engine and vibe profiling (`core/suggestion_engine/`).
+
+### 3.7 Ingestion & Download Lifecycle
+- Auto-importer monitoring (`core/auto_importer.py`) and retroactive metadata enrichment (`services/metadata_enhancer.py`).
+- Candidate evaluation state machine and fallback waterfalls in `services/download_manager.py`.
