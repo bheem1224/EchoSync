@@ -330,14 +330,11 @@ class EchosyncTrack:
 
         # 4. Balanced Quote Stripping
         clean_title = clean_title.strip()
-        if len(clean_title) >= 2:
-            if (
-                clean_title.startswith('"')
-                and clean_title.endswith('"')
-                or clean_title.startswith("'")
-                and clean_title.endswith("'")
-            ):
-                clean_title = clean_title[1:-1]
+        if len(clean_title) >= 2 and (
+            (clean_title.startswith('"') and clean_title.endswith('"'))
+            or (clean_title.startswith("'") and clean_title.endswith("'"))
+        ):
+            clean_title = clean_title[1:-1]
 
         self.title = clean_title
 
@@ -404,8 +401,10 @@ class EchosyncTrack:
             "media_ids": media_ids,
             "media": media_list,
             "mbid": self.musicbrainz_id,
+            "musicbrainz_id": self.musicbrainz_id,
             "isrc": self.isrc,
             "acoustid": self.acoustid_id,
+            "acoustid_id": self.acoustid_id,
             "mb_release_id": self.mb_release_id,
             "original_release_date": self.original_release_date.isoformat()
             if self.original_release_date

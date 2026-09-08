@@ -134,20 +134,44 @@ class Gatekeeper:
         return resolved_target
 
     def authorize_and_execute(
-        self_or_manifest, manifest: dict[str, Any] | None = None
+        self_or_manifest: Any = None,
+        manifest: dict[str, Any] | None = None,
+        **kwargs: Any,
     ) -> dict[str, Any]:
         """
         Parse, validate, and execute an I/O manifest via echosync_core.
         Supports both Gatekeeper().authorize_and_execute(manifest) and
-        Gatekeeper.authorize_and_execute(manifest).
+        Gatekeeper.authorize_and_execute(manifest), as well as keyword arguments:
+        Gatekeeper.authorize_and_execute(operation="move", source=..., destination=...).
         """
-        if manifest is None and isinstance(self_or_manifest, dict):
-            manifest = self_or_manifest
-            self = Gatekeeper()
+        if isinstance(self_or_manifest, Gatekeeper):
+            instance = self_or_manifest
+            m = dict(manifest or {})
+            m.update(kwargs)
+        elif isinstance(self_or_manifest, type) and issubclass(
+            self_or_manifest, Gatekeeper
+        ):
+            instance = self_or_manifest()
+            m = dict(manifest or {})
+            m.update(kwargs)
+        elif isinstance(self_or_manifest, dict):
+            instance = Gatekeeper()
+            m = dict(self_or_manifest)
+            if manifest:
+                m.update(manifest)
+            m.update(kwargs)
+        elif isinstance(self_or_manifest, str):
+            instance = Gatekeeper()
+            m = {"operation": self_or_manifest}
+            if manifest:
+                m.update(manifest)
+            m.update(kwargs)
         else:
-            self = self_or_manifest
+            instance = Gatekeeper()
+            m = dict(manifest or {})
+            m.update(kwargs)
 
-        return self._authorize_and_execute(manifest)
+        return instance._authorize_and_execute(m)
 
     def _authorize_and_execute(self, manifest: dict[str, Any]) -> dict[str, Any]:
         operation = manifest.get("operation")
@@ -156,7 +180,7 @@ class Gatekeeper:
 
         uris = manifest.get("target_uris") or []
         if not uris:
-            for k in ("target_uri", "src", "target"):
+            for k in ("target_uri", "src", "target", "source"):
                 if manifest.get(k):
                     uris = [manifest[k]]
                     break
@@ -197,14 +221,18 @@ class Gatekeeper:
                     {"path": posix_path, "metadata": meta, "status": "extracted"}
                 )
 
-            elif operation == "safe_move":
+            elif operation in ("safe_move", "move"):
                 dst_uri = (
                     manifest.get("destination_uri")
                     or manifest.get("dst_uri")
                     or manifest.get("dst")
+                    or manifest.get("destination")
+                    or manifest.get("dest")
                 )
                 if not dst_uri:
-                    raise ValueError("Operation 'safe_move' requires 'destination_uri'")
+                    raise ValueError(
+                        f"Operation '{operation}' requires 'destination_uri' or 'destination'"
+                    )
                 resolved_dst = self.resolve_uri(str(dst_uri))
                 validated_dst = self.validate_path(resolved_dst).as_posix()
 
@@ -215,8 +243,8 @@ class Gatekeeper:
                     p_mode = dst_parent.stat().st_mode
                     if not (p_mode & 0o200):
                         dst_parent.chmod(p_mode | 0o775)
-                except Exception:
-                    pass
+                except OSError as err:
+                    logger.debug("Could not adjust destination parent permissions: %s", err)
 
                 # Attempt to ensure source parent directory is writable (needed for file deletion)
                 try:
@@ -225,12 +253,12 @@ class Gatekeeper:
                         sp_mode = src_parent.stat().st_mode
                         if not (sp_mode & 0o200):
                             src_parent.chmod(sp_mode | 0o775)
-                except Exception:
-                    pass
+                except OSError as err:
+                    logger.debug("Could not adjust source parent permissions: %s", err)
 
                 try:
                     echosync_core.safe_move_file(posix_path, validated_dst)
-                except Exception as move_err:
+                except (OSError, RuntimeError) as move_err:
                     # Fallback in Python if cross-device / container volume permissions block atomic move
                     import shutil
 
@@ -238,12 +266,12 @@ class Gatekeeper:
                         shutil.copy2(posix_path, validated_dst)
                         try:
                             Path(posix_path).unlink()
-                        except Exception as del_err:
+                        except OSError as del_err:
                             logger.warning(
                                 f"File copied to library ({validated_dst}) but source could not be deleted ({posix_path}): {del_err}"
                             )
-                    except Exception:
-                        raise move_err
+                    except (OSError, RuntimeError):
+                        raise move_err from None
 
                 execution_results.append(
                     {"src": posix_path, "dst": validated_dst, "status": "moved"}

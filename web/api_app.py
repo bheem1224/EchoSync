@@ -53,6 +53,7 @@ from web.routes.suggestions import router as suggestions_bp
 from web.routes.sync import router as sync_bp
 from web.routes.system import router as system_bp
 from web.routes.system_tasks import router as system_tasks_bp
+from web.routes.tracks import legacy_router as legacy_tracks_bp
 from web.routes.tracks import router as tracks_bp
 from web.routes.ui_registry import router as ui_registry_bp
 from web.routes.webhooks import router as webhooks_bp
@@ -109,9 +110,9 @@ async def lifespan(app: FastAPI):
     try:
         from core.hook_manager import hook_manager
 
-        hook_manager.trigger("ON_API_STARTUP", app)
+        hook_manager.execute_hook("ON_API_STARTUP", app)
     except Exception as e:
-        logger.warning(f"Failed to trigger ON_API_STARTUP hook: {e}")
+        logger.warning(f"Failed to execute ON_API_STARTUP hook: {e}")
 
     # Load scheduled sync jobs on startup
     try:
@@ -232,6 +233,7 @@ def create_app(testing: bool = False) -> FastAPI:
     app.include_router(dashboard_bp)
     app.include_router(dashboards_bp)
     app.include_router(tracks_bp)
+    app.include_router(legacy_tracks_bp)
     app.include_router(library_bp)
     app.include_router(media_bp)
     app.include_router(search_bp)

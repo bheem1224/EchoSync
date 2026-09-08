@@ -23,12 +23,16 @@ from database import _canonicalize_path
 from database.music_database import (
     Album,
     Artist,
+    ArtistAlias,
     ExternalIdentifier,
     LocalMedia,
     Track,
+    TrackAlias,
     TrackArtist,
+    TrackArtistAlias,
     generate_nanoid,
 )
+from core.metadata.schemas import EntityAliasProposal
 
 
 class TrackRepository:
@@ -1123,6 +1127,226 @@ class TrackRepository:
             session.commit()
 
         return updated_count
+
+    @classmethod
+    def upsert_entity_aliases(
+        cls,
+        session: Session,
+        proposals: list[EntityAliasProposal],
+        sync_id: str | None = None,
+        commit: bool = True,
+    ) -> int:
+        """Upsert a list of EntityAliasProposal records into artist_aliases,
+
+        track_artist_aliases, or track_aliases in music_library.db.
+
+        Guarantees that transliterations and romanizations remain strictly in the database
+        and are never written to physical audio files.
+
+        Returns the number of successfully upserted aliases.
+        """
+        if not proposals:
+            return 0
+
+        track: Track | None = None
+        if sync_id:
+            track = cls.get_track_by_sync_id(session, sync_id)
+
+        upserted_count = 0
+        for prop in proposals:
+            if not prop or not getattr(prop, "value", None):
+                continue
+
+            entity_type = prop.entity_type
+            value = str(prop.value).strip()
+            if not value:
+                continue
+            lang = getattr(prop, "language", None)
+            script = getattr(prop, "script", None)
+            alias_type = getattr(prop, "alias_type", None)
+
+            if entity_type == "artist":
+                artist_id: int | None = None
+                if prop.entity_id is not None:
+                    if isinstance(prop.entity_id, int) or (
+                        isinstance(prop.entity_id, str) and prop.entity_id.isdigit()
+                    ):
+                        artist_id = int(prop.entity_id)
+                    else:
+                        found_artist = (
+                            session.query(Artist)
+                            .filter(
+                                or_(
+                                    Artist.musicbrainz_id == str(prop.entity_id),
+                                    Artist.name == str(prop.entity_id),
+                                )
+                            )
+                            .first()
+                        )
+                        if found_artist:
+                            artist_id = found_artist.id
+
+                if not artist_id and track and track.artist_id:
+                    artist_id = track.artist_id
+
+                if not artist_id:
+                    continue
+
+                existing = (
+                    session.query(ArtistAlias)
+                    .filter_by(
+                        artist_id=artist_id,
+                        locale=lang,
+                        script=script,
+                        name=value,
+                    )
+                    .first()
+                )
+                if existing:
+                    if alias_type:
+                        existing.alias_type = alias_type
+                else:
+                    new_alias = ArtistAlias(
+                        artist_id=artist_id,
+                        name=value,
+                        locale=lang,
+                        script=script,
+                        alias_type=alias_type,
+                    )
+                    session.add(new_alias)
+                upserted_count += 1
+
+            elif entity_type == "track_artist":
+                track_artist_id: int | None = None
+                if prop.entity_id is not None:
+                    if isinstance(prop.entity_id, int) or (
+                        isinstance(prop.entity_id, str) and prop.entity_id.isdigit()
+                    ):
+                        candidate_id = int(prop.entity_id)
+                        ta = (
+                            session.query(TrackArtist)
+                            .filter_by(id=candidate_id)
+                            .first()
+                        )
+                        if ta:
+                            track_artist_id = ta.id
+                        elif track:
+                            ta_by_artist = (
+                                session.query(TrackArtist)
+                                .filter_by(track_id=track.id, artist_id=candidate_id)
+                                .first()
+                            )
+                            if ta_by_artist:
+                                track_artist_id = ta_by_artist.id
+                    else:
+                        if track:
+                            found_artist = (
+                                session.query(Artist)
+                                .filter(
+                                    or_(
+                                        Artist.musicbrainz_id == str(prop.entity_id),
+                                        Artist.name == str(prop.entity_id),
+                                    )
+                                )
+                                .first()
+                            )
+                            if found_artist:
+                                ta_by_artist = (
+                                    session.query(TrackArtist)
+                                    .filter_by(
+                                        track_id=track.id, artist_id=found_artist.id
+                                    )
+                                    .first()
+                                )
+                                if ta_by_artist:
+                                    track_artist_id = ta_by_artist.id
+
+                if not track_artist_id and track:
+                    track_artists = (
+                        session.query(TrackArtist).filter_by(track_id=track.id).all()
+                    )
+                    if len(track_artists) == 1:
+                        track_artist_id = track_artists[0].id
+
+                if not track_artist_id:
+                    continue
+
+                existing_ta = (
+                    session.query(TrackArtistAlias)
+                    .filter_by(
+                        track_artist_id=track_artist_id,
+                        language=lang,
+                        script=script,
+                        alias_name=value,
+                    )
+                    .first()
+                )
+                if existing_ta:
+                    if alias_type:
+                        existing_ta.alias_type = alias_type
+                else:
+                    new_ta_alias = TrackArtistAlias(
+                        track_artist_id=track_artist_id,
+                        alias_name=value,
+                        language=lang,
+                        script=script,
+                        alias_type=alias_type,
+                    )
+                    session.add(new_ta_alias)
+                upserted_count += 1
+
+            elif entity_type == "track":
+                track_id: int | None = None
+                if prop.entity_id is not None:
+                    if isinstance(prop.entity_id, int) or (
+                        isinstance(prop.entity_id, str) and prop.entity_id.isdigit()
+                    ):
+                        track_id = int(prop.entity_id)
+                if not track_id and track:
+                    track_id = track.id
+
+                if not track_id:
+                    continue
+
+                existing_t = (
+                    session.query(TrackAlias)
+                    .filter_by(
+                        track_id=track_id,
+                        locale=lang,
+                        script=script,
+                        name=value,
+                    )
+                    .first()
+                )
+                if not existing_t:
+                    new_t_alias = TrackAlias(
+                        track_id=track_id,
+                        name=value,
+                        locale=lang,
+                        script=script,
+                    )
+                    session.add(new_t_alias)
+                upserted_count += 1
+
+        if upserted_count > 0:
+            if commit:
+                session.commit()
+            else:
+                session.flush()
+
+        return upserted_count
+
+    def upsert_aliases(
+        self,
+        proposals: list[EntityAliasProposal],
+        sync_id: str | None = None,
+        commit: bool = True,
+    ) -> int:
+        if self.session is None:
+            raise ValueError("TrackRepository instance was initialized without a Session")
+        return self.upsert_entity_aliases(
+            self.session, proposals, sync_id=sync_id, commit=commit
+        )
 
 
 def bulk_upsert_tracks(session: Session, tracks: list[EchosyncTrack]) -> int:

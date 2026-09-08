@@ -344,6 +344,14 @@ class SuggestionStagingQueue(WorkingBase):
         UTCDateTime(), default=utc_now, onupdate=utc_now
     )
 
+    @property
+    def raw_payload(self) -> dict | None:
+        return self.context_data
+
+    @raw_payload.setter
+    def raw_payload(self, val: dict | None):
+        self.context_data = val
+
 
 class SuggestionBlacklist(WorkingBase):
     """

@@ -466,8 +466,9 @@ def get_library_index(request: Request):
 
 
 @router.get("/stream/{track_id}")
-def stream_track(track_id):
-    """Stream a track file."""
+@router.get("/tracks/{track_id}/stream")
+def stream_track(track_id: int):
+    """Stream a track file with HTTP Range support."""
     try:
         file_path = media_manager.get_track_stream(track_id)
         if not file_path:
@@ -476,6 +477,8 @@ def stream_track(track_id):
             )
 
         return FileResponse(file_path)
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error streaming track {track_id}: {e}")
         raise HTTPException(status_code=500, detail={"error": str(e)})

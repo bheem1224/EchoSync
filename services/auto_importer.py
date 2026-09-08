@@ -129,6 +129,8 @@ class AutoImportService:
             )
             self.library_root = Path(_lib) if _lib else None
         self.enhancer = RetroactiveEnhancer()
+        from core.metadata.engine import MetadataResolutionEngine
+        self.engine = MetadataResolutionEngine()
         self._scan_lock = threading.Lock()
         self._processing_lock = threading.Lock()
         self._processing_files = set()
@@ -421,7 +423,16 @@ class AutoImportService:
                 continue
 
             try:
-                metadata, confidence = self.enhancer.identify_file(p)
+                from core.metadata.schemas import ResolutionRequest
+
+                req = ResolutionRequest(media_id=f"review_{task_id}", file_path=p)
+                res = self.engine.resolve_track(req)
+                metadata = (
+                    res.to_dict()
+                    if (res.success and res.musicbrainz_track_id)
+                    else None
+                )
+                confidence = res.confidence_score
                 now = utc_now()
                 with work_db.session_scope() as session:
                     task = (
@@ -433,9 +444,8 @@ class AutoImportService:
                         task.last_checked_at = now
                         task.updated_at = now
                         task.retry_count = (task.retry_count or 0) + 1
-                        if metadata:
-                            task.confidence_score = confidence
-                            task.detected_metadata = metadata
+                        task.confidence_score = confidence
+                        task.detected_metadata = res.to_dict()
 
                 if metadata and confidence >= confidence_threshold:
                     if auto_import:
@@ -757,24 +767,15 @@ class AutoImportService:
 
                 by_dir.setdefault(str(file_path.parent), []).append(file_path)
 
-            # ── Phase 2: identify each directory group together (album-aware) ─────
+            # ── Phase 2: identify and decide per directory group ─────
+            from core.metadata.schemas import ResolutionRequest
+
             for dir_path, dir_files in by_dir.items():
                 logger.info(
                     "Processing directory group: %s (%d file(s))",
                     dir_path,
                     len(dir_files),
                 )
-                try:
-                    dir_files_str = [str(f) for f in dir_files]
-                    batch_results = self.enhancer.identify_batch(dir_files_str)
-                except Exception as exc:
-                    logger.error(
-                        "identify_batch error for '%s': %s",
-                        dir_path,
-                        exc,
-                        exc_info=True,
-                    )
-                    batch_results = {}
 
                 # ── Phase 3: per-file decision logic (Chunked Concurrency) ─────────
                 CHUNK_SIZE = 50
@@ -783,10 +784,20 @@ class AutoImportService:
 
                     # Step D: Process Results and Finalize
                     for file_path in chunk_files:
-                        res = batch_results.get(str(file_path))
-                        metadata, confidence = res if res else (None, 0.0)
                         file_key = str(file_path)
                         try:
+                            req = ResolutionRequest(
+                                media_id=f"media_{file_path.stem}",
+                                file_path=file_path,
+                            )
+                            res = self.engine.resolve_track(req)
+                            metadata = (
+                                res.to_dict()
+                                if (res.success and res.musicbrainz_track_id)
+                                else None
+                            )
+                            confidence = res.confidence_score
+
                             # Finally Decide
                             if metadata and confidence >= confidence_threshold:
                                 if auto_import:
@@ -799,14 +810,16 @@ class AutoImportService:
                                     self.enhancer.create_or_update_review_task(
                                         str(file_path),
                                         "Match found but auto_import is False",
-                                        match_data=metadata,
+                                        match_data=res.to_dict(),
+                                        confidence_score=confidence,
                                     )
                                     batch_stats["pending_review"] += 1
                             else:
                                 self.enhancer.create_or_update_review_task(
                                     str(file_path),
                                     "No confident match found",
-                                    match_data=metadata,
+                                    match_data=res.to_dict(),
+                                    confidence_score=confidence,
                                 )
                                 batch_stats["pending_review"] += 1
 

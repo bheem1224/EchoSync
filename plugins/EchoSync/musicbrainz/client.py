@@ -1146,7 +1146,7 @@ class MusicBrainzClient(PluginBase):
             )
             response = self.http.get(
                 f"{self.api_base}/recording/{mbid}",
-                params={"fmt": "json", "inc": "artists+releases+isrcs+media"},
+                params={"fmt": "json", "inc": "artists+releases+release-groups+isrcs+media"},
             )
             logger.debug(
                 f"[MusicBrainz Client] get_metadata response: status={response.status_code}"
@@ -1159,13 +1159,16 @@ class MusicBrainzClient(PluginBase):
 
             data = response.json() or {}
             logger.debug(f"[MusicBrainz Client] get_metadata response JSON: {data}")
+            releases = data.get("releases") or []
             result = {
                 "title": data.get("title"),
+                "disambiguation": data.get("disambiguation") or "",
                 "recording_id": data.get("id"),
                 "artist": "",
                 "artist_id": "",
                 "album": "",
                 "release_id": "",
+                "release_group_id": "",
                 "date": "",
                 "track_number": None,
                 "disc_number": None,
@@ -1177,6 +1180,7 @@ class MusicBrainzClient(PluginBase):
                 "length": int(data.get("length"))
                 if data.get("length") and str(data.get("length")).isdigit()
                 else None,
+                "releases": releases,
             }
 
             credits = data.get("artist-credit") or []
@@ -1192,12 +1196,19 @@ class MusicBrainzClient(PluginBase):
                 ):
                     result["artist_id"] = credits[0]["artist"].get("id") or ""
 
-            releases = data.get("releases") or []
-            if releases:
+            canonical_release = self.resolve_canonical_studio_release(releases)
+            if canonical_release:
+                result["album"] = canonical_release.get("canonical_studio_album") or ""
+                result["release_id"] = canonical_release.get("canonical_studio_release_mbid") or ""
+                result["release_group_id"] = canonical_release.get("canonical_studio_release_group_mbid") or ""
+                result["date"] = canonical_release.get("date") or ""
+            elif releases:
                 release = releases[0] or {}
                 result["album"] = release.get("title") or ""
                 result["release_id"] = release.get("id") or ""
+                result["release_group_id"] = (release.get("release-group") or {}).get("id") or ""
                 result["date"] = release.get("date") or ""
+
             isrcs = data.get("isrcs") or []
             if isrcs:
                 result["isrc"] = isrcs[0]
@@ -1231,7 +1242,7 @@ class MusicBrainzClient(PluginBase):
                     params={
                         "fmt": "json",
                         "query": full_query,
-                        "inc": "artists+releases+isrcs+media",
+                        "inc": "artists+releases+release-groups+isrcs+media",
                         "limit": len(chunk),
                     },
                 )
@@ -1247,13 +1258,16 @@ class MusicBrainzClient(PluginBase):
                     if not rec_id or rec_id not in chunk:
                         continue
 
+                    rec_releases = recording.get("releases") or []
                     result = {
                         "title": recording.get("title"),
+                        "disambiguation": recording.get("disambiguation") or "",
                         "recording_id": rec_id,
                         "artist": "",
                         "artist_id": "",
                         "album": "",
                         "release_id": "",
+                        "release_group_id": "",
                         "date": "",
                         "track_number": None,
                         "disc_number": None,
@@ -1267,6 +1281,7 @@ class MusicBrainzClient(PluginBase):
                         if recording.get("length")
                         and str(recording.get("length")).isdigit()
                         else None,
+                        "releases": rec_releases,
                     }
 
                     credits = recording.get("artist-credit") or []
@@ -1282,21 +1297,31 @@ class MusicBrainzClient(PluginBase):
                         ):
                             result["artist_id"] = credits[0]["artist"].get("id") or ""
 
-                    releases = recording.get("releases") or []
-                    if releases:
-                        release = releases[0] or {}
+                    canonical_release = self.resolve_canonical_studio_release(rec_releases)
+                    if canonical_release:
+                        result["album"] = canonical_release.get("canonical_studio_album") or ""
+                        result["release_id"] = canonical_release.get("canonical_studio_release_mbid") or ""
+                        result["release_group_id"] = canonical_release.get("canonical_studio_release_group_mbid") or ""
+                        result["date"] = canonical_release.get("date") or ""
+                    elif rec_releases:
+                        release = rec_releases[0] or {}
                         result["album"] = release.get("title") or ""
                         result["release_id"] = release.get("id") or ""
+                        result["release_group_id"] = (release.get("release-group") or {}).get("id") or ""
                         result["date"] = release.get("date") or ""
+
                     isrcs = recording.get("isrcs") or []
                     if isrcs:
                         result["isrc"] = isrcs[0]
+
+                    results[rec_id] = result
 
             except HttpError as exc:
                 logger.warning(f"MusicBrainz batch metadata HTTP error: {exc}")
                 continue
             except Exception as exc:
                 logger.error(f"Failed to fetch batch metadata: {exc}")
+                continue
 
         return results
 

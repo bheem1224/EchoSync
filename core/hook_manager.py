@@ -57,31 +57,58 @@ class HookManager:
                                 f"callback '{callback.__name__}' returned a coroutine. "
                                 "Hooks must be synchronous plain functions."
                             )
-                    except Exception as e:
+                    except Exception:
                         value = prev_value
-                        logging.getLogger("hook_manager").error(
-                            f"Error applying filter for hook '{hook_name}': {e}",
-                            exc_info=True,
+                        logging.getLogger("hook_manager").exception(
+                            f"Error applying filter for hook '{hook_name}'"
                         )
         finally:
             self._local.depths[hook_name] -= 1
         return value
 
-    def trigger(self, hook_name: str, *args, **kwargs) -> None:
+    def register_hook(self, hook_name: str, callback: Callable) -> None:
+        """Register a callback for a specific hook (alias for add_filter)."""
+        self.add_filter(hook_name, callback)
+
+    def trigger(self, hook_name: str, *args: Any, **kwargs: Any) -> list[Any]:
+        """Trigger a hook (alias for execute_hook)."""
+        return self.execute_hook(hook_name, *args, **kwargs)
+
+    def execute_hook(self, hook_name: str, *args: Any, **kwargs: Any) -> list[Any]:
         """
-        Trigger an event hook. All registered callbacks will be executed.
-        Unlike apply_filters, this does not pass a value through the chain.
+        Execute all callbacks registered for a hook and collect results into a flat list.
+        Each callback may return an item, a list of items, or None.
+        Exceptions raised by individual callbacks are caught, logged, and dropped to prevent
+        pipeline abort.
         """
+        results: list[Any] = []
         if hook_name in self._filters:
+            import logging
+
             for callback in self._filters[hook_name]:
                 try:
-                    callback(*args, **kwargs)
-                except Exception as e:
+                    res = callback(*args, **kwargs)
+                    if asyncio.iscoroutine(res):
+                        res.close()
+                        logging.getLogger("hook_manager").error(
+                            f"Async hook rejected for '{hook_name}': "
+                            f"callback '{getattr(callback, '__name__', str(callback))}' returned a coroutine. "
+                            "Hooks must be synchronous plain functions."
+                        )
+                        continue
+                    if res is None:
+                        continue
+                    if isinstance(res, list):
+                        results.extend(res)
+                    else:
+                        results.append(res)
+                except Exception:
                     import logging
 
-                    logging.getLogger("hook_manager").error(
-                        f"Error triggering hook '{hook_name}': {e}", exc_info=True
+                    logging.getLogger("hook_manager").exception(
+                        f"Error executing hook '{hook_name}' in callback '{getattr(callback, '__name__', str(callback))}'"
                     )
+        return results
 
 
 # Global singleton

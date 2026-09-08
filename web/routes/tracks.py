@@ -19,6 +19,7 @@ from web.schemas.track import TrackPatchRequest
 
 logger = get_logger("tracks_route")
 router = APIRouter(prefix="/api/v1/core/tracks", tags=["Core: Tracks"])
+legacy_router = APIRouter(prefix="/api/tracks", tags=["Core: Tracks (Legacy)"])
 
 # Physical-only fields that must never be PATCH'd through the track endpoint
 _PHYSICAL_FIELDS = frozenset(
@@ -31,6 +32,10 @@ _PHYSICAL_FIELDS = frozenset(
         "file_size_bytes",
         "inode",
         "mtime",
+        "duration",
+        "duration_ms",
+        "channels",
+        "media_id",
     }
 )
 
@@ -124,6 +129,7 @@ async def get_canonical_track(sync_id: str, detail: bool = Query(False)):
 
 
 @router.patch("/{sync_id}", response_model=TrackSummarySchema)
+@legacy_router.patch("/{sync_id}", response_model=TrackSummarySchema)
 async def patch_canonical_track(sync_id: str, payload: TrackPatchRequest):
     """
     Partially update a track's logical metadata by sync_id.
@@ -164,6 +170,34 @@ async def patch_canonical_track(sync_id: str, payload: TrackPatchRequest):
             for key, val in payload_dict.items():
                 if key in allowed and hasattr(track, key):
                     setattr(track, key, val)
+
+            if "artist" in payload_dict or "artist_name" in payload_dict:
+                art_name = payload_dict.get("artist") or payload_dict.get("artist_name")
+                if art_name:
+                    from database.music_database import Artist
+                    artist_obj = session.query(Artist).filter_by(name=art_name).first()
+                    if not artist_obj:
+                        artist_obj = Artist(name=art_name)
+                        session.add(artist_obj)
+                        session.flush()
+                    track.artist_id = artist_obj.id
+
+            if "album" in payload_dict or "album_title" in payload_dict:
+                alb_title = payload_dict.get("album") or payload_dict.get("album_title")
+                if alb_title:
+                    from database.music_database import Album
+                    album_obj = session.query(Album).filter_by(title=alb_title).first()
+                    if not album_obj:
+                        album_obj = Album(title=alb_title, artist_id=track.artist_id)
+                        session.add(album_obj)
+                        session.flush()
+                    track.album_id = album_obj.id
+
+            from core.path_formatter import ensure_path_invariance
+
+            for media in track.media_files or []:
+                ensure_path_invariance(session, track, media)
+
             session.commit()
             session.refresh(track)
 

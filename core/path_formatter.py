@@ -113,12 +113,12 @@ def get_library_preferences() -> tuple[str, str]:
     """
     Query active library root and renaming pattern preferences.
     Priority:
-    1. config.db system_settings table:
+    1. config_manager (active runtime settings & test mocks):
+       - 'storage.library_dir' or 'library_dir' or 'storage_locations.library'
+       - 'auto_import.file_organization_pattern' or 'library_import.renaming_pattern' or 'metadata_enhancement.naming_template'
+    2. config.db system_settings table:
        - 'storage_locations.library'
        - 'library_import.renaming_pattern'
-    2. config_manager / config.json:
-       - 'storage_locations.library' or 'storage.library_dir'
-       - 'library_import.renaming_pattern' or 'metadata_enhancement.naming_template'
     3. Fallback defaults:
        - library_root: /data/library
        - renaming_pattern: {Artist}/{Album}/{Track} - {Title}.{ext}
@@ -126,34 +126,39 @@ def get_library_preferences() -> tuple[str, str]:
     library_root: str | None = None
     renaming_pattern: str | None = None
 
-    # Step 1: Try reading from config.db (system_settings)
-    try:
-        from database.config_database import get_config_database
-
-        db = get_config_database()
-        lib_val = db.get_system_setting("storage_locations.library")
-        if lib_val:
-            library_root = str(lib_val)
-        pat_val = db.get_system_setting("library_import.renaming_pattern")
-        if pat_val:
-            renaming_pattern = str(pat_val)
-    except Exception:
-        pass
-
-    # Step 2: Fallback to config_manager
+    # Step 1: Check config_manager (runtime config / test fixtures)
     try:
         from core.settings import config_manager
 
-        if not library_root:
-            library_root = config_manager.get(
-                "storage_locations.library"
-            ) or config_manager.get("storage.library_dir")
-        if not renaming_pattern:
-            renaming_pattern = config_manager.get(
-                "library_import.renaming_pattern"
-            ) or config_manager.get("metadata_enhancement.naming_template")
+        library_root = (
+            config_manager.get("storage.library_dir")
+            or config_manager.get("library_dir")
+            or config_manager.get("storage_locations.library")
+        )
+        renaming_pattern = (
+            config_manager.get("auto_import.file_organization_pattern")
+            or config_manager.get("library_import.renaming_pattern")
+            or config_manager.get("metadata_enhancement.naming_template")
+        )
     except Exception:
         pass
+
+    # Step 2: Try reading from config.db if still unset
+    if not library_root or not renaming_pattern:
+        try:
+            from database.config_database import get_config_database
+
+            db = get_config_database()
+            if not library_root:
+                lib_val = db.get_system_setting("storage_locations.library") or db.get_system_setting("storage.library_dir")
+                if lib_val:
+                    library_root = str(lib_val)
+            if not renaming_pattern:
+                pat_val = db.get_system_setting("library_import.renaming_pattern") or db.get_system_setting("auto_import.file_organization_pattern")
+                if pat_val:
+                    renaming_pattern = str(pat_val)
+        except Exception:
+            pass
 
     # Step 3: Default fallbacks
     if not library_root:
@@ -197,15 +202,19 @@ def extract_track_token(meta: dict[str, Any]) -> str:
 
 
 def build_destination_path(
-    base_library_path: str,
-    pattern: str,
-    meta: dict[str, Any],
-    ext: str,
+    base_library_path: str | dict[str, Any],
+    pattern: str | None = None,
+    meta: dict[str, Any] | None = None,
+    ext: str | None = None,
     singles_pattern: str | None = None,
     group_singles: bool | None = None,
 ) -> Path:
     """
     Interpolate dynamic tokens into destination library path.
+
+    Supports both:
+    1. Single dictionary: build_destination_path(metadata_dict)
+    2. Explicit parameters: build_destination_path(base_path, pattern, meta, ext, ...)
 
     Supported tokens:
     - {Artist}: meta['album_artist'] or meta['artist'] (default: 'Unknown Artist')
@@ -215,7 +224,28 @@ def build_destination_path(
     - {Year}: 4-digit release year
     - {Format} / {ext}: Clean extension without leading dot (e.g. 'flac')
     """
-    ext_clean = ext.lstrip(".").lower()
+    if isinstance(base_library_path, dict):
+        meta = dict(base_library_path)
+        pref_lib_root, pref_pattern = get_library_preferences()
+        base_library_path = pref_lib_root
+        pattern = pattern or pref_pattern
+        ext = ext or meta.get("ext") or meta.get("file_format") or "flac"
+    elif meta is None:
+        meta = {}
+
+    if not pattern:
+        _, pattern = get_library_preferences()
+    if not ext:
+        ext = meta.get("ext") or meta.get("file_format") or "flac"
+
+    if pattern:
+        pattern = re.sub(r"(?<!\.){ext}", ".{ext}", pattern)
+        pattern = re.sub(r"(?<!\.){Format}", ".{Format}", pattern)
+    if singles_pattern:
+        singles_pattern = re.sub(r"(?<!\.){ext}", ".{ext}", singles_pattern)
+        singles_pattern = re.sub(r"(?<!\.){Format}", ".{Format}", singles_pattern)
+
+    ext_clean = str(ext).lstrip(".").lower()
 
     # Resolve artist
     raw_artist = meta.get("album_artist") or meta.get("artist") or "Unknown Artist"
@@ -323,3 +353,80 @@ def build_destination_path(
         cleaned_segments[-1] = f"{filename}.{ext_clean}"
 
     return Path(base_library_path).joinpath(*cleaned_segments)
+
+
+def ensure_path_invariance(session: Any, track: Any, local_media: Any) -> Path:
+    """Ensure library track file path matches active library_import renaming pattern.
+
+    If target_path != current_path, relocate file via Gatekeeper.authorize_and_execute,
+    suppress library watcher events, update local_media.file_path, and prune empty source folders.
+    """
+    import logging
+
+    from core.io_gatekeeper import Gatekeeper
+    from core.settings import config_manager
+    from core.system_watcher import suppress_path
+    from core.utils.file_utils import prune_empty_parent_directories
+
+    if not local_media or not getattr(local_media, "file_path", None):
+        return Path("")
+
+    current_path = Path(local_media.file_path)
+    if not current_path.exists():
+        return current_path
+
+    artist_name = (
+        track.artist.name
+        if getattr(track, "artist", None) and track.artist
+        else "Unknown Artist"
+    )
+    album_title = (
+        track.album.title
+        if getattr(track, "album", None) and track.album
+        else "Unknown Album"
+    )
+
+    metadata_dict = {
+        "artist": artist_name,
+        "album_artist": artist_name,
+        "album": album_title,
+        "title": track.title or "Unknown Track",
+        "track": track.track_number,
+        "track_number": track.track_number,
+        "disc_number": track.disc_number,
+        "year": getattr(track, "year", None)
+        or (
+            track.album.release_date.year
+            if getattr(track, "album", None) and getattr(track.album, "release_date", None)
+            else getattr(track.album, "release_year", None) if getattr(track, "album", None) else None
+        ),
+        "ext": current_path.suffix.lstrip(".") or "flac",
+    }
+
+    target_path = build_destination_path(metadata_dict)
+    if target_path.resolve() != current_path.resolve():
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        with suppress_path(str(target_path)):
+            Gatekeeper.authorize_and_execute(
+                operation="move",
+                source=str(current_path),
+                destination=str(target_path),
+            )
+        local_media.file_path = str(target_path)
+        session.flush()
+
+        # Clean up empty source parent directories up to library root
+        try:
+            lib_root = config_manager.get(
+                "storage.library_dir"
+            ) or config_manager.get("library_dir")
+            stop_roots = {Path(lib_root).resolve()} if lib_root else set()
+            prune_empty_parent_directories(current_path, stop_at_roots=stop_roots)
+        except Exception as prune_err:
+            logging.getLogger("path_formatter").debug(
+                "Failed pruning empty parent directories for %s: %s",
+                current_path,
+                prune_err,
+            )
+
+    return target_path

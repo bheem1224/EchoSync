@@ -411,6 +411,9 @@ class TrackArtist(Base):
 
     track: Mapped[Track] = relationship(back_populates="artist_associations")
     artist: Mapped[Artist] = relationship(back_populates="track_associations")
+    aliases: Mapped[list[TrackArtistAlias]] = relationship(
+        "TrackArtistAlias", back_populates="track_artist", cascade="all, delete-orphan"
+    )
 
 
 class LocalMedia(Base):
@@ -525,11 +528,70 @@ class ArtistAlias(Base):
     name: Mapped[str] = mapped_column(String, nullable=False)
     locale: Mapped[str | None] = mapped_column(String)
     script: Mapped[str | None] = mapped_column(String)
+    alias_type: Mapped[str | None] = mapped_column(String(30))
     is_primary_for_locale: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default="0"
     )
 
     artist: Mapped[Artist] = relationship(back_populates="aliases")
+
+    @property
+    def language(self) -> str | None:
+        return self.locale
+
+    @language.setter
+    def language(self, val: str | None) -> None:
+        self.locale = val
+
+    @property
+    def alias_name(self) -> str:
+        return self.name
+
+    @alias_name.setter
+    def alias_name(self, val: str) -> None:
+        self.name = val
+
+
+class TrackArtistAlias(Base):
+    """Localised / transliterated names for a collaborating track artist."""
+
+    __tablename__ = "track_artist_aliases"
+    __table_args__ = (
+        UniqueConstraint(
+            "track_artist_id",
+            "language",
+            "script",
+            "alias_name",
+            name="uq_track_artist_alias",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    track_artist_id: Mapped[int] = mapped_column(
+        ForeignKey("track_artists.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    language: Mapped[str | None] = mapped_column(String(10))
+    script: Mapped[str | None] = mapped_column(String(10))
+    alias_type: Mapped[str | None] = mapped_column(String(30))
+    alias_name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+
+    track_artist: Mapped[TrackArtist] = relationship(back_populates="aliases")
+
+    @property
+    def name(self) -> str:
+        return self.alias_name
+
+    @name.setter
+    def name(self, val: str) -> None:
+        self.alias_name = val
+
+    @property
+    def locale(self) -> str | None:
+        return self.language
+
+    @locale.setter
+    def locale(self, val: str | None) -> None:
+        self.language = val
 
 
 class TrackAudioFeatures(Base):
@@ -1190,6 +1252,7 @@ __all__ = [
     "Track",
     "TrackAlias",
     "TrackArtist",
+    "TrackArtistAlias",
     "TrackAudioFeatures",
     "close_database",
     "get_database",

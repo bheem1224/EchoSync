@@ -34,7 +34,7 @@ def test_get_suggestion_queue_serialization(client):
         # Ensure an account exists
         acc = session.query(Account).first()
         if not acc:
-            acc = Account(id=1, name="Test Account", service="local")
+            acc = Account(id=1, plugin_id=1, remote_account_id="acc-1", username="Test Account")
             session.add(acc)
             session.flush()
         account_id = acc.id
@@ -104,3 +104,110 @@ def test_get_suggestion_queue_serialization(client):
             session.query(SuggestionStagingQueue).filter(
                 SuggestionStagingQueue.sync_id.in_(["sync-item-1", "sync-item-2"])
             ).delete(synchronize_session=False)
+
+
+def test_get_suggestion_queue_hydrates_duplicate_payload(client: TestClient):
+    """Verify GET /api/v1/system/manager/queue/suggestions returns enriched winner/loser tracks,
+    comparison reason, and formatted duplicate title."""
+    work_db = get_working_database()
+
+    with work_db.session_scope() as session:
+        acc = session.query(Account).first()
+        if not acc:
+            acc = Account(id=1, plugin_id=1, remote_account_id="acc-1", username="Test Account")
+            session.add(acc)
+            session.flush()
+        account_id = acc.id
+
+        dup_payload = {
+            "type": "Duplicate Resolution",
+            "originator": "System",
+            "event": "system_duplicate",
+            "subtype": "acoustic_duplicate",
+            "confidence_score": 100.0,
+            "reason": "Acoustic duplicate detected",
+            "winner_track": {
+                "id": 101,
+                "title": "Hotel California",
+                "artist": "Eagles",
+                "album": "Hotel California",
+                "format": "flac",
+                "bitrate": 1411000,
+                "sample_rate": 44100,
+                "file_path": "/music/Eagles/Hotel California.flac",
+                "duration": 390000,
+            },
+            "loser_track": {
+                "id": 102,
+                "title": "Hotel California",
+                "artist": "Eagles",
+                "album": "Hotel California (Remaster)",
+                "format": "mp3",
+                "bitrate": 320000,
+                "sample_rate": 44100,
+                "file_path": "/music/Eagles/Hotel California.mp3",
+                "duration": 390500,
+            },
+        }
+
+        item = SuggestionStagingQueue(
+            account_id=account_id,
+            sync_id="sync-dup-test-1",
+            reason="HYGIENE_DUPLICATION",
+            intent_type="HYGIENE_DUPLICATION",
+            ui_label="Review needed for system_duplicate",
+            context_data=dup_payload,
+            status="pending",
+        )
+        session.add(item)
+
+    try:
+        resp = client.get("/api/v1/system/manager/queue/suggestions")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data.get("success") is True
+
+        suggestions = data.get("suggestions", [])
+        dup_sugg = next(
+            (s for s in suggestions if s["sync_id"] == "sync-dup-test-1"), None
+        )
+        assert dup_sugg is not None
+
+        # Verify title formatted to "{Artist} - {Title} (Duplicate)"
+        assert dup_sugg["title"] == "Eagles - Hotel California (Duplicate)"
+        assert dup_sugg["comparison_reason"] == "Acoustic Match (100%)"
+
+        # Verify winner_track hydrated
+        winner = dup_sugg["winner_track"]
+        assert winner is not None
+        assert winner["id"] == 101
+        assert winner["title"] == "Hotel California"
+        assert winner["artist"] == "Eagles"
+        assert winner["format"] == "flac"
+        assert winner["bitrate"] == 1411000
+        assert winner["file_path"] == "/music/Eagles/Hotel California.flac"
+
+        # Verify loser_track hydrated
+        loser = dup_sugg["loser_track"]
+        assert loser is not None
+        assert loser["id"] == 102
+        assert loser["format"] == "mp3"
+        assert loser["bitrate"] == 320000
+        assert loser["file_path"] == "/music/Eagles/Hotel California.mp3"
+
+        # Test swap endpoint
+        swap_resp = client.post(
+            "/api/v1/system/manager/suggestions/sync-dup-test-1/swap"
+        )
+        assert swap_resp.status_code == 200
+        swap_data = swap_resp.json()
+        assert swap_data.get("success") is True
+        assert swap_data["winner_track"]["id"] == 102
+        assert swap_data["loser_track"]["id"] == 101
+
+    finally:
+        with work_db.session_scope() as session:
+            session.query(SuggestionStagingQueue).filter(
+                SuggestionStagingQueue.sync_id == "sync-dup-test-1"
+            ).delete(synchronize_session=False)
+

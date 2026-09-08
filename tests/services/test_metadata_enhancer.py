@@ -1251,3 +1251,203 @@ def test_revert_track_metadata_from_disk(tmp_path, monkeypatch):
         assert t.isrc is None
         assert t.metadata_status.get("enhanced") is False
         assert t.metadata_status.get("reverted_from_disk") is True
+
+
+def test_acoustid_candidate_penalizes_remix_disambiguation():
+    """Verify 'Hey, Soul Sister (Country Mix)' is rejected in favor of the canonical studio cut."""
+    from services.metadata_enhancer import select_best_acoustid_recording
+
+    # Candidate 1: "Country Mix" remix candidate (has closer duration delta: 50ms)
+    cand_remix = {
+        "title": "Hey, Soul Sister (Country Mix)",
+        "disambiguation": "Country Mix",
+        "recording_id": "mbid-remix-001",
+        "length": 216050,
+        "releases": [
+            {
+                "id": "rel-single-1",
+                "title": "Hey, Soul Sister (Country Mix) - Single",
+                "status": "Official",
+                "release-group": {
+                    "id": "rg-single-1",
+                    "primary-type": "Single",
+                    "secondary-types": ["Remix"],
+                },
+            }
+        ],
+    }
+
+    # Candidate 2: Canonical studio album cut (has slightly higher duration delta: 250ms)
+    cand_studio = {
+        "title": "Hey, Soul Sister",
+        "disambiguation": "",
+        "recording_id": "mbid-studio-002",
+        "length": 216250,
+        "releases": [
+            {
+                "id": "rel-album-2",
+                "title": "Save Me, San Francisco",
+                "status": "Official",
+                "release-group": {
+                    "id": "rg-album-2",
+                    "primary-type": "Album",
+                    "secondary-types": [],
+                },
+            }
+        ],
+    }
+
+    class MockProvider:
+        def get_metadata(self, mbid: str):
+            if mbid == "mbid-remix-001":
+                return cand_remix
+            if mbid == "mbid-studio-002":
+                return cand_studio
+            return None
+
+    provider = MockProvider()
+
+    best_meta, best_mbid, conf = select_best_acoustid_recording(
+        candidate_mbids=["mbid-remix-001", "mbid-studio-002"],
+        file_duration_ms=216000,
+        metadata_provider=provider,
+        baseline_title="Hey, Soul Sister",
+        filename="Hey, Soul Sister.flac",
+        max_duration_delta_ms=2000,
+    )
+
+    assert best_mbid == "mbid-studio-002"
+    assert best_meta is not None
+    assert best_meta["recording_id"] == "mbid-studio-002"
+    assert best_meta["title"] == "Hey, Soul Sister"
+
+
+def test_enhance_track_delegates_to_metadata_resolution_engine_and_persists_atomically(
+    tmp_path, monkeypatch
+):
+    """Verify RetroactiveEnhancer.enhance_track delegates to MetadataResolutionEngine
+
+    and atomically writes chromaprint and acoustid_id to the database.
+    """
+    from database.music_database import (
+        Artist,
+        AudioFingerprint,
+        Base,
+        LocalMedia,
+        MusicDatabase,
+        Track,
+    )
+
+    db_path = str(tmp_path / "test_enhance_track.db")
+    db = MusicDatabase(db_path)
+    Base.metadata.create_all(db.engine)
+
+    fake_file = tmp_path / "midnight_city.flac"
+    fake_file.write_bytes(b"dummy audio flac data")
+
+    with db.session_scope() as session:
+        artist = Artist(name="M83")
+        session.add(artist)
+        session.flush()
+
+        track = Track(
+            title="Midnight City",
+            artist_id=artist.id,
+            duration=243000,
+            sync_id="sync_m83_001",
+        )
+        session.add(track)
+        session.flush()
+        track_id = track.id
+
+        media = LocalMedia(
+            track_id=track.id,
+            file_path=str(fake_file),
+            file_format="flac",
+            media_id="media_m83_001",
+        )
+        session.add(media)
+
+    monkeypatch.setattr("database.music_database.get_database", lambda: db)
+    monkeypatch.setattr("database.get_database", lambda: db)
+
+    # Mock tagging write
+    tagged_files = []
+    monkeypatch.setattr(
+        "services.metadata_enhancer.RetroactiveEnhancer.tag_file_verified",
+        lambda self, p, tags: tagged_files.append((p, tags)),
+    )
+
+    # Mock echosync_core.extract_metadata
+    import echosync_core
+
+    monkeypatch.setattr(
+        echosync_core,
+        "extract_metadata",
+        lambda p: {
+            "title": "Midnight City",
+            "artist": "M83",
+            "duration_ms": 243000,
+            "channels": 2,
+        },
+    )
+
+    dummy_cp = "E" * 60
+    from core.matching_engine.fingerprinting import FingerprintGenerator
+
+    monkeypatch.setattr(
+        FingerprintGenerator,
+        "generate_with_duration",
+        lambda p: (dummy_cp, 243.0),
+    )
+
+    mock_acoustid = MagicMock()
+    mock_acoustid.resolve_fingerprint_details.return_value = {
+        "acoustid_id": "acoustid_m83_win",
+        "mbids": ["mbid_m83_midnight"],
+    }
+
+    mock_mb = MagicMock()
+    mock_mb.get_metadata.return_value = {
+        "title": "Midnight City",
+        "artist": "M83",
+        "album": "Hurry Up, We're Dreaming",
+        "release_id": "rel_m83_huwd",
+        "length": 243000,
+        "release_group": {"primary_type": "Album"},
+    }
+
+    from core.enums import Capability
+
+    enhancer = RetroactiveEnhancer()
+    monkeypatch.setattr(
+        enhancer,
+        "_get_plugin",
+        lambda cap, **kw: mock_acoustid
+        if cap == Capability.RESOLVE_FINGERPRINT
+        else mock_mb,
+    )
+    monkeypatch.setattr(enhancer, "_get_mb_plugin", lambda: mock_mb)
+
+    with db.session_scope() as session:
+        result = enhancer.enhance_track(track_id, session=session)
+
+    assert result is not None
+    assert result.musicbrainz_track_id == "mbid_m83_midnight"
+    assert result.acoustid_id == "acoustid_m83_win"
+    assert result.chromaprint == dummy_cp
+    assert result.confidence_score == 0.95
+
+    with db.session_scope() as session:
+        db_track = session.get(Track, track_id)
+        assert db_track.musicbrainz_id == "mbid_m83_midnight"
+        assert db_track.metadata_status.get("enhanced") is True
+
+        db_fp = (
+            session.query(AudioFingerprint).filter_by(media_id="media_m83_001").first()
+        )
+        assert db_fp is not None
+        assert db_fp.chromaprint == dummy_cp
+        assert db_fp.acoustid_id == "acoustid_m83_win"
+
+

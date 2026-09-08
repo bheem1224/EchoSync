@@ -43,12 +43,18 @@ class ExecuteRequest(BaseModel):
 
 
 class ConflictResolveRequest(BaseModel):
-    resolution: str
+    resolution: str | None = None
+    keep_id: int | None = None
+    delete_ids: list[int] | None = None
+    keep_media_id: str | None = None
+    delete_media_ids: list[str] | None = None
+    sync_id: str | None = None
 
 
 from pathlib import Path
 
 from sqlalchemy import func
+from sqlalchemy.orm.attributes import flag_modified
 
 from core.nexus_framework.plugin_store import plugin_store
 from core.settings import config_manager
@@ -59,7 +65,7 @@ from core.suggestion_engine.deletion import (
 )
 from core.tiered_logger import get_logger
 from database.config_database import get_config_database
-from database.music_database import Artist, Track, get_database
+from database.music_database import Album, Artist, LocalMedia, Track, get_database
 from database.working_database import (
     Account,
     SuggestionBlacklist,
@@ -891,6 +897,7 @@ def resolve_conflict(payload: ConflictResolveRequest, _=Depends(require_auth)):
     payload_data = payload.model_dump(exclude_unset=True) if payload else {}
     keep_id = payload_data.get("keep_id")
     delete_ids = payload_data.get("delete_ids", [])
+    sync_id = payload_data.get("sync_id")
 
     if not keep_id or not delete_ids:
         return {"error": "keep_id and delete_ids are required"}
@@ -899,6 +906,26 @@ def resolve_conflict(payload: ConflictResolveRequest, _=Depends(require_auth)):
         service = DuplicateHygieneService()
         success = service.resolve_conflict(keep_id, delete_ids)
         if success:
+            work_db = get_working_database()
+            with work_db.session_scope() as session:
+                query = session.query(SuggestionStagingQueue)
+                if sync_id:
+                    query = query.filter(SuggestionStagingQueue.sync_id == sync_id)
+                else:
+                    query = query.filter(SuggestionStagingQueue.status == "pending")
+                items = query.all()
+                for it in items:
+                    c = it.context_data or {}
+                    if (
+                        sync_id
+                        or c.get("keep_id") == keep_id
+                        or keep_id in c.get("delete_ids", [])
+                        or (
+                            c.get("winner_track")
+                            and c["winner_track"].get("id") == keep_id
+                        )
+                    ):
+                        it.status = "resolved"
             return {"success": True}
         else:
             return {"error": "Failed to resolve some conflicts"}
@@ -993,6 +1020,178 @@ def set_manager_settings(payload: ManagerSettingsRequest, _=Depends(require_auth
     return {"success": True}
 
 
+def _format_track_dict(track_obj=None, raw_dict=None) -> dict[str, Any]:
+    raw = raw_dict or {}
+    if track_obj:
+        best_media = (
+            track_obj.get_best_media()
+            if hasattr(track_obj, "get_best_media")
+            else None
+        )
+        if not best_media and getattr(track_obj, "media_files", None):
+            best_media = track_obj.media_files[0]
+        artist_name = (
+            track_obj.artist.name if getattr(track_obj, "artist", None) else None
+        )
+        album_name = (
+            track_obj.album.title if getattr(track_obj, "album", None) else None
+        )
+        return {
+            "id": track_obj.id,
+            "title": track_obj.title or raw.get("title") or "Unknown Title",
+            "artist": artist_name or raw.get("artist") or raw.get("artist_name") or "Unknown Artist",
+            "album": album_name or raw.get("album") or raw.get("album_title") or "Unknown Album",
+            "format": (best_media.file_format if best_media else None) or raw.get("format") or raw.get("file_format") or "Unknown",
+            "bitrate": (best_media.bitrate if best_media else None) or raw.get("bitrate"),
+            "sample_rate": (getattr(best_media, "sample_rate", None) if best_media else None) or raw.get("sample_rate"),
+            "file_path": (best_media.file_path if best_media else track_obj.file_path) or raw.get("file_path") or raw.get("path") or "",
+            "duration": track_obj.duration or raw.get("duration"),
+        }
+    return {
+        "id": raw.get("id") or raw.get("track_id"),
+        "title": raw.get("title") or "Unknown Title",
+        "artist": raw.get("artist") or raw.get("artist_name") or "Unknown Artist",
+        "album": raw.get("album") or raw.get("album_title") or "Unknown Album",
+        "format": raw.get("format") or raw.get("file_format") or "Unknown",
+        "bitrate": raw.get("bitrate"),
+        "sample_rate": raw.get("sample_rate"),
+        "file_path": raw.get("file_path") or raw.get("path") or "",
+        "duration": raw.get("duration"),
+    }
+
+
+def _hydrate_duplicate_tracks(
+    ctx: dict, sync_id: str | None = None
+) -> tuple[dict | None, dict | None, str | None]:
+    subtype = ctx.get("subtype") or ctx.get("event") or ""
+    confidence = ctx.get("confidence_score")
+
+    if subtype == "acoustic_duplicate":
+        score_str = f" ({int(confidence)}%)" if confidence is not None else ""
+        comparison_reason = f"Acoustic Match{score_str}"
+    elif subtype == "relational_duplicate":
+        comparison_reason = "1:N Relational Duplicate"
+    else:
+        comparison_reason = ctx.get("reason") or "Duplicate Audio"
+
+    # 1. Direct winner_track / loser_track
+    if ctx.get("winner_track") and ctx.get("loser_track"):
+        return (
+            _format_track_dict(raw_dict=ctx["winner_track"]),
+            _format_track_dict(raw_dict=ctx["loser_track"]),
+            comparison_reason,
+        )
+
+    # 2. Extract from tracks array if present
+    raw_tracks = ctx.get("tracks") or []
+    winner_raw = None
+    loser_raw = None
+    for t in raw_tracks:
+        if isinstance(t, dict):
+            if t.get("is_kept") is True and winner_raw is None:
+                winner_raw = t
+            elif t.get("is_kept") is False and loser_raw is None:
+                loser_raw = t
+
+    keep_id = ctx.get("keep_id") or (winner_raw.get("id") if winner_raw else None)
+    delete_ids = ctx.get("delete_ids") or (
+        [loser_raw.get("id")] if loser_raw and loser_raw.get("id") else []
+    )
+    loser_id = delete_ids[0] if delete_ids else None
+
+    # Database hydration
+    db = get_database()
+    track_map = {}
+    ids_to_fetch = [i for i in [keep_id, loser_id] if isinstance(i, int)]
+    if ids_to_fetch:
+        try:
+            with db.session_scope() as session:
+                from sqlalchemy.orm import joinedload, selectinload
+
+                db_tracks = (
+                    session.query(Track)
+                    .options(
+                        joinedload(Track.artist),
+                        joinedload(Track.album),
+                        selectinload(Track.media_files),
+                    )
+                    .filter(Track.id.in_(ids_to_fetch))
+                    .all()
+                )
+                for trk in db_tracks:
+                    track_map[trk.id] = trk
+        except Exception as e:
+            logger.debug("Failed querying tracks for suggestion hydration: %s", e)
+
+    winner_track = (
+        _format_track_dict(track_obj=track_map.get(keep_id), raw_dict=winner_raw)
+        if (keep_id or winner_raw)
+        else None
+    )
+    loser_track = (
+        _format_track_dict(track_obj=track_map.get(loser_id), raw_dict=loser_raw)
+        if (loser_id or loser_raw)
+        else None
+    )
+
+    # Handle 1:N relational duplicates (media-level duplicates for a single track)
+    if not winner_track and not loser_track:
+        track_id = ctx.get("track_id")
+        if track_id:
+            try:
+                with db.session_scope() as session:
+                    from sqlalchemy.orm import joinedload, selectinload
+
+                    trk = (
+                        session.query(Track)
+                        .options(
+                            joinedload(Track.artist),
+                            joinedload(Track.album),
+                            selectinload(Track.media_files),
+                        )
+                        .filter(Track.id == track_id)
+                        .first()
+                    )
+                    if trk and trk.media_files:
+                        keep_mid = ctx.get("keep_media_id")
+                        w_media = next(
+                            (m for m in trk.media_files if m.media_id == keep_mid),
+                            trk.media_files[0],
+                        )
+                        l_media = next(
+                            (m for m in trk.media_files if m.media_id != keep_mid),
+                            trk.media_files[-1],
+                        )
+                        art_name = trk.artist.name if trk.artist else "Unknown Artist"
+                        alb_title = trk.album.title if trk.album else "Unknown Album"
+                        winner_track = {
+                            "id": trk.id,
+                            "title": trk.title,
+                            "artist": art_name,
+                            "album": alb_title,
+                            "format": w_media.file_format or "Unknown",
+                            "bitrate": w_media.bitrate,
+                            "sample_rate": getattr(w_media, "sample_rate", None),
+                            "file_path": w_media.file_path or "",
+                            "duration": trk.duration,
+                        }
+                        loser_track = {
+                            "id": trk.id,
+                            "title": trk.title,
+                            "artist": art_name,
+                            "album": alb_title,
+                            "format": l_media.file_format or "Unknown",
+                            "bitrate": l_media.bitrate,
+                            "sample_rate": getattr(l_media, "sample_rate", None),
+                            "file_path": l_media.file_path or "",
+                            "duration": trk.duration,
+                        }
+            except Exception as e:
+                logger.debug("Failed relational duplicate media hydration: %s", e)
+
+    return winner_track, loser_track, comparison_reason
+
+
 @router.get("/queue/suggestions")
 def get_suggestion_queue(_=Depends(require_auth)):
     work_db = get_working_database()
@@ -1007,24 +1206,72 @@ def get_suggestion_queue(_=Depends(require_auth)):
             suggestions = []
             for item in items:
                 ctx = item.context_data or {}
+                reason_type = getattr(
+                    item,
+                    "reason",
+                    getattr(item, "intent_type", "SUGGESTION"),
+                )
+                is_duplicate = (
+                    reason_type == "HYGIENE_DUPLICATION"
+                    or getattr(item, "intent_type", None) == "HYGIENE_DUPLICATION"
+                    or ctx.get("event") == "system_duplicate"
+                    or "duplicate" in str(getattr(item, "reason", "")).lower()
+                )
+
+                winner_track = None
+                loser_track = None
+                comparison_reason = None
+                if is_duplicate:
+                    winner_track, loser_track, comparison_reason = (
+                        _hydrate_duplicate_tracks(ctx, getattr(item, "sync_id", None))
+                    )
+
+                # Format clear card title
+                artist_name = (
+                    (winner_track.get("artist") if winner_track else None)
+                    or ctx.get("artist")
+                    or ctx.get("artist_name")
+                )
+                track_title = (
+                    (winner_track.get("title") if winner_track else None)
+                    or ctx.get("title")
+                )
+
+                if is_duplicate:
+                    if (
+                        artist_name
+                        and track_title
+                        and (
+                            not item.ui_label
+                            or item.ui_label.startswith("Review needed")
+                            or "(Duplicate)" in item.ui_label
+                        )
+                    ):
+                        card_title = f"{artist_name} - {track_title} (Duplicate)"
+                    elif item.ui_label and not item.ui_label.startswith("Review needed"):
+                        card_title = item.ui_label
+                    elif artist_name and track_title:
+                        card_title = f"{artist_name} - {track_title} (Duplicate)"
+                    else:
+                        card_title = getattr(item, "ui_label", None) or "Duplicate Track"
+                else:
+                    card_title = getattr(item, "ui_label", None) or ctx.get("title") or "Unknown"
+
                 suggestions.append(
                     {
                         "sync_id": getattr(item, "sync_id", None),
-                        "type": getattr(
-                            item,
-                            "reason",
-                            getattr(item, "intent_type", "SUGGESTION"),
-                        ),
+                        "type": reason_type,
                         "intent_type": getattr(
                             item, "intent_type", getattr(item, "reason", None)
                         ),
                         "originator": ctx.get("originator", "Consensus Engine"),
-                        "title": getattr(item, "ui_label", None)
-                        or ctx.get("title")
-                        or "Unknown",
-                        "artist": ctx.get("artist", ctx.get("artist_name")),
-                        "album": ctx.get("album"),
-                        "score": ctx.get("score"),
+                        "title": card_title,
+                        "artist": artist_name,
+                        "album": (
+                            winner_track.get("album") if winner_track else None
+                        )
+                        or ctx.get("album"),
+                        "score": ctx.get("score") or ctx.get("confidence_score"),
                         "status": getattr(item, "status", "pending"),
                         "track_id": getattr(
                             item,
@@ -1040,6 +1287,10 @@ def get_suggestion_queue(_=Depends(require_auth)):
                             item, "user_id", getattr(item, "account_id", None)
                         ),
                         "account_id": getattr(item, "account_id", None),
+                        "winner_track": winner_track,
+                        "loser_track": loser_track,
+                        "comparison_reason": comparison_reason,
+                        "context_data": ctx,
                     }
                 )
             return {
@@ -1049,6 +1300,72 @@ def get_suggestion_queue(_=Depends(require_auth)):
     except Exception as e:
         logger.error(f"Error getting suggestion queue: {e}", exc_info=True)
         return {"error": "Failed to get suggestion queue"}
+
+
+@router.post("/suggestions/{sync_id}/swap")
+def swap_suggestion_tracks(sync_id: str, _=Depends(require_auth)):
+    """Swap winner and loser track assignments in a duplicate suggestion."""
+    sync_id = _normalize_sync_id(sync_id)
+    if not sync_id:
+        return {"error": "sync_id is required"}
+
+    work_db = get_working_database()
+    try:
+        with work_db.session_scope() as session:
+            item = (
+                session.query(SuggestionStagingQueue)
+                .filter_by(sync_id=sync_id)
+                .first()
+            )
+            if not item:
+                return {"error": "Suggestion not found"}
+
+            ctx = dict(item.context_data or {})
+            # Swap winner_track and loser_track
+            w = ctx.get("winner_track")
+            l = ctx.get("loser_track")
+            if w or l:
+                ctx["winner_track"] = l
+                ctx["loser_track"] = w
+
+            # Swap keep_id and delete_ids
+            old_keep = ctx.get("keep_id")
+            old_deletes = ctx.get("delete_ids", [])
+            if old_keep and old_deletes:
+                ctx["keep_id"] = old_deletes[0]
+                ctx["delete_ids"] = [old_keep] + old_deletes[1:]
+
+            # Swap keep_media_id and delete_media_ids
+            old_keep_m = ctx.get("keep_media_id")
+            old_delete_m = ctx.get("delete_media_ids", [])
+            if old_keep_m and old_delete_m:
+                ctx["keep_media_id"] = old_delete_m[0]
+                ctx["delete_media_ids"] = [old_keep_m] + old_delete_m[1:]
+
+            # Update tracks is_kept flag if array exists
+            if ctx.get("tracks"):
+                new_tracks = []
+                for t in ctx["tracks"]:
+                    t_copy = dict(t)
+                    t_copy["is_kept"] = not t_copy.get("is_kept", False)
+                    new_tracks.append(t_copy)
+                ctx["tracks"] = new_tracks
+
+            item.context_data = ctx
+            flag_modified(item, "context_data")
+
+            winner, loser, reason = _hydrate_duplicate_tracks(ctx, sync_id)
+            return {
+                "success": True,
+                "sync_id": sync_id,
+                "winner_track": winner,
+                "loser_track": loser,
+            }
+    except Exception as e:
+        logger.error(
+            f"Error swapping duplicate suggestion {sync_id}: {e}", exc_info=True
+        )
+        return {"error": "Failed to swap duplicate suggestion"}
 
 
 @router.post("/suggestion-candidates/override")

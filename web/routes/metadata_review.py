@@ -457,6 +457,8 @@ def _build_track_from_metadata(file_path: Path, metadata: dict[str, Any]):
         media=[media_item],
         identifiers={source: str(provider_id)} if provider_id else {},
     )
+    track.fingerprint = metadata.get("fingerprint") or metadata.get("chromaprint")
+    track.acoustid_id = metadata.get("acoustid_id") or metadata.get("acoustid")
     return track
 
 
@@ -569,7 +571,33 @@ def _import_single_file(
                     return 1
 
         # Fallback: file is brand new to the library -> bulk upsert
-        return TrackRepository.bulk_upsert_tracks(session, [track_dto])
+        upsert_res = TrackRepository.bulk_upsert_tracks(session, [track_dto])
+        if track_dto.fingerprint:
+            new_lm = (
+                session.query(LocalMedia)
+                .filter(LocalMedia.file_path == canonical_new_path)
+                .first()
+            )
+            if new_lm:
+                existing_fp = (
+                    session.query(AudioFingerprint)
+                    .filter_by(media_id=new_lm.media_id)
+                    .first()
+                )
+                if existing_fp:
+                    existing_fp.chromaprint = track_dto.fingerprint
+                    if track_dto.acoustid_id:
+                        existing_fp.acoustid_id = track_dto.acoustid_id
+                else:
+                    session.add(
+                        AudioFingerprint(
+                            media_id=new_lm.media_id,
+                            chromaprint=track_dto.fingerprint,
+                            acoustid_id=track_dto.acoustid_id,
+                        )
+                    )
+                session.flush()
+        return upsert_res
 
 
 def _normalize_duration_seconds(
@@ -803,7 +831,17 @@ def approve_review_queue_item(
                     # Construct EchosyncTrack object from staging track_data
                     staged_track = EchosyncTrack.from_dict(track_dict)
 
-                    # Update staged_track properties with any modifications from final_metadata
+                    # Physical audio metrics are invariant and derived purely from native DSP inspection
+                    _PHYSICAL_FORM_FIELDS = {
+                        "duration",
+                        "duration_ms",
+                        "bitrate",
+                        "sample_rate",
+                        "channels",
+                        "media_id",
+                    }
+
+                    # Update staged_track properties with any modifications from final_metadata (stripping physical fields)
                     if final_metadata:
                         if final_metadata.get("title"):
                             staged_track.raw_title = final_metadata["title"]
@@ -838,11 +876,20 @@ def approve_review_queue_item(
                             ]
                         if final_metadata.get("isrc"):
                             staged_track.isrc = final_metadata["isrc"]
-                        if final_metadata.get("duration"):
-                            try:
-                                staged_track.duration = int(final_metadata["duration"])
-                            except Exception:
-                                pass
+
+                    # Derive physical properties purely from DSP inspection of container
+                    import echosync_core
+
+                    native_props = (
+                        echosync_core.extract_metadata(str(file_path_obj)) or {}
+                    )
+                    native_dur = native_props.get("duration_ms")
+                    if native_dur is not None:
+                        staged_track.duration = int(native_dur)
+                    elif native_props.get("duration") is not None:
+                        staged_track.duration = int(
+                            round(float(native_props["duration"]) * 1000)
+                        )
 
                     # Merge the finalized metadata back to dict for tagging
                     metadata_to_tag = {
@@ -890,50 +937,56 @@ def approve_review_queue_item(
                             detail="Failed to verify written tags on disk",
                         )
 
-                    # 3. Calculate target relocation path using naming pattern
-                    library_dir = (
-                        config_manager.get("storage.library_dir")
-                        or config_manager.get("library_dir")
-                        or "./library"
-                    )
-                    pattern = (
-                        config_manager.get("auto_import.file_organization_pattern")
-                        or "{Artist}/{Album}/{Title}{ext}"
-                    )
-                    if "{ext}" not in pattern:
-                        pattern += "{ext}"
+                    # 3. Calculate target relocation path using build_destination_path
+                    from core.path_formatter import build_destination_path
 
-                    artist_name = staged_track.artist_name or "Unknown Artist"
-                    album_title = staged_track.album_title or "Unknown Album"
-                    title = staged_track.title or "Unknown Title"
-                    ext = file_path_obj.suffix or ".mp3"
-                    new_rel = Path(artist_name) / album_title / f"{title}{ext}"
-                    destination_path = Path(library_dir).resolve() / new_rel
+                    destination_path = build_destination_path(metadata_to_tag)
+                    if (
+                        destination_path.suffix.lower()
+                        != file_path_obj.suffix.lower()
+                    ):
+                        destination_path = destination_path.with_suffix(
+                            file_path_obj.suffix
+                        )
 
-                    if destination_path.exists() and destination_path != file_path_obj:
+                    if (
+                        destination_path.exists()
+                        and destination_path.resolve() != file_path_obj.resolve()
+                    ):
                         counter = 1
-                        while destination_path.exists():
-                            destination_path = destination_path.with_name(
-                                f"{title}_{counter}{ext}"
+                        stem = destination_path.stem
+                        parent = destination_path.parent
+                        ext_with_dot = destination_path.suffix
+                        while (
+                            destination_path.exists()
+                            and destination_path.resolve()
+                            != file_path_obj.resolve()
+                        ):
+                            destination_path = (
+                                parent / f"{stem} ({counter}){ext_with_dot}"
                             )
                             counter += 1
 
-                    canonical_target_path = _canonicalize_path(str(destination_path))
+                    canonical_target_path = _canonicalize_path(
+                        str(destination_path)
+                    )
 
+                    from core.io_gatekeeper import Gatekeeper
                     from services.library_watcher import suppress_path
 
                     with suppress_path(str(destination_path)):
                         # 4. Relocate file physically if path changes
-                        if destination_path != file_path_obj:
-                            destination_path.parent.mkdir(parents=True, exist_ok=True)
-                            from core.io_gatekeeper import Gatekeeper
-
+                        if (
+                            destination_path.resolve()
+                            != file_path_obj.resolve()
+                        ):
+                            destination_path.parent.mkdir(
+                                parents=True, exist_ok=True
+                            )
                             Gatekeeper.authorize_and_execute(
-                                {
-                                    "operation": "safe_move",
-                                    "src": str(file_path_obj),
-                                    "dst": str(destination_path),
-                                }
+                                operation="move",
+                                source=str(file_path_obj),
+                                destination=str(destination_path),
                             )
                             logger.info(
                                 f"Relocated file: {file_path_obj} -> {destination_path}"
@@ -947,7 +1000,9 @@ def approve_review_queue_item(
                             dl_dir = config_manager.get(
                                 "storage.download_dir"
                             ) or config_manager.get("download_dir")
-                            stop_roots = {Path(dl_dir).resolve()} if dl_dir else set()
+                            stop_roots = (
+                                {Path(dl_dir).resolve()} if dl_dir else set()
+                            )
                             prune_empty_parent_directories(
                                 file_path_obj, stop_at_roots=stop_roots
                             )
@@ -1216,176 +1271,77 @@ def lookup_review_queue_item_acoustid(task_id: int, _=Depends(require_auth)):
             if not file_path:
                 raise HTTPException(status_code=404, detail="File does not exist")
 
-            fingerprint_provider = _get_fingerprint_provider()
-            metadata_provider = _get_metadata_provider()
-            if not fingerprint_provider:
-                raise HTTPException(
-                    status_code=503, detail="No fingerprint provider configured"
-                )
-
-            # ── Step 1: generate fingerprint + duration in one fpcalc call ──────
-            fingerprint, duration = FingerprintGenerator.generate_with_duration(
-                str(file_path)
-            )
-
-            if not fingerprint:
-                raise HTTPException(
-                    status_code=422, detail="Fingerprint generation failed"
-                )
-
-            if isinstance(fingerprint, bytes):
-                fingerprint = fingerprint.decode("utf-8", errors="ignore")
-
-            # Fall back to audio duration helper if fpcalc didn't report duration (very rare)
-            if not duration or duration <= 0:
-                enhancer = get_metadata_enhancer()
-                if hasattr(enhancer, "_get_audio_duration"):
-                    try:
-                        duration = enhancer._get_audio_duration(file_path)
-                    except Exception:
-                        duration = None
-
-            if not duration or int(duration) <= 0:
-                raise HTTPException(
-                    status_code=422, detail="Audio duration unavailable for lookup"
-                )
-
-            duration_int = int(duration)
-
+            from core.metadata.engine import MetadataResolutionEngine
+            from core.metadata.schemas import ResolutionRequest
             from sqlalchemy.orm.attributes import flag_modified
 
-            # ── Step 2: Hydrate track and persist raw fingerprint NOW, before API call ────
             track_obj = EchosyncTrack.from_dict(task.track_data or {})
-            track_obj.fingerprint = fingerprint
 
-            task.track_data = track_obj.to_dict()
-            flag_modified(task, "track_data")
+            engine = MetadataResolutionEngine()
+            req = ResolutionRequest(
+                media_id=str(task.id),
+                file_path=Path(file_path),
+                baseline_title=track_obj.title or track_obj.raw_title,
+                baseline_artist=track_obj.artist_name,
+                baseline_album=track_obj.album_title,
+            )
+            res = engine.resolve_track(req)
 
-            # ── Step 3: query AcoustID API ───────────────────────────────────────
-            acoustid_id: str | None = None
-            mbids: list[str] = []
+            if res.chromaprint:
+                track_obj.fingerprint = res.chromaprint
 
-            if hasattr(fingerprint_provider, "resolve_fingerprint_details"):
-                try:
-                    details = fingerprint_provider.resolve_fingerprint_details(
-                        fingerprint, duration_int
-                    )
-                    if isinstance(details, dict):
-                        acoustid_id = (
-                            str(details.get("acoustid_id") or "").strip() or None
-                        )
-                        raw_mbids = details.get("mbids") or []
-                        if isinstance(raw_mbids, list):
-                            mbids = [
-                                str(mbid).strip()
-                                for mbid in raw_mbids
-                                if str(mbid).strip()
-                            ]
-                except Exception as lookup_error:
-                    logger.warning(
-                        f"AcoustID detail lookup failed for task {task_id}: {lookup_error}"
-                    )
-            else:
-                try:
-                    mbids = (
-                        fingerprint_provider.resolve_fingerprint(
-                            fingerprint, duration_int
-                        )
-                        or []
-                    )
-                except Exception as lookup_error:
-                    logger.warning(
-                        f"AcoustID resolve_fingerprint failed for task {task_id}: {lookup_error}"
-                    )
-
-            # ── Step 4: no match → return 200 with fingerprint for submission ───
-            if not acoustid_id and not mbids:
+            # If no match found
+            if not res.acoustid_id and not res.musicbrainz_track_id:
                 logger.info(
                     f"AcoustID scan for task {task_id}: no match in database. "
                     "Fingerprint stored for submission."
                 )
-
                 track_obj.identifiers["source"] = "acoustid_no_match"
                 task.track_data = track_obj.to_dict()
+                task.detected_metadata = res.to_dict()
                 flag_modified(task, "track_data")
-                serialized = _serialize_task(task)
+                serialized = _serialize_task(task, detected_metadata=task.detected_metadata)
                 return {
                     "success": True,
                     "match_found": False,
                     "acoustid_match": False,
-                    "acoustid_fingerprint": fingerprint,
-                    "acoustid_fingerprint_duration": duration_int,
+                    "acoustid_fingerprint": res.chromaprint,
+                    "acoustid_fingerprint_duration": int(round((res.duration_ms or 0) / 1000.0)),
                     "updated_fields": [
                         "acoustid_fingerprint",
                         "acoustid_fingerprint_duration",
                     ]
-                    if fingerprint
+                    if res.chromaprint
                     else [],
                     "metadata": serialized["detected_metadata"],
                     "message": "No matching record found in database",
                     "task": serialized,
+                    "resolution_result": res.to_dict(),
                 }
 
-            # ── Step 5: match found → enrich metadata ────────────────────────────
-            if acoustid_id:
-                track_obj.acoustid_id = acoustid_id
+            # Match found
+            if res.acoustid_id:
+                track_obj.acoustid_id = res.acoustid_id
+            if res.musicbrainz_track_id:
+                track_obj.musicbrainz_id = res.musicbrainz_track_id
+            if res.title:
+                track_obj.title = res.title
+                track_obj.raw_title = res.title
+                track_obj.display_title = res.title
+            if res.artist:
+                track_obj.artist_name = res.artist
+            if res.album:
+                track_obj.album_title = res.album
+            if res.year:
+                track_obj.release_year = res.year
+            if res.isrc:
+                track_obj.isrc = res.isrc
 
             track_obj.identifiers["source"] = "acoustid_lookup"
-
-            if (
-                mbids
-                and metadata_provider
-                and hasattr(metadata_provider, "get_metadata")
-            ):
-                try:
-                    from services.metadata_enhancer import (
-                        select_best_acoustid_recording,
-                    )
-
-                    file_dur_ms = duration_int * 1000 if duration_int else None
-                    best_meta, best_mbid, _ = select_best_acoustid_recording(
-                        candidate_mbids=mbids,
-                        file_duration_ms=file_dur_ms,
-                        metadata_provider=metadata_provider,
-                        baseline_title=track_obj.title or track_obj.raw_title,
-                        filename=file_path.name if file_path else None,
-                        max_duration_delta_ms=2000,
-                    )
-                    if best_mbid and best_meta:
-                        track_obj.musicbrainz_id = best_mbid
-                        track_obj.title = best_meta.get("title") or track_obj.title
-                        track_obj.artist_name = (
-                            best_meta.get("artist") or track_obj.artist_name
-                        )
-                        track_obj.album_title = (
-                            best_meta.get("album") or track_obj.album_title
-                        )
-                        track_obj.isrc = best_meta.get("isrc") or track_obj.isrc
-                    elif mbids:
-                        track_obj.musicbrainz_id = mbids[0]
-                        fetched = metadata_provider.get_metadata(mbids[0])
-                        if isinstance(fetched, dict):
-                            track_obj.title = fetched.get("title") or track_obj.title
-                            track_obj.artist_name = (
-                                fetched.get("artist") or track_obj.artist_name
-                            )
-                            track_obj.album_title = (
-                                fetched.get("album") or track_obj.album_title
-                            )
-                            track_obj.isrc = fetched.get("isrc") or track_obj.isrc
-                except Exception as lookup_error:
-                    logger.warning(
-                        f"AcoustID metadata enrichment failed for task {task_id}: {lookup_error}"
-                    )
-            elif mbids:
-                track_obj.musicbrainz_id = mbids[0]
-
             task.track_data = track_obj.to_dict()
+            task.detected_metadata = res.to_dict()
+            task.confidence_score = res.confidence_score
             flag_modified(task, "track_data")
-            confidence_floor = 0.9 if mbids else 0.6
-            task.confidence_score = max(
-                float(task.confidence_score or 0.0), confidence_floor
-            )
 
             updated_fields = []
             if track_obj.title:
@@ -1403,15 +1359,16 @@ def lookup_review_queue_item_acoustid(task_id: int, _=Depends(require_auth)):
             if track_obj.isrc:
                 updated_fields.append("isrc")
 
-            serialized = _serialize_task(task)
+            serialized = _serialize_task(task, detected_metadata=task.detected_metadata)
             return {
                 "success": True,
                 "match_found": True,
-                "acoustid_match": True,
+                "acoustid_match": bool(res.acoustid_id),
                 "updated_fields": list(dict.fromkeys(updated_fields)),
                 "metadata": serialized["detected_metadata"],
                 "message": "Match found",
                 "task": serialized,
+                "resolution_result": res.to_dict(),
             }
     except HTTPException:
         raise

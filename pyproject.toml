@@ -60,3 +60,12 @@ dependencies = [
 dev = [
     "ruff>=0.16.6",
 ]
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+ignore = [
+    "BLE001",
+    "S110",
+]
