@@ -420,16 +420,34 @@ def stage_metadata_divergence(
         system_user_id = working_db.get_system_user_id()
         cand_title = (
             candidate_metadata.get("title") or candidate_metadata.get("raw_title") or ""
+            if isinstance(candidate_metadata, dict)
+            else ""
         )
         cand_artist = (
-            candidate_metadata.get("artist")
-            or candidate_metadata.get("artist_name")
-            or ""
+            (
+                candidate_metadata.get("artist")
+                or candidate_metadata.get("artist_name")
+                or ""
+            )
+            if isinstance(candidate_metadata, dict)
+            else ""
         )
+        # Sanitize candidate_metadata for JSON serialization
+        clean_cand_meta: dict[str, Any] | str
+        if isinstance(candidate_metadata, dict):
+            clean_cand_meta = {}
+            for k, v in candidate_metadata.items():
+                if isinstance(v, (str, int, float, bool, list, dict)) or v is None:
+                    clean_cand_meta[str(k)] = v
+                else:
+                    clean_cand_meta[str(k)] = str(v)
+        else:
+            clean_cand_meta = str(candidate_metadata)
+
         payload = {
             "file_path": str(file_path),
             "original_title": original_title,
-            "candidate_metadata": candidate_metadata,
+            "candidate_metadata": clean_cand_meta,
             "divergence_reason": (
                 f"Title similarity failed trust gate between '{original_title}' "
                 f"and candidate '{cand_title}' by '{cand_artist}'"
@@ -571,6 +589,142 @@ def revert_track_metadata_from_disk(track_id: int, session: Any | None = None) -
             return _execute(sess)
 
 
+def select_best_acoustid_recording(
+    candidate_mbids: list[str],
+    file_duration_ms: int | float | None,
+    metadata_provider: Any,
+    baseline_title: str | None = None,
+    filename: str | None = None,
+    tag_title: str | None = None,
+    max_duration_delta_ms: int = 2000,
+) -> tuple[dict[str, Any] | None, str | None, float]:
+    """Select the best AcoustID candidate recording by enforcing a duration delta window (default ±2000ms)
+
+    and verifying against the title trust gate.
+
+    Args:
+        candidate_mbids: List of MusicBrainz recording IDs returned by AcoustID.
+        file_duration_ms: Duration of the physical file in milliseconds.
+        metadata_provider: MusicBrainz client / provider supporting get_metadata(mbid).
+        baseline_title: Baseline track title (if known).
+        filename: Filename for trust gate validation.
+        tag_title: Embedded tag title (if known).
+        max_duration_delta_ms: Maximum allowed duration difference in ms (default 2000ms).
+
+    Returns:
+        tuple: (best_metadata_dict, best_mbid, confidence_score)
+               or (None, None, 0.0) if no valid candidate meets criteria.
+    """
+    if (
+        not candidate_mbids
+        or not metadata_provider
+        or not hasattr(metadata_provider, "get_metadata")
+    ):
+        return None, None, 0.0
+
+    best_cand_meta = None
+    best_cand_mbid = None
+    best_dur_delta = float("inf")
+
+    fallback_cand_meta = None
+    fallback_cand_mbid = None
+    fallback_dur_delta = float("inf")
+
+    clean_file_dur_ms: int | None = None
+    if file_duration_ms is not None:
+        try:
+            f_dur = float(file_duration_ms)
+            clean_file_dur_ms = (
+                int(round(f_dur * 1000)) if 0 < f_dur < 10000 else int(round(f_dur))
+            )
+        except (ValueError, TypeError):
+            clean_file_dur_ms = None
+
+    for mbid in candidate_mbids:
+        mbid_str = str(mbid).strip()
+        if not mbid_str:
+            continue
+        try:
+            meta = metadata_provider.get_metadata(mbid_str)
+            if not isinstance(meta, dict):
+                continue
+
+            cand_title = meta.get("title")
+            # 1. Trust Gate Verification
+            if cand_title and not verify_title_trust_gate(
+                candidate_title=cand_title,
+                baseline_title=baseline_title,
+                filename=filename,
+                tag_title=tag_title,
+                min_similarity=0.60,
+            ):
+                logger.warning(
+                    "[enhancer] Trust Gate REJECTED AcoustID candidate '%s' vs baseline '%s' (MBID: %s)",
+                    cand_title,
+                    baseline_title,
+                    mbid_str,
+                )
+                continue
+
+            # 2. Duration Delta Evaluation
+            mb_dur = (
+                meta.get("length") or meta.get("duration_ms") or meta.get("duration")
+            )
+            mb_dur_ms: int | None = None
+            if mb_dur is not None:
+                try:
+                    m_val = float(mb_dur)
+                    mb_dur_ms = (
+                        int(round(m_val * 1000))
+                        if 0 < m_val < 10000
+                        else int(round(m_val))
+                    )
+                except (ValueError, TypeError):
+                    mb_dur_ms = None
+
+            if clean_file_dur_ms and mb_dur_ms:
+                delta = abs(clean_file_dur_ms - mb_dur_ms)
+            else:
+                delta = 0
+
+            # Check if within max_duration_delta_ms window
+            if delta <= max_duration_delta_ms:
+                if delta < best_dur_delta:
+                    best_dur_delta = delta
+                    best_cand_meta = meta
+                    best_cand_mbid = mbid_str
+            else:
+                if delta < fallback_dur_delta:
+                    fallback_dur_delta = delta
+                    fallback_cand_meta = meta
+                    fallback_cand_mbid = mbid_str
+
+        except Exception as exc:
+            logger.debug("Failed evaluating AcoustID candidate %s: %s", mbid_str, exc)
+            continue
+
+    if best_cand_mbid:
+        logger.info(
+            "✓ AcoustID candidate selected: MBID %s ('%s') with duration delta %dms (<= %dms window)",
+            best_cand_mbid,
+            best_cand_meta.get("title") if best_cand_meta else "",
+            best_dur_delta,
+            max_duration_delta_ms,
+        )
+        return best_cand_meta, best_cand_mbid, 0.95
+
+    # If file duration was unknown, allow best fallback passing trust gate
+    if clean_file_dur_ms is None and fallback_cand_mbid:
+        return fallback_cand_meta, fallback_cand_mbid, 0.85
+
+    logger.warning(
+        "[enhancer] No AcoustID candidate fell within ±%dms window (best delta: %sms)",
+        max_duration_delta_ms,
+        str(fallback_dur_delta) if fallback_dur_delta != float("inf") else "N/A",
+    )
+    return None, None, 0.0
+
+
 class RetroactiveEnhancer:
     """Background service for library-wide batch metadata enhancement."""
 
@@ -675,7 +829,17 @@ class RetroactiveEnhancer:
                         # Fallback to FingerprintGenerator if native Rust extension threw or returned None
                         if not fp:
                             try:
-                                fp = FingerprintGenerator.generate(str(local_path))
+                                fp, dur_sec = (
+                                    FingerprintGenerator.generate_with_duration(
+                                        str(local_path)
+                                    )
+                                )
+                                if (
+                                    dur_sec
+                                    and hasattr(media, "duration")
+                                    and not media.duration
+                                ):
+                                    media.duration = int(round(float(dur_sec) * 1000))
                             except Exception as fp_err:
                                 logger.debug(
                                     "Fallback FingerprintGenerator failed for %s: %s",
@@ -1123,7 +1287,14 @@ class RetroactiveEnhancer:
             # Generate Chromaprint fingerprint for unverified ingested files
             fingerprint = None
             try:
-                fingerprint = FingerprintGenerator.generate(str(file_path))
+                fingerprint, fp_dur = FingerprintGenerator.generate_with_duration(
+                    str(file_path)
+                )
+                if (not duration_sec or duration_sec <= 0) and fp_dur:
+                    duration_sec = float(fp_dur)
+                    duration_ms = int(round(duration_sec * 1000))
+                    if track_obj:
+                        track_obj.duration = duration_ms
             except Exception as fp_err:
                 logger.debug(
                     f"Fingerprint generation failed for {file_path.name}: {fp_err}"
@@ -1189,85 +1360,45 @@ class RetroactiveEnhancer:
                         )
 
                     if mbids and metadata_provider:
-                        top_mbid = mbids[0]
-                        logger.info(
-                            f"✓ AcoustID identified: {file_path.name} → MBID: {top_mbid}"
+                        baseline_title = track_obj.title or track_obj.raw_title
+                        tag_title = raw_tags.get("title")
+                        file_dur_ms = duration_ms or (
+                            int(round(float(duration_sec) * 1000))
+                            if duration_sec
+                            else None
                         )
-                        try:
-                            fetched = metadata_provider.get_metadata(top_mbid)
-                            if fetched:
-                                cand_title = fetched.get("title")
-                                baseline_title = track_obj.title or track_obj.raw_title
-                                tag_title = raw_tags.get("title")
-                                if cand_title and not verify_title_trust_gate(
-                                    candidate_title=cand_title,
-                                    baseline_title=baseline_title,
-                                    filename=file_path.name,
-                                    tag_title=tag_title,
-                                ):
-                                    logger.warning(
-                                        "[enhancer] Trust Gate REJECTED AcoustID candidate '%s' vs baseline '%s' for %s",
-                                        cand_title,
-                                        baseline_title,
-                                        file_path.name,
-                                    )
-                                    stage_metadata_divergence(
-                                        sync_id=getattr(track_obj, "sync_id", None),
-                                        candidate_metadata=fetched,
-                                        file_path=file_path,
-                                        original_title=baseline_title or tag_title,
-                                    )
-                                else:
-                                    # Check duration delta between file and MusicBrainz recording
-                                    mb_dur = (
-                                        fetched.get("length")
-                                        or fetched.get("duration_ms")
-                                        or fetched.get("duration")
-                                    )
-                                    if mb_dur:
-                                        mb_dur_ms = (
-                                            int(float(mb_dur) * 1000)
-                                            if float(mb_dur) < 10000
-                                            else int(mb_dur)
-                                        )
-                                        dur_delta = (
-                                            abs(int(duration_ms) - mb_dur_ms)
-                                            if duration_ms
-                                            else 0
-                                        )
-                                    else:
-                                        dur_delta = 0
-
-                                    # Confirmed MBID with duration delta <= 2000ms gets confidence >= 0.90
-                                    if dur_delta <= 2000:
-                                        confidence = 0.95
-                                    else:
-                                        confidence = 0.88
-
-                                    if acoustid_id:
-                                        fetched["acoustid_id"] = acoustid_id
-                                    fetched["musicbrainz_id"] = top_mbid
-                                    fetched["recording_id"] = top_mbid
-
-                                    # Normalize artist credits and extract version/edition info
-                                    raw_t = fetched.get("title") or ""
-                                    raw_a = fetched.get("artist") or ""
-                                    clean_t, clean_a = (
-                                        normalize_track_comparison_fields(raw_t, raw_a)
-                                    )
-                                    _, ver_info = extract_version_info(raw_t)
-                                    if ver_info and not fetched.get("version"):
-                                        fetched["version"] = ver_info
-
-                                    logger.info(
-                                        f"  ✓ AcoustID metadata fetched: '{clean_t}' by '{clean_a}' "
-                                        f"(duration delta: {dur_delta}ms, confidence: {confidence:.2f})"
-                                    )
-                                    return fetched, confidence
-                        except Exception as e:
-                            logger.warning(
-                                f"Failed to fetch metadata for MBID {top_mbid}: {e}"
+                        best_meta, best_mbid, confidence = (
+                            select_best_acoustid_recording(
+                                candidate_mbids=mbids,
+                                file_duration_ms=file_dur_ms,
+                                metadata_provider=metadata_provider,
+                                baseline_title=baseline_title,
+                                filename=file_path.name,
+                                tag_title=tag_title,
+                                max_duration_delta_ms=2000,
                             )
+                        )
+                        if best_mbid and best_meta:
+                            if acoustid_id:
+                                best_meta["acoustid_id"] = acoustid_id
+                            best_meta["musicbrainz_id"] = best_mbid
+                            best_meta["recording_id"] = best_mbid
+
+                            # Normalize artist credits and extract version/edition info
+                            raw_t = best_meta.get("title") or ""
+                            raw_a = best_meta.get("artist") or ""
+                            clean_t, clean_a = normalize_track_comparison_fields(
+                                raw_t, raw_a
+                            )
+                            _, ver_info = extract_version_info(raw_t)
+                            if ver_info and not best_meta.get("version"):
+                                best_meta["version"] = ver_info
+
+                            logger.info(
+                                f"  ✓ AcoustID metadata fetched: '{clean_t}' by '{clean_a}' "
+                                f"(confidence: {confidence:.2f})"
+                            )
+                            return best_meta, confidence
                     else:
                         logger.debug(
                             f"✗ No MBID found from AcoustID for {file_path.name}"
@@ -1849,10 +1980,14 @@ class RetroactiveEnhancer:
                     pass
                 if file_exists and not track.fingerprint:
                     try:
-                        fingerprint = FingerprintGenerator.generate(file_path_str)
+                        fingerprint, dur_sec = (
+                            FingerprintGenerator.generate_with_duration(file_path_str)
+                        )
                         if fingerprint:
                             track.fingerprint = fingerprint
                             track.fingerprint_confidence = 1.0  # type: ignore[attr-defined]
+                        if (not track.duration or track.duration <= 0) and dur_sec:
+                            track.duration = int(round(float(dur_sec) * 1000))
                     except Exception as fp_err:
                         logger.warning(
                             f"Failed to generate fingerprint for review task: {fp_err}"
@@ -1980,9 +2115,18 @@ class RetroactiveEnhancer:
         if not title or not artist:
             return None
 
+        # Sanitize track number prefixes from title (e.g. "00 - My Way" -> "My Way")
+        import re
+
+        sanitized_title = re.sub(
+            r"^(?:(?:\d{1,2}[.-])?\d{1,3}[\s\-_.]{1,3}\s*)+", "", str(title)
+        ).strip()
+        if sanitized_title:
+            title = sanitized_title
+
         clean_t, clean_a = normalize_track_comparison_fields(title, artist)
         search_query_track = EchosyncTrack(
-            raw_title=clean_t,
+            raw_title=title,
             artist_name=clean_a,
             album_title=track.album_title
             if hasattr(track, "album_title") and track.album_title
@@ -2381,6 +2525,21 @@ class RetroactiveEnhancer:
                                 item["metadata_status"]["title_fixed_from_tags"] = True
                                 item["metadata_changed"] = True
 
+                        # Extract duration if missing
+                        if not t_track.duration or t_track.duration <= 0:
+                            tag_dur = file_tags.get("duration_ms") or file_tags.get(
+                                "duration"
+                            )
+                            if tag_dur:
+                                try:
+                                    t_dur_val = float(tag_dur)
+                                    if 0 < t_dur_val < 10000:
+                                        t_track.duration = int(round(t_dur_val * 1000))
+                                    elif t_dur_val >= 10000:
+                                        t_track.duration = int(round(t_dur_val))
+                                except (ValueError, TypeError):
+                                    pass
+
                         # Fallback to Directory Path Structure if artist or album is still unknown
                         # e.g. /data/library/{Artist}/{Album}/{Track}.flac
                         if (
@@ -2634,7 +2793,11 @@ class RetroactiveEnhancer:
                         )
                         if not existing_fp:
                             try:
-                                cp = FingerprintGenerator.generate(str(local_path))
+                                cp, dur_sec = (
+                                    FingerprintGenerator.generate_with_duration(
+                                        str(local_path)
+                                    )
+                                )
                                 if cp:
                                     item["new_fingerprints"][mid] = {
                                         "chromaprint": cp,
@@ -2642,6 +2805,9 @@ class RetroactiveEnhancer:
                                     }
                                     if not t_track.fingerprint:
                                         t_track.fingerprint = cp
+                                if (not duration or duration <= 0) and dur_sec:
+                                    duration = int(round(float(dur_sec) * 1000))
+                                    t_track.duration = duration
                             except Exception as fp_err:
                                 logger.debug(
                                     f"Fingerprint generation failed for {local_path.name}: {fp_err}"
@@ -2649,6 +2815,18 @@ class RetroactiveEnhancer:
                         else:
                             if not t_track.fingerprint:
                                 t_track.fingerprint = existing_fp
+                            if not duration or duration <= 0:
+                                try:
+                                    _, dur_sec = (
+                                        FingerprintGenerator.generate_with_duration(
+                                            str(local_path)
+                                        )
+                                    )
+                                    if dur_sec:
+                                        duration = int(round(float(dur_sec) * 1000))
+                                        t_track.duration = duration
+                                except Exception:
+                                    pass
 
                     # 0. Local Chromaprint Cache Resolution (Fast-Path Short-Circuit)
                     target_cp = t_track.fingerprint
@@ -2753,12 +2931,68 @@ class RetroactiveEnhancer:
                             details = fingerprint_provider.resolve_fingerprint_details(
                                 t_track.fingerprint, duration_secs
                             )  # type: ignore[attr-defined]
-                            if details.get("mbids"):
-                                new_musicbrainz_id = details["mbids"][0]
-                            if details.get("acoustid_id"):
-                                t_track.acoustid_id = details["acoustid_id"]
+                            ac_id = (
+                                details.get("acoustid_id")
+                                if isinstance(details, dict)
+                                else None
+                            )
+                            if ac_id:
+                                t_track.acoustid_id = ac_id
                                 for mid, fp_val in item["new_fingerprints"].items():
-                                    fp_val["acoustid_id"] = details["acoustid_id"]
+                                    fp_val["acoustid_id"] = ac_id
+                                for mid, fp_val in item.get("fingerprints", {}).items():
+                                    fp_val["acoustid_id"] = ac_id
+
+                            cand_mbids = (
+                                details.get("mbids")
+                                if isinstance(details, dict)
+                                else []
+                            )
+                            if cand_mbids and mb_client:
+                                first_media, first_local_path = (
+                                    valid_media_paths[0]
+                                    if valid_media_paths
+                                    else (None, None)
+                                )
+                                first_filename = (
+                                    first_local_path.name if first_local_path else None
+                                )
+                                first_tag_title = None
+                                for _m, _p, _tags in all_file_tags:
+                                    if _tags.get("title"):
+                                        first_tag_title = _tags.get("title")
+                                        break
+                                baseline_title = t_track.title or getattr(
+                                    t_track, "raw_title", None
+                                )
+                                file_dur_ms = (
+                                    duration
+                                    if duration > 10000
+                                    else int(round(float(duration) * 1000))
+                                )
+                                best_meta, best_mbid, conf = (
+                                    select_best_acoustid_recording(
+                                        candidate_mbids=cand_mbids,
+                                        file_duration_ms=file_dur_ms,
+                                        metadata_provider=mb_client,
+                                        baseline_title=baseline_title,
+                                        filename=first_filename,
+                                        tag_title=first_tag_title,
+                                        max_duration_delta_ms=2000,
+                                    )
+                                )
+                                if best_mbid and best_meta:
+                                    new_musicbrainz_id = best_mbid
+                                    resolved_meta = best_meta
+                                    if best_meta.get("title"):
+                                        t_track.title = best_meta["title"]
+                                    if best_meta.get("artist"):
+                                        t_track.artist_name = best_meta["artist"]
+                                    if best_meta.get("album"):
+                                        t_track.album_title = best_meta["album"]
+                                    if best_meta.get("isrc"):
+                                        t_track.isrc = best_meta["isrc"]
+                                    item["metadata_changed"] = True
                         except Exception as res_err:
                             logger.debug(
                                 f"Fingerprint resolution error for {t_track.title}: {res_err}"
@@ -3081,9 +3315,8 @@ class RetroactiveEnhancer:
                             for media in track.media_files:
                                 if (
                                     media.media_id in existing_fp_records
-                                    and not existing_fp_records[
-                                        media.media_id
-                                    ].acoustid_id
+                                    and existing_fp_records[media.media_id].acoustid_id
+                                    != t_track.acoustid_id
                                 ):
                                     existing_fp_records[
                                         media.media_id

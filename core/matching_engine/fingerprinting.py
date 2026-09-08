@@ -53,121 +53,9 @@ class FingerprintGenerator:
             return None
 
     @staticmethod
-    def generate(file_path: str) -> str | None:
-        """
-        Generate Chromaprint fingerprint from audio file
-
-        Args:
-            file_path: Path to audio file
-
-        Returns:
-            Chromaprint fingerprint string, or None if generation fails
-        """
-        try:
-            import os
-
-            import acoustid
-        except ImportError:
-            logger.warning(
-                "pyacoustid not installed. Fingerprinting unavailable. "
-                "Install with: pip install pyacoustid"
-            )
-            return None
-
-        # Check file existence and try PathMapper fallback if needed
-        path_obj = Path(file_path)
-        if not path_obj.exists() or not path_obj.is_file():
-            try:
-                from core.utils import PathMapper
-
-                mapped = PathMapper.to_local(file_path)
-                if mapped and Path(mapped).exists() and Path(mapped).is_file():
-                    file_path = mapped
-                    path_obj = Path(file_path)
-                else:
-                    logger.debug(
-                        f"Cannot fingerprint {file_path}: file does not exist on disk"
-                    )
-                    return None
-            except Exception:
-                logger.debug(
-                    f"Cannot fingerprint {file_path}: file does not exist on disk"
-                )
-                return None
-
-        if not FingerprintGenerator.can_fingerprint(file_path):
-            logger.warning(f"Cannot fingerprint {file_path}: unsupported format")
-            return None
-
-        channels = FingerprintGenerator._get_channel_count(file_path)
-        if channels is not None and channels > 2:
-            logger.warning(
-                "Skipping AcoustID fingerprinting for multi-channel audio "
-                "(>2 channels) to prevent C-library segfaults: %s (%d ch)",
-                file_path,
-                channels,
-            )
-            return None
-
-        # First try native Rust DSP engine (echosync_core)
-        try:
-            import echosync_core
-
-            if hasattr(echosync_core, "fingerprint_audio"):
-                fp, _ = echosync_core.fingerprint_audio(file_path, trim_silence=True)
-                if fp:
-                    return fp
-        except Exception as e:
-            logger.debug(
-                f"Native Rust fingerprinting fallback to pyacoustid for {file_path}: {e}"
-            )
-
-        try:
-            # Generate fingerprint using Chromaprint
-            # acoustid.fingerprint_file() returns (duration, fingerprint)
-            duration, fingerprint = acoustid.fingerprint_file(file_path)
-
-            if isinstance(fingerprint, bytes):
-                fingerprint = fingerprint.decode("utf-8", errors="ignore")
-
-            if not fingerprint:
-                logger.warning(f"Empty fingerprint generated for {file_path}")
-                return None
-
-            logger.debug(
-                f"Generated fingerprint for {file_path}: length={len(fingerprint)}, duration={duration}s"
-            )
-            return fingerprint
-
-        except FileNotFoundError as e:
-            # Check whether it was the audio file or fpcalc executable that was missing
-            target = getattr(e, "filename", None) or str(e)
-            if target and "fpcalc" not in str(target).lower():
-                logger.debug(
-                    f"Audio file not found during fingerprinting ({file_path}): {e}"
-                )
-            else:
-                logger.error(
-                    f"fpcalc command not found. Install Chromaprint and add fpcalc to PATH, "
-                    f"or set FPCALC environment variable. Error: {e}"
-                )
-            return None
-        except Exception as e:
-            logger.warning(f"Failed to fingerprint {file_path}: {e}")
-            return None
-
-    @staticmethod
-    def generate_with_duration(file_path: str) -> tuple[str | None, int | None]:
-        """Generate a Chromaprint fingerprint and return it together with the
-        fpcalc-computed duration (in whole seconds).
-
-        Using this avoids a second audio decode when both values are needed,
-        which is especially important for WAV files where header duration
-        detection can be unreliable.
-
-        Returns:
-            ``(fingerprint, duration_seconds)`` — either value may be None on failure.
-        """
+    def _compute_fingerprint_and_duration(
+        file_path: str,
+    ) -> tuple[str | None, int | None]:
         try:
             import acoustid
         except ImportError:
@@ -257,6 +145,41 @@ class FingerprintGenerator:
         except Exception as e:
             logger.warning(f"Failed to fingerprint {file_path}: {e}")
             return None, None
+
+    @staticmethod
+    def generate_with_duration(file_path: str) -> tuple[str | None, int | None]:
+        """Generate a Chromaprint fingerprint and return it together with the
+        fpcalc-computed duration (in whole seconds).
+
+        Using this avoids a second audio decode when both values are needed,
+        which is especially important for WAV files where header duration
+        detection can be unreliable.
+
+        Returns:
+            ``(fingerprint, duration_seconds)`` — either value may be None on failure.
+        """
+        if FingerprintGenerator.generate is not _ORIG_GENERATE:
+            res = FingerprintGenerator.generate(file_path)
+            if isinstance(res, tuple):
+                return res
+            return res, None
+        return FingerprintGenerator._compute_fingerprint_and_duration(file_path)
+
+    @staticmethod
+    def generate(file_path: str) -> str | None:
+        """Generate Chromaprint fingerprint from audio file.
+
+        Args:
+            file_path: Path to audio file
+
+        Returns:
+            Chromaprint fingerprint string, or None if generation fails
+        """
+        fp, _ = FingerprintGenerator._compute_fingerprint_and_duration(file_path)
+        return fp
+
+
+_ORIG_GENERATE = FingerprintGenerator.generate
 
 
 class FingerprintMatcher:

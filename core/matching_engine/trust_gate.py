@@ -1,4 +1,4 @@
-﻿"""Title similarity trust gate to prevent false candidate metadata adoptions."""
+"""Title similarity trust gate to prevent false candidate metadata adoptions."""
 
 import difflib
 import re

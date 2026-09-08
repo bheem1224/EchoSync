@@ -2,8 +2,7 @@
 
 **The ultimate bridge between commercial streaming and your self-hosted audiophile library.**
 
-[![Docker Pulls](https://img.shields.io/docker/pulls/bheem1224/EchoSync.svg)](https://hub.docker.com/r/bheem1224/EchoSync)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+![Docker Pulls](https://img.shields.io/docker/pulls/bheem1224/EchoSync.svg)![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
 
 EchoSync is a highly resilient, self-hosted middleware application designed to perfectly mirror your Spotify and Tidal playlists to your local media servers (Plex, Jellyfin, Navidrome). If a track is missing from your local library, EchoSync seamlessly interfaces with Soulseek (via slskd) to acquire it, perfectly tagging and organizing it along the way.
 
@@ -39,8 +38,7 @@ Commercial streaming metadata is notoriously inconsistent. EchoSync features a c
 
 - Spotify (Supports Multiple Accounts)
 - Tidal (up coming)
-- YouTube Music (up coming)
-  **Local Media Servers:**
+- YouTube Music (up coming) **Local Media Servers:**
 - Plex
 - Jellyfin
 - Navidrome (up coming)
@@ -58,7 +56,7 @@ Commercial streaming metadata is notoriously inconsistent. EchoSync features a c
 
 ### ⚠️ CRITICAL: The Master Encryption Key
 
-EchoSync AES-encrypts your sensitive provider credentials (Spotify, Tidal, Slskd) inside `config.db`. **You must provide a `MASTER_KEY` environment variable.** * **Option A (Pre-generate):** Generate a random base64 string and add it to your compose file *before\* your first boot.
+EchoSync AES-encrypts your sensitive provider credentials (Spotify, Tidal, Slskd) inside `config.db`. **You must provide a** `MASTER_KEY` **environment variable.** * **Option A (Pre-generate):** Generate a random base64 string and add it to your compose file *before\* your first boot.
 
 - **Option B (Auto-generate):** If you boot without one, EchoSync will auto-generate a base64 key and print it to your Docker logs. **You must copy this key and add it to your compose file immediately.** If you reboot the container without setting the `MASTER_KEY` environment variable, EchoSync will not be able to decrypt `config.db`, effectively resetting your configuration.
 

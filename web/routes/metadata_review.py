@@ -1332,30 +1332,53 @@ def lookup_review_queue_item_acoustid(task_id: int, _=Depends(require_auth)):
 
             track_obj.identifiers["source"] = "acoustid_lookup"
 
-            if mbids:
-                track_obj.musicbrainz_id = mbids[0]
-
             if (
                 mbids
                 and metadata_provider
                 and hasattr(metadata_provider, "get_metadata")
             ):
                 try:
-                    fetched = metadata_provider.get_metadata(mbids[0])
-                    if isinstance(fetched, dict):
-                        # merge primitive dictionary into the hydrated object manually
-                        track_obj.title = fetched.get("title") or track_obj.title
+                    from services.metadata_enhancer import (
+                        select_best_acoustid_recording,
+                    )
+
+                    file_dur_ms = duration_int * 1000 if duration_int else None
+                    best_meta, best_mbid, _ = select_best_acoustid_recording(
+                        candidate_mbids=mbids,
+                        file_duration_ms=file_dur_ms,
+                        metadata_provider=metadata_provider,
+                        baseline_title=track_obj.title or track_obj.raw_title,
+                        filename=file_path.name if file_path else None,
+                        max_duration_delta_ms=2000,
+                    )
+                    if best_mbid and best_meta:
+                        track_obj.musicbrainz_id = best_mbid
+                        track_obj.title = best_meta.get("title") or track_obj.title
                         track_obj.artist_name = (
-                            fetched.get("artist") or track_obj.artist_name
+                            best_meta.get("artist") or track_obj.artist_name
                         )
                         track_obj.album_title = (
-                            fetched.get("album") or track_obj.album_title
+                            best_meta.get("album") or track_obj.album_title
                         )
-                        track_obj.isrc = fetched.get("isrc") or track_obj.isrc
+                        track_obj.isrc = best_meta.get("isrc") or track_obj.isrc
+                    elif mbids:
+                        track_obj.musicbrainz_id = mbids[0]
+                        fetched = metadata_provider.get_metadata(mbids[0])
+                        if isinstance(fetched, dict):
+                            track_obj.title = fetched.get("title") or track_obj.title
+                            track_obj.artist_name = (
+                                fetched.get("artist") or track_obj.artist_name
+                            )
+                            track_obj.album_title = (
+                                fetched.get("album") or track_obj.album_title
+                            )
+                            track_obj.isrc = fetched.get("isrc") or track_obj.isrc
                 except Exception as lookup_error:
                     logger.warning(
                         f"AcoustID metadata enrichment failed for task {task_id}: {lookup_error}"
                     )
+            elif mbids:
+                track_obj.musicbrainz_id = mbids[0]
 
             task.track_data = track_obj.to_dict()
             flag_modified(task, "track_data")

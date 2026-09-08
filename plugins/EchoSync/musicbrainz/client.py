@@ -1171,6 +1171,12 @@ class MusicBrainzClient(PluginBase):
                 "disc_number": None,
                 "cover_art_url": None,
                 "isrc": None,
+                "duration_ms": int(data.get("length"))
+                if data.get("length") and str(data.get("length")).isdigit()
+                else None,
+                "length": int(data.get("length"))
+                if data.get("length") and str(data.get("length")).isdigit()
+                else None,
             }
 
             credits = data.get("artist-credit") or []
@@ -1253,6 +1259,14 @@ class MusicBrainzClient(PluginBase):
                         "disc_number": None,
                         "cover_art_url": None,
                         "isrc": None,
+                        "duration_ms": int(recording.get("length"))
+                        if recording.get("length")
+                        and str(recording.get("length")).isdigit()
+                        else None,
+                        "length": int(recording.get("length"))
+                        if recording.get("length")
+                        and str(recording.get("length")).isdigit()
+                        else None,
                     }
 
                     credits = recording.get("artist-credit") or []
@@ -1406,7 +1420,33 @@ class MusicBrainzClient(PluginBase):
     ) -> list[EchosyncTrack]:
         if type != "track":
             return []
-        return self.get_artist_tracks(query)[:limit]
+        query_clean = str(query or "").strip()
+        if not query_clean:
+            return []
+        safe_query = self._escape_lucene(query_clean)
+        try:
+            results = self._search_metadata_query(
+                f'recording:"{safe_query}"', limit=limit
+            )
+            tracks: list[EchosyncTrack] = []
+            for r in results:
+                mbid = r.get("mbid")
+                track_obj = self.create_echo_sync_track(
+                    title=r.get("title") or "",
+                    artist=r.get("artist") or "",
+                    album=r.get("album") or "Unknown Album",
+                    musicbrainz_id=mbid,
+                    isrc=r.get("isrc"),
+                    duration_ms=r.get("duration"),
+                    provider_id=mbid,
+                    source=self.name,
+                )
+                if track_obj:
+                    tracks.append(track_obj)
+            return tracks
+        except Exception as exc:
+            logger.warning("MusicBrainzClient.search failed: %s", exc)
+            return []
 
     def get_track(self, track_id: str) -> EchosyncTrack | None:
         logger.debug(f"[MusicBrainz Client] get_track called for track_id={track_id}")
