@@ -1,25 +1,33 @@
 # Architectural Invariant Violation Ledger
 
-*Last Audited: 2026-05-27 19:15:00 UTC*
+*Last Audited: 2026-05-27 19:30:00 UTC*
 
 | Violation Type | File Path | Line Number | Observed Pattern | Architectural Remediation |
 | :--- | :--- | :--- | :--- | :--- |
+| Rogue HTTP Client | `plugins/EchoSync/navidrome/routes.py` | 35 | `import requests` | Route through `RequestManager` / `PluginSDK.http` |
+| Rogue HTTP Client | `plugins/EchoSync/navidrome/routes.py` | 143 | `import requests` | Route through `RequestManager` / `PluginSDK.http` |
+| Rogue HTTP Client | `plugins/EchoSync/slskd/client.py` | 404 | `import requests` | Route through `RequestManager` / `PluginSDK.http` |
+| Rogue HTTP Client | `plugins/EchoSync/tidal/api_v2.py` | 3 | `import requests` | Route through `RequestManager` / `PluginSDK.http` |
+| Rogue HTTP Client | `plugins/EchoSync/tidal/__init__.py` | 15 | `import requests` | Route through `RequestManager` / `PluginSDK.http` |
+| Rogue HTTP Client | `plugins/EchoSync/plex/routes.py` | 353 | `import requests` | Route through `RequestManager` / `PluginSDK.http` |
+| Rogue HTTP Client | `plugins/EchoSync/jellyfin/routes.py` | 35 | `import requests` | Route through `RequestManager` / `PluginSDK.http` |
+| Rogue HTTP Client | `plugins/EchoSync/jellyfin/routes.py` | 144 | `import requests` | Route through `RequestManager` / `PluginSDK.http` |
+| Rogue HTTP Client | `core/nexus_framework/plugin_store.py` | 9 | `import requests` | Route through `RequestManager` |
 | Ungated File Move | `services/library_sync_service.py` | 321 | `shutil.move(file_path, dest_path)` | Route through `Gatekeeper.authorize_and_execute` / `echosync_core.safe_move_file` |
 | Ungated File Move | `services/download_manager.py` | 2424 | `shutil.move(str(src), str(dest))` | Route through `Gatekeeper.authorize_and_execute` / `echosync_core.safe_move_file` |
-| Ungated File Deletion | `services/media_manager.py` | 242 | `os.remove(file_path)` | Route through `Gatekeeper.authorize_and_execute` / `echosync_core.delete_file` |
-| Ungated File Deletion | `services/auto_importer.py` | 177 | `file_p.unlink(missing_ok=True)` | Route through `Gatekeeper.authorize_and_execute` / `echosync_core.delete_file` |
-| Ungated File Deletion | `web/routes/metadata_review.py` | 1092 | `os.unlink(str(resolved_file))` | Route through `Gatekeeper.authorize_and_execute` / `echosync_core.delete_file` |
+| Ungated File Deletion | `services/auto_importer.py` | 254 | `file_p.unlink(missing_ok=True)` | Route through `Gatekeeper.authorize_and_execute` / `echosync_core.delete_file` |
+| Ungated File Deletion | `web/routes/metadata_review.py` | 1147 | `os.unlink(str(resolved_file))` | Route through `Gatekeeper.authorize_and_execute` / `echosync_core.delete_file` |
 | Ungated File Deletion | `web/routes/system.py` | 180 | `os.remove(tmp_path)` | Route through `Gatekeeper.authorize_and_execute` / `echosync_core.delete_file` |
 | Ungated File Deletion | `web/routes/system.py` | 1017 | `os.remove(db_path)` | Route through `Gatekeeper.authorize_and_execute` / `echosync_core.delete_file` |
-| Ungated File Deletion | `core/task_manager/system_jobs.py` | 1247 | `os.remove(db_file)` | Route through `Gatekeeper.authorize_and_execute` / `echosync_core.delete_file` |
+| Ungated File Deletion | `core/task_manager/system_jobs.py` | 1254 | `os.remove(db_file)` | Route through `Gatekeeper.authorize_and_execute` / `echosync_core.delete_file` |
 | Ungated File Rename | `core/tiered_logger.py` | 73 | `os.rename(sfn, dfn)` | Route through managed file logger handlers / Gatekeeper |
 | Ungated File Rename | `core/tiered_logger.py` | 89 | `os.rename(self.baseFilename, dfn)` | Route through managed file logger handlers / Gatekeeper |
 | Ungated File Deletion | `core/tiered_logger.py` | 69 | `os.remove(dfn)` | Route through managed file logger handlers / Gatekeeper |
 | Ungated File Deletion | `core/tiered_logger.py` | 84 | `os.remove(dfn)` | Route through managed file logger handlers / Gatekeeper |
-| Direct SQLite Connection | `core/matching_engine/fingerprinting.py` | 349 | `sqlite3.connect(self.db_path, timeout=30.0)` | Refactor to DatabaseGateway scoped ORM sessions (`session_scope()`) |
-| Direct SQLite Connection | `core/matching_engine/fingerprinting.py` | 381 | `sqlite3.connect(self.db_path, timeout=30.0)` | Refactor to DatabaseGateway scoped ORM sessions (`session_scope()`) |
-| Direct SQLite Connection | `core/matching_engine/fingerprinting.py` | 418 | `sqlite3.connect(self.db_path, timeout=30.0)` | Refactor to DatabaseGateway scoped ORM sessions (`session_scope()`) |
-| Direct SQLite Connection | `core/matching_engine/fingerprinting.py` | 445 | `sqlite3.connect(self.db_path, timeout=30.0)` | Refactor to DatabaseGateway scoped ORM sessions (`session_scope()`) |
+| Direct SQLite Connection | `core/matching_engine/fingerprinting.py` | 272 | `sqlite3.connect(self.db_path, timeout=30.0)` | Refactor to DatabaseGateway scoped ORM sessions (`session_scope()`) |
+| Direct SQLite Connection | `core/matching_engine/fingerprinting.py` | 304 | `sqlite3.connect(self.db_path, timeout=30.0)` | Refactor to DatabaseGateway scoped ORM sessions (`session_scope()`) |
+| Direct SQLite Connection | `core/matching_engine/fingerprinting.py` | 341 | `sqlite3.connect(self.db_path, timeout=30.0)` | Refactor to DatabaseGateway scoped ORM sessions (`session_scope()`) |
+| Direct SQLite Connection | `core/matching_engine/fingerprinting.py` | 368 | `sqlite3.connect(self.db_path, timeout=30.0)` | Refactor to DatabaseGateway scoped ORM sessions (`session_scope()`) |
 | Direct SQLite Connection | `core/db/migrations.py` | 89 | `sqlite3.connect(db_path, timeout=30.0)` | Use Alembic / DatabaseGateway connection abstraction |
 | Direct SQLite Connection | `core/backup_manager.py` | 31 | `sqlite3.connect(str(source_path))` | Wrap backup operations in DatabaseGateway / SQLite Online Backup API |
 | Direct SQLite Connection | `core/backup_manager.py` | 32 | `sqlite3.connect(str(target_path))` | Wrap backup operations in DatabaseGateway / SQLite Online Backup API |

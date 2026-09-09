@@ -11,7 +11,7 @@ Detailed architectural specifications are organized into the following topic-sco
 * **[Download Lifecycle & Metadata Pipeline](download-pipeline.md):** Candidate ranking state machine, waterfall metadata resolution, and stream integrity verification.
 * **[Database Evolution & 3-DB Split](database-evolution.md):** Physical partitioning model (`config.db`, `working.db`, `library.db`), entity promotion lifecycle, and PostgreSQL migration roadmap.
 * **[Native Rust FFI Engine](rust-ffi-engine.md):** `echosync_core` crate architecture, lofty tag parsing/writing, callback batching, and path traversal security.
-* **[Metadata Enhancement Subsystem & Ingress Architecture](metadata_enhancement_architecture.md):** Comprehensive audit of all metadata enhancement callers, 5-stage cascading decision tree, AcoustID/Picard divergence, rate limiting, and hook lifecycles.
+* **[Metadata Enhancement Subsystem & Ingress Architecture](metadata-enhancement-architecture.md):** Comprehensive audit of all metadata enhancement callers, 5-stage cascading decision tree, AcoustID/Picard divergence, rate limiting, and hook lifecycles.
 * **[Architectural Rule Violations Ledger](rule-violations.md):** Live audit matrix of ungated I/O operations, direct DB connections, and remediations.
 
 ---
