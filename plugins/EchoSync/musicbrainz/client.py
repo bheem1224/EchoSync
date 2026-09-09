@@ -193,12 +193,10 @@ class MusicBrainzClient(PluginBase):
                 artist_name,
                 exc,
             )
-        except Exception as exc:
-            logger.error(
-                "Failed to fetch artist tracks for '%s': %s",
+        except Exception:
+            logger.exception(
+                "Failed to fetch artist tracks for '%s'",
                 artist_name,
-                exc,
-                exc_info=True,
             )
 
         # Deduplicate by artist+title to keep discovery diff deterministic.
@@ -1202,12 +1200,50 @@ class MusicBrainzClient(PluginBase):
                 result["release_id"] = canonical_release.get("canonical_studio_release_mbid") or ""
                 result["release_group_id"] = canonical_release.get("canonical_studio_release_group_mbid") or ""
                 result["date"] = canonical_release.get("date") or ""
+                result["year"] = canonical_release.get("canonical_year")
             elif releases:
                 release = releases[0] or {}
                 result["album"] = release.get("title") or ""
                 result["release_id"] = release.get("id") or ""
                 result["release_group_id"] = (release.get("release-group") or {}).get("id") or ""
                 result["date"] = release.get("date") or ""
+                raw_d = str(result["date"]).strip()
+                if len(raw_d) >= 4 and raw_d[:4].isdigit():
+                    try:
+                        result["year"] = int(raw_d[:4])
+                    except ValueError:
+                        pass
+
+            rec_id = data.get("id")
+            target_rel_id = result.get("release_id")
+            for r in releases:
+                if not isinstance(r, dict):
+                    continue
+                if target_rel_id and r.get("id") != target_rel_id:
+                    continue
+                for medium in r.get("media", []) or []:
+                    if not isinstance(medium, dict):
+                        continue
+                    m_pos = medium.get("position") or 1
+                    for track_entry in medium.get("tracks", []) or []:
+                        if not isinstance(track_entry, dict):
+                            continue
+                        r_entry = track_entry.get("recording") or {}
+                        if r_entry.get("id") == rec_id:
+                            raw_num = track_entry.get("number") or track_entry.get("position")
+                            try:
+                                result["track_number"] = int(str(raw_num).split("/")[0].strip())
+                            except (TypeError, ValueError):
+                                pass
+                            try:
+                                result["disc_number"] = int(m_pos)
+                            except (TypeError, ValueError):
+                                result["disc_number"] = 1
+                            break
+                    if result["track_number"] is not None:
+                        break
+                if result["track_number"] is not None:
+                    break
 
             isrcs = data.get("isrcs") or []
             if isrcs:
@@ -1536,16 +1572,6 @@ class MusicBrainzClient(PluginBase):
                 return None
 
             return self.accounts.get_token(target.get("id"))
-
-            # get_account_token in StorageService handles database access safely
-            token_row = storage.get_account_token(target["id"])
-            if not token_row:
-                return None
-
-            if token_row and token_row.get("access_token"):
-                # StorageService.get_account_token should return decrypted token
-                return token_row["access_token"]
-            return None
         except Exception as e:
             logger.debug(f"Could not load MusicBrainz access token: {e}")
             return None

@@ -1,11 +1,9 @@
 """Tests for MetadataResolutionEngine (core/metadata/engine.py)."""
 
-from pathlib import Path
 from unittest.mock import MagicMock
 
-import pytest
-
 import echosync_core
+
 from core.matching_engine.fingerprinting import FingerprintGenerator
 from core.metadata.engine import MetadataResolutionEngine
 from core.metadata.schemas import ResolutionRequest
@@ -348,3 +346,187 @@ def test_resolve_track_local_cache_hit(monkeypatch, tmp_path):
     assert result.album == "Random Access Memories"
     # Verify acoustid provider was not called
     assert not engine._acoustid_provider.resolve_fingerprint_details.called
+
+
+def test_resolve_track_rejects_corrupted_embedded_mbid_via_trust_gate(monkeypatch, tmp_path):
+    """Verifies that a corrupted embedded MBID (pointing to a different song) is rejected
+
+    by the Trust Gate, allowing execution to fall through to AcoustID resolution.
+    """
+    audio_file = tmp_path / "01 - There's Nothing Holdin' Me Back.flac"
+    audio_file.write_bytes(b"dummy flac content")
+
+    file_dur_ms = 199000
+
+    # Physical tags have corrupted MBID pointing to "Where Were You in the Morning?"
+    corrupted_mbid = "2aeeb920-2e46-4b09-bfe9-ee1c56f0294d"
+    canonical_mbid = "correct-mbid-holdin-back"
+
+    monkeypatch.setattr(
+        echosync_core,
+        "extract_metadata",
+        lambda p: {
+            "title": "There's Nothing Holdin' Me Back",
+            "artist": "Shawn Mendes",
+            "duration_ms": file_dur_ms,
+            "channels": 2,
+            "musicbrainz_trackid": corrupted_mbid,
+        },
+    )
+
+    dummy_cp = "E" * 60
+    monkeypatch.setattr(
+        FingerprintGenerator,
+        "generate_with_duration",
+        lambda p: (dummy_cp, file_dur_ms / 1000.0),
+    )
+
+    mock_acoustid = MagicMock()
+    mock_acoustid.resolve_fingerprint_details.return_value = {
+        "acoustid_id": "acoustid-holdin-back",
+        "mbids": [canonical_mbid],
+    }
+
+    mock_mb = MagicMock()
+
+    def mock_get_metadata(mbid):
+        if mbid == corrupted_mbid:
+            # Stale / wrong song metadata
+            return {
+                "title": "Where Were You in the Morning?",
+                "artist": "Shawn Mendes",
+                "album": "Shawn Mendes",
+                "recording_id": corrupted_mbid,
+                "release_id": "rel-shawn-mendes-stale",
+            }
+        elif mbid == canonical_mbid:
+            # Genuine canonical release from AcoustID
+            return {
+                "title": "There's Nothing Holdin' Me Back",
+                "artist": "Shawn Mendes",
+                "album": "Illuminate",
+                "recording_id": canonical_mbid,
+                "release_id": "rel-illuminate-canonical",
+                "year": 2017,
+                "track_number": 1,
+                "disc_number": 1,
+                "duration_ms": file_dur_ms,
+                "release_group": {"primary_type": "Album"},
+            }
+        return None
+
+    mock_mb.get_metadata.side_effect = mock_get_metadata
+
+    engine = MetadataResolutionEngine(
+        acoustid_provider=mock_acoustid,
+        metadata_provider=mock_mb,
+    )
+
+    req = ResolutionRequest(
+        media_id="media_shawn_mendes",
+        file_path=audio_file,
+        baseline_title="There's Nothing Holdin' Me Back",
+        baseline_artist="Shawn Mendes",
+    )
+
+    result = engine.resolve_track(req)
+
+    # Trust Gate must have rejected corrupted_mbid and fallen through to AcoustID
+    assert result.musicbrainz_track_id == canonical_mbid
+    assert result.title == "There's Nothing Holdin' Me Back"
+    assert result.artist == "Shawn Mendes"
+    assert result.album == "Illuminate"
+    assert result.resolution_method == "acoustid"
+    assert result.acoustid_id == "acoustid-holdin-back"
+    assert result.year == 2017
+    assert result.track_number == 1
+    assert result.disc_number == 1
+    assert result.musicbrainz_release_id == "rel-illuminate-canonical"
+    assert mock_acoustid.resolve_fingerprint_details.called
+
+
+def test_resolve_track_honors_ignore_embedded_mbid_flag(monkeypatch, tmp_path):
+    """Verifies that ignore_embedded_mbid=True bypasses embedded MBID lookup completely."""
+    audio_file = tmp_path / "song_with_tag.flac"
+    audio_file.write_bytes(b"dummy audio content")
+
+    file_dur_ms = 210000
+    embedded_mbid = "mbid-embedded-tag"
+    acoustid_mbid = "mbid-acoustid-resolved"
+
+    monkeypatch.setattr(
+        echosync_core,
+        "extract_metadata",
+        lambda p: {
+            "title": "Song Title",
+            "artist": "Artist Name",
+            "duration_ms": file_dur_ms,
+            "channels": 2,
+            "musicbrainz_id": embedded_mbid,
+        },
+    )
+
+    dummy_cp = "F" * 60
+    monkeypatch.setattr(
+        FingerprintGenerator,
+        "generate_with_duration",
+        lambda p: (dummy_cp, file_dur_ms / 1000.0),
+    )
+
+    mock_acoustid = MagicMock()
+    mock_acoustid.resolve_fingerprint_details.return_value = {
+        "acoustid_id": "acoustid-98765",
+        "mbids": [acoustid_mbid],
+    }
+
+    mock_mb = MagicMock()
+
+    def mock_get_metadata(mbid):
+        if mbid == embedded_mbid:
+            return {
+                "title": "Song Title",
+                "artist": "Artist Name",
+                "album": "Embedded Tag Album",
+                "recording_id": embedded_mbid,
+            }
+        elif mbid == acoustid_mbid:
+            return {
+                "title": "Song Title",
+                "artist": "Artist Name",
+                "album": "Acoustic Verified Album",
+                "recording_id": acoustid_mbid,
+                "year": 2021,
+                "track_number": 3,
+                "disc_number": 1,
+                "duration_ms": file_dur_ms,
+                "release_group": {"primary_type": "Album"},
+            }
+        return None
+
+    mock_mb.get_metadata.side_effect = mock_get_metadata
+
+    engine = MetadataResolutionEngine(
+        acoustid_provider=mock_acoustid,
+        metadata_provider=mock_mb,
+    )
+
+    req = ResolutionRequest(
+        media_id="media_ignore_flag",
+        file_path=audio_file,
+        baseline_title="Song Title",
+        baseline_artist="Artist Name",
+        ignore_embedded_mbid=True,
+    )
+
+    result = engine.resolve_track(req)
+
+    # Embedded MBID must have been ignored; resolved via AcoustID
+    assert result.musicbrainz_track_id == acoustid_mbid
+    assert result.album == "Acoustic Verified Album"
+    assert result.resolution_method == "acoustid"
+    assert result.acoustid_id == "acoustid-98765"
+    assert result.year == 2021
+    assert result.track_number == 3
+    assert result.disc_number == 1
+    assert mock_acoustid.resolve_fingerprint_details.called
+

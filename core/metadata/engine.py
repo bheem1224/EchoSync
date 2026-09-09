@@ -33,6 +33,126 @@ from core.tiered_logger import get_logger
 logger = get_logger("core.metadata.engine")
 
 
+def _extract_release_details(
+    meta: Any,
+    recording_id: str | None = None,
+    fallback_year: int | None = None,
+    fallback_track: int | None = None,
+    fallback_disc: int | None = None,
+) -> tuple[int | None, int | None, int | None]:
+    """Extract (year, track_number, disc_number) from canonical release metadata."""
+    if not meta:
+        return fallback_year, fallback_track, fallback_disc
+
+    if not isinstance(meta, dict):
+        year = (
+            getattr(meta, "year", None)
+            or getattr(meta, "release_year", None)
+            or fallback_year
+        )
+        track_num = getattr(meta, "track_number", None) or fallback_track
+        disc_num = getattr(meta, "disc_number", None) or fallback_disc
+        return year, track_num, disc_num
+
+    # 1. Year Extraction
+    extracted_year: int | None = None
+    raw_year = (
+        meta.get("year")
+        or meta.get("canonical_year")
+        or meta.get("date")
+        or meta.get("first-release-date")
+        or meta.get("first_release_date")
+        or meta.get("release_date")
+    )
+    if raw_year:
+        try:
+            m = re.search(r"\b(19\d\d|20\d\d)\b", str(raw_year))
+            if m:
+                extracted_year = int(m.group(1))
+            else:
+                extracted_year = int(str(raw_year)[:4])
+        except (ValueError, TypeError):
+            extracted_year = None
+
+    if extracted_year is None:
+        extracted_year = fallback_year
+
+    # 2. Track & Disc Number Extraction
+    extracted_track: int | None = None
+    extracted_disc: int | None = None
+
+    raw_track = meta.get("track_number") or meta.get("track")
+    if raw_track is not None:
+        try:
+            extracted_track = int(str(raw_track).split("/")[0].strip())
+        except (ValueError, TypeError):
+            extracted_track = None
+
+    raw_disc = meta.get("disc_number") or meta.get("disc")
+    if raw_disc is not None:
+        try:
+            extracted_disc = int(str(raw_disc).split("/")[0].strip())
+        except (ValueError, TypeError):
+            extracted_disc = None
+
+    # If track or disc is missing, inspect nested releases and media
+    if extracted_track is None or extracted_disc is None:
+        rec_id = (
+            recording_id
+            or meta.get("recording_id")
+            or meta.get("id")
+            or meta.get("musicbrainz_track_id")
+        )
+        releases = meta.get("releases") or []
+        target_rel_id = meta.get("release_id") or meta.get("musicbrainz_release_id")
+
+        target_releases = [
+            r for r in releases if isinstance(r, dict) and r.get("id") == target_rel_id
+        ]
+        candidate_releases = (
+            target_releases if target_releases else [r for r in releases if isinstance(r, dict)]
+        )
+
+        for rel in candidate_releases:
+            if extracted_year is None and rel.get("date"):
+                m = re.search(r"\b(19\d\d|20\d\d)\b", str(rel.get("date")))
+                if m:
+                    extracted_year = int(m.group(1))
+
+            media = rel.get("media") or []
+            for medium in media:
+                if not isinstance(medium, dict):
+                    continue
+                med_pos = medium.get("position") or 1
+                try:
+                    disc_val = int(med_pos)
+                except (ValueError, TypeError):
+                    disc_val = 1
+
+                for track in medium.get("tracks") or []:
+                    if not isinstance(track, dict):
+                        continue
+                    t_rec = track.get("recording") or {}
+                    t_rec_id = t_rec.get("id") if isinstance(t_rec, dict) else None
+                    if rec_id and t_rec_id == rec_id:
+                        raw_pos = track.get("number") or track.get("position")
+                        try:
+                            extracted_track = int(str(raw_pos).split("/")[0].strip())
+                        except (ValueError, TypeError):
+                            pass
+                        extracted_disc = disc_val
+                        break
+                if extracted_track is not None:
+                    break
+            if extracted_track is not None:
+                break
+
+    final_track = extracted_track if extracted_track is not None else fallback_track
+    final_disc = extracted_disc if extracted_disc is not None else fallback_disc
+
+    return extracted_year, final_track, final_disc
+
+
 class MetadataResolutionEngine:
     """Authoritative metadata resolution engine ensuring uniform behavior across
 
@@ -351,7 +471,7 @@ class MetadataResolutionEngine:
             or raw_tags.get("recording_id")
             or raw_tags.get("musicbrainz_trackid")
         )
-        if embedded_mbid:
+        if embedded_mbid and not request.ignore_embedded_mbid:
             mb_plugin = self._get_mb_plugin()
             if mb_plugin and hasattr(mb_plugin, "get_metadata"):
                 try:
@@ -362,13 +482,20 @@ class MetadataResolutionEngine:
                             if isinstance(meta, dict)
                             else getattr(meta, "title", None)
                         )
-                        if not c_title or verify_title_trust_gate(
+                        baseline_check = request.baseline_title or baseline_title
+                        if not c_title or not verify_title_trust_gate(
                             candidate_title=c_title,
-                            baseline_title=baseline_title,
+                            baseline_title=baseline_check,
                             filename=file_path.name,
                             tag_title=tag_title,
                             min_similarity=0.60,
                         ):
+                            logger.warning(
+                                f"[resolution_engine] Embedded MBID {embedded_mbid} rejected by Trust Gate "
+                                f"(Candidate: '{c_title or ''}' vs Baseline: '{request.baseline_title}'). "
+                                "Falling through to AcoustID."
+                            )
+                        else:
                             c_artist = (
                                 (meta.get("artist") or meta.get("artist_name"))
                                 if isinstance(meta, dict)
@@ -390,8 +517,15 @@ class MetadataResolutionEngine:
                                 if isinstance(meta, dict)
                                 else getattr(meta, "mb_release_id", None)
                             )
+                            c_year, c_track, c_disc = _extract_release_details(
+                                meta,
+                                recording_id=str(embedded_mbid).strip(),
+                                fallback_year=parsed_year,
+                                fallback_track=parsed_track_num,
+                                fallback_disc=parsed_disc_num,
+                            )
                             logger.info(
-                                "[resolution_engine] Embedded MBID fast-path hit: %s → %s",
+                                "[resolution_engine] Embedded MBID fast-path verified: %s → %s",
                                 file_path.name,
                                 embedded_mbid,
                             )
@@ -401,9 +535,9 @@ class MetadataResolutionEngine:
                                 title=c_title or baseline_title,
                                 artist=c_artist or baseline_artist,
                                 album=c_album or baseline_album,
-                                year=parsed_year,
-                                track_number=parsed_track_num,
-                                disc_number=parsed_disc_num,
+                                year=c_year,
+                                track_number=c_track,
+                                disc_number=c_disc,
                                 musicbrainz_track_id=str(embedded_mbid).strip(),
                                 musicbrainz_release_id=c_rel_id,
                                 acoustid_id=raw_tags.get("acoustid_id"),
@@ -411,7 +545,7 @@ class MetadataResolutionEngine:
                                 duration_ms=duration_ms,
                                 isrc=tag_isrc,
                                 confidence_score=0.99,
-                                resolution_method="local_cache",
+                                resolution_method="embedded_mbid",
                             )
                 except Exception as e_mb:
                     logger.debug(
@@ -437,16 +571,23 @@ class MetadataResolutionEngine:
                         file_path.name,
                         cached_meta.get("musicbrainz_id"),
                     )
+                    c_year, c_track, c_disc = _extract_release_details(
+                        cached_meta,
+                        recording_id=cached_meta.get("musicbrainz_id")
+                        or cached_meta.get("musicbrainz_track_id"),
+                        fallback_year=parsed_year,
+                        fallback_track=parsed_track_num,
+                        fallback_disc=parsed_disc_num,
+                    )
                     return ResolutionResult(
                         media_id=request.media_id,
                         sync_id=request.sync_id,
                         title=cached_meta.get("title") or baseline_title,
                         artist=cached_meta.get("artist") or baseline_artist,
                         album=cached_meta.get("album") or baseline_album,
-                        year=cached_meta.get("year") or parsed_year,
-                        track_number=cached_meta.get("track_number")
-                        or parsed_track_num,
-                        disc_number=cached_meta.get("disc_number") or parsed_disc_num,
+                        year=c_year,
+                        track_number=c_track,
+                        disc_number=c_disc,
                         musicbrainz_track_id=cached_meta.get("musicbrainz_id")
                         or cached_meta.get("musicbrainz_track_id"),
                         musicbrainz_release_id=cached_meta.get("release_mbid")
@@ -481,9 +622,15 @@ class MetadataResolutionEngine:
                     title=acoustid_res["title"],
                     artist=acoustid_res["artist"],
                     album=acoustid_res.get("album") or baseline_album,
-                    year=acoustid_res.get("year") or parsed_year,
-                    track_number=acoustid_res.get("track_number") or parsed_track_num,
-                    disc_number=acoustid_res.get("disc_number") or parsed_disc_num,
+                    year=acoustid_res.get("year")
+                    if acoustid_res.get("year") is not None
+                    else parsed_year,
+                    track_number=acoustid_res.get("track_number")
+                    if acoustid_res.get("track_number") is not None
+                    else parsed_track_num,
+                    disc_number=acoustid_res.get("disc_number")
+                    if acoustid_res.get("disc_number") is not None
+                    else parsed_disc_num,
                     musicbrainz_track_id=acoustid_res["musicbrainz_track_id"],
                     musicbrainz_release_id=acoustid_res.get("musicbrainz_release_id"),
                     acoustid_id=acoustid_res.get("acoustid_id"),
@@ -718,13 +865,10 @@ class MetadataResolutionEngine:
                     best_mbid = mbid_str
 
             if best_candidate and best_mbid:
-                raw_year = best_candidate.get("year") or best_candidate.get("date")
-                parsed_year = None
-                if raw_year:
-                    try:
-                        parsed_year = int(str(raw_year)[:4])
-                    except (ValueError, TypeError):
-                        pass
+                cand_year, cand_track, cand_disc = _extract_release_details(
+                    best_candidate,
+                    recording_id=best_mbid,
+                )
 
                 return {
                     "title": best_candidate.get("title") or baseline_title,
@@ -734,9 +878,9 @@ class MetadataResolutionEngine:
                     "album": best_candidate.get("album")
                     or best_candidate.get("album_title")
                     or "",
-                    "year": parsed_year,
-                    "track_number": best_candidate.get("track_number"),
-                    "disc_number": best_candidate.get("disc_number"),
+                    "year": cand_year,
+                    "track_number": cand_track,
+                    "disc_number": cand_disc,
                     "musicbrainz_track_id": best_mbid,
                     "musicbrainz_release_id": best_candidate.get("release_id"),
                     "acoustid_id": acoustid_id,
@@ -948,10 +1092,21 @@ class MetadataResolutionEngine:
                     else getattr(meta, "mb_release_id", None)
                 )
 
+                final_year, final_track, final_disc = _extract_release_details(
+                    meta,
+                    recording_id=best_mbid,
+                    fallback_year=getattr(best_cand, "release_year", None),
+                    fallback_track=getattr(best_cand, "track_number", None),
+                    fallback_disc=getattr(best_cand, "disc_number", None),
+                )
+
                 return {
                     "title": final_title,
                     "artist": final_artist,
                     "album": final_album,
+                    "year": final_year,
+                    "track_number": final_track,
+                    "disc_number": final_disc,
                     "musicbrainz_track_id": best_mbid,
                     "musicbrainz_release_id": final_release_id,
                     "confidence_score": best_score / 100.0,

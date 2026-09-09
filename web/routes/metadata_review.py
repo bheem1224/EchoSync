@@ -1271,9 +1271,10 @@ def lookup_review_queue_item_acoustid(task_id: int, _=Depends(require_auth)):
             if not file_path:
                 raise HTTPException(status_code=404, detail="File does not exist")
 
+            from sqlalchemy.orm.attributes import flag_modified
+
             from core.metadata.engine import MetadataResolutionEngine
             from core.metadata.schemas import ResolutionRequest
-            from sqlalchemy.orm.attributes import flag_modified
 
             track_obj = EchosyncTrack.from_dict(task.track_data or {})
 
@@ -1284,6 +1285,7 @@ def lookup_review_queue_item_acoustid(task_id: int, _=Depends(require_auth)):
                 baseline_title=track_obj.title or track_obj.raw_title,
                 baseline_artist=track_obj.artist_name,
                 baseline_album=track_obj.album_title,
+                ignore_embedded_mbid=True,
             )
             res = engine.resolve_track(req)
 
@@ -1324,6 +1326,8 @@ def lookup_review_queue_item_acoustid(task_id: int, _=Depends(require_auth)):
                 track_obj.acoustid_id = res.acoustid_id
             if res.musicbrainz_track_id:
                 track_obj.musicbrainz_id = res.musicbrainz_track_id
+            if res.musicbrainz_release_id:
+                track_obj.mb_release_id = res.musicbrainz_release_id
             if res.title:
                 track_obj.title = res.title
                 track_obj.raw_title = res.title
@@ -1334,6 +1338,10 @@ def lookup_review_queue_item_acoustid(task_id: int, _=Depends(require_auth)):
                 track_obj.album_title = res.album
             if res.year:
                 track_obj.release_year = res.year
+            if res.track_number is not None:
+                track_obj.track_number = res.track_number
+            if res.disc_number is not None:
+                track_obj.disc_number = res.disc_number
             if res.isrc:
                 track_obj.isrc = res.isrc
 
@@ -1352,8 +1360,14 @@ def lookup_review_queue_item_acoustid(task_id: int, _=Depends(require_auth)):
                 updated_fields.append("album")
             if track_obj.release_year:
                 updated_fields.append("year")
+            if track_obj.track_number is not None:
+                updated_fields.append("track_number")
+            if track_obj.disc_number is not None:
+                updated_fields.append("disc_number")
             if track_obj.musicbrainz_id:
                 updated_fields.append("musicbrainz_id")
+            if track_obj.mb_release_id:
+                updated_fields.append("musicbrainz_release_id")
             if track_obj.acoustid_id:
                 updated_fields.append("acoustid")
             if track_obj.isrc:

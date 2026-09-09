@@ -6,8 +6,9 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
-
-ResolutionMethod = Literal["local_cache", "acoustid", "isrc", "text_waterfall"]
+ResolutionMethod = Literal[
+    "local_cache", "acoustid", "isrc", "text_waterfall", "embedded_mbid"
+]
 
 
 @dataclass
@@ -52,6 +53,7 @@ class ResolutionRequest:
     baseline_artist: str | None = None
     baseline_album: str | None = None
     baseline_isrc: str | None = None
+    ignore_embedded_mbid: bool = False
 
 
 @dataclass
