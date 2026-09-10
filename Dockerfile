@@ -4,10 +4,13 @@
 # ---- Node Stage: Build Svelte Web UI ----
 FROM node:20-slim AS node
 
+WORKDIR /app/webui
 WORKDIR /build
 
 # 1. Install dependencies deterministically via lockfile
 COPY webui/package.json webui/package-lock.json* ./
+RUN npm install
+COPY webui ./
 RUN npm ci
 
 # 2. Copy source files and compile static bundle
@@ -72,6 +75,7 @@ RUN mkdir -p /config /data/logs /data/downloads /data/Transfer /defaults
 COPY . .
 
 # Copy built Svelte UI from the node stage
+COPY --from=node /app/webui/build /app/webui/build
 COPY --from=node /build/build /app/webui/build
 
 # Setup entrypoint
