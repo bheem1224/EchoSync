@@ -3,10 +3,10 @@
 ## 1. Technical Reference Index
 
 For detailed subsystem specifications, consult the dedicated technical reference manuals:
-- **[API Reference Specification](api-reference.md):** Complete REST endpoint paths, query parameters, payload schemas, and response contracts.
-- **[Event Bus Dictionary & Lifecycle](event-bus.md):** Channel registry, event payload schemas, and lightweight UUID migration targets.
-- **[Matching & Suggestion Engines](matching-and-suggestions.md):** Weighted metadata scoring formulas, token sorting, vibe profiling, and recommendation pipelines.
-- **[Download Lifecycle & Metadata Pipeline](download-pipeline.md):** State transition machine, candidate heuristics, fallback waterfalls, and stream verification.
+- **[Architectural Rule Violations Ledger](rule-violations.md):** Audit matrix of ungated I/O operations, direct DB connections, rogue HTTP clients, and remediations.
+- **[Database Evolution Specification](database-evolution.md):** 3-DB split (`config.db`, `working.db`, `library.db`), 1:N media model, and PostgreSQL roadmap.
+- **[Metadata Enhancement, Matching & Download Pipeline](metadata-enhancement-architecture.md):** 5-stage identification, weighted matching formulas, candidate ranking, and download pipeline.
+- **[Native Rust FFI Engine](rust-ffi-engine.md):** `echosync_core` crate architecture, lofty audio tagging, scanner, and FFI boundaries.
 
 ---
 
@@ -86,7 +86,7 @@ For detailed subsystem specifications, consult the dedicated technical reference
 
 | API Subsystem | Primary Controller File | Functionality Scope |
 | :--- | :--- | :--- |
-| Library & Tracks API | `web/routes/tracks.py` & `library.py` | Track querying, physical media details, CRUD. |
+| Library & Tracks API | `web/routes/tracks.py` & `library.py` | Track querying, physical media details, CRUD operations. |
 | Metadata Review & Promotion | `web/routes/metadata_review.py` | Ingestion staging confirmation and virtual promotion. |
 | System Operations & Status | `web/routes/system.py` | Health metrics, system restarts, log streaming. |
 | Webhooks Integration Router | `web/routes/webhooks.py` | Inbound webhooks from Plex, Jellyfin, and external tools. |
