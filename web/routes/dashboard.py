@@ -23,13 +23,12 @@ def get_custom_dashboard_yaml(filename: str):
     if not re.match(r"^[a-zA-Z0-9_\-]+\.(yaml|yml|json)$", safe_name):
         raise HTTPException(status_code=400, detail="Invalid dashboard filename")
 
-    try:
-        base_dir = Path("config/webui").resolve()
-        target_path = resolve_safe_path(base_dir, safe_name)
-    except (PathTraversalError, ValueError):
+    base_dir = os.path.abspath(os.path.realpath("config/webui"))
+    target_path = os.path.abspath(os.path.realpath(os.path.join(base_dir, safe_name)))
+    if os.path.commonpath([target_path, base_dir]) != base_dir:
         raise HTTPException(status_code=403, detail="Access denied")
 
-    if not target_path.exists() or not target_path.is_file():
+    if not os.path.isfile(target_path):
         raise HTTPException(status_code=404, detail="Dashboard not found")
 
     try:

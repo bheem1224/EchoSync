@@ -1,6 +1,7 @@
 """Metadata API endpoints."""
 
 import mimetypes
+import os
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query
@@ -320,25 +321,33 @@ def get_cover_art(path: str = Query(..., description="absolute path to audio fil
             config_manager.get("data_dir"),
             ".",
         ]
-        allowed_roots = [Path(r).resolve() for r in candidate_roots if r]
+        allowed_roots = [
+            os.path.abspath(os.path.realpath(str(r))) for r in candidate_roots if r
+        ]
 
-        try:
-            file_path = resolve_safe_path(allowed_roots, path)
-        except (PathTraversalError, ValueError):
+        target_abs = os.path.abspath(os.path.realpath(os.path.normpath(str(path))))
+        is_safe = False
+        for root_abs in allowed_roots:
+            try:
+                if os.path.commonpath([target_abs, root_abs]) == root_abs:
+                    is_safe = True
+                    break
+            except Exception:
+                continue
+
+        if not is_safe:
             raise HTTPException(
                 status_code=403, detail="Security violation: Access denied"
             )
 
-        if not file_path.exists() or not file_path.is_file():
+        if not os.path.isfile(target_abs):
             raise HTTPException(status_code=404, detail="File not found")
 
+        parent_dir = os.path.dirname(target_abs)
         for name in ["cover.jpg", "folder.jpg", "cover.png", "folder.png"]:
-            try:
-                fallback = resolve_safe_path(allowed_roots, file_path.parent / name)
-                if fallback.exists() and fallback.is_file():
-                    return FileResponse(path=str(fallback))
-            except (PathTraversalError, ValueError):
-                continue
+            fallback = os.path.join(parent_dir, name)
+            if is_safe and os.path.isfile(fallback):
+                return FileResponse(path=fallback)
 
         raise HTTPException(status_code=404, detail="No cover art found")
     except HTTPException:

@@ -74,7 +74,19 @@ class PluginStore:
             return False
 
     def scan_repository(self, repo_url: str) -> list[dict]:
-        logger.debug(f"Scanning repository: {repo_url}")
+        import urllib.parse
+        try:
+            parsed_u = urllib.parse.urlsplit(str(repo_url))
+            if parsed_u.username or parsed_u.password:
+                netloc = parsed_u.hostname or ""
+                if parsed_u.port:
+                    netloc += f":{parsed_u.port}"
+                parsed_u = parsed_u._replace(netloc=f"***@{netloc}")
+            clean_log_url = urllib.parse.urlunsplit(parsed_u)
+        except Exception:
+            clean_log_url = "<repository-url>"
+
+        logger.debug(f"Scanning repository: {clean_log_url}")
         if not hasattr(self, "plugins_dir") or self.plugins_dir is None:
             from core.settings import config_manager
 

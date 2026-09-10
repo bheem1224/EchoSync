@@ -614,18 +614,18 @@ class ConfigDatabase:
 
             plugin_name = name.split(".")[-1]
             if re.match(r"^[a-zA-Z0-9_\-]+$", plugin_name):
-                plugins_root = (
-                    Path(config_manager.get_plugins_dir()).resolve() / "EchoSync"
+                plugins_root = os.path.abspath(
+                    os.path.realpath(str(Path(config_manager.get_plugins_dir()) / "EchoSync"))
                 )
-                try:
-                    bundle_path = resolve_safe_path(plugins_root, plugin_name)
-                    if bundle_path.is_dir():
+                bundle_path = os.path.abspath(
+                    os.path.realpath(os.path.join(plugins_root, plugin_name))
+                )
+                if os.path.commonpath([bundle_path, plugins_root]) == plugins_root:
+                    if os.path.isdir(bundle_path):
                         resolved_plugin_id_str = name
                         resolved_version = "1.0.0"
-                        resolved_path = str(bundle_path)
+                        resolved_path = bundle_path
                         is_matched = True
-                except (PathTraversalError, ValueError):
-                    pass
 
         if name.lower() == "system" or is_matched:
             plugin_id_int = (

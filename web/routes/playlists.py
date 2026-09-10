@@ -87,34 +87,43 @@ double_v1_router = APIRouter(prefix="/api/v1/v1/core/playlists", tags=["Playlist
 # these words the two strings refer to the same track and a 0.95 title score is
 # awarded.  Any unrecognised token (e.g. 'Part 2', 'Remix', 'Live') causes the
 # substring boost to be withheld, preventing false-positive Swap Cases.
-_OST_SAFE_RE = re.compile(
-    r"^(?:"
-    r"\s"  # whitespace between tokens
-    r"|电视剧|网剧|影视剧|影視劇|电影"  # drama-type classifiers
-    r"|片头曲|片尾曲|主题曲|插曲|推广曲"  # song-role labels
-    r"|原声带|原声|配乐"  # soundtrack labels
-    r"|ost|theme|opening|ending|soundtrack|original"  # English equivalents (original set)
-    # ── Extended English metadata terms ──────────────────────────────────
-    # These words appear in longer title variants (remaster editions, release
-    # format suffixes, event-specific tags) but do NOT change track identity.
-    # Longer forms are listed before shorter prefixes so the regex engine
-    # consumes them greedily before attempting a shorter alternative
-    # (e.g. 'remastered' is tried before 'remaster').
-    # \d covers year tokens (2013, 2024) and track numbers.
-    r"|remastered|remaster"  # remaster suffix variants
-    r"|acoustic|live"  # performance/recording type
-    r"|radio|single|extended|club"  # release format descriptors
-    r"|version|edit|mix|remix|bootleg"  # common music metadata
-    r"|official|song|shanty"  # descriptor words
-    r"|sea|uefa|euro|anthem|from|la"  # expanded descriptor words: sea shanty, euro 2024, from "...", la la la, anthem
-    r"|deluxe"  # edition descriptor
-    r"|pt|part|vol|volume"  # part indicators
-    r"|viii|vii|iii|iv|vi|ix|ii|i|x"  # Roman numerals (longest first)
-    r"|gabry|ponte|ice|pop"  # common edit descriptors
-    r"|\d"  # digits for years / track numbers (2013, 2024, 1, 2)
-    r")+$",
-    re.IGNORECASE | re.UNICODE,
-)
+_OST_SAFE_WORDS = {
+    "电视剧", "网剧", "影视剧", "影視劇", "电影",
+    "片头曲", "片尾曲", "主题曲", "插曲", "推广曲",
+    "原声带", "原声", "配乐",
+    "ost", "theme", "opening", "ending", "soundtrack", "original",
+    "remastered", "remaster", "acoustic", "live",
+    "radio", "single", "extended", "club",
+    "version", "edit", "mix", "remix", "bootleg",
+    "official", "song", "shanty", "sea", "uefa", "euro", "anthem", "from", "la",
+    "deluxe", "pt", "part", "vol", "volume",
+    "viii", "vii", "iii", "iv", "vi", "ix", "ii", "i", "x", "v",
+    "gabry", "ponte", "ice", "pop",
+}
+
+
+class _OstSafeMatcher:
+    def match(self, text: str):
+        if not text:
+            return None
+        s = re.sub(r"[\s\-_]+", "", str(text).lower())
+        if not s:
+            return True
+        n = len(s)
+        dp = [False] * (n + 1)
+        dp[0] = True
+        for i in range(n):
+            if not dp[i]:
+                continue
+            if s[i].isdigit():
+                dp[i + 1] = True
+            for w in _OST_SAFE_WORDS:
+                if s.startswith(w, i):
+                    dp[i + len(w)] = True
+        return True if dp[n] else None
+
+
+_OST_SAFE_RE = _OstSafeMatcher()
 # ──────────────────────────────────────────────────────────────────────────────
 
 # ── Pinyin artist-matching constants ─────────────────────────────────────────
@@ -2015,7 +2024,7 @@ def start_analyze_job(payload_obj: PlaylistAnalyzeSchema | None = None):
             ANALYSIS_JOBS[job_id]["status"] = "finished"
         except Exception as e:
             logger.error(f"Background analysis job {job_id} failed: {e}", exc_info=True)
-            ANALYSIS_JOBS[job_id]["error"] = str(e)
+            ANALYSIS_JOBS[job_id]["error"] = "Playlist analysis failed"
             ANALYSIS_JOBS[job_id]["status"] = "failed"
         finally:
             ANALYSIS_JOBS[job_id]["finished_at"] = time.time()

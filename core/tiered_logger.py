@@ -158,19 +158,17 @@ class SafeFormatter(logging.Formatter):
     @staticmethod
     def strip_emojis(text):
         """Remove emoji characters from text for Windows compatibility"""
-        # Remove emoji characters but keep other Unicode (clean non-overlapping ranges)
-        emoji_pattern = re.compile(
-            "["
-            "\u24c2"
-            "\u2702-\u27b0"
-            "\U0001f100-\U0001f251"
-            "\U0001f300-\U0001f6ff"
-            "\U0001f900-\U0001f9ff"
-            "\U0001fa70-\U0001faff"
-            "]+",
-            flags=re.UNICODE,
+        if not text:
+            return ""
+        return "".join(
+            c for c in str(text)
+            if not (
+                0x1F000 <= ord(c) <= 0x1FAFF
+                or 0x2700 <= ord(c) <= 0x27BF
+                or 0x2600 <= ord(c) <= 0x26FF
+                or ord(c) == 0x24C2
+            )
         )
-        return emoji_pattern.sub("", text)
 
     def format(self, record):
         # Try to format with emojis first, fall back to stripped version

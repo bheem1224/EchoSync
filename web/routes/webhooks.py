@@ -162,7 +162,7 @@ async def handle_plugin_ingress_webhook(
             f"Error dispatching webhook to plugin {plugin_id}: {e}", exc_info=True
         )
         return JSONResponse(
-            status_code=500, content={"status": "error", "detail": str(e)}
+            status_code=500, content={"status": "error", "detail": "Failed to dispatch webhook"}
         )
 
     return {"status": "ok", "plugin_id": plugin_id, "endpoint": endpoint_slug}

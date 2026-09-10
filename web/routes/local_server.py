@@ -1,3 +1,4 @@
+import os
 import subprocess
 from pathlib import Path
 
@@ -34,27 +35,35 @@ def stream_audio(path: str = Query(..., description="Path to the audio file")):
     if not path:
         raise HTTPException(status_code=400, detail="Missing 'path' query parameter")
 
-    candidate_roots = [
-        config_manager.get("storage.library_dir"),
-        config_manager.get("library_dir"),
-        config_manager.get("download_dir"),
-        config_manager.get("storage.download_dir"),
-        config_manager.get("data_dir"),
-        ".",
-    ]
-    allowed_roots = [Path(r).resolve() for r in candidate_roots if r]
-
-    if not allowed_roots:
-        raise HTTPException(
-            status_code=500, detail="Library directory is not configured"
-        )
-
     try:
-        from core.path_security import PathTraversalError, resolve_safe_path
+        candidate_roots = [
+            config_manager.get("storage.library_dir"),
+            config_manager.get("library_dir"),
+            config_manager.get("download_dir"),
+            config_manager.get("storage.download_dir"),
+            config_manager.get("data_dir"),
+            ".",
+        ]
+        allowed_roots = [
+            os.path.abspath(os.path.realpath(str(r))) for r in candidate_roots if r
+        ]
 
-        try:
-            requested_path = resolve_safe_path(allowed_roots, path)
-        except (PathTraversalError, ValueError):
+        if not allowed_roots:
+            raise HTTPException(
+                status_code=500, detail="Library directory is not configured"
+            )
+
+        target_abs = os.path.abspath(os.path.realpath(os.path.normpath(str(path))))
+        is_safe = False
+        for root_abs in allowed_roots:
+            try:
+                if os.path.commonpath([target_abs, root_abs]) == root_abs:
+                    is_safe = True
+                    break
+            except Exception:
+                continue
+
+        if not is_safe:
             logger.warning(
                 f"Security violation: Attempted to access file outside library path: {path}"
             )
@@ -62,15 +71,16 @@ def stream_audio(path: str = Query(..., description="Path to the audio file")):
                 status_code=403, detail="Security violation: Access denied"
             )
 
-        if not requested_path.exists() or not requested_path.is_file():
+        if not os.path.isfile(target_abs):
             raise HTTPException(status_code=404, detail="File not found")
 
+        requested_path = Path(target_abs)
         ext = requested_path.suffix.lower()
 
         # --- Native formats: direct byte-range delivery ---
         if ext in _NATIVE_FORMATS:
             return FileResponse(
-                path=str(requested_path), media_type=f"audio/{ext.lstrip('.')}"
+                path=target_abs, media_type=f"audio/{ext.lstrip('.')}"
             )
 
         # --- Exotic formats: server-side FFmpeg transcode to FLAC stream ---
@@ -93,7 +103,7 @@ def stream_audio(path: str = Query(..., description="Path to the audio file")):
             ]
 
             def generate():
-                in_file = open(requested_path, "rb")
+                in_file = open(target_abs, "rb")
                 proc = subprocess.Popen(
                     ffmpeg_cmd,
                     stdin=in_file,
@@ -154,7 +164,7 @@ def stream_audio(path: str = Query(..., description="Path to the audio file")):
             )
 
         # Unknown/unsupported format — serve as-is and let the client decide.
-        return FileResponse(path=str(requested_path))
+        return FileResponse(path=target_abs)
 
     except HTTPException:
         raise

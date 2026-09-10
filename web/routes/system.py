@@ -548,23 +548,21 @@ async def update_settings(request: Request):
         ui_path = str(payload["custom_ui_path"]).strip()
         if ui_path:
             try:
-                from core.path_security import PathTraversalError, resolve_safe_path
+                allowed_ui_root = os.path.abspath(os.path.realpath(str(Path(config_manager.config_dir) / "custom_ui")))
+                os.makedirs(allowed_ui_root, exist_ok=True)
 
-                allowed_ui_root = (
-                    Path(config_manager.config_dir) / "custom_ui"
-                ).resolve()
-                allowed_ui_root.mkdir(parents=True, exist_ok=True)
-                resolved_ui = resolve_safe_path(allowed_ui_root, ui_path)
-                if not resolved_ui.is_dir():
+                cleaned_input = os.path.normpath(ui_path).lstrip('/\\')
+                target_cand = os.path.abspath(os.path.realpath(os.path.join(allowed_ui_root, cleaned_input)))
+                if os.path.commonpath([target_cand, allowed_ui_root]) != allowed_ui_root:
+                    raise HTTPException(
+                        status_code=403,
+                        detail="Security violation: Custom UI path must be inside config/custom_ui",
+                    )
+                if not os.path.isdir(target_cand):
                     raise HTTPException(
                         status_code=400, detail="Custom UI directory does not exist"
                     )
-                payload["custom_ui_path"] = str(resolved_ui)
-            except (PathTraversalError, ValueError):
-                raise HTTPException(
-                    status_code=403,
-                    detail="Security violation: Custom UI path must be inside config/custom_ui",
-                )
+                payload["custom_ui_path"] = target_cand
             except HTTPException:
                 raise
             except Exception:

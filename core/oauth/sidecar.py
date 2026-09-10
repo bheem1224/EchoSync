@@ -62,13 +62,18 @@ def oauth_callback(provider_name: str):
         target_path = f"/api/{clean_provider}/callback"
 
     query_string = request.query_string.decode("utf-8") if request.query_string else ""
-    redirect_url = f"http://{lan_ip}:{main_port}{target_path}"
+    expected_netloc = f"{lan_ip}:{main_port}"
+    expected_prefix = f"http://{expected_netloc}/"
+    redirect_url = f"http://{expected_netloc}{target_path}"
     if query_string:
         redirect_url += f"?{query_string}"
 
     # Verify destination is strictly the expected local host/port
+    if not redirect_url.startswith(expected_prefix):
+        return ("Invalid redirect destination", 400)
+
     parsed = urllib.parse.urlsplit(redirect_url)
-    if parsed.netloc != f"{lan_ip}:{main_port}":
+    if parsed.scheme != "http" or parsed.netloc != expected_netloc:
         return ("Invalid redirect destination", 400)
 
     logger.info(

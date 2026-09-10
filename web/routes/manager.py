@@ -866,7 +866,7 @@ def fetch_metadata(track_id: int, _=Depends(require_auth)):
         logger.error(
             f"Error fetching metadata for track {track_id}: {e}", exc_info=True
         )
-        return {"error": f"Failed to fetch track metadata: {e}"}
+        return {"error": "Failed to fetch track metadata"}
 
 
 @router.post("/track/{track_id}/override")
