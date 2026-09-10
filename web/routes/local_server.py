@@ -54,16 +54,13 @@ def stream_audio(path: str = Query(..., description="Path to the audio file")):
             )
 
         target_abs = os.path.abspath(os.path.realpath(os.path.normpath(str(path))))
-        is_safe = False
+        matched_root = None
         for root_abs in allowed_roots:
-            try:
-                if os.path.commonpath([target_abs, root_abs]) == root_abs:
-                    is_safe = True
-                    break
-            except Exception:
-                continue
+            if target_abs.startswith(root_abs + os.sep) or target_abs == root_abs:
+                matched_root = root_abs
+                break
 
-        if not is_safe:
+        if not matched_root:
             logger.warning(
                 f"Security violation: Attempted to access file outside library path: {path}"
             )

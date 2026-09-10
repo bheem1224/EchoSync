@@ -24,8 +24,8 @@ def get_custom_dashboard_yaml(filename: str):
         raise HTTPException(status_code=400, detail="Invalid dashboard filename")
 
     base_dir = os.path.abspath(os.path.realpath("config/webui"))
-    target_path = os.path.abspath(os.path.realpath(os.path.join(base_dir, safe_name)))
-    if os.path.commonpath([target_path, base_dir]) != base_dir:
+    target_path = os.path.abspath(os.path.join(base_dir, safe_name))
+    if not target_path.startswith(base_dir + os.sep) and target_path != base_dir:
         raise HTTPException(status_code=403, detail="Access denied")
 
     if not os.path.isfile(target_path):

@@ -326,16 +326,13 @@ def get_cover_art(path: str = Query(..., description="absolute path to audio fil
         ]
 
         target_abs = os.path.abspath(os.path.realpath(os.path.normpath(str(path))))
-        is_safe = False
+        matched_root = None
         for root_abs in allowed_roots:
-            try:
-                if os.path.commonpath([target_abs, root_abs]) == root_abs:
-                    is_safe = True
-                    break
-            except Exception:
-                continue
+            if target_abs.startswith(root_abs + os.sep) or target_abs == root_abs:
+                matched_root = root_abs
+                break
 
-        if not is_safe:
+        if not matched_root:
             raise HTTPException(
                 status_code=403, detail="Security violation: Access denied"
             )
@@ -345,8 +342,9 @@ def get_cover_art(path: str = Query(..., description="absolute path to audio fil
 
         parent_dir = os.path.dirname(target_abs)
         for name in ["cover.jpg", "folder.jpg", "cover.png", "folder.png"]:
-            fallback = os.path.join(parent_dir, name)
-            if is_safe and os.path.isfile(fallback):
+            safe_name = os.path.basename(name)
+            fallback = os.path.abspath(os.path.join(parent_dir, safe_name))
+            if (fallback.startswith(matched_root + os.sep) or fallback == matched_root) and os.path.isfile(fallback):
                 return FileResponse(path=fallback)
 
         raise HTTPException(status_code=404, detail="No cover art found")

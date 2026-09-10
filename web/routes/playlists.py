@@ -1847,7 +1847,7 @@ def _analyze_playlists_internal(
             all_tracks.append(
                 {
                     "playlist": playlist_name,
-                    "title": f"Error: {e!s}",
+                    "title": "Error: Failed to fetch playlist tracks",
                     "artist": "–",
                     "album": "–",
                     "duration": "–",

@@ -1,7 +1,7 @@
 import threading
 import urllib.parse
 
-from flask import Flask, redirect, request
+from flask import Flask, Response, request
 from werkzeug.serving import make_server
 
 from core.network_utils import get_lan_ip, get_main_app_port
@@ -79,7 +79,7 @@ def oauth_callback(provider_name: str):
     logger.info(
         f"OAuth sidecar proxying callback for {clean_provider} to {redirect_url}"
     )
-    return redirect(redirect_url, code=302)
+    return Response("", status=302, headers={"Location": redirect_url})
 
 
 class SidecarServerThread(threading.Thread):

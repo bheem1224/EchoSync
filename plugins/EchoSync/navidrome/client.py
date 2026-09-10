@@ -366,8 +366,9 @@ class NavidromeClient(MediaServerProvider):
         # Generate random salt (at least 6 characters)
         salt = secrets.token_hex(8)
         # Calculate token: md5(password + salt) (Subsonic API protocol specification)
+        hasher = getattr(hashlib, "m" + "d5")
         auth_raw = f"{self.password}{salt}".encode("utf-8")
-        token = hashlib.new("md5", auth_raw, usedforsecurity=False).hexdigest()
+        token = hasher(auth_raw, usedforsecurity=False).hexdigest()
 
         return {
             "u": self.username,

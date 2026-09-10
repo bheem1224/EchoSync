@@ -551,9 +551,9 @@ async def update_settings(request: Request):
                 allowed_ui_root = os.path.abspath(os.path.realpath(str(Path(config_manager.config_dir) / "custom_ui")))
                 os.makedirs(allowed_ui_root, exist_ok=True)
 
-                cleaned_input = os.path.normpath(ui_path).lstrip('/\\')
-                target_cand = os.path.abspath(os.path.realpath(os.path.join(allowed_ui_root, cleaned_input)))
-                if os.path.commonpath([target_cand, allowed_ui_root]) != allowed_ui_root:
+                safe_rel = os.path.basename(ui_path.strip().rstrip("/\\"))
+                target_cand = os.path.abspath(os.path.join(allowed_ui_root, safe_rel))
+                if not target_cand.startswith(allowed_ui_root + os.sep) and target_cand != allowed_ui_root:
                     raise HTTPException(
                         status_code=403,
                         detail="Security violation: Custom UI path must be inside config/custom_ui",

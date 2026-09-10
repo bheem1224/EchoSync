@@ -50,11 +50,11 @@ def get_system_health() -> dict[str, Any]:
             core_healthy = True
             core_message = "Core services operational"
         except Exception as e:
-            logger.error(f"Core health check failed (fallback): {e}")
-            core_message = str(e)
+            logger.error(f"Core health check failed (fallback): {e}", exc_info=True)
+            core_message = "Core database connection failed"
     except Exception as e:
-        logger.error(f"Core health check failed: {e}")
-        core_message = str(e)
+        logger.error(f"Core health check failed: {e}", exc_info=True)
+        core_message = "Core database connection failed"
 
     # 2. Count Enabled Providers
     disabled_plugins = config_manager.get_disabled_plugins()
