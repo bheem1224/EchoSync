@@ -52,9 +52,9 @@ FROM python:3.12-bookworm
 WORKDIR /app
 
 # Copy pre-compiled static runtime binaries (Zero apt-get / dpkg calls)
-COPY --from=ffmpeg-source /ffmpeg /ffprobe /fpcalc /usr/local/bin/
+COPY --from=ffmpeg-source /ffmpeg /ffprobe /usr/local/bin/
 COPY --from=gosu-source /gosu /usr/local/bin/
-RUN chmod 755 /usr/local/bin/ffmpeg /usr/local/bin/ffprobe /usr/local/bin/fpcalc /usr/local/bin/gosu
+RUN chmod 755 /usr/local/bin/ffmpeg /usr/local/bin/ffprobe /usr/local/bin/gosu
 
 # Create non-root user
 RUN useradd --create-home --shell /bin/bash --uid 1000 echosync
