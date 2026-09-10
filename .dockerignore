@@ -1,5 +1,7 @@
 # Docker ignore file for Echosync WebUI
-
+webui/node_modules
+webui/build
+webui/.svelte-kit
 # Git
 .git
 .gitignore
