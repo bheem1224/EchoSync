@@ -59,10 +59,7 @@ class FingerprintGenerator:
         try:
             import acoustid
         except ImportError:
-            logger.warning(
-                "pyacoustid not installed. Fingerprinting unavailable. "
-                "Install with: pip install pyacoustid"
-            )
+            logger.warning("pyacoustid not installed. Fingerprinting unavailable. Install with: pip install pyacoustid")
             return None, None
 
         # Check file existence and try PathMapper fallback if needed
@@ -76,14 +73,10 @@ class FingerprintGenerator:
                     file_path = mapped
                     path_obj = Path(file_path)
                 else:
-                    logger.debug(
-                        f"Cannot fingerprint {file_path}: file does not exist on disk"
-                    )
+                    logger.debug(f"Cannot fingerprint {file_path}: file does not exist on disk")
                     return None, None
             except Exception:
-                logger.debug(
-                    f"Cannot fingerprint {file_path}: file does not exist on disk"
-                )
+                logger.debug(f"Cannot fingerprint {file_path}: file does not exist on disk")
                 return None, None
 
         if not FingerprintGenerator.can_fingerprint(file_path):
@@ -109,9 +102,7 @@ class FingerprintGenerator:
                 if fp:
                     return fp, int(round(dur)) if dur is not None else None
         except Exception as e:
-            logger.debug(
-                f"Native Rust fingerprinting fallback to pyacoustid for {file_path}: {e}"
-            )
+            logger.debug(f"Native Rust fingerprinting fallback to pyacoustid for {file_path}: {e}")
 
         try:
             raw_duration, fingerprint = acoustid.fingerprint_file(file_path)
@@ -122,20 +113,13 @@ class FingerprintGenerator:
             if not fingerprint:
                 logger.warning(f"Empty fingerprint generated for {file_path}")
                 return None, None
-            duration_sec = (
-                int(round(float(raw_duration))) if raw_duration is not None else None
-            )
-            logger.debug(
-                f"Generated fingerprint for {file_path}: "
-                f"length={len(fingerprint)}, duration={duration_sec}s"
-            )
+            duration_sec = int(round(float(raw_duration))) if raw_duration is not None else None
+            logger.debug(f"Generated fingerprint for {file_path}: length={len(fingerprint)}, duration={duration_sec}s")
             return fingerprint, duration_sec
         except FileNotFoundError as e:
             target = getattr(e, "filename", None) or str(e)
             if target and "fpcalc" not in str(target).lower():
-                logger.debug(
-                    f"Audio file not found during fingerprinting ({file_path}): {e}"
-                )
+                logger.debug(f"Audio file not found during fingerprinting ({file_path}): {e}")
             else:
                 logger.error(
                     f"fpcalc command not found. Install Chromaprint and add fpcalc to PATH, "
@@ -190,9 +174,7 @@ class FingerprintMatcher:
     MIN_CONFIDENCE = 0.85
 
     @staticmethod
-    def fingerprints_match(
-        fp1: str | None, fp2: str | None, confidence_threshold: float = MIN_CONFIDENCE
-    ) -> bool:
+    def fingerprints_match(fp1: str | None, fp2: str | None, confidence_threshold: float = MIN_CONFIDENCE) -> bool:
         """
         Compare two Chromaprint fingerprints
 
@@ -268,9 +250,7 @@ class FingerprintCache:
             import contextlib
             import sqlite3
 
-            with contextlib.closing(
-                sqlite3.connect(self.db_path, timeout=30.0)
-            ) as conn:
+            with contextlib.closing(sqlite3.connect(self.db_path, timeout=30.0)) as conn:
                 conn.execute("PRAGMA busy_timeout = 5000")
                 conn.execute("PRAGMA journal_mode = WAL")
                 conn.execute("""
@@ -300,9 +280,7 @@ class FingerprintCache:
             import contextlib
             import sqlite3
 
-            with contextlib.closing(
-                sqlite3.connect(self.db_path, timeout=30.0)
-            ) as conn:
+            with contextlib.closing(sqlite3.connect(self.db_path, timeout=30.0)) as conn:
                 conn.execute("PRAGMA busy_timeout = 5000")
                 conn.execute("PRAGMA journal_mode = WAL")
                 cursor = conn.cursor()
@@ -337,9 +315,7 @@ class FingerprintCache:
             import contextlib
             import sqlite3
 
-            with contextlib.closing(
-                sqlite3.connect(self.db_path, timeout=30.0)
-            ) as conn:
+            with contextlib.closing(sqlite3.connect(self.db_path, timeout=30.0)) as conn:
                 conn.execute("PRAGMA busy_timeout = 5000")
                 conn.execute("PRAGMA journal_mode = WAL")
                 conn.execute(
@@ -364,9 +340,7 @@ class FingerprintCache:
             import contextlib
             import sqlite3
 
-            with contextlib.closing(
-                sqlite3.connect(self.db_path, timeout=30.0)
-            ) as conn:
+            with contextlib.closing(sqlite3.connect(self.db_path, timeout=30.0)) as conn:
                 conn.execute("PRAGMA busy_timeout = 5000")
                 conn.execute("PRAGMA journal_mode = WAL")
                 conn.execute(

@@ -22,9 +22,7 @@ from services.metadata_enhancer import RetroactiveEnhancer
 from web.routes.metadata_review import lookup_review_queue_item_acoustid
 
 
-def test_diagnostic_retroactive_enhancer_divergence_track_2491(
-    tmp_path, monkeypatch, caplog
-):
+def test_diagnostic_retroactive_enhancer_divergence_track_2491(tmp_path, monkeypatch, caplog):
     """
     Test 1: RetroactiveEnhancer path for Track 2491 (Resolved).
     Demonstrates:
@@ -42,18 +40,14 @@ def test_diagnostic_retroactive_enhancer_divergence_track_2491(
     working_db = WorkingDatabase(tmp_path / "working.db")
     WorkingBase.metadata.create_all(working_db.engine)
 
-    file_dir = (
-        tmp_path / "data" / "library" / "Calvin Harris" / "Chilled House, Session 8"
-    )
+    file_dir = tmp_path / "data" / "library" / "Calvin Harris" / "Chilled House, Session 8"
     file_dir.mkdir(parents=True, exist_ok=True)
     audio_file = file_dir / "00 - My Way.flac"
     audio_file.write_bytes(b"dummy audio content")
 
     with music_db.session_scope() as session:
         artist_unk = Artist(name="Unknown Artist", normalized_name="unknown artist")
-        album_unk = Album(
-            title="Unknown Album", normalized_title="unknown album", artist=artist_unk
-        )
+        album_unk = Album(title="Unknown Album", normalized_title="unknown album", artist=artist_unk)
         session.add_all([artist_unk, album_unk])
         session.flush()
 
@@ -82,12 +76,8 @@ def test_diagnostic_retroactive_enhancer_divergence_track_2491(
 
     monkeypatch.setattr("database.music_database.get_database", lambda: music_db)
     monkeypatch.setattr("database.get_database", lambda: music_db)
-    monkeypatch.setattr(
-        "database.working_database.get_working_database", lambda: working_db
-    )
-    monkeypatch.setattr(
-        "services.metadata_enhancer._tagging_write", lambda p, tags: None
-    )
+    monkeypatch.setattr("database.working_database.get_working_database", lambda: working_db)
+    monkeypatch.setattr("services.metadata_enhancer._tagging_write", lambda p, tags: None)
     monkeypatch.setattr(
         "services.metadata_enhancer.RetroactiveEnhancer.tag_file_verified",
         lambda self, p, tags: None,
@@ -115,9 +105,7 @@ def test_diagnostic_retroactive_enhancer_divergence_track_2491(
             "score": 1.0,
         }
 
-    mock_acoustid.resolve_fingerprint_details.side_effect = (
-        fake_resolve_fingerprint_details
-    )
+    mock_acoustid.resolve_fingerprint_details.side_effect = fake_resolve_fingerprint_details
 
     mock_mb = MagicMock()
     mock_mb.capabilities = type("Caps", (), {"supports_batching": False})()
@@ -150,9 +138,7 @@ def test_diagnostic_retroactive_enhancer_divergence_track_2491(
 
     with music_db.session_scope() as session:
         t = session.get(Track, 2491)
-        fps = (
-            session.query(AudioFingerprint).filter_by(media_id="media_2491_uuid").all()
-        )
+        fps = session.query(AudioFingerprint).filter_by(media_id="media_2491_uuid").all()
         acoustid_id_in_db = fps[0].acoustid_id if fps else None
         chromaprint_in_db = fps[0].chromaprint if fps else None
 
@@ -182,9 +168,7 @@ def test_diagnostic_manual_review_ui_acoustid_success_track_2491(tmp_path, monke
     working_db = WorkingDatabase(tmp_path / "working.db")
     WorkingBase.metadata.create_all(working_db.engine)
 
-    file_dir = (
-        tmp_path / "data" / "library" / "Calvin Harris" / "Chilled House, Session 8"
-    )
+    file_dir = tmp_path / "data" / "library" / "Calvin Harris" / "Chilled House, Session 8"
     file_dir.mkdir(parents=True, exist_ok=True)
     audio_file = file_dir / "00 - My Way.flac"
     audio_file.write_bytes(b"dummy audio content")
@@ -203,9 +187,7 @@ def test_diagnostic_manual_review_ui_acoustid_success_track_2491(tmp_path, monke
         )
         session.add(task)
 
-    monkeypatch.setattr(
-        "web.routes.metadata_review.get_working_database", lambda: working_db
-    )
+    monkeypatch.setattr("web.routes.metadata_review.get_working_database", lambda: working_db)
     monkeypatch.setattr(
         "core.settings.config_manager.get",
         lambda k: str(tmp_path / "data" / "library") if "library_dir" in k else None,
@@ -235,25 +217,15 @@ def test_diagnostic_manual_review_ui_acoustid_success_track_2491(tmp_path, monke
         "isrc": "GBARL1601004",
     }
 
-    monkeypatch.setattr(
-        "web.routes.metadata_review._get_fingerprint_provider", lambda: mock_acoustid
-    )
-    monkeypatch.setattr(
-        "web.routes.metadata_review._get_metadata_provider", lambda: mock_mb
-    )
+    monkeypatch.setattr("web.routes.metadata_review._get_fingerprint_provider", lambda: mock_acoustid)
+    monkeypatch.setattr("web.routes.metadata_review._get_metadata_provider", lambda: mock_mb)
 
     response = lookup_review_queue_item_acoustid(task_id=101, _=None)
 
     assert response["success"] is True
     assert response["match_found"] is True
-    assert (
-        response["task"]["detected_metadata"]["acoustid_id"]
-        == "848149e9-798b-4ea7-90c7-2c9e7e725068"
-    )
-    assert (
-        response["task"]["detected_metadata"]["musicbrainz_id"]
-        == "4b05f421-21bb-4810-a1f0-53c40dd2952b"
-    )
+    assert response["task"]["detected_metadata"]["acoustid_id"] == "848149e9-798b-4ea7-90c7-2c9e7e725068"
+    assert response["task"]["detected_metadata"]["musicbrainz_id"] == "4b05f421-21bb-4810-a1f0-53c40dd2952b"
     assert response["task"]["detected_metadata"]["title"] == "My Way"
     assert response["task"]["detected_metadata"]["artist"] == "Calvin Harris"
 
@@ -297,12 +269,8 @@ def test_diagnostic_matching_engine_rejects_unsanitized_prefix_due_to_compilatio
     print(f"\nUn-sanitized score: {score_unsanitized:.1f}%")
     print(f"Sanitized score: {score_sanitized:.1f}%")
 
-    assert score_unsanitized < 85.0, (
-        f"Un-sanitized score {score_unsanitized}% must fall below 85% waterfall threshold"
-    )
-    assert score_sanitized >= 85.0, (
-        f"Sanitized score {score_sanitized}% must meet or exceed 85% waterfall threshold"
-    )
+    assert score_unsanitized < 85.0, f"Un-sanitized score {score_unsanitized}% must fall below 85% waterfall threshold"
+    assert score_sanitized >= 85.0, f"Sanitized score {score_sanitized}% must meet or exceed 85% waterfall threshold"
 
 
 def test_diagnostic_waterfall_prefix_sanitization(monkeypatch):
@@ -363,9 +331,7 @@ def test_diagnostic_musicbrainz_search_deprecates_artist_tracks(monkeypatch):
     client.sdk = mock_sdk
 
     artist_tracks_called = []
-    monkeypatch.setattr(
-        client, "get_artist_tracks", lambda a: artist_tracks_called.append(a)
-    )
+    monkeypatch.setattr(client, "get_artist_tracks", lambda a: artist_tracks_called.append(a))
 
     queries_run = []
 
@@ -377,9 +343,7 @@ def test_diagnostic_musicbrainz_search_deprecates_artist_tracks(monkeypatch):
 
     results = client.search("Calvin Harris", type="track", limit=10)
 
-    assert len(artist_tracks_called) == 0, (
-        "MusicBrainzClient.search must never call get_artist_tracks"
-    )
+    assert len(artist_tracks_called) == 0, "MusicBrainzClient.search must never call get_artist_tracks"
     assert len(queries_run) == 1
     assert queries_run[0] == 'recording:"Calvin Harris"'
     assert results == []
