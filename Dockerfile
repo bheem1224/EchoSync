@@ -4,15 +4,15 @@
 # ---- Node Stage: Build Svelte Web UI ----
 FROM node:20-slim AS node
 
-WORKDIR /build
-
-# 1. Install dependencies deterministically via lockfile
+# 1. Install dependencies in /deps without touching /build
+WORKDIR /deps
 COPY webui/package.json webui/package-lock.json* ./
 RUN npm ci
 
-# 2. Copy source files and compile static bundle
+# 2. Copy source to clean /build directory (zero file collision / overwrite)
+WORKDIR /build
 COPY webui/ ./
-RUN npm run build
+RUN ln -s /deps/node_modules /build/node_modules && npm run build
 
 # ---- Builder Stage: Rust & UV Sync ----
 FROM python:3.12-slim AS builder
