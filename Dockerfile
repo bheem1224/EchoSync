@@ -1,6 +1,10 @@
 # Echosync Dockerfile
 # Multi-stage build for Svelte Web UI, Rust PyO3 Core, and Python Backend
 
+# ---- Pre-compiled Binary Sources ----
+FROM mwader/static-ffmpeg:latest AS ffmpeg-source
+FROM tianon/gosu:latest AS gosu-source
+
 # ---- Node Stage: Build Svelte Web UI ----
 FROM node:20-slim AS node
 
@@ -43,41 +47,31 @@ ENV UV_PROJECT_ENVIRONMENT="/opt/venv"
 RUN uv sync --frozen --no-dev
 
 # ---- Python Stage: Final Application Image ----
-FROM python:3.12-slim
+FROM python:3.12-bookworm
 
 WORKDIR /app
 
-# Install runtime system dependencies (no rustc/cargo)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
-    gosu \
-    ffmpeg \
-    libchromaprint-tools \
-    passwd \
-    && rm -rf /var/lib/apt/lists/*
+# Copy pre-compiled static runtime binaries (Zero apt-get / dpkg calls)
+COPY --from=ffmpeg-source /ffmpeg /ffprobe /fpcalc /usr/local/bin/
+COPY --from=gosu-source /gosu /usr/local/bin/
+RUN chmod 755 /usr/local/bin/ffmpeg /usr/local/bin/ffprobe /usr/local/bin/fpcalc /usr/local/bin/gosu
 
-# Create non-root user for security
+# Create non-root user
 RUN useradd --create-home --shell /bin/bash --uid 1000 echosync
 
-# Copy compiled .venv from builder stage
+# Copy compiled venv from builder stage
 COPY --from=builder /opt/venv /opt/venv
 RUN chmod -R 755 /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
-# Create necessary directories
+# Create directories and copy source
 RUN mkdir -p /config /data/logs /data/downloads /data/Transfer /defaults
-
-# Copy application code
 COPY . .
-
-# Copy built Svelte UI from the node stage
 COPY --from=node /build/build /app/webui/build
 
-# Setup entrypoint
 RUN chmod +x /app/entrypoint.sh
 ENTRYPOINT ["/app/entrypoint.sh"]
 
-# Create template files
 RUN cp /app/config/config.example.json /defaults/config.json || true && \
     chmod 644 /defaults/config.json || true
 
@@ -85,7 +79,7 @@ VOLUME ["/config", "/data"]
 EXPOSE 5000 5001
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD curl -f http://localhost:5000/api/v1/system/health || exit 1
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:5000/api/v1/system/health')" || exit 1
 
 ENV PYTHONPATH=/app
 ENV PUID=99
