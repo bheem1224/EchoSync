@@ -47,7 +47,7 @@ ENV UV_PROJECT_ENVIRONMENT="/opt/venv"
 RUN uv sync --frozen --no-dev
 
 # ---- Python Stage: Final Application Image ----
-FROM python:3.12-bookworm
+FROM python:3.12-slim-bookworm
 
 WORKDIR /app
 
