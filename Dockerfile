@@ -15,37 +15,31 @@ COPY webui/ ./
 RUN ln -s /deps/node_modules /build/node_modules && npm run build
 
 # ---- Builder Stage: Rust & UV Sync ----
-# Use official rust image as the toolchain source to avoid apt-get/rustup churn
 FROM rust:slim-bookworm AS rust-toolchain
 
-FROM python:3.12-slim-bookworm AS builder
+# Full bookworm image includes gcc, libc6-dev, and build utilities pre-baked
+FROM python:3.12-bookworm AS builder
 
 WORKDIR /app
 
-# Copy Rust toolchain directly from the official image (zero apt/curl compile churn)
+# Copy Rust toolchain directly from official image
 COPY --from=rust-toolchain /usr/local/cargo /usr/local/cargo
 COPY --from=rust-toolchain /usr/local/rustup /usr/local/rustup
 ENV PATH="/usr/local/cargo/bin:${PATH}"
 ENV RUSTUP_HOME="/usr/local/rustup"
 ENV CARGO_HOME="/usr/local/cargo"
 
-# Install only the C compiler needed for linking (Debian bookworm avoids Trixie package churn)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc \
-    libc6-dev \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install uv directly from the official astral-sh image
+# Install uv directly from official image
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
-# Copy backend dependency files and Rust source
+# Copy dependency specifications and Rust source
 COPY pyproject.toml uv.lock .python-version Cargo.toml README.md ./
 COPY src/ ./src/
 
 ENV UV_PYTHON_DOWNLOADS="never"
 ENV UV_PROJECT_ENVIRONMENT="/opt/venv"
 
-# Compile echosync_core and dependencies
+# Compile echosync_core and synchronize dependencies (zero apt-get / dpkg calls)
 RUN uv sync --frozen --no-dev
 
 # ---- Python Stage: Final Application Image ----
