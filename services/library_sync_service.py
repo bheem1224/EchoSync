@@ -2,7 +2,6 @@ import logging
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
 
 import echosync_core
 from sqlalchemy import delete, select
@@ -31,7 +30,7 @@ class LibrarySyncService:
     Replaces the legacy DatabaseUpdateWorker.
     """
 
-    def __init__(self, database_path: str = None):
+    def __init__(self, database_path: str | None = None):
         self.db = MusicDatabase(database_path) if database_path else get_database()
         self.gatekeeper = Gatekeeper()
 
@@ -238,7 +237,6 @@ class LibrarySyncService:
                 time.sleep(0.01)
 
             import re
-            import shutil
 
             from services.auto_importer import parse_fallback_filename
 
@@ -266,12 +264,12 @@ class LibrarySyncService:
                     return True
                 if re.match(r"^[\d\s\-_.]+$", clean):
                     return True
-                if re.match(
-                    r"^(track|audio|sound|music|song|sample|temp|tmp|file|corrupted)[\s\-_.]*\d*$",
-                    clean,
-                ):
-                    return True
-                return False
+                return bool(
+                    re.match(
+                        r"^(track|audio|sound|music|song|sample|temp|tmp|file|corrupted)[\s\-_.]*\d*$",
+                        clean,
+                    )
+                )
 
             with ThreadPoolExecutor(
                 max_workers=min(2, os.cpu_count() or 1)
@@ -306,45 +304,28 @@ class LibrarySyncService:
 
                     if is_unidentifiable and os.path.exists(file_path):
                         logger.warning(
-                            f"Unidentifiable media file detected: '{file_path}'. Ejecting to quarantine: '{quarantine_dir}'."
+                            f"Unidentifiable media file detected in library: '{file_path}'. "
+                            "Retaining file in library and enrolling in ReviewTask(action='RESOLVE_LIBRARY_ORPHAN')."
                         )
                         try:
-                            dest_file_name = os.path.basename(file_path)
-                            dest_path = os.path.join(quarantine_dir, dest_file_name)
-                            if os.path.exists(dest_path) and os.path.abspath(
-                                dest_path
-                            ) != os.path.abspath(file_path):
-                                base, ext = os.path.splitext(dest_file_name)
-                                dest_path = os.path.join(
-                                    quarantine_dir, f"{base}_{int(time.time())}{ext}"
-                                )
-                            shutil.move(file_path, dest_path)
+                            from database.repositories.task_repository import TaskRepository
+
+                            TaskRepository.create_review_task(
+                                file_path=file_path,
+                                action="RESOLVE_LIBRARY_ORPHAN",
+                                track_data={
+                                    "action": "RESOLVE_LIBRARY_ORPHAN",
+                                    "raw_title": title or fn_title or os.path.splitext(os.path.basename(file_path))[0],
+                                    "artist": artist or fn_artist or "Unknown Artist",
+                                    "album": (raw_dict.get("album") if isinstance(raw_dict, dict) else None) or "Unknown Album",
+                                },
+                            )
                             logger.info(
-                                f"Moved unidentifiable file to quarantine: '{file_path}' -> '{dest_path}'"
+                                f"Retained unidentifiable file in library and enrolled review task: '{file_path}'"
                             )
-
-                            with self.db.session_factory() as session:
-                                TrackRepository.purge_ejected_media_cascade(
-                                    session, file_path
-                                )
-
-                            # Prune empty parent directories in library after ejection
-                            from core.utils.file_utils import (
-                                prune_empty_parent_directories,
-                            )
-
-                            lib_stop_roots = (
-                                {Path(library_dir).resolve()} if library_dir else set()
-                            )
-                            prune_empty_parent_directories(
-                                file_path, stop_at_roots=lib_stop_roots
-                            )
-
-                            ejected_files_count += 1
-                        except Exception as e:
-                            logger.error(
-                                f"Failed to eject unidentifiable file {file_path}: {e}",
-                                exc_info=True,
+                        except Exception:
+                            logger.exception(
+                                f"Failed to enroll review task for unidentifiable file {file_path}"
                             )
                         continue
 

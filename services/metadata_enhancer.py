@@ -1372,6 +1372,41 @@ class RetroactiveEnhancer:
                                 m_path.name,
                                 inv_err,
                             )
+            else:
+                meta_status = dict(track.metadata_status or {})
+                attempts = int(meta_status.get("enhancement_attempts", 0)) + 1
+                meta_status["enhancement_attempts"] = attempts
+                meta_status["last_enhancement_attempt"] = (
+                    datetime.datetime.now(datetime.UTC).isoformat()
+                )
+                if attempts >= 5:
+                    track.musicbrainz_id = "NOT_FOUND"
+                    meta_status["enhanced"] = False
+                    try:
+                        from database.repositories.task_repository import TaskRepository
+
+                        TaskRepository.create_review_task(
+                            file_path=first_media.file_path,
+                            action="RESOLVE_LIBRARY_ORPHAN",
+                            track_id=track.id,
+                            media_id=getattr(first_media, "id", None),
+                            track_data={
+                                "action": "RESOLVE_LIBRARY_ORPHAN",
+                                "title": track.title,
+                                "artist": track.artist.name if track.artist else "Unknown Artist",
+                                "album": track.album.title if track.album else "Unknown Album",
+                                "attempts": attempts,
+                            },
+                        )
+                    except Exception as task_err:
+                        logger.warning(
+                            "[enhancer] Failed to enqueue orphan ReviewTask for track %d: %s",
+                            track.id,
+                            task_err,
+                        )
+                track.metadata_status = meta_status
+                flag_modified(track, "metadata_status")
+
             return result
 
         if session is not None:
@@ -2994,10 +3029,40 @@ class RetroactiveEnhancer:
                             "Metadata discovery returned no matches for: %s",
                             t_track.title,
                         )
-                        t_track.musicbrainz_id = "NOT_FOUND"
-                        item["metadata_status"]["enhancement_attempts"] = (
-                            item["metadata_status"].get("enhancement_attempts", 0) + 1
+                        attempts = int(item["metadata_status"].get("enhancement_attempts", 0)) + 1
+                        item["metadata_status"]["enhancement_attempts"] = attempts
+                        item["metadata_status"]["last_enhancement_attempt"] = (
+                            datetime.datetime.now(datetime.UTC).isoformat()
                         )
+                        if attempts >= 5:
+                            t_track.musicbrainz_id = "NOT_FOUND"
+                            item["metadata_status"]["enhanced"] = False
+                            try:
+                                from database.repositories.task_repository import TaskRepository
+
+                                first_path = (
+                                    valid_media_paths[0][1] if valid_media_paths else ""
+                                )
+                                TaskRepository.create_review_task(
+                                    file_path=str(first_path),
+                                    action="RESOLVE_LIBRARY_ORPHAN",
+                                    track_id=item["id"],
+                                    track_data={
+                                        "action": "RESOLVE_LIBRARY_ORPHAN",
+                                        "title": t_track.title,
+                                        "artist": t_track.artist_name or "Unknown Artist",
+                                        "album": t_track.album_title or "Unknown Album",
+                                        "attempts": attempts,
+                                    },
+                                )
+                            except Exception as task_err:
+                                logger.warning(
+                                    "[enhancer] Failed to enqueue orphan ReviewTask for track %d: %s",
+                                    item["id"],
+                                    task_err,
+                                )
+                        else:
+                            t_track.musicbrainz_id = None
 
                     results_to_commit.append(item)
 
@@ -3022,8 +3087,10 @@ class RetroactiveEnhancer:
                     t_track = res["track"]
                     if t_track.musicbrainz_id and t_track.musicbrainz_id != "NOT_FOUND":
                         track.musicbrainz_id = t_track.musicbrainz_id
-                    else:
+                    elif res["metadata_status"].get("enhancement_attempts", 0) >= 5:
                         track.musicbrainz_id = "NOT_FOUND"
+                    else:
+                        track.musicbrainz_id = None
 
                     if t_track.isrc:
                         track.isrc = t_track.isrc

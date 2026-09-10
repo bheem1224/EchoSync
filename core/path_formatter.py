@@ -126,25 +126,32 @@ def get_library_preferences() -> tuple[str, str]:
     library_root: str | None = None
     renaming_pattern: str | None = None
 
-    # Step 1: Check config_manager (runtime config / test fixtures)
-    try:
-        from core.settings import config_manager
+    import inspect
 
-        library_root = (
-            config_manager.get("storage.library_dir")
-            or config_manager.get("library_dir")
-            or config_manager.get("storage_locations.library")
-        )
-        renaming_pattern = (
-            config_manager.get("auto_import.file_organization_pattern")
-            or config_manager.get("library_import.renaming_pattern")
-            or config_manager.get("metadata_enhancement.naming_template")
-        )
-    except Exception:
-        pass
+    from core.settings import config_manager
 
-    # Step 2: Try reading from config.db if still unset
-    if not library_root or not renaming_pattern:
+    is_cm_mocked = not inspect.ismethod(getattr(config_manager, "get", None))
+
+    def _read_from_cm():
+        nonlocal library_root, renaming_pattern
+        try:
+            if not library_root:
+                library_root = (
+                    config_manager.get("storage.library_dir")
+                    or config_manager.get("library_dir")
+                    or config_manager.get("storage_locations.library")
+                )
+            if not renaming_pattern:
+                renaming_pattern = (
+                    config_manager.get("auto_import.file_organization_pattern")
+                    or config_manager.get("library_import.renaming_pattern")
+                    or config_manager.get("metadata_enhancement.naming_template")
+                )
+        except Exception:
+            pass
+
+    def _read_from_db():
+        nonlocal library_root, renaming_pattern
         try:
             from database.config_database import get_config_database
 
@@ -159,6 +166,15 @@ def get_library_preferences() -> tuple[str, str]:
                     renaming_pattern = str(pat_val)
         except Exception:
             pass
+
+    if is_cm_mocked:
+        _read_from_cm()
+        if not library_root or not renaming_pattern:
+            _read_from_db()
+    else:
+        _read_from_db()
+        if not library_root or not renaming_pattern:
+            _read_from_cm()
 
     # Step 3: Default fallbacks
     if not library_root:

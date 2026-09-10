@@ -530,3 +530,194 @@ def test_resolve_track_honors_ignore_embedded_mbid_flag(monkeypatch, tmp_path):
     assert result.disc_number == 1
     assert mock_acoustid.resolve_fingerprint_details.called
 
+
+def test_resolve_track_bypasses_cache_when_ignore_cache_true(monkeypatch, tmp_path):
+    """Verifies that Stage 2 local cache is bypassed when ignore_cache=True."""
+    audio_file = tmp_path / "song_cached.flac"
+    audio_file.write_bytes(b"dummy audio content")
+
+    file_dur_ms = 200000
+    cached_mbid = "mbid-cached-1234"
+    acoustid_mbid = "mbid-fresh-acoustid"
+
+    monkeypatch.setattr(
+        echosync_core,
+        "extract_metadata",
+        lambda p: {
+            "title": "Song Title",
+            "artist": "Song Artist",
+            "duration_ms": file_dur_ms,
+            "channels": 2,
+        },
+    )
+
+    dummy_cp = "C" * 60
+    monkeypatch.setattr(
+        FingerprintGenerator,
+        "generate_with_duration",
+        lambda p: (dummy_cp, file_dur_ms / 1000.0),
+    )
+
+    mock_acoustid = MagicMock()
+    mock_acoustid.resolve_fingerprint_details.return_value = {
+        "acoustid_id": "acoustid-fresh-5678",
+        "mbids": [acoustid_mbid],
+    }
+
+    mock_mb = MagicMock()
+    mock_mb.get_metadata.return_value = {
+        "title": "Song Title",
+        "artist": "Song Artist",
+        "album": "Fresh AcoustID Album",
+        "recording_id": acoustid_mbid,
+        "duration_ms": file_dur_ms,
+        "release_group": {"primary_type": "Album"},
+    }
+
+    engine = MetadataResolutionEngine(
+        acoustid_provider=mock_acoustid,
+        metadata_provider=mock_mb,
+    )
+
+    # Pre-populate engine's in-memory chromaprint cache with stale/cached metadata
+    engine._chromaprint_cache[dummy_cp] = {
+        "title": "Song Title",
+        "artist": "Song Artist",
+        "album": "Old Cached Album",
+        "musicbrainz_id": cached_mbid,
+        "duration_ms": file_dur_ms,
+    }
+
+    # 1. Without ignore_cache, Stage 2 returns cached entry
+    req_cached = ResolutionRequest(
+        media_id="test_cache_hit",
+        file_path=audio_file,
+        baseline_title="Song Title",
+        baseline_artist="Song Artist",
+        ignore_cache=False,
+    )
+    result_cached = engine.resolve_track(req_cached)
+    assert result_cached.resolution_method == "local_cache"
+    assert result_cached.musicbrainz_track_id == cached_mbid
+    assert not mock_acoustid.resolve_fingerprint_details.called
+
+    # 2. With ignore_cache=True, Stage 2 is skipped and external AcoustID is queried
+    req_bypass = ResolutionRequest(
+        media_id="test_cache_bypass",
+        file_path=audio_file,
+        baseline_title="Song Title",
+        baseline_artist="Song Artist",
+        ignore_cache=True,
+    )
+    result_bypass = engine.resolve_track(req_bypass)
+    assert result_bypass.resolution_method == "acoustid"
+    assert result_bypass.musicbrainz_track_id == acoustid_mbid
+    assert result_bypass.album == "Fresh AcoustID Album"
+    assert mock_acoustid.resolve_fingerprint_details.called
+
+
+def test_trust_gate_rejects_candidate_matching_dirty_baseline_but_contradicting_filename(
+    monkeypatch, tmp_path
+):
+    """Simulates file '01 - There's Nothing Holdin' Me Back.flac' with dirty DB baseline
+
+    'Where Were You in the Morning?' and asserts that candidate 'Where Were You in the Morning?'
+    is rejected and invalidated from cache, falling through to AcoustID.
+    """
+    from core.matching_engine.trust_gate import verify_title_trust_gate
+
+    # 1. Direct Trust Gate unit test
+    dirty_db_baseline = "Where Were You in the Morning?"
+    physical_filename = "01 - There's Nothing Holdin' Me Back.flac"
+    candidate_bad = "Where Were You in the Morning?"
+    candidate_good = "There's Nothing Holdin' Me Back"
+
+    # Candidate matching dirty DB baseline but contradicting filename MUST be rejected
+    assert not verify_title_trust_gate(
+        candidate_title=candidate_bad,
+        baseline_title=dirty_db_baseline,
+        filename=physical_filename,
+    )
+
+    # Candidate matching clean filename stem MUST be accepted
+    assert verify_title_trust_gate(
+        candidate_title=candidate_good,
+        baseline_title=dirty_db_baseline,
+        filename=physical_filename,
+    )
+
+    # 2. Engine integration test with cache poisoning invalidation
+    audio_file = tmp_path / physical_filename
+    audio_file.write_bytes(b"dummy audio flac")
+
+    file_dur_ms = 199000
+    dummy_cp = "E" * 60
+
+    monkeypatch.setattr(
+        echosync_core,
+        "extract_metadata",
+        lambda p: {
+            "title": dirty_db_baseline,
+            "artist": "Shawn Mendes",
+            "duration_ms": file_dur_ms,
+            "channels": 2,
+        },
+    )
+    monkeypatch.setattr(
+        FingerprintGenerator,
+        "generate_with_duration",
+        lambda p: (dummy_cp, file_dur_ms / 1000.0),
+    )
+
+    correct_mbid = "mbid-correct-holdin-me-back"
+    mock_acoustid = MagicMock()
+    mock_acoustid.resolve_fingerprint_details.return_value = {
+        "acoustid_id": "acoustid-shawn-1234",
+        "mbids": [correct_mbid],
+    }
+
+    mock_mb = MagicMock()
+    mock_mb.get_metadata.return_value = {
+        "title": "There's Nothing Holdin' Me Back",
+        "artist": "Shawn Mendes",
+        "album": "Illuminate",
+        "recording_id": correct_mbid,
+        "duration_ms": file_dur_ms,
+        "release_group": {"primary_type": "Album"},
+    }
+
+    engine = MetadataResolutionEngine(
+        acoustid_provider=mock_acoustid,
+        metadata_provider=mock_mb,
+    )
+
+    # Poison the in-memory cache with the dirty title
+    engine._chromaprint_cache[dummy_cp] = {
+        "title": candidate_bad,
+        "artist": "Shawn Mendes",
+        "album": "Shawn Mendes",
+        "musicbrainz_id": "mbid-poisoned",
+        "duration_ms": file_dur_ms,
+    }
+
+    req = ResolutionRequest(
+        media_id="track_123",
+        file_path=audio_file,
+        baseline_title=dirty_db_baseline,
+        baseline_artist="Shawn Mendes",
+    )
+
+    result = engine.resolve_track(req)
+
+    # Verify poisoned cache entry was rejected and removed from cache
+    assert (
+        dummy_cp not in engine._chromaprint_cache
+        or engine._chromaprint_cache[dummy_cp]["title"] != candidate_bad
+    )
+    # Verify result resolved via AcoustID with correct title
+    assert result.resolution_method == "acoustid"
+    assert result.title == "There's Nothing Holdin' Me Back"
+    assert result.musicbrainz_track_id == correct_mbid
+    assert mock_acoustid.resolve_fingerprint_details.called
+
+

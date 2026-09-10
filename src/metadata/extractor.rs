@@ -25,6 +25,7 @@ pub struct TrackMetadata {
     pub repack_source: Option<String>,
     pub repack_release_mbid: Option<String>,
     pub release_group_id: Option<String>,
+    pub echosync_signature: Option<String>,
     pub codec: String,
     pub bit_depth: Option<u8>,
     pub sample_rate: Option<u32>,
@@ -74,6 +75,7 @@ fn extract_from_tag(
     repack_source: &mut Option<String>,
     repack_release_mbid: &mut Option<String>,
     release_group_id: &mut Option<String>,
+    echosync_signature: &mut Option<String>,
 ) {
     if title.is_none() {
         let t_val = t
@@ -230,6 +232,10 @@ fn extract_from_tag(
             *release_group_id = rg_val;
         }
     }
+    if echosync_signature.is_none() {
+        *echosync_signature = get_unknown_or_text(t, "ECHOSYNC_SIGNATURE")
+            .or_else(|| get_unknown_or_text(t, "SIGNATURE"));
+    }
     if mbid.is_none() {
         if let Some(ref mid) = musicbrainz_track_id {
             *mbid = Some(mid.clone());
@@ -367,6 +373,7 @@ impl MetadataExtractor {
         let mut repack_source = None;
         let mut repack_release_mbid = None;
         let mut release_group_id = None;
+        let mut echosync_signature = None;
 
         // Container-specific preferred and fallback tag search
         let mut candidate_tags: Vec<&Tag> = Vec::new();
@@ -415,6 +422,7 @@ impl MetadataExtractor {
                 &mut repack_source,
                 &mut repack_release_mbid,
                 &mut release_group_id,
+                &mut echosync_signature,
             );
         }
 
@@ -435,6 +443,7 @@ impl MetadataExtractor {
             repack_source,
             repack_release_mbid,
             release_group_id,
+            echosync_signature,
             codec,
             bit_depth,
             sample_rate,

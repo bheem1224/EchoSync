@@ -10,6 +10,7 @@ Unifies the 5-stage resolution waterfall:
 
 from __future__ import annotations
 
+import difflib
 import re
 from pathlib import Path
 from typing import Any
@@ -17,7 +18,12 @@ from typing import Any
 from core.db.echo_sync_track import EchosyncTrack
 from core.enums import Capability
 from core.matching_engine.fingerprinting import FingerprintGenerator
+from core.matching_engine.matching_engine import WeightedMatchingEngine
+from core.matching_engine.scoring_profile import PROFILE_EXACT_SYNC
 from core.matching_engine.trust_gate import (
+    clean_title_from_filename,
+    is_cross_script,
+    is_generic_title,
     sanitize_title_from_filename,
     verify_title_trust_gate,
 )
@@ -169,6 +175,14 @@ class MetadataResolutionEngine:
         self._metadata_provider = metadata_provider
         self._hook_manager = hook_manager
         self._chromaprint_cache: dict[str, dict[str, Any]] = {}
+        self.matcher = WeightedMatchingEngine(PROFILE_EXACT_SYNC)
+
+    def invalidate_cache(self, chromaprint: str | None = None) -> None:
+        """Invalidate in-memory chromaprint cache entry or entire cache."""
+        if chromaprint:
+            self._chromaprint_cache.pop(chromaprint, None)
+        else:
+            self._chromaprint_cache.clear()
 
     @property
     def hook_manager(self) -> Any:
@@ -218,37 +232,43 @@ class MetadataResolutionEngine:
         self, candidate: dict[str, Any], baseline_title: str, file_duration_ms: int
     ) -> float:
         """Score AcoustID recording candidate by duration proximity, variant disambiguation penalties,
-
-        and canonical studio release weighting.
+        and canonical studio release weighting using WeightedMatchingEngine.
         """
-        score = 100.0
         cand_dur = (
             candidate.get("length")
             or candidate.get("duration_ms")
             or candidate.get("duration")
         )
+        cand_dur_ms: int | None = None
         if cand_dur:
             try:
                 cand_dur_val = float(cand_dur)
                 if 0 < cand_dur_val < 10000:
                     cand_dur_val *= 1000.0
+                cand_dur_ms = int(cand_dur_val)
                 delta = abs(cand_dur_val - file_duration_ms)
                 if delta > 2000:
                     return 0.0  # Outside strict AcoustID duration window
-                score -= delta / 100.0
             except (ValueError, TypeError):
                 pass
 
-        disambig = str(candidate.get("disambiguation") or "").lower()
-        cand_title = str(candidate.get("title") or "").lower()
-        base = str(baseline_title or "").lower()
-
-        # Penalize variant versions if baseline lacks them
-        variants = ["remix", "mix", "edit", "acoustic", "live", "country mix"]
-        for var in variants:
-            if (var in disambig or var in cand_title) and var not in base:
-                score -= 40.0
-                break
+        c_artist = str(candidate.get("artist") or candidate.get("artist_name") or "")
+        c_album = str(candidate.get("album") or candidate.get("album_title") or "")
+        query_track = EchosyncTrack(
+            raw_title=baseline_title or "",
+            artist_name=c_artist,
+            album_title=c_album,
+            duration=file_duration_ms if file_duration_ms > 0 else None,
+        )
+        cand_track = EchosyncTrack(
+            raw_title=candidate.get("title") or "",
+            artist_name=c_artist,
+            album_title=c_album,
+            duration=cand_dur_ms,
+            version=candidate.get("disambiguation"),
+        )
+        match_res = self.matcher.calculate_match(query_track, cand_track)
+        score = match_res.confidence_score if match_res else 0.0
 
         # Boost canonical studio release groups
         release_group = (
@@ -464,6 +484,74 @@ class MetadataResolutionEngine:
             or ""
         )
 
+        # Extract clean title directly from physical filename
+        sanitized_file_title = clean_title_from_filename(file_path.name)
+        filename_is_identifiable = bool(
+            sanitized_file_title and not is_generic_title(sanitized_file_title)
+        )
+
+        # Check if physical filename stem contradicts the requested baseline_title
+        filename_contradicts_baseline = False
+        if (
+            filename_is_identifiable
+            and request.baseline_title
+            and not is_cross_script(request.baseline_title, sanitized_file_title)
+        ):
+            base_file_sim = difflib.SequenceMatcher(
+                None,
+                request.baseline_title.lower().strip(),
+                sanitized_file_title.lower().strip(),
+            ).ratio()
+            if base_file_sim < 0.60:
+                filename_contradicts_baseline = True
+
+        # ── Stage 0: Zero-Trust Signature Gate (ECHOSYNC_SIGNATURE) ───────────
+        sig_tag = raw_tags.get("echosync_signature")
+        if sig_tag and not request.ignore_cache and baseline_title and baseline_artist:
+            try:
+                import echosync_core
+
+                if hasattr(echosync_core, "verify_audio_signature"):
+                    if echosync_core.verify_audio_signature(
+                        str(file_path), baseline_title, baseline_artist, str(sig_tag).strip()
+                    ):
+                        logger.info(
+                            "[resolution_engine] Stage 0 HIT (Verified ECHOSYNC_SIGNATURE): %s",
+                            file_path.name,
+                        )
+                        return ResolutionResult(
+                            media_id=request.media_id,
+                            sync_id=request.sync_id,
+                            title=baseline_title,
+                            artist=baseline_artist,
+                            album=baseline_album or None,
+                            year=parsed_year,
+                            track_number=parsed_track_num,
+                            disc_number=parsed_disc_num,
+                            musicbrainz_track_id=raw_tags.get("musicbrainz_track_id")
+                            or raw_tags.get("musicbrainz_id")
+                            or raw_tags.get("mbid")
+                            or raw_tags.get("recording_id"),
+                            musicbrainz_release_id=raw_tags.get("musicbrainz_album_id")
+                            or raw_tags.get("musicbrainz_release_id"),
+                            acoustid_id=raw_tags.get("acoustid_id"),
+                            chromaprint=chromaprint,
+                            duration_ms=duration_ms,
+                            isrc=tag_isrc,
+                            confidence_score=1.0,
+                            resolution_method="signature_verified",
+                        )
+                    else:
+                        logger.warning(
+                            "[resolution_engine] Stage 0 FAILED: ECHOSYNC_SIGNATURE mismatch/tampering detected on %s",
+                            file_path.name,
+                        )
+            except Exception as sig_err:
+                logger.debug(
+                    "[resolution_engine] Stage 0 signature verification error: %s",
+                    sig_err,
+                )
+
         # ── Fast-Path: Embedded MusicBrainz ID in Tags ─────────────────────────
         embedded_mbid = (
             raw_tags.get("musicbrainz_id")
@@ -483,7 +571,22 @@ class MetadataResolutionEngine:
                             else getattr(meta, "title", None)
                         )
                         baseline_check = request.baseline_title or baseline_title
-                        if not c_title or not verify_title_trust_gate(
+
+                        contradicts_filename = False
+                        if c_title and filename_contradicts_baseline:
+                            sim = difflib.SequenceMatcher(
+                                None,
+                                str(c_title).lower().strip(),
+                                sanitized_file_title.lower().strip(),
+                            ).ratio()
+                            if sim < 0.60:
+                                contradicts_filename = True
+                                logger.warning(
+                                    f"[resolution_engine] Candidate '{c_title}' contradicts physical filename "
+                                    f"'{sanitized_file_title}' (similarity={sim:.2f}). Rejecting embedded hit."
+                                )
+
+                        if not c_title or contradicts_filename or not verify_title_trust_gate(
                             candidate_title=c_title,
                             baseline_title=baseline_check,
                             filename=file_path.name,
@@ -553,15 +656,31 @@ class MetadataResolutionEngine:
                     )
 
         # ── Stage 2: Local Chromaprint Cache ──────────────────────────────────
-        if chromaprint:
+        if chromaprint and not request.ignore_cache:
             cached_meta = self._check_local_chromaprint_cache(
                 chromaprint, sync_id=request.sync_id
             )
             if cached_meta:
                 cand_title = cached_meta.get("title")
-                if cand_title and verify_title_trust_gate(
+
+                contradicts_filename = False
+                if cand_title and filename_contradicts_baseline:
+                    sim = difflib.SequenceMatcher(
+                        None,
+                        str(cand_title).lower().strip(),
+                        sanitized_file_title.lower().strip(),
+                    ).ratio()
+                    if sim < 0.60:
+                        contradicts_filename = True
+                        logger.warning(
+                            f"[resolution_engine] Candidate '{cand_title}' contradicts physical filename "
+                            f"'{sanitized_file_title}' (similarity={sim:.2f}). Rejecting cached hit and invalidating cache."
+                        )
+                        self.invalidate_cache(chromaprint)
+
+                if cand_title and not contradicts_filename and verify_title_trust_gate(
                     candidate_title=cand_title,
-                    baseline_title=baseline_title,
+                    baseline_title=request.baseline_title or baseline_title,
                     filename=file_path.name,
                     tag_title=tag_title,
                     min_similarity=0.60,
@@ -1019,10 +1138,7 @@ class MetadataResolutionEngine:
             if not candidate_tracks:
                 return None
 
-            from core.matching_engine.matching_engine import WeightedMatchingEngine
-            from core.matching_engine.scoring_profile import PROFILE_EXACT_SYNC
-
-            matcher = WeightedMatchingEngine(PROFILE_EXACT_SYNC)
+            matcher = self.matcher
             best_score = 0.0
             best_cand = None
             best_mbid = None

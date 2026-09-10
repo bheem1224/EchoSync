@@ -219,6 +219,24 @@ fn populate_tag_items(tag: &mut Tag, tags: &HashMap<String, String>) {
             ));
         }
     }
+
+    // Extract and set EchoSync Signature (portable acoustic proof)
+    let sig_val = tags
+        .get("echosync_signature")
+        .or_else(|| tags.get("signature"))
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty());
+    if let Some(sig) = sig_val {
+        let key_str = if tag.tag_type() == TagType::Mp4Ilst {
+            "----:com.apple.iTunes:ECHOSYNC_SIGNATURE".to_string()
+        } else {
+            "ECHOSYNC_SIGNATURE".to_string()
+        };
+        tag.insert_unchecked(TagItem::new(
+            ItemKey::Unknown(key_str),
+            ItemValue::Text(sig.to_string()),
+        ));
+    }
 }
 
 fn populate_riff_items(tag: &mut Tag, tags: &HashMap<String, String>) {
@@ -299,6 +317,18 @@ fn populate_riff_items(tag: &mut Tag, tags: &HashMap<String, String>) {
         .filter(|s| !s.is_empty())
     {
         tag.set_genre(g_val.to_string());
+    }
+
+    let sig_val = tags
+        .get("echosync_signature")
+        .or_else(|| tags.get("signature"))
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty());
+    if let Some(sig) = sig_val {
+        tag.insert_unchecked(TagItem::new(
+            ItemKey::Unknown("ECHOSYNC_SIGNATURE".to_string()),
+            ItemValue::Text(sig.to_string()),
+        ));
     }
 }
 

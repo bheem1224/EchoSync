@@ -1,8 +1,8 @@
-"""FastAPI dependencies for EchoSync web routes."""
-
-from database.config_database import ConfigDatabase, get_config_database
+from database.config_database import ConfigDatabase
 
 
 def get_config_db() -> ConfigDatabase:
     """FastAPI Depends provider that returns the shared, thread-safe ConfigDatabase instance."""
-    return get_config_database()
+    import database.config_database as cdb
+
+    return cdb.get_config_database()

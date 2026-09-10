@@ -72,28 +72,33 @@ class LibraryReorganizerService:
                     raw_album = track.album.title if track.album else "Unknown Album"
 
                     # ----------------------------------------------------
-                    # Quarantine Check: Missing core metadata
+                    # Orphan Review Check: Missing core metadata
+                    # Established library tracks must NEVER be ejected to /data/downloads.
                     # ----------------------------------------------------
                     if (
                         raw_artist.lower() == "unknown artist"
                         or raw_album.lower() == "unknown album"
                     ):
-                        quarantine_dir = Path("/data/downloads/poor_metadata")
-                        os.makedirs(quarantine_dir, exist_ok=True)
-                        target_path = quarantine_dir / os.path.basename(media.file_path)
-
-                        Gatekeeper.authorize_and_execute(
-                            {
-                                "operation": "safe_move",
-                                "src": media.file_path,
-                                "dst": target_path,
-                            }
-                        )
                         logger.warning(
-                            f"Ejected media {media.id} to quarantine staging due to missing tags: {media.file_path}"
+                            f"Library track {track.id} (media {media.id}) missing core metadata: {media.file_path}. "
+                            "Enrolling in ReviewTask(action='RESOLVE_LIBRARY_ORPHAN') without destructive ejection."
                         )
+                        from database.repositories.task_repository import TaskRepository
 
-                        session.delete(media)
+                        TaskRepository.create_review_task(
+                            file_path=media.file_path,
+                            action="RESOLVE_LIBRARY_ORPHAN",
+                            track_id=track.id,
+                            media_id=media.id,
+                            track_data={
+                                "action": "RESOLVE_LIBRARY_ORPHAN",
+                                "title": track.title,
+                                "artist": raw_artist,
+                                "album": raw_album,
+                                "track_id": track.id,
+                                "media_id": media.id,
+                            },
+                        )
                         continue
 
                     current_path = Path(media.file_path)

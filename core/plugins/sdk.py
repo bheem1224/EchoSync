@@ -132,10 +132,10 @@ class _WebhooksSDKFacade:
                 mod
                 and not mod.startswith("core.plugins")
                 and not mod.startswith("core.nexus_framework")
+                and mod.startswith("plugins.")
             ):
-                if mod.startswith("plugins."):
-                    caller_mod = mod
-                    break
+                caller_mod = mod
+                break
             frame = frame.f_back
 
         if caller_mod.startswith("plugins."):
@@ -285,7 +285,7 @@ class _WebhooksSDKFacade:
 
     def list_endpoints(self) -> list[dict[str, Any]]:
         """List all endpoints registered for this plugin."""
-        namespace, crc32_id = self._resolve_namespace_and_id()
+        _namespace, crc32_id = self._resolve_namespace_and_id()
         results = [
             ep for (p_id, _), ep in _REGISTERED_WEBHOOKS.items() if p_id == crc32_id
         ]
@@ -351,12 +351,10 @@ async def dispatch_webhook(plugin_id: int, slug: str, payload: dict[str, Any]) -
                 res = handler(slug, payload)
                 if asyncio.iscoroutine(res):
                     await res
-            except Exception as e:
-                logger.error(
-                    "Error in webhook handler for plugin %d: %s",
+            except Exception:
+                logger.exception(
+                    "Error in webhook handler for plugin %d",
                     plugin_id,
-                    e,
-                    exc_info=True,
                 )
 
     # 2. Dispatch to PluginRegistry provider class / instance
@@ -375,12 +373,10 @@ async def dispatch_webhook(plugin_id: int, slug: str, payload: dict[str, Any]) -
                 res = hook_method(slug, payload)
                 if asyncio.iscoroutine(res):
                     await res
-    except Exception as e:
-        logger.error(
-            "Error invoking on_webhook_received on plugin %d: %s",
+    except Exception:
+        logger.exception(
+            "Error invoking on_webhook_received on plugin %d",
             plugin_id,
-            e,
-            exc_info=True,
         )
 
     # 3. Publish to EventBus
@@ -415,3 +411,10 @@ if not hasattr(_SDK, "webhooks"):
     _SDK.webhooks = _webhooks_prop  # type: ignore[attr-defined]
 
 sdk = _base_sdk
+
+
+def verify_file_signature(file_path: str | Path, title: str, artist: str) -> bool:
+    """Verify the native cryptographic Content-Addressed Acoustic Proof (ECHOSYNC_SIGNATURE)."""
+    from core.nexus_framework.sdk import verify_file_signature as _vfs
+
+    return _vfs(file_path, title, artist)

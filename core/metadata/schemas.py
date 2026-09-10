@@ -54,6 +54,7 @@ class ResolutionRequest:
     baseline_album: str | None = None
     baseline_isrc: str | None = None
     ignore_embedded_mbid: bool = False
+    ignore_cache: bool = False
 
 
 @dataclass

@@ -389,11 +389,12 @@ def get_all_system_accounts(config_db: ConfigDatabase = Depends(get_config_db)):
 
         # 2. Get media server users and ensure they have Account records in config.db
         media_users = []
-        media_service_id = (
-            config_db.get_or_create_service_id(active_servers[0])
-            if active_servers
-            else None
-        )
+        media_service_id = None
+        if active_servers:
+            if isinstance(active_servers[0], int):
+                media_service_id = active_servers[0]
+            else:
+                media_service_id = config_db.get_or_create_service_id(str(active_servers[0]))
         if active_media_server_name == "plex" and media_service_id:
             PlexClient = PluginRegistry.get_plugin_class(active_servers[0])
             if PlexClient:

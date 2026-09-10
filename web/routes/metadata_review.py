@@ -1282,10 +1282,11 @@ def lookup_review_queue_item_acoustid(task_id: int, _=Depends(require_auth)):
             req = ResolutionRequest(
                 media_id=str(task.id),
                 file_path=Path(file_path),
-                baseline_title=track_obj.title or track_obj.raw_title,
+                baseline_title=None,  # Do not pass corrupt DB title as ground truth
                 baseline_artist=track_obj.artist_name,
                 baseline_album=track_obj.album_title,
                 ignore_embedded_mbid=True,
+                ignore_cache=True,
             )
             res = engine.resolve_track(req)
 

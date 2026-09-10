@@ -10,7 +10,7 @@ import re
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import Integer, and_, func, or_, select
+from sqlalchemy import Integer, and_, func, not_, or_, select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session, joinedload
 
@@ -19,6 +19,7 @@ from core.database.utils import calculate_safe_batch_size
 # Canonical model: EchosyncTrack + EchosyncMedia from core.db
 from core.db.echo_sync_track import EchosyncMedia, EchosyncTrack
 from core.matching_engine.text_utils import split_artists
+from core.metadata.schemas import EntityAliasProposal
 from database import _canonicalize_path
 from database.music_database import (
     Album,
@@ -32,7 +33,6 @@ from database.music_database import (
     TrackArtistAlias,
     generate_nanoid,
 )
-from core.metadata.schemas import EntityAliasProposal
 
 
 class TrackRepository:
@@ -236,12 +236,26 @@ class TrackRepository:
         )
 
         if not force_refresh:
+            MAX_REATTEMPTS = 5
             query = query.filter(
                 or_(
                     func.json_extract(Track.metadata_status, "$.enhanced").is_(None),
                     func.json_extract(Track.metadata_status, "$.enhanced") == False,
                     func.json_extract(Track.metadata_status, "$.enhanced") == 0,
                     func.json_extract(Track.metadata_status, "$.enhanced") == "false",
+                )
+            ).filter(
+                not_(
+                    and_(
+                        Track.musicbrainz_id == "NOT_FOUND",
+                        func.coalesce(
+                            func.json_extract(
+                                Track.metadata_status, "$.enhancement_attempts"
+                            ),
+                            0,
+                        ).cast(Integer)
+                        >= MAX_REATTEMPTS,
+                    )
                 )
             )
             if not check_all_files:
