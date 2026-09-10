@@ -721,3 +721,194 @@ def test_trust_gate_rejects_candidate_matching_dirty_baseline_but_contradicting_
     assert mock_acoustid.resolve_fingerprint_details.called
 
 
+def test_acoustid_prefilters_unrelated_artists_without_musicbrainz_fetches(
+    monkeypatch, tmp_path
+):
+    """Mocks AcoustID returning MBIDs for Metro Station, Jonas Blue, and Shawn Mendes.
+    Asserts MusicBrainz client is only called for the Shawn Mendes MBID.
+    """
+    audio_file = tmp_path / "01 - There's Nothing Holdin' Me Back.flac"
+    audio_file.write_bytes(b"dummy audio flac")
+
+    file_dur_ms = 199000
+    dummy_cp = "F" * 60
+
+    monkeypatch.setattr(
+        echosync_core,
+        "extract_metadata",
+        lambda p: {
+            "title": "There's Nothing Holdin' Me Back",
+            "artist": "Shawn Mendes",
+            "duration_ms": file_dur_ms,
+            "channels": 2,
+        },
+    )
+    monkeypatch.setattr(
+        FingerprintGenerator,
+        "generate_with_duration",
+        lambda p: (dummy_cp, file_dur_ms / 1000.0),
+    )
+
+    mock_acoustid = MagicMock()
+    mock_acoustid.resolve_fingerprint_details.return_value = {
+        "acoustid_id": "acoustid-cluster-123",
+        "mbids": [
+            "mbid-metro-station",
+            "mbid-jonas-blue",
+            "mbid-shawn-mendes",
+        ],
+        "recordings": [
+            {
+                "id": "mbid-metro-station",
+                "title": "Shake It",
+                "artist": "Metro Station",
+                "duration": 199,
+            },
+            {
+                "id": "mbid-jonas-blue",
+                "title": "Fast Car",
+                "artist": "Jonas Blue",
+                "duration": 199,
+            },
+            {
+                "id": "mbid-shawn-mendes",
+                "title": "There's Nothing Holdin' Me Back",
+                "artist": "Shawn Mendes",
+                "duration": 199,
+            },
+        ],
+    }
+
+    mock_mb = MagicMock()
+    mock_mb.get_metadata.return_value = {
+        "title": "There's Nothing Holdin' Me Back",
+        "artist": "Shawn Mendes",
+        "album": "Illuminate",
+        "recording_id": "mbid-shawn-mendes",
+        "duration_ms": file_dur_ms,
+        "release_group": {"primary_type": "Album"},
+    }
+
+    engine = MetadataResolutionEngine(
+        acoustid_provider=mock_acoustid,
+        metadata_provider=mock_mb,
+    )
+
+    req = ResolutionRequest(
+        media_id="test_prefilter",
+        file_path=audio_file,
+        baseline_title="There's Nothing Holdin' Me Back",
+        baseline_artist="Shawn Mendes",
+        ignore_cache=True,
+    )
+
+    result = engine.resolve_track(req)
+
+    # MusicBrainz client must ONLY have been called for the Shawn Mendes MBID
+    assert mock_mb.get_metadata.call_count == 1
+    mock_mb.get_metadata.assert_called_once_with("mbid-shawn-mendes")
+    assert result.musicbrainz_track_id == "mbid-shawn-mendes"
+    assert result.resolution_method == "acoustid"
+
+
+def test_acoustid_matching_engine_selects_correct_title_over_same_album_track(
+    monkeypatch, tmp_path
+):
+    """Simulates candidates for 'Where Were You in the Morning?' and 'There's Nothing Holdin' Me Back'.
+    Verifies 'There's Nothing Holdin' Me Back' is selected when the filename is
+    '01 - There's Nothing Holdin' Me Back.flac'.
+    """
+    audio_file = tmp_path / "01 - There's Nothing Holdin' Me Back.flac"
+    audio_file.write_bytes(b"dummy audio flac")
+
+    file_dur_ms = 199000
+    dummy_cp = "G" * 60
+
+    monkeypatch.setattr(
+        echosync_core,
+        "extract_metadata",
+        lambda p: {
+            "title": None,
+            "artist": "Shawn Mendes",
+            "duration_ms": file_dur_ms,
+            "channels": 2,
+        },
+    )
+    monkeypatch.setattr(
+        FingerprintGenerator,
+        "generate_with_duration",
+        lambda p: (dummy_cp, file_dur_ms / 1000.0),
+    )
+
+    mock_acoustid = MagicMock()
+    mock_acoustid.resolve_fingerprint_details.return_value = {
+        "acoustid_id": "acoustid-shawn-cluster",
+        "mbids": [
+            "mbid-morning",
+            "mbid-holdin-me-back",
+        ],
+        "recordings": [
+            {
+                "id": "mbid-morning",
+                "title": "Where Were You in the Morning?",
+                "artist": "Shawn Mendes",
+                "duration": 199,
+            },
+            {
+                "id": "mbid-holdin-me-back",
+                "title": "There's Nothing Holdin' Me Back",
+                "artist": "Shawn Mendes",
+                "duration": 199,
+            },
+        ],
+    }
+
+    mock_mb = MagicMock()
+
+    def mb_meta(mbid):
+        if mbid == "mbid-morning":
+            return {
+                "title": "Where Were You in the Morning?",
+                "artist": "Shawn Mendes",
+                "album": "Shawn Mendes",
+                "recording_id": "mbid-morning",
+                "duration_ms": file_dur_ms,
+                "release_group": {"primary_type": "Album"},
+            }
+        elif mbid == "mbid-holdin-me-back":
+            return {
+                "title": "There's Nothing Holdin' Me Back",
+                "artist": "Shawn Mendes",
+                "album": "Illuminate",
+                "recording_id": "mbid-holdin-me-back",
+                "duration_ms": file_dur_ms,
+                "release_group": {"primary_type": "Album"},
+            }
+        return None
+
+    mock_mb.get_metadata.side_effect = mb_meta
+
+    engine = MetadataResolutionEngine(
+        acoustid_provider=mock_acoustid,
+        metadata_provider=mock_mb,
+    )
+
+    req = ResolutionRequest(
+        media_id="test_same_artist_disambiguation",
+        file_path=audio_file,
+        baseline_title=None,
+        baseline_artist="Shawn Mendes",
+        ignore_cache=True,
+    )
+
+    result = engine.resolve_track(req)
+
+    # Candidate 'Where Were You in the Morning?' must have been rejected
+    # Candidate 'There's Nothing Holdin' Me Back' must have been chosen
+    assert result.musicbrainz_track_id == "mbid-holdin-me-back"
+    assert result.title == "There's Nothing Holdin' Me Back"
+    assert result.resolution_method == "acoustid"
+    assert result.confidence_score >= 0.70
+
+
+

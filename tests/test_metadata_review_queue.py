@@ -50,10 +50,13 @@ def test_review_queue_includes_current_metadata(monkeypatch, mock_work_db, tmp_p
     assert len(payload["tasks"]) == 1
 
 
-def test_acoustid_lookup_returns_acoustid_id_without_mbid(
+def test_acoustid_lookup_returns_match_or_fails_fast(
     monkeypatch, mock_work_db, tmp_path
 ):
-    from core.enums import Capability
+    import pytest
+    from fastapi import HTTPException
+
+    from core.metadata.schemas import ResolutionResult
     from database.working_database import ReviewTask
     from web.routes import metadata_review
 
@@ -61,36 +64,15 @@ def test_acoustid_lookup_returns_acoustid_id_without_mbid(
     file_path.write_bytes(b"fake-audio-data")
 
     with mock_work_db.session_scope() as session:
-        session.add(
-            ReviewTask(
-                file_path=str(file_path),
-                status="pending",
-                detected_metadata={"title": "Known Song"},
-                confidence_score=0.1,
-            )
+        task_rec = ReviewTask(
+            file_path=str(file_path),
+            status="pending",
+            detected_metadata={"title": "Known Song"},
+            confidence_score=0.1,
         )
-
-    class FakeFingerprintProvider:
-        def resolve_fingerprint_details(self, _fingerprint, _duration):
-            return {
-                "acoustid_id": "9b6f42f0-demo-acoustid",
-                "mbids": [],
-                "score": 0.61,
-            }
-
-        def resolve_fingerprint(self, _fingerprint, _duration):
-            return []
-
-    class FakeEnhancer:
-        def _get_audio_duration(self, _file_path):
-            return 180
-
-    def fake_get_provider(capability, **kwargs):
-        if capability == Capability.RESOLVE_FINGERPRINT:
-            return FakeFingerprintProvider()
-        if capability == Capability.FETCH_METADATA:
-            return None
-        return None
+        session.add(task_rec)
+        session.flush()
+        task_id = task_rec.id
 
     def mock_get(key, default=None):
         if "library_dir" in key or "download_dir" in key:
@@ -99,20 +81,52 @@ def test_acoustid_lookup_returns_acoustid_id_without_mbid(
 
     monkeypatch.setattr(metadata_review.config_manager, "get", mock_get)
     monkeypatch.setattr(metadata_review, "get_working_database", lambda: mock_work_db)
-    monkeypatch.setattr(metadata_review, "get_plugin_by_capability", fake_get_provider)
+
+    # Test 1: Successful AcoustID match
+    class MockEngineSuccess:
+        def resolve_track(self, req):
+            return ResolutionResult(
+                media_id=req.media_id,
+                confidence_score=0.95,
+                resolution_method="acoustid",
+                acoustid_id="9b6f42f0-demo-acoustid",
+                musicbrainz_track_id="mb-track-123",
+                title="Known Song",
+                artist="Known Artist",
+                chromaprint="fake-fingerprint",
+                duration_ms=180000,
+            )
+
     monkeypatch.setattr(
-        metadata_review.FingerprintGenerator,
-        "generate_with_duration",
-        staticmethod(lambda _path: ("fake-fingerprint", 180)),
-    )
-    monkeypatch.setattr(
-        metadata_review, "get_metadata_enhancer", lambda: FakeEnhancer()
+        "core.metadata.engine.MetadataResolutionEngine", MockEngineSuccess
     )
 
-    payload = metadata_review.lookup_review_queue_item_acoustid(1)
+    payload = metadata_review.lookup_review_queue_item_acoustid(task_id)
     detected = payload["task"]["detected_metadata"]
     assert detected["acoustid_id"] == "9b6f42f0-demo-acoustid"
+    assert detected["musicbrainz_id"] == "mb-track-123"
     assert detected["title"] == "Known Song"
+    assert payload["resolution_result"]["musicbrainz_track_id"] == "mb-track-123"
+
+    # Test 2: Fail-fast when confidence is 0.0 or resolution_method is not acoustid
+    class MockEngineFail:
+        def resolve_track(self, req):
+            return ResolutionResult(
+                media_id=req.media_id,
+                title="Unverified Guess",
+                artist="Unknown Artist",
+                confidence_score=0.0,
+                resolution_method="none",
+            )
+
+    monkeypatch.setattr(
+        "core.metadata.engine.MetadataResolutionEngine", MockEngineFail
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        metadata_review.lookup_review_queue_item_acoustid(task_id)
+    assert exc_info.value.status_code == 404
+    assert "AcoustID could not verify a matching track" in exc_info.value.detail
 
 
 def test_build_native_tag_payload_version_separation():

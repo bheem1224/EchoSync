@@ -132,7 +132,7 @@ class AcoustIDProvider(PluginBase):
             )
             duration_val = duration_val / 1000.0
 
-        duration_int = int(round(duration_val))
+        duration_int = round(duration_val)
 
         if duration_int <= 0:
             logger.warning(
@@ -141,7 +141,7 @@ class AcoustIDProvider(PluginBase):
             return {"acoustid_id": None, "mbids": [], "score": None, "match_status": "UNRESOLVED"}
         payload = {
             "client": api_key,
-            "meta": "recordingids",
+            "meta": "recordings+tracks",
             "fingerprint": fingerprint.strip(),
             "duration": duration_int,
         }
@@ -174,6 +174,7 @@ class AcoustIDProvider(PluginBase):
                     "AcoustID lookup succeeded but found 0 matches for fingerprint."
                 )
             mbids: list[str] = []
+            recordings_list: list[dict[str, Any]] = []
             seen_mbid = set()
             best_result: dict[str, Any] | None = None
             best_score = -1.0
@@ -199,6 +200,24 @@ class AcoustIDProvider(PluginBase):
                         seen_mbid.add(mbid)
                         mbids.append(mbid)
 
+                        # Extract artist string from artist credits
+                        artist_names = []
+                        for a in recording.get("artists", []) or []:
+                            if isinstance(a, dict) and a.get("name"):
+                                artist_names.append(str(a["name"]))
+                        artist_str = ", ".join(artist_names) if artist_names else None
+
+                        recordings_list.append(
+                            {
+                                "id": mbid,
+                                "title": recording.get("title"),
+                                "artist": artist_str,
+                                "artists": artist_names,
+                                "duration": recording.get("duration"),
+                                "score": score,
+                            }
+                        )
+
             acoustid_id = None
             if isinstance(best_result, dict):
                 result_id = str(best_result.get("id") or "").strip()
@@ -209,6 +228,7 @@ class AcoustIDProvider(PluginBase):
             return {
                 "acoustid_id": acoustid_id,
                 "mbids": mbids,
+                "recordings": recordings_list,
                 "score": best_score if best_score >= 0.0 else None,
                 "match_status": match_status,
             }
@@ -257,7 +277,7 @@ class AcoustIDProvider(PluginBase):
             duration_val = float(duration)
             if duration_val > 10000:
                 duration_val = duration_val / 1000.0
-            duration_int = int(round(duration_val))
+            duration_int = round(duration_val)
             if duration_int <= 0:
                 return False
         except Exception:

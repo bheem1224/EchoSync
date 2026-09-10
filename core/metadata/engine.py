@@ -229,10 +229,16 @@ class MetadataResolutionEngine:
         return plugins[0] if plugins else None
 
     def score_candidate(
-        self, candidate: dict[str, Any], baseline_title: str, file_duration_ms: int
+        self,
+        candidate: dict[str, Any],
+        baseline_title: str,
+        file_duration_ms: int,
+        baseline_artist: str | None = None,
+        baseline_album: str | None = None,
+        filename: str | None = None,
     ) -> float:
         """Score AcoustID recording candidate by duration proximity, variant disambiguation penalties,
-        and canonical studio release weighting using WeightedMatchingEngine.
+        and canonical studio release weighting using WeightedMatchingEngine(PROFILE_EXACT_SYNC).
         """
         cand_dur = (
             candidate.get("length")
@@ -252,25 +258,44 @@ class MetadataResolutionEngine:
             except (ValueError, TypeError):
                 pass
 
+        c_title = str(candidate.get("title") or "")
         c_artist = str(candidate.get("artist") or candidate.get("artist_name") or "")
         c_album = str(candidate.get("album") or candidate.get("album_title") or "")
+
+        # Candidate title MUST match the filename stem or baseline title with confidence >= 0.70
+        clean_file_title = clean_title_from_filename(filename) if filename else ""
+        title_similarities = []
+        if baseline_title and baseline_title.strip():
+            sim_b = difflib.SequenceMatcher(
+                None, c_title.lower().strip(), baseline_title.lower().strip()
+            ).ratio()
+            title_similarities.append(sim_b)
+        if clean_file_title and not is_generic_title(clean_file_title):
+            sim_f = difflib.SequenceMatcher(
+                None, c_title.lower().strip(), clean_file_title.lower().strip()
+            ).ratio()
+            title_similarities.append(sim_f)
+
+        if title_similarities and max(title_similarities) < 0.70:
+            return 0.0
+
         query_track = EchosyncTrack(
-            raw_title=baseline_title or "",
-            artist_name=c_artist,
-            album_title=c_album,
+            raw_title=baseline_title or clean_file_title,
+            artist_name=baseline_artist or c_artist,
+            album_title=baseline_album or c_album,
             duration=file_duration_ms if file_duration_ms > 0 else None,
         )
         cand_track = EchosyncTrack(
-            raw_title=candidate.get("title") or "",
+            raw_title=c_title,
             artist_name=c_artist,
             album_title=c_album,
             duration=cand_dur_ms,
-            version=candidate.get("disambiguation"),
+            version=candidate.get("disambiguation") or candidate.get("version"),
         )
         match_res = self.matcher.calculate_match(query_track, cand_track)
         score = match_res.confidence_score if match_res else 0.0
 
-        # Boost canonical studio release groups
+        # Preference for canonical studio release groups
         release_group = (
             candidate.get("release_group") or candidate.get("release-group") or {}
         )
@@ -287,7 +312,7 @@ class MetadataResolutionEngine:
 
         p_type = release_group.get("primary_type") or release_group.get("primary-type")
         if p_type == "Album":
-            score += 25.0
+            score += 5.0
 
         return max(score, 0.0)
 
@@ -727,6 +752,8 @@ class MetadataResolutionEngine:
                 baseline_title=baseline_title,
                 filename=file_path.name,
                 tag_title=tag_title,
+                baseline_artist=baseline_artist,
+                baseline_album=baseline_album,
             )
             if acoustid_res:
                 logger.info(
@@ -931,8 +958,10 @@ class MetadataResolutionEngine:
         baseline_title: str,
         filename: str,
         tag_title: str | None,
+        baseline_artist: str | None = None,
+        baseline_album: str | None = None,
     ) -> dict[str, Any] | None:
-        """Query AcoustID and pick the highest scoring candidate recording."""
+        """Query AcoustID, pre-filter candidate recordings, and pick the highest scoring candidate."""
         acoustid_plugin = self._get_acoustid_plugin()
         mb_plugin = self._get_mb_plugin()
         if not acoustid_plugin or not mb_plugin:
@@ -947,17 +976,99 @@ class MetadataResolutionEngine:
                 return None
             acoustid_id = details.get("acoustid_id")
             candidate_mbids = details.get("mbids") or []
-            if not candidate_mbids:
+            recordings = details.get("recordings") or []
+            if not candidate_mbids and not recordings:
                 return None
+
+            # Map recordings by MBID for pre-filtering
+            rec_by_mbid: dict[str, dict[str, Any]] = {}
+            for r in recordings:
+                if isinstance(r, dict) and r.get("id"):
+                    rec_by_mbid[str(r["id"]).strip()] = r
+
+            # Collect unique MBIDs
+            all_mbid_candidates = list(candidate_mbids)
+            for r_id in rec_by_mbid:
+                if r_id not in all_mbid_candidates:
+                    all_mbid_candidates.append(r_id)
+
+            def _is_artist_unrelated(cand_artist_str: str) -> bool:
+                if not cand_artist_str or not cand_artist_str.strip():
+                    return False
+                c_art = cand_artist_str.lower().strip()
+
+                if baseline_artist and str(baseline_artist).strip():
+                    b_art = str(baseline_artist).lower().strip()
+                    if b_art not in ("unknown", "unknown artist", "various artists", "va"):
+                        if c_art in b_art or b_art in c_art:
+                            return False
+                        b_tokens = {w for w in re.findall(r"\w+", b_art) if len(w) > 2}
+                        c_tokens = {w for w in re.findall(r"\w+", c_art) if len(w) > 2}
+                        if b_tokens and c_tokens and (b_tokens & c_tokens):
+                            return False
+                        sim = difflib.SequenceMatcher(None, b_art, c_art).ratio()
+                        if sim >= 0.50:
+                            return False
+                        if filename:
+                            fn_clean = filename.lower()
+                            if c_art in fn_clean:
+                                return False
+                        return True
+
+                if filename:
+                    fn_clean = filename.lower()
+                    parts = re.split(r"[\-_]", Path(filename).stem)
+                    if len(parts) >= 2:
+                        fn_artist_guess = parts[0].lower().strip()
+                        if len(fn_artist_guess) > 2 and not fn_artist_guess.isdigit():
+                            if c_art in fn_artist_guess or fn_artist_guess in c_art:
+                                return False
+                            sim = difflib.SequenceMatcher(None, fn_artist_guess, c_art).ratio()
+                            return sim < 0.50
+                return False
+
+            viable_candidates: list[tuple[str, float]] = []
+            for mbid in all_mbid_candidates:
+                mbid_str = str(mbid).strip()
+                if not mbid_str:
+                    continue
+
+                rec_meta = rec_by_mbid.get(mbid_str) or {}
+                cand_artist = rec_meta.get("artist")
+                if cand_artist and _is_artist_unrelated(cand_artist):
+                    logger.debug(
+                        "[resolution_engine] Pre-filter discarded AcoustID candidate MBID %s by unrelated artist '%s' (baseline: '%s')",
+                        mbid_str,
+                        cand_artist,
+                        baseline_artist,
+                    )
+                    continue
+
+                rec_dur = rec_meta.get("duration")
+                if rec_dur is not None:
+                    try:
+                        rec_dur_val = float(rec_dur)
+                        if 0 < rec_dur_val < 10000:
+                            rec_dur_val *= 1000.0
+                        dur_delta = abs(rec_dur_val - file_duration_ms)
+                    except (ValueError, TypeError):
+                        dur_delta = 999999.0
+                else:
+                    dur_delta = 999999.0
+
+                viable_candidates.append((mbid_str, dur_delta))
+
+            # Sort by duration proximity (closest match first)
+            viable_candidates.sort(key=lambda x: x[1])
+
+            # Cap MusicBrainz candidate detail fetches to maximum of top 3
+            top_candidates = [item[0] for item in viable_candidates[:3]]
 
             best_candidate: dict[str, Any] | None = None
             best_mbid: str | None = None
             best_score = 0.0
 
-            for mbid in candidate_mbids:
-                mbid_str = str(mbid).strip()
-                if not mbid_str:
-                    continue
+            for mbid_str in top_candidates:
                 cand_meta = mb_plugin.get_metadata(mbid_str)
                 if not isinstance(cand_meta, dict):
                     continue
@@ -977,6 +1088,9 @@ class MetadataResolutionEngine:
                     candidate=cand_meta,
                     baseline_title=baseline_title,
                     file_duration_ms=file_duration_ms,
+                    baseline_artist=baseline_artist,
+                    baseline_album=baseline_album,
+                    filename=filename,
                 )
                 if cand_score > 0 and cand_score > best_score:
                     best_score = cand_score

@@ -1293,34 +1293,15 @@ def lookup_review_queue_item_acoustid(task_id: int, _=Depends(require_auth)):
             if res.chromaprint:
                 track_obj.fingerprint = res.chromaprint
 
-            # If no match found
-            if not res.acoustid_id and not res.musicbrainz_track_id:
-                logger.info(
-                    f"AcoustID scan for task {task_id}: no match in database. "
-                    "Fingerprint stored for submission."
+            if res.confidence_score == 0.0 or res.resolution_method != "acoustid":
+                logger.warning(
+                    f"AcoustID scan for task {task_id}: verification failed or not resolved via acoustid "
+                    f"(method={res.resolution_method}, score={res.confidence_score})"
                 )
-                track_obj.identifiers["source"] = "acoustid_no_match"
-                task.track_data = track_obj.to_dict()
-                task.detected_metadata = res.to_dict()
-                flag_modified(task, "track_data")
-                serialized = _serialize_task(task, detected_metadata=task.detected_metadata)
-                return {
-                    "success": True,
-                    "match_found": False,
-                    "acoustid_match": False,
-                    "acoustid_fingerprint": res.chromaprint,
-                    "acoustid_fingerprint_duration": int(round((res.duration_ms or 0) / 1000.0)),
-                    "updated_fields": [
-                        "acoustid_fingerprint",
-                        "acoustid_fingerprint_duration",
-                    ]
-                    if res.chromaprint
-                    else [],
-                    "metadata": serialized["detected_metadata"],
-                    "message": "No matching record found in database",
-                    "task": serialized,
-                    "resolution_result": res.to_dict(),
-                }
+                raise HTTPException(
+                    status_code=404,
+                    detail="AcoustID could not verify a matching track for this audio file",
+                )
 
             # Match found
             if res.acoustid_id:
