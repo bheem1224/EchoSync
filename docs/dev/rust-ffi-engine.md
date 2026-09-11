@@ -53,3 +53,6 @@ All audio tag reading and tag writing operations route strictly through `lofty` 
 ## 4. Zero-Trust Path Sandboxing in Rust
 
 Before performing file operations (`safe_move_file`, `copy_file`, `delete_file` in `src/file_handling/fs_ops.rs`), Rust resolves canonical paths (`std::fs::canonicalize`) and verifies they fall strictly within allowed root paths passed by `Gatekeeper`.
+
+---
+*Part of the EchoSync Wiki Documentation Suite.*

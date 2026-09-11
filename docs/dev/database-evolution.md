@@ -117,3 +117,6 @@ While SQLite with WAL mode is the default zero-config storage engine, the reposi
    - Replace manual `or_` tuple matching loops with dialect-aware `tuple_in()` generation for PostgreSQL while retaining `or_` chunking for SQLite.
 3. **Multi-Database Connection Pooling:**
    - Configure PostgreSQL schema separation (`config`, `working`, `library`) or isolated database endpoints via environment variables (`POSTGRES_CONFIG_URL`, `POSTGRES_WORKING_URL`, `POSTGRES_LIBRARY_URL`).
+
+---
+*Part of the EchoSync Wiki Documentation Suite.*

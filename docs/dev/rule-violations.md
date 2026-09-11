@@ -1,70 +1,63 @@
 # Architectural Invariant Violation Ledger
-
-*Last Audited: 2026-05-27 19:15:00 UTC*
+*Last Audited: 2026-09-11 12:30:01 UTC*
 
 | Violation Type | File Path | Line Number | Observed Pattern | Architectural Remediation |
 | :--- | :--- | :--- | :--- | :--- |
-| Ungated File Move | `services/library_sync_service.py` | 321 | `shutil.move(file_path, dest_path)` | Route through `Gatekeeper.authorize_and_execute` / `echosync_core.safe_move_file` |
-| Ungated File Move | `services/download_manager.py` | 2424 | `shutil.move(str(src), str(dest))` | Route through `Gatekeeper.authorize_and_execute` / `echosync_core.safe_move_file` |
-| Ungated File Deletion | `services/media_manager.py` | 242 | `os.remove(file_path)` | Route through `Gatekeeper.authorize_and_execute` / `echosync_core.delete_file` |
-| Ungated File Deletion | `services/auto_importer.py` | 177 | `file_p.unlink(missing_ok=True)` | Route through `Gatekeeper.authorize_and_execute` / `echosync_core.delete_file` |
-| Ungated File Deletion | `web/routes/metadata_review.py` | 1092 | `os.unlink(str(resolved_file))` | Route through `Gatekeeper.authorize_and_execute` / `echosync_core.delete_file` |
-| Ungated File Deletion | `web/routes/system.py` | 180 | `os.remove(tmp_path)` | Route through `Gatekeeper.authorize_and_execute` / `echosync_core.delete_file` |
-| Ungated File Deletion | `web/routes/system.py` | 1017 | `os.remove(db_path)` | Route through `Gatekeeper.authorize_and_execute` / `echosync_core.delete_file` |
-| Ungated File Deletion | `core/task_manager/system_jobs.py` | 1247 | `os.remove(db_file)` | Route through `Gatekeeper.authorize_and_execute` / `echosync_core.delete_file` |
-| Ungated File Rename | `core/tiered_logger.py` | 73 | `os.rename(sfn, dfn)` | Route through managed file logger handlers / Gatekeeper |
-| Ungated File Rename | `core/tiered_logger.py` | 89 | `os.rename(self.baseFilename, dfn)` | Route through managed file logger handlers / Gatekeeper |
-| Ungated File Deletion | `core/tiered_logger.py` | 69 | `os.remove(dfn)` | Route through managed file logger handlers / Gatekeeper |
-| Ungated File Deletion | `core/tiered_logger.py` | 84 | `os.remove(dfn)` | Route through managed file logger handlers / Gatekeeper |
-| Direct SQLite Connection | `core/matching_engine/fingerprinting.py` | 349 | `sqlite3.connect(self.db_path, timeout=30.0)` | Refactor to DatabaseGateway scoped ORM sessions (`session_scope()`) |
-| Direct SQLite Connection | `core/matching_engine/fingerprinting.py` | 381 | `sqlite3.connect(self.db_path, timeout=30.0)` | Refactor to DatabaseGateway scoped ORM sessions (`session_scope()`) |
-| Direct SQLite Connection | `core/matching_engine/fingerprinting.py` | 418 | `sqlite3.connect(self.db_path, timeout=30.0)` | Refactor to DatabaseGateway scoped ORM sessions (`session_scope()`) |
-| Direct SQLite Connection | `core/matching_engine/fingerprinting.py` | 445 | `sqlite3.connect(self.db_path, timeout=30.0)` | Refactor to DatabaseGateway scoped ORM sessions (`session_scope()`) |
-| Direct SQLite Connection | `core/db/migrations.py` | 89 | `sqlite3.connect(db_path, timeout=30.0)` | Use Alembic / DatabaseGateway connection abstraction |
-| Direct SQLite Connection | `core/backup_manager.py` | 31 | `sqlite3.connect(str(source_path))` | Wrap backup operations in DatabaseGateway / SQLite Online Backup API |
-| Direct SQLite Connection | `core/backup_manager.py` | 32 | `sqlite3.connect(str(target_path))` | Wrap backup operations in DatabaseGateway / SQLite Online Backup API |
-| Direct SQLite Connection | `database/engine.py` | 37 | `sqlite3.connect(self.db_path, timeout=60.0)` | Encapsulate inside SQLAlchemy engine setup |
-| Direct SQLite Connection | `database/config_database.py` | 59 | `sqlite3.connect(str(self.database_path), timeout=30.0)` | Refactor to use ConfigDatabase SQLAlchemy session scope |
-| Direct SQLite Connection | `database/config_database.py` | 126 | `sqlite3.connect(str(self.database_path), timeout=60.0)` | Refactor to use ConfigDatabase SQLAlchemy session scope |
-| Direct SQLite Connection | `services/state_listener.py` | 16 | `get_working_database().SessionLocal` | Use DatabaseGateway `session_scope()` context manager |
-| Ungated Directory Removal | `core/backup_manager.py` | 105 | `shutil.rmtree(staging_dir, ignore_errors=True)` | Route through `Gatekeeper` directory cleanup methods |
-| Ungated Directory Removal | `core/backup_manager.py` | 175 | `shutil.rmtree(staging_dir, ignore_errors=True)` | Route through `Gatekeeper` directory cleanup methods |
-| Ungated Directory Removal | `core/nexus_framework/plugin_loader.py` | 955 | `shutil.rmtree(author_item, ignore_errors=True)` | Route through `Gatekeeper` directory cleanup methods |
-| Ungated File Rename | `core/nexus_framework/plugin_store.py` | 1094 | `os.rename(str(target_dir), str(backup_dir))` | Route through `Gatekeeper.authorize_and_execute` / atomic move routines |
-| Ungated File Rename | `core/nexus_framework/plugin_store.py` | 1110 | `os.rename(str(tmp_dir), str(target_dir))` | Route through `Gatekeeper.authorize_and_execute` / atomic move routines |
-| Ungated File Rename | `core/nexus_framework/plugin_store.py` | 1123 | `os.rename(str(backup_dir), str(target_dir))` | Route through `Gatekeeper.authorize_and_execute` / atomic move routines |
-| Ungated File Rename | `core/nexus_framework/plugin_store.py` | 1282 | `os.rename(str(backup_dir), str(target_dir))` | Route through `Gatekeeper.authorize_and_execute` / atomic move routines |
-| Ungated File Deletion | `core/nexus_framework/plugin_store.py` | 1478 | `os.remove(tmp_zip_path)` | Route through `Gatekeeper.authorize_and_execute` / `echosync_core.delete_file` |
-| Ungated Directory Removal | `core/nexus_framework/plugin_store.py` | 730 | `shutil.rmtree(tmp_dir, ignore_errors=True)` | Route through `Gatekeeper` directory cleanup methods |
-| Ungated Directory Removal | `core/nexus_framework/plugin_store.py` | 908 | `shutil.rmtree(tmp_dir, ignore_errors=True)` | Route through `Gatekeeper` directory cleanup methods |
-| Ungated Directory Removal | `core/nexus_framework/plugin_store.py` | 1086 | `shutil.rmtree(beta_dir, ignore_errors=True)` | Route through `Gatekeeper` directory cleanup methods |
-| Ungated Directory Removal | `core/nexus_framework/plugin_store.py` | 1092 | `shutil.rmtree(backup_dir, ignore_errors=True)` | Route through `Gatekeeper` directory cleanup methods |
-| Ungated Directory Removal | `core/nexus_framework/plugin_store.py` | 1104 | `shutil.rmtree(target_dir, ignore_errors=True)` | Route through `Gatekeeper` directory cleanup methods |
-| Ungated Directory Removal | `core/nexus_framework/plugin_store.py` | 1115 | `shutil.rmtree(backup_dir, ignore_errors=True)` | Route through `Gatekeeper` directory cleanup methods |
-| Ungated Directory Removal | `core/nexus_framework/plugin_store.py` | 1281 | `shutil.rmtree(target_dir, ignore_errors=True)` | Route through `Gatekeeper` directory cleanup methods |
-| Ungated Directory Removal | `core/nexus_framework/plugin_store.py` | 1480 | `shutil.rmtree(tmp_dir, ignore_errors=True)` | Route through `Gatekeeper` directory cleanup methods |
-| Ungated Directory Removal | `core/nexus_framework/plugin_store.py` | 1496 | `shutil.rmtree(beta_path, ignore_errors=True)` | Route through `Gatekeeper` directory cleanup methods |
-| Ungated Directory Removal | `core/nexus_framework/plugin_store.py` | 1825 | `shutil.rmtree(dest_dir, ignore_errors=True)` | Route through `Gatekeeper` directory cleanup methods |
-| Ungated Directory Copy | `core/nexus_framework/plugin_store.py` | 942 | `shutil.copy2(stable_db_path, beta_db_path)` | Use SQLite ATTACH DATABASE or migration scripts instead of raw DB file copies |
-| Rate Limiter Instance Evasion | `core/request_manager.py` | 79 | `self._last_call_ts = 0.0` (Instance-level rate state) | Centralize rate limiting state per provider in shared global map |
-| Session Resource Leak | `core/request_manager.py` | 76 | `self._session = requests.Session()` without context manager | Implement `__enter__`/`__exit__` context manager or global connection pool |
-| Unlocked Async Rate Limiter | `core/rate_limiter.py` | 37 | Missing `asyncio.Lock` around timestamp queue mutations | Wrap timestamp modifications in `asyncio.Lock` to prevent concurrent bursting |
-| Incomplete Module Purge | `core/nexus_framework/plugin_loader.py` | 215 | `del sys.modules[m]` without `__teardown__` hook | Implement mandatory plugin `__teardown__` hooks and explicit GC collection |
-| Sandbox CPU Bloat | `core/nexus_framework/plugin_loader.py` | 147 | Overzealous AST Node Traversal on all method calls | Refactor to `sys.meta_path` import hooks or Python audit hooks |
-| Sync I/O in Async Context | `core/nexus_framework/plugin_loader.py` | 586 | Synchronous `py_file.read_text()` during plugin scans | Offload plugin scanning to `asyncio.to_thread()` threadpool |
-| Swallowed Dependency Error | `core/nexus_framework/plugin_SDK.py` | 341 | `except ImportError: pass` on missing `wasmtime` | Log explicit warning and mark WASM plugin state as disabled/unsupported |
-| Synchronous Event Dispatch | `core/event_bus.py` | 92 | `for handler in specific: handler(...)` holding `_lock` | Dispatch via asynchronous queue/threadpool; unlock event loop |
-| Poisoned Transaction State | `core/job_queue.py` | 310 | `_execute_job_logic(job)` without `except Exception` rollback | Wrap job execution in `except Exception:` and execute `session.rollback()` |
-| Resource Orphan on Thread Kill | `core/job_queue.py` | 326 | `process.terminate()` / `ctypes` thread killing | Replace force-kills with cooperative cancellation tokens (`threading.Event`) |
-| Lock Contention in Loop | `services/metadata_enhancer.py` | 396 | `ServiceRegistry.resolve('matching_engine')` inside track loop | Resolve service engine once outside the candidate processing loop |
-| Dynamic Regex Parsing Overhead | `core/matching_engine/text_utils.py` | 497 | `re.search(pattern, ...)` with uncompiled pattern strings | Pre-compile regex patterns at module level via `re.compile()` |
-| Duplicate Hook Execution | `core/matching_engine/matching_engine.py` | 429 | Double-firing `scoring_modifier` hook per candidate | Compute modifiers once per candidate match to prevent redundant hook passes |
-| Orphaned String Namespace | `core/nexus_framework/plugin_loader.py` | 192 | `clean_ns = base_ns.split('@')[0]` string parsing | Eradicate string namespaces; strictly use integer `plugin_id` |
-| Micro-Venv Subprocess Bloat | `core/nexus_framework/plugin_venv.py` | 49 | Subprocess `pip install` per plugin venv | Use shared dependency graph resolver / unified site-packages |
-| Deprecated Table Method | `database/working_database.py` | 485 | `create_table(table_name=f"prv_{...}")` | Deprecate `prv_` creation methods and enforce standard ORM tables |
-| AST Sandbox Escape | `core/nexus_framework/plugin_loader.py` | 61 | Static AST bypassed via `getattr`/`eval` dynamic execution | Enforce runtime Python audit hooks (`sys.addaudithook`) |
-| Call Stack Spoofing | `core/nexus_framework/plugin_SDK.py` | 372 | `inspect.currentframe()` stack frame validation | Pass capability tokens upon plugin instantiation; remove stack inspection |
-| Unlocked Router Dict Mutation | `core/nexus_framework/plugin_router.py` | 15 | Unlocked `cls._routers` modifications | Protect router registry mutations with `threading.RLock()` |
-| Instantiation DB Overhead | `core/nexus_framework/plugin_loader.py` | 108 | Database query per `plugin_id` instantiation | Cache resolved `plugin_id -> provider_cls` mapping in `PluginRegistry` |
-| Identity Spoofing | `core/nexus_framework/plugin_loader.py` | 829 | Exported `ProviderClass` registered unvalidated | Forcefully overwrite `name` and `plugin_id` on imported plugin instances |
-| Unsigned Manifest Trust | `core/nexus_framework/plugin_loader.py` | 556 | Direct trust of unverified `privileged` flag in JSON | Authenticate manifests cryptographically; store authorization flags in DB |
+| Direct SQLite Conn | `core/backup_manager.py` | 31 | `src_conn = sqlite3.connect(str(source_path))` | Use DatabaseGateway scoped ORM sessions (session_scope()) |
+| Direct SQLite Conn | `core/backup_manager.py` | 32 | `dst_conn = sqlite3.connect(str(target_path))` | Use DatabaseGateway scoped ORM sessions (session_scope()) |
+| Direct SQLite Conn | `core/db/migrations.py` | 89 | `with contextlib.closing(sqlite3.connect(db_path, timeout=30.0)) as conn:` | Use DatabaseGateway scoped ORM sessions (session_scope()) |
+| Direct SQLite Conn | `core/matching_engine/fingerprinting.py` | 253 | `with contextlib.closing(sqlite3.connect(self.db_path, timeout=30.0)) as conn:` | Use DatabaseGateway scoped ORM sessions (session_scope()) |
+| Direct SQLite Conn | `core/matching_engine/fingerprinting.py` | 283 | `with contextlib.closing(sqlite3.connect(self.db_path, timeout=30.0)) as conn:` | Use DatabaseGateway scoped ORM sessions (session_scope()) |
+| Direct SQLite Conn | `core/matching_engine/fingerprinting.py` | 318 | `with contextlib.closing(sqlite3.connect(self.db_path, timeout=30.0)) as conn:` | Use DatabaseGateway scoped ORM sessions (session_scope()) |
+| Direct SQLite Conn | `core/matching_engine/fingerprinting.py` | 343 | `with contextlib.closing(sqlite3.connect(self.db_path, timeout=30.0)) as conn:` | Use DatabaseGateway scoped ORM sessions (session_scope()) |
+| Direct SQLite Conn | `database/config_database.py` | 60 | `conn = sqlite3.connect(str(self.database_path), timeout=30.0)` | Use DatabaseGateway scoped ORM sessions (session_scope()) |
+| Direct SQLite Conn | `database/config_database.py` | 117 | `conn = sqlite3.connect(str(self.database_path), timeout=60.0)` | Use DatabaseGateway scoped ORM sessions (session_scope()) |
+| Direct SQLite Conn | `database/engine.py` | 37 | `conn = sqlite3.connect(self.db_path, timeout=60.0, check_same_thread=False)` | Use DatabaseGateway scoped ORM sessions (session_scope()) |
+| Direct SQLite Conn | `scratch/check_indexes.py` | 8 | `conn = sqlite3.connect(db_path)` | Use DatabaseGateway scoped ORM sessions (session_scope()) |
+| Direct SQLite Conn | `scratch/check_schema.py` | 20 | `conn = sqlite3.connect(db_path)` | Use DatabaseGateway scoped ORM sessions (session_scope()) |
+| Direct SQLite Conn | `scratch/cleanup_tmp_tables.py` | 28 | `conn = sqlite3.connect(path)` | Use DatabaseGateway scoped ORM sessions (session_scope()) |
+| Direct SQLite Conn | `scratch/find_dbs.py` | 12 | `conn = sqlite3.connect(fp)` | Use DatabaseGateway scoped ORM sessions (session_scope()) |
+| Direct SQLite Conn | `scripts/inspect_dbs.py` | 7 | `conn = sqlite3.connect(path)` | Use DatabaseGateway scoped ORM sessions (session_scope()) |
+| Direct SQLite Conn | `scripts/inspect_service_config.py` | 3 | `conn = sqlite3.connect("config/config.db")` | Use DatabaseGateway scoped ORM sessions (session_scope()) |
+| Direct SQLite Conn | `scripts/inspect_services.py` | 3 | `conn = sqlite3.connect("config/config.db")` | Use DatabaseGateway scoped ORM sessions (session_scope()) |
+| Rogue HTTP Client | `core/nexus_framework/plugin_store.py` | 9 | `import requests` | Route through RequestManager.get() or RequestManager session |
+| Rogue HTTP Client | `core/nexus_framework/plugin_store.py` | 308 | `resp = requests.get(api_url, timeout=10, allow_redirects=False)` | Route through RequestManager.get() or RequestManager session |
+| Rogue HTTP Client | `core/nexus_framework/plugin_store.py` | 314 | `dir_resp = requests.get(` | Route through RequestManager.get() or RequestManager session |
+| Rogue HTTP Client | `core/nexus_framework/plugin_store.py` | 321 | `manifest_resp = requests.get(` | Route through RequestManager.get() or RequestManager session |
+| Rogue HTTP Client | `plugins/EchoSync/jellyfin/routes.py` | 35 | `import requests` | Route through RequestManager.get() or RequestManager session |
+| Rogue HTTP Client | `plugins/EchoSync/jellyfin/routes.py` | 44 | `response = requests.post(` | Route through RequestManager.get() or RequestManager session |
+| Rogue HTTP Client | `plugins/EchoSync/jellyfin/routes.py` | 144 | `import requests` | Route through RequestManager.get() or RequestManager session |
+| Rogue HTTP Client | `plugins/EchoSync/jellyfin/routes.py` | 153 | `response = requests.post(auth_url, json=auth_data, headers=headers, timeout=10)` | Route through RequestManager.get() or RequestManager session |
+| Rogue HTTP Client | `plugins/EchoSync/jellyfin/routes.py` | 167 | `info_response = requests.get(info_url, headers=info_headers, timeout=5)` | Route through RequestManager.get() or RequestManager session |
+| Rogue HTTP Client | `plugins/EchoSync/navidrome/routes.py` | 35 | `import requests` | Route through RequestManager.get() or RequestManager session |
+| Rogue HTTP Client | `plugins/EchoSync/navidrome/routes.py` | 46 | `response = requests.get(auth_url, params=params, timeout=5)` | Route through RequestManager.get() or RequestManager session |
+| Rogue HTTP Client | `plugins/EchoSync/navidrome/routes.py` | 143 | `import requests` | Route through RequestManager.get() or RequestManager session |
+| Rogue HTTP Client | `plugins/EchoSync/navidrome/routes.py` | 155 | `response = requests.get(auth_url, params=params, timeout=10)` | Route through RequestManager.get() or RequestManager session |
+| Rogue HTTP Client | `plugins/EchoSync/plex/routes.py` | 353 | `import requests` | Route through RequestManager.get() or RequestManager session |
+| Rogue HTTP Client | `plugins/EchoSync/plex/routes.py` | 364 | `resp = requests.get(` | Route through RequestManager.get() or RequestManager session |
+| Rogue HTTP Client | `plugins/EchoSync/slskd/client.py` | 404 | `import requests` | Route through RequestManager.get() or RequestManager session |
+| Rogue HTTP Client | `plugins/EchoSync/slskd/client.py` | 407 | `response = requests.get(` | Route through RequestManager.get() or RequestManager session |
+| Rogue HTTP Client | `plugins/EchoSync/tidal/__init__.py` | 15 | `import requests` | Route through RequestManager.get() or RequestManager session |
+| Rogue HTTP Client | `plugins/EchoSync/tidal/__init__.py` | 18 | `resp = requests.get("https://api.tidal.com/v1/", timeout=5)` | Route through RequestManager.get() or RequestManager session |
+| Rogue HTTP Client | `plugins/EchoSync/tidal/api_v2.py` | 3 | `import requests` | Route through RequestManager.get() or RequestManager session |
+| Rogue HTTP Client | `plugins/EchoSync/tidal/api_v2.py` | 25 | `response = requests.get(url, headers=self.headers, params=params)` | Route through RequestManager.get() or RequestManager session |
+| Ungated File Operation | `core/db/migrations.py` | 59 | `music_db.unlink()` | Route through Gatekeeper.authorize_and_execute / echosync_core |
+| Ungated File Operation | `core/nexus_framework/plugin_store.py` | 65 | `custom_repos.remove(url)` | Route through Gatekeeper.authorize_and_execute / echosync_core |
+| Ungated File Operation | `core/nexus_framework/plugin_store.py` | 1106 | `os.rename(str(target_dir), str(backup_dir))` | Route through Gatekeeper.authorize_and_execute / echosync_core |
+| Ungated File Operation | `core/nexus_framework/plugin_store.py` | 1122 | `os.rename(str(tmp_dir), str(target_dir))` | Route through Gatekeeper.authorize_and_execute / echosync_core |
+| Ungated File Operation | `core/nexus_framework/plugin_store.py` | 1135 | `os.rename(str(backup_dir), str(target_dir))` | Route through Gatekeeper.authorize_and_execute / echosync_core |
+| Ungated File Operation | `core/nexus_framework/plugin_store.py` | 1294 | `os.rename(str(backup_dir), str(target_dir))` | Route through Gatekeeper.authorize_and_execute / echosync_core |
+| Ungated File Operation | `core/nexus_framework/plugin_store.py` | 1490 | `os.remove(tmp_zip_path)` | Route through Gatekeeper.authorize_and_execute / echosync_core |
+| Ungated File Operation | `core/task_manager/system_jobs.py` | 1254 | `os.remove(db_file)` | Route through Gatekeeper.authorize_and_execute / echosync_core |
+| Ungated File Operation | `core/tiered_logger.py` | 69 | `os.remove(dfn)` | Route through Gatekeeper.authorize_and_execute / echosync_core |
+| Ungated File Operation | `core/tiered_logger.py` | 73 | `os.rename(sfn, dfn)` | Route through Gatekeeper.authorize_and_execute / echosync_core |
+| Ungated File Operation | `core/tiered_logger.py` | 84 | `os.remove(dfn)` | Route through Gatekeeper.authorize_and_execute / echosync_core |
+| Ungated File Operation | `core/tiered_logger.py` | 89 | `os.rename(self.baseFilename, dfn)` | Route through Gatekeeper.authorize_and_execute / echosync_core |
+| Ungated File Operation | `core/utils/file_utils.py` | 59 | `junk.unlink()` | Route through Gatekeeper.authorize_and_execute / echosync_core |
+| Ungated File Operation | `core/utils/file_utils.py` | 106 | `junk.unlink()` | Route through Gatekeeper.authorize_and_execute / echosync_core |
+| Ungated File Operation | `run_api.py` | 100 | `lock_file.unlink()` | Route through Gatekeeper.authorize_and_execute / echosync_core |
+| Ungated File Operation | `services/auto_importer.py` | 254 | `file_p.unlink(missing_ok=True)` | Route through Gatekeeper.authorize_and_execute / echosync_core |
+| Ungated File Operation | `services/download_manager.py` | 2424 | `shutil.move(str(src), str(dest))` | Route through Gatekeeper.authorize_and_execute / echosync_core |
+| Ungated File Operation | `web/routes/metadata_review.py` | 982 | `os.unlink(str(resolved_file))` | Route through Gatekeeper.authorize_and_execute / echosync_core |
+| Ungated File Operation | `web/routes/system.py` | 180 | `os.remove(tmp_path)` | Route through Gatekeeper.authorize_and_execute / echosync_core |
+| Ungated File Operation | `web/routes/system.py` | 1016 | `os.remove(db_path)` | Route through Gatekeeper.authorize_and_execute / echosync_core |

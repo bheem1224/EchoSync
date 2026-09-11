@@ -30,3 +30,6 @@ To enable instant scrobbling and playback tracking:
 
 - **Automatic Refresh:** When `Gatekeeper` imports a track into `/data/library`, EchoSync invokes Plex API `/library/sections/{id}/refresh` scoped to the updated folder path.
 - **Plex Rating Key Binding:** Remote Plex rating keys are stored in `external_identifiers` table in `library.db` with `provider_id = "plex"`.
+
+---
+*Part of the EchoSync Wiki Documentation Suite.*

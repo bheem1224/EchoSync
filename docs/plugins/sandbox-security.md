@@ -36,3 +36,6 @@ To prevent identity spoofing, EchoSync verifies plugin identity using physical f
 
 1. **Fast Track (Unprivileged Pure Python / WASM):** Automatically validated by AST scanner and published to the store.
 2. **Audit Track (Privileged / Native Code):** Mandatory manual code audit required before official store approval.
+
+---
+*Part of the EchoSync Wiki Documentation Suite.*

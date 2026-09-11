@@ -43,3 +43,6 @@ permissions:
 3. Filters results against quality profiles (`min_bitrate`, `codec`).
 4. Sends download request to `/api/v1/transfers/downloads`.
 5. `ON_DOWNLOAD_PROGRESS` hook reports status until completed.
+
+---
+*Part of the EchoSync Wiki Documentation Suite.*

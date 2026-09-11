@@ -113,3 +113,6 @@ The host UI uses `webui/src/components/DynamicPluginLoader.svelte` to fetch the 
   <svelte:element this={comp.tag_name} />
 {/each}
 ```
+
+---
+*Part of the EchoSync Wiki Documentation Suite.*

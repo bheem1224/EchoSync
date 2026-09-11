@@ -64,3 +64,6 @@ Once launched, visit `http://localhost:8000` in your web browser. Confirm the ba
 ```bash
 curl -s http://localhost:8000/api/system/health | jq
 ```
+
+---
+*Part of the EchoSync Wiki Documentation Suite.*

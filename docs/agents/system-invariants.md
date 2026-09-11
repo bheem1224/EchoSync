@@ -33,3 +33,6 @@ Autonomous coding agents (e.g. Jules, AI assistants) contributing code to EchoSy
 
 ### Rule 6: No Legacy Shims
 - When a method or pattern is deprecated, remove it completely instead of writing backward-compatibility wrapper shims.
+
+---
+*Part of the EchoSync Wiki Documentation Suite.*
