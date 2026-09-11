@@ -1269,28 +1269,42 @@ class MetadataResolutionEngine:
                     dur_delta_sec = 0.0  # Unknown duration — pass through
 
                 # Step B: Artist token filter (pre-network)
+                # Skip filter if baseline_artist is missing, empty, or generic
                 cand_artist = rec_meta.get("artist") or ""
-                if cand_artist and baseline_artist and str(baseline_artist).strip():
-                    b_art = str(baseline_artist).lower().strip()
-                    if b_art not in ("unknown", "unknown artist", "various artists", "va"):
-                        c_art = cand_artist.lower().strip()
-                        overlap = (
-                            c_art in b_art
-                            or b_art in c_art
-                            or bool(
-                                {w for w in re.findall(r"\w+", b_art) if len(w) > 2}
-                                & {w for w in re.findall(r"\w+", c_art) if len(w) > 2}
-                            )
-                            or difflib.SequenceMatcher(None, b_art, c_art).ratio() >= 0.50
+                b_art = str(baseline_artist).lower().strip() if baseline_artist else ""
+                generic_artists = {
+                    "unknown",
+                    "unknown artist",
+                    "various artists",
+                    "va",
+                    "various",
+                    "soundtrack",
+                    "ost",
+                    "various artist",
+                }
+                if cand_artist and b_art and b_art not in generic_artists and not is_generic_title(b_art):
+                    c_art = cand_artist.lower().strip()
+                    overlap = (
+                        c_art in b_art
+                        or b_art in c_art
+                        or bool(
+                            {w for w in re.findall(r"\w+", b_art) if len(w) > 2}
+                            & {w for w in re.findall(r"\w+", c_art) if len(w) > 2}
                         )
-                        if not overlap:
-                            logger.debug(
-                                "[resolution_engine] Step B DROPPED MBID %s: artist '%s' disjoint from baseline '%s'",
-                                mbid_str,
-                                cand_artist,
-                                baseline_artist,
-                            )
-                            continue
+                        or difflib.SequenceMatcher(None, b_art, c_art).ratio() >= 0.50
+                    )
+                    if not overlap:
+                        logger.debug(
+                            "[resolution_engine] Step B DROPPED MBID %s: artist '%s' disjoint from baseline '%s'",
+                            mbid_str,
+                            cand_artist,
+                            baseline_artist,
+                        )
+                        continue
+
+                # Candidate AcoustID match score (normalized 0.0 - 1.0)
+                raw_score = float(rec_meta.get("score") or 0.0)
+                cand_acoustid_score = raw_score / 100.0 if raw_score > 1.0 else raw_score
 
                 # Step C: Fast in-memory title check against filename stem
                 cand_title = str(rec_meta.get("title") or "").strip()
@@ -1304,8 +1318,13 @@ class MetadataResolutionEngine:
                     if fn_tokens and c_tokens:
                         common_tokens = fn_tokens & c_tokens
                         if not common_tokens:
-                            # Completely disjoint titles sharing no significant words
-                            sim = min(sim, 0.15)
+                            # Disjoint titles sharing no significant words:
+                            # If acoustic match is high-confidence (score >= 0.95 and duration delta <= 1.0s),
+                            # do NOT cap at 0.15; assign a minimum baseline acoustic confidence floor of 0.65.
+                            if cand_acoustid_score >= 0.95 and dur_delta_sec <= 1.0:
+                                sim = max(sim, 0.65)
+                            else:
+                                sim = min(sim, 0.15)
                         else:
                             token_overlap = len(common_tokens) / max(len(fn_tokens), len(c_tokens))
                             sim = max(sim, token_overlap)
@@ -1326,10 +1345,7 @@ class MetadataResolutionEngine:
                     sim = 0.50  # Neutral similarity for untagged candidates or generic filenames
 
                 # Ranking score: 80% title similarity + 20% AcoustID cluster score
-                cand_score = float(rec_meta.get("score") or 0.0)
-                if cand_score > 1.0:
-                    cand_score /= 100.0
-                pre_rank_score = (sim * 0.8) + (cand_score * 0.2)
+                pre_rank_score = (sim * 0.8) + (cand_acoustid_score * 0.2)
 
                 viable_candidates.append((mbid_str, pre_rank_score, dur_delta_sec, sim))
 

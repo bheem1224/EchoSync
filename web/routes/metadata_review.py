@@ -251,6 +251,7 @@ def _serialize_task(
         "file_path": task.file_path,
         "media_id": task.file_path,
         "detected_metadata": detected,
+        "proposed_metadata": detected,
         "current_metadata": current_metadata if current_metadata is not None else _read_current_metadata(task),
         "proposed_artist": artist_val or "Unknown Artist",
         "proposed_title": title_val or "Unknown Title",

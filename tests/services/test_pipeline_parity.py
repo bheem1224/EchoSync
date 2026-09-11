@@ -1,7 +1,5 @@
-from pathlib import Path
 from unittest.mock import MagicMock
 
-from core.db.echo_sync_track import EchosyncTrack
 from core.enums import Capability
 from core.matching_engine.fingerprinting import FingerprintGenerator
 from core.metadata.engine import MetadataResolutionEngine
@@ -353,3 +351,36 @@ def test_musicbrainz_http_call_count_capped_on_clear_match(tmp_path, monkeypatch
     assert result.musicbrainz_track_id == "mbid_radioactive_canon"
     # Crucial assertion: HTTP call count <= 1 when clear filename match exists
     assert len(mb_calls) == 1, f"Expected <= 1 MusicBrainz call, but got {len(mb_calls)}: {mb_calls}"
+
+
+def test_review_task_to_dict_includes_proposed_and_detected_metadata():
+    """Verify that ReviewTask.to_dict() correctly maps both detected_metadata and
+    proposed_metadata properties so FastAPI responses preserve both keys.
+    """
+    from database.working_database import ReviewTask
+
+    task = ReviewTask(
+        id=42,
+        file_path="/music/Track 01.flac",
+        track_data={
+            "title": "Song Title",
+            "artist": "Artist Name",
+            "album": "Album Title",
+            "release_year": 2024,
+            "mbid": "mbid_12345",
+        },
+        status="pending",
+        confidence_score=0.92,
+    )
+
+    d = task.to_dict()
+
+    assert d["id"] == 42
+    assert d["file_path"] == "/music/Track 01.flac"
+    assert d["media_id"] == "/music/Track 01.flac"
+    assert "detected_metadata" in d
+    assert "proposed_metadata" in d
+    assert d["detected_metadata"]["title"] == "Song Title"
+    assert d["proposed_metadata"]["title"] == "Song Title"
+    assert d["proposed_metadata"]["musicbrainz_id"] == "mbid_12345"
+    assert d["confidence_score"] == 0.92

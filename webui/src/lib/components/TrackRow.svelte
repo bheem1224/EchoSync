@@ -67,13 +67,13 @@
 </script>
 
 <svelte:window
-  on:click={handleClickOutside}
-  on:contextmenu={handleClickOutside}
+  onclick={handleClickOutside}
+  oncontextmenu={handleClickOutside}
 />
 
 <div
   class="track-row group hover:bg-white/5 rounded-md px-3 py-2 grid grid-cols-[40px_2fr_1fr_1fr_auto_60px_auto] items-center gap-2 transition-colors relative cursor-pointer"
-  on:contextmenu={handleContextMenu}
+  oncontextmenu={handleContextMenu}
   role="row"
   tabindex="0"
 >
@@ -85,7 +85,7 @@
   <a
     href="/library/artists/{track.artist_id}"
     class="text-gray-400 text-xs hover:text-blue-400 hover:underline truncate"
-    on:click|stopPropagation
+    onclick={(e) => e.stopPropagation()}
   >
     {track.artist_name || artist?.name || "Artist"}
   </a>
@@ -93,7 +93,7 @@
   <a
     href="/library/albums/{track.album_id}"
     class="text-gray-400 text-xs hover:text-blue-400 hover:underline truncate"
-    on:click|stopPropagation
+    onclick={(e) => e.stopPropagation()}
   >
     {track.album_title || album?.title || "Album"}
   </a>
@@ -159,7 +159,10 @@
   >
     <button
       class="p-1.5 rounded-full hover:bg-blue-500/20 text-blue-400 transition-colors active:scale-95"
-      on:click|stopPropagation={() => handleAction("play")}
+      onclick={(e) => {
+        e.stopPropagation();
+        handleAction("play");
+      }}
       title="Play"
     >
       <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"
@@ -170,7 +173,10 @@
     <div class="relative menu-container z-50">
       <button
         class="p-1.5 rounded-full hover:bg-gray-700 text-gray-400 hover:text-white transition-colors active:scale-95"
-        on:click|stopPropagation={toggleMenu}
+        onclick={(e) => {
+          e.stopPropagation();
+          toggleMenu();
+        }}
         title="Options"
       >
         <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"
@@ -186,32 +192,32 @@
         >
           <button
             class="w-full text-left px-4 py-2 hover:bg-gray-700 text-blue-400 flex items-center gap-2 active:scale-95 transition-all duration-200"
-            on:click={() => handleAction("play")}
+            onclick={() => handleAction("play")}
           >
             <span>▶️</span> Play
           </button>
           <button
             class="w-full text-left px-4 py-2 hover:bg-gray-700 text-white flex items-center gap-2 active:scale-95 transition-all duration-200"
-            on:click={() => handleAction("metadata")}
+            onclick={() => handleAction("metadata")}
           >
             <span>✏️</span> Edit Metadata
           </button>
           <button
             class="w-full text-left px-4 py-2 hover:bg-gray-700 text-blue-300 flex items-center gap-2 active:scale-95 transition-all duration-200"
-            on:click={() => handleAction("upgrade")}
+            onclick={() => handleAction("upgrade")}
           >
             <span>⬆️</span> Force Upgrade
           </button>
           <div class="border-t border-gray-700 my-1"></div>
           <button
             class="w-full text-left px-4 py-2 hover:bg-red-900/50 text-red-400 flex items-center gap-2 active:scale-95 transition-all duration-200"
-            on:click={() => handleAction("delete")}
+            onclick={() => handleAction("delete")}
           >
             <span>🗑️</span> Delete
           </button>
           <button
             class="w-full text-left px-4 py-2 hover:bg-red-900/50 text-red-500 flex items-center gap-2 active:scale-95 transition-all duration-200"
-            on:click={() => handleAction("force_delete")}
+            onclick={() => handleAction("force_delete")}
           >
             <span>⚠️</span> Force System Delete
           </button>
@@ -228,32 +234,32 @@
   >
     <button
       class="w-full text-left px-4 py-2 hover:bg-gray-700 text-blue-400 flex items-center gap-2 active:scale-95 transition-all duration-200"
-      on:click={() => handleAction("play")}
+      onclick={() => handleAction("play")}
     >
       <span>▶️</span> Play
     </button>
     <button
       class="w-full text-left px-4 py-2 hover:bg-gray-700 text-white flex items-center gap-2 active:scale-95 transition-all duration-200"
-      on:click={() => handleAction("metadata")}
+      onclick={() => handleAction("metadata")}
     >
       <span>✏️</span> Edit Metadata
     </button>
     <button
       class="w-full text-left px-4 py-2 hover:bg-gray-700 text-blue-300 flex items-center gap-2 active:scale-95 transition-all duration-200"
-      on:click={() => handleAction("upgrade")}
+      onclick={() => handleAction("upgrade")}
     >
       <span>⬆️</span> Force Upgrade
     </button>
     <div class="border-t border-gray-700 my-1"></div>
     <button
       class="w-full text-left px-4 py-2 hover:bg-red-900/50 text-red-400 flex items-center gap-2 active:scale-95 transition-all duration-200"
-      on:click={() => handleAction("delete")}
+      onclick={() => handleAction("delete")}
     >
       <span>🗑️</span> Delete
     </button>
     <button
       class="w-full text-left px-4 py-2 hover:bg-red-900/50 text-red-500 flex items-center gap-2 active:scale-95 transition-all duration-200"
-      on:click={() => handleAction("force_delete")}
+      onclick={() => handleAction("force_delete")}
     >
       <span>⚠️</span> Force System Delete
     </button>
