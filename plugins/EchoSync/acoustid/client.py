@@ -131,14 +131,14 @@ class AcoustIDProvider(PluginBase):
             return {"acoustid_id": None, "mbids": [], "score": None, "match_status": "UNRESOLVED"}
         payload = {
             "client": api_key,
-            "meta": "recordings+tracks",
-            "fingerprint": fingerprint.strip(),
+            "meta": "recordings recordingids releases releasegroups tracks compress",
             "duration": duration_int,
+            "fingerprint": fingerprint.strip(),
         }
 
         try:
             logger.debug(
-                f"AcoustID payload: fingerprint_len={len(fingerprint)}, duration={duration}, api_key_len={len(api_key)}"
+                f"AcoustID payload: fingerprint_len={len(fingerprint)}, duration={duration_int}, api_key_len={len(api_key)}"
             )
             response = self.http.post(f"{self.api_base}/lookup", data=payload)
 
@@ -184,39 +184,48 @@ class AcoustIDProvider(PluginBase):
                 for recording in result.get("recordings", []) or []:
                     if not isinstance(recording, dict):
                         continue
-                    mbid = str(recording.get("id") or "").strip()
-                    if mbid and mbid not in seen_mbid:
-                        seen_mbid.add(mbid)
-                        mbids.append(mbid)
+                    rec_id = str(recording.get("id") or "").strip()
+                    if rec_id and rec_id not in seen_mbid:
+                        seen_mbid.add(rec_id)
+                        mbids.append(rec_id)
 
-                        # Robust artist extraction: joined array > "artist" field fallback
-                        artist_names = []
-                        for a in recording.get("artists", []) or []:
-                            if isinstance(a, dict) and a.get("name"):
-                                artist_names.append(str(a["name"]))
-                        if artist_names:
-                            artist_str: str | None = ", ".join(artist_names)
-                        else:
-                            # Tertiary fallback: bare "artist" string (non-standard responses)
-                            artist_str = recording.get("artist") or None
+                    # Robust artist extraction: joined array > "artist" field fallback
+                    artist_names = []
+                    for a in recording.get("artists", []) or []:
+                        if isinstance(a, dict) and a.get("name"):
+                            artist_names.append(str(a["name"]))
+                        elif isinstance(a, str) and a.strip():
+                            artist_names.append(a.strip())
+                    if artist_names:
+                        artist_str: str | None = ", ".join(artist_names)
+                    else:
+                        # Tertiary fallback: bare "artist" string (non-standard responses)
+                        artist_str = recording.get("artist") or None
 
-                        # Guarantee duration is always present (as float or None) for pre-filtering
-                        raw_duration = recording.get("duration")
-                        try:
-                            duration_val: float | None = float(raw_duration) if raw_duration is not None else None
-                        except (ValueError, TypeError):
-                            duration_val = None
+                    # Guarantee duration is always present (as float or None) for pre-filtering
+                    raw_duration = recording.get("duration")
+                    try:
+                        duration_val: float | None = float(raw_duration) if raw_duration is not None else None
+                    except (ValueError, TypeError):
+                        duration_val = None
 
-                        recordings_list.append(
-                            {
-                                "id": mbid,
-                                "title": recording.get("title"),
-                                "artist": artist_str,
-                                "artists": artist_names,
-                                "duration": duration_val,
-                                "score": score,
-                            }
-                        )
+                    recordings_list.append(
+                        {
+                            "id": rec_id or recording.get("id"),
+                            "title": recording.get("title"),
+                            "artist": artist_str,
+                            "artists": artist_names,
+                            "duration": duration_val,
+                            "score": score,
+                        }
+                    )
+
+                # Also collect any bare recordingids if present
+                for rid in result.get("recordingids", []) or []:
+                    rid_s = str(rid).strip()
+                    if rid_s and rid_s not in seen_mbid:
+                        seen_mbid.add(rid_s)
+                        mbids.append(rid_s)
 
             acoustid_id = None
             if isinstance(best_result, dict):

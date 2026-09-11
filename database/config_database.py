@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import os
 import re
 import sqlite3
 import threading
@@ -60,9 +61,7 @@ class ConfigDatabase:
                     conn.execute("VACUUM")
                     conn.execute("REINDEX")
                     conn.close()
-                    logger.info(
-                        "Automatic database recovery completed successfully. Retrying schema initialization..."
-                    )
+                    logger.info("Automatic database recovery completed successfully. Retrying schema initialization...")
                     self._ensure_schema_once(force=True)
                 except Exception as ree:
                     logger.error(f"Automatic database recovery failed: {ree}")
@@ -76,19 +75,11 @@ class ConfigDatabase:
         except Exception:
             path_key = str(self.database_path)
 
-        if (
-            not force
-            and ConfigDatabase._schema_initialized
-            and path_key in ConfigDatabase._initialized_paths
-        ):
+        if not force and ConfigDatabase._schema_initialized and path_key in ConfigDatabase._initialized_paths:
             return
 
         with ConfigDatabase._schema_lock:
-            if (
-                not force
-                and ConfigDatabase._schema_initialized
-                and path_key in ConfigDatabase._initialized_paths
-            ):
+            if not force and ConfigDatabase._schema_initialized and path_key in ConfigDatabase._initialized_paths:
                 return
             self._run_schema_migrations()
             ConfigDatabase._initialized_paths.add(path_key)
@@ -145,9 +136,7 @@ class ConfigDatabase:
 
                     if "account_tokens" in broken_tables:
                         logger.warning("Healing corrupted account_tokens schema...")
-                        cursor.execute(
-                            "CREATE TABLE account_tokens_backup AS SELECT * FROM account_tokens"
-                        )
+                        cursor.execute("CREATE TABLE account_tokens_backup AS SELECT * FROM account_tokens")
                         cursor.execute("DROP TABLE account_tokens")
                         cursor.execute("""
                             CREATE TABLE account_tokens (
@@ -163,17 +152,13 @@ class ConfigDatabase:
                                 FOREIGN KEY(account_id) REFERENCES accounts(id) ON DELETE CASCADE
                             )
                         """)
-                        cursor.execute(
-                            "INSERT INTO account_tokens SELECT * FROM account_tokens_backup"
-                        )
+                        cursor.execute("INSERT INTO account_tokens SELECT * FROM account_tokens_backup")
                         cursor.execute("DROP TABLE account_tokens_backup")
                         logger.info("Successfully healed account_tokens schema.")
 
                     if "account_mappings" in broken_tables:
                         logger.warning("Healing corrupted account_mappings schema...")
-                        cursor.execute(
-                            "CREATE TABLE account_mappings_backup AS SELECT * FROM account_mappings"
-                        )
+                        cursor.execute("CREATE TABLE account_mappings_backup AS SELECT * FROM account_mappings")
                         cursor.execute("DROP TABLE account_mappings")
                         cursor.execute("""
                             CREATE TABLE account_mappings (
@@ -187,9 +172,7 @@ class ConfigDatabase:
                                 FOREIGN KEY(mapped_account_id) REFERENCES accounts(id) ON DELETE CASCADE
                             )
                         """)
-                        cursor.execute(
-                            "INSERT INTO account_mappings SELECT * FROM account_mappings_backup"
-                        )
+                        cursor.execute("INSERT INTO account_mappings SELECT * FROM account_mappings_backup")
                         cursor.execute("DROP TABLE account_mappings_backup")
                         logger.info("Successfully healed account_mappings schema.")
 
@@ -204,26 +187,16 @@ class ConfigDatabase:
                     cursor.execute(f"DROP {t_row[0].upper()} IF EXISTS {t_row[1]}")
 
                 # Check if services table exists and has UNIQUE name constraint
-                cursor.execute(
-                    "SELECT sql FROM sqlite_master WHERE type='table' AND name='services'"
-                )
+                cursor.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='services'")
                 row = cursor.fetchone()
                 has_unique_name = False
                 if row:
                     sql_str = row[0]
-                    col_unique = (
-                        re.search(r"\bname\b[^,]*\bunique\b", sql_str, re.IGNORECASE)
-                        is not None
-                    )
-                    table_unique = (
-                        re.search(r"\bunique\s*\(\s*name\s*\)", sql_str, re.IGNORECASE)
-                        is not None
-                    )
+                    col_unique = re.search(r"\bname\b[^,]*\bunique\b", sql_str, re.IGNORECASE) is not None
+                    table_unique = re.search(r"\bunique\s*\(\s*name\s*\)", sql_str, re.IGNORECASE) is not None
                     has_unique_name = col_unique or table_unique
                 if has_unique_name:
-                    logger.info(
-                        "Migrating services table to remove UNIQUE constraint from name column..."
-                    )
+                    logger.info("Migrating services table to remove UNIQUE constraint from name column...")
                     try:
                         cursor.connection.commit()
                         cursor.execute("PRAGMA foreign_keys = OFF")
@@ -264,27 +237,17 @@ class ConfigDatabase:
                             FROM services_old
                         """)
                         cursor.execute("DROP TABLE services_old")
-                        logger.info(
-                            "Successfully migrated services table (removed UNIQUE constraint on name)"
-                        )
+                        logger.info("Successfully migrated services table (removed UNIQUE constraint on name)")
                     except Exception as me:
-                        logger.error(
-                            f"Failed to migrate services table (UNIQUE removal): {me}"
-                        )
+                        logger.error(f"Failed to migrate services table (UNIQUE removal): {me}")
                         # Safe fallback recovery
                         try:
-                            cursor.execute(
-                                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='services_old'"
-                            )
+                            cursor.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='services_old'")
                             has_old = cursor.fetchone() is not None
-                            cursor.execute(
-                                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='services'"
-                            )
+                            cursor.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='services'")
                             has_new = cursor.fetchone() is not None
                             if has_old and not has_new:
-                                cursor.execute(
-                                    "ALTER TABLE services_old RENAME TO services"
-                                )
+                                cursor.execute("ALTER TABLE services_old RENAME TO services")
                             elif has_old and has_new:
                                 cursor.execute("DROP TABLE services_old")
                         except Exception as fe:
@@ -451,43 +414,27 @@ class ConfigDatabase:
                 cursor.execute("PRAGMA table_info(services)")
                 columns = [row[1] for row in cursor.fetchall()]
                 if "absolute_install_path" not in columns:
-                    cursor.execute(
-                        "ALTER TABLE services ADD COLUMN absolute_install_path TEXT"
-                    )
+                    cursor.execute("ALTER TABLE services ADD COLUMN absolute_install_path TEXT")
                 if "loaded_modules" not in columns:
-                    cursor.execute(
-                        "ALTER TABLE services ADD COLUMN loaded_modules TEXT"
-                    )
+                    cursor.execute("ALTER TABLE services ADD COLUMN loaded_modules TEXT")
                 if "plugin_id" not in columns:
                     cursor.execute("ALTER TABLE services ADD COLUMN plugin_id INTEGER")
                 if "version" not in columns:
                     cursor.execute("ALTER TABLE services ADD COLUMN version TEXT")
                 if "capabilities" not in columns:
-                    cursor.execute(
-                        "ALTER TABLE services ADD COLUMN capabilities TEXT DEFAULT '{}'"
-                    )
+                    cursor.execute("ALTER TABLE services ADD COLUMN capabilities TEXT DEFAULT '{}'")
 
                 # Cleanup: Drop deprecated tables
                 cursor.execute("DROP TABLE IF EXISTS accounts_metadata")
                 cursor.execute("DROP TABLE IF EXISTS config_kvs")
 
                 # Indexes
-                cursor.execute(
-                    "CREATE INDEX IF NOT EXISTS idx_services_name ON services(name)"
-                )
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_services_name ON services(name)")
 
-                cursor.execute(
-                    "CREATE INDEX IF NOT EXISTS idx_services_plugin_id ON services(plugin_id)"
-                )
-                cursor.execute(
-                    "CREATE INDEX IF NOT EXISTS idx_accounts_service ON accounts(service_id)"
-                )
-                cursor.execute(
-                    "CREATE INDEX IF NOT EXISTS idx_tokens_account ON account_tokens(account_id)"
-                )
-                cursor.execute(
-                    "CREATE INDEX IF NOT EXISTS idx_pkce_expires ON pkce_sessions(expires_at)"
-                )
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_services_plugin_id ON services(plugin_id)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_accounts_service ON accounts(service_id)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_tokens_account ON account_tokens(account_id)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_pkce_expires ON pkce_sessions(expires_at)")
                 cursor.execute(
                     "CREATE INDEX IF NOT EXISTS idx_account_mappings_source ON account_mappings(source_account_id)"
                 )
@@ -500,9 +447,7 @@ class ConfigDatabase:
                 cursor.execute(
                     "CREATE INDEX IF NOT EXISTS idx_plugin_snapshots_expires ON plugin_snapshots(expires_at)"
                 )
-                cursor.execute(
-                    "CREATE INDEX IF NOT EXISTS idx_ui_components_plugin_id ON ui_components(plugin_id)"
-                )
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_ui_components_plugin_id ON ui_components(plugin_id)")
                 cursor.execute(
                     "CREATE INDEX IF NOT EXISTS idx_ui_components_component_type ON ui_components(component_type)"
                 )
@@ -542,12 +487,7 @@ class ConfigDatabase:
                                         resolved_plugin_id_str = p_folder.split("/")[-1]
                                         resolved_version = p.get("version", "1.0.0")
                                         break
-                                plugin_id_int = (
-                                    binascii.crc32(
-                                        resolved_plugin_id_str.encode("utf-8")
-                                    )
-                                    & 0xFFFFFFFF
-                                )
+                                plugin_id_int = binascii.crc32(resolved_plugin_id_str.encode("utf-8")) & 0xFFFFFFFF
                                 cursor.execute(
                                     "UPDATE services SET plugin_id = ? WHERE id = ?",
                                     (plugin_id_int, s_id),
@@ -560,9 +500,7 @@ class ConfigDatabase:
 
             # Run schema creation and inline migrations on writer thread to avoid concurrent-writes
             execute_write(str(self.database_path), _schema)
-            logger.debug(
-                "[system] - Config database schema ensured and legacy services migrated"
-            )
+            logger.debug("[system] - Config database schema ensured and legacy services migrated")
             self.seed_default_system_settings()
         except Exception as e:
             logger.error(f"Failed to initialize config schema: {e}", exc_info=True)
@@ -617,9 +555,7 @@ class ConfigDatabase:
                 plugins_root = os.path.abspath(
                     os.path.realpath(str(Path(config_manager.get_plugins_dir()) / "EchoSync"))
                 )
-                bundle_path = os.path.abspath(
-                    os.path.realpath(os.path.join(plugins_root, plugin_name))
-                )
+                bundle_path = os.path.abspath(os.path.realpath(os.path.join(plugins_root, plugin_name)))
                 if os.path.commonpath([bundle_path, plugins_root]) == plugins_root:
                     if os.path.isdir(bundle_path):
                         resolved_plugin_id_str = name
@@ -628,10 +564,7 @@ class ConfigDatabase:
                         is_matched = True
 
         if name.lower() == "system" or is_matched:
-            plugin_id_int = (
-                binascii.crc32(resolved_plugin_id_str.lower().encode("utf-8"))
-                & 0xFFFFFFFF
-            )
+            plugin_id_int = binascii.crc32(resolved_plugin_id_str.lower().encode("utf-8")) & 0xFFFFFFFF
             self.register_service(
                 resolved_plugin_id_str,
                 "streaming",
@@ -646,9 +579,7 @@ class ConfigDatabase:
             if existing_id:
                 return existing_id
         else:
-            logger.debug(
-                f"Service '{name}' is not physically installed or core. Not registering."
-            )
+            logger.debug(f"Service '{name}' is not physically installed or core. Not registering.")
 
         return 0
 
@@ -721,9 +652,7 @@ class ConfigDatabase:
 
         return 0
 
-    def set_service_config(
-        self, service_id: int, key: str, value: Any, is_sensitive: bool = False
-    ) -> bool:
+    def set_service_config(self, service_id: int, key: str, value: Any, is_sensitive: bool = False) -> bool:
         try:
             import json
 
@@ -735,9 +664,7 @@ class ConfigDatabase:
                 service_id = resolved_id
 
             if not service_id:
-                logger.warning(
-                    f"Cannot set service config for unknown service: {service_id}"
-                )
+                logger.warning(f"Cannot set service config for unknown service: {service_id}")
                 return False
 
             if isinstance(value, (list, dict)):
@@ -789,9 +716,7 @@ class ConfigDatabase:
 
                     value = decrypt_string(value)
 
-                if isinstance(value, str) and (
-                    value.startswith("[") or value.startswith("{")
-                ):
+                if isinstance(value, str) and (value.startswith("[") or value.startswith("{")):
                     try:
                         value = json.loads(value)
                     except json.JSONDecodeError:
@@ -831,9 +756,7 @@ class ConfigDatabase:
                         except Exception:
                             pass
 
-                    if isinstance(value, str) and (
-                        value.startswith("[") or value.startswith("{")
-                    ):
+                    if isinstance(value, str) and (value.startswith("[") or value.startswith("{")):
                         try:
                             value = json.loads(value)
                         except json.JSONDecodeError:
@@ -882,18 +805,14 @@ class ConfigDatabase:
             # 2. Check canonical variations & CRC32
             import binascii
 
-            clean_name = (
-                id_str.lower().replace("echosync.", "").replace("echosync/", "").strip()
-            )
+            clean_name = id_str.lower().replace("echosync.", "").replace("echosync/", "").strip()
             variations = {
                 id_str.lower(),
                 clean_name,
                 f"echosync.{clean_name}",
                 f"echosync/{clean_name}",
             }
-            crc_list = [
-                binascii.crc32(v.encode("utf-8")) & 0xFFFFFFFF for v in variations
-            ]
+            crc_list = [binascii.crc32(v.encode("utf-8")) & 0xFFFFFFFF for v in variations]
 
             placeholders = ",".join("?" * len(crc_list))
             name_placeholders = ",".join("?" * len(variations))
@@ -917,17 +836,11 @@ class ConfigDatabase:
                     .replace(" ", "_")
                     .replace("-", "_")
                 )
-                if (
-                    row_name == norm_name
-                    or row_name.endswith(f".{norm_name}")
-                    or norm_name.endswith(f".{row_name}")
-                ):
+                if row_name == norm_name or row_name.endswith(f".{norm_name}") or norm_name.endswith(f".{row_name}"):
                     return int(r["id"])
             return None
 
-    def get_accounts(
-        self, service_id: int | None = None, is_active: bool | None = None
-    ) -> list[dict[str, Any]]:
+    def get_accounts(self, service_id: int | None = None, is_active: bool | None = None) -> list[dict[str, Any]]:
         try:
             with self._get_connection() as conn:
                 c = conn.cursor()
@@ -1103,9 +1016,7 @@ class ConfigDatabase:
             logger.error(f"Error upserting account: {e}")
             return int(account_id) if account_id is not None else 0
 
-    def set_active_account(
-        self, service_id: int, account_id: int, exclusive: bool = True
-    ) -> bool:
+    def set_active_account(self, service_id: int, account_id: int, exclusive: bool = True) -> bool:
         """Set an account as active.
 
         Args:
@@ -1279,9 +1190,7 @@ class ConfigDatabase:
                 if not row:
                     return None
 
-                access_token, refresh_token, token_type, expires_at, scope, provider = (
-                    row
-                )
+                access_token, refresh_token, token_type, expires_at, scope, provider = row
                 from core.security import decrypt_string
 
                 if access_token:
@@ -1412,9 +1321,7 @@ class ConfigDatabase:
                 try:
                     return json.loads(row[0])
                 except (json.JSONDecodeError, TypeError):
-                    logger.warning(
-                        "Invalid download_provider_priority format, returning default"
-                    )
+                    logger.warning("Invalid download_provider_priority format, returning default")
                     return []
         except Exception as e:
             logger.error(f"Error getting download provider priority: {e}")
@@ -1548,14 +1455,10 @@ class ConfigDatabase:
             )
             logger.info(f"Purged all account mappings involving account {account_id}")
         except Exception as e:
-            logger.error(
-                f"Error purging account mappings for account {account_id}: {e}"
-            )
+            logger.error(f"Error purging account mappings for account {account_id}: {e}")
 
     # ── Plugin Snapshot Helpers ──────────────────────────────────────────
-    def create_plugin_snapshot(
-        self, plugin_id: int, snapshot_data: str, ttl_hours: int = 24
-    ) -> bool:
+    def create_plugin_snapshot(self, plugin_id: int, snapshot_data: str, ttl_hours: int = 24) -> bool:
         try:
             expires_at = int(time.time()) + (ttl_hours * 3600)
             execute_write_sql(
@@ -1753,9 +1656,7 @@ class ConfigDatabase:
                 if not profiles_map:
                     return []
 
-                c.execute(
-                    "SELECT profile_id, priority, rules FROM quality_profile_steps ORDER BY priority ASC"
-                )
+                c.execute("SELECT profile_id, priority, rules FROM quality_profile_steps ORDER BY priority ASC")
                 for row in c.fetchall():
                     pid, priority, rules_raw = str(row[0]), row[1], row[2]
                     if pid not in profiles_map:
@@ -1771,19 +1672,9 @@ class ConfigDatabase:
                             rules = rules_raw
 
                     # If rules contains advanced_filters metadata
-                    if (
-                        isinstance(rules, dict)
-                        and "advanced_filters" in rules
-                        and len(rules) == 1
-                    ):
-                        profiles_map[pid]["advanced_filters"] = rules[
-                            "advanced_filters"
-                        ]
-                    elif (
-                        isinstance(rules, dict)
-                        and "formats" in rules
-                        and len(rules) == 1
-                    ):
+                    if isinstance(rules, dict) and "advanced_filters" in rules and len(rules) == 1:
+                        profiles_map[pid]["advanced_filters"] = rules["advanced_filters"]
+                    elif isinstance(rules, dict) and "formats" in rules and len(rules) == 1:
                         profiles_map[pid]["formats"] = rules["formats"]
                     else:
                         profiles_map[pid]["formats"].append(rules)
@@ -1807,9 +1698,7 @@ class ConfigDatabase:
         """Upsert a single quality profile and its step hierarchy."""
         return self.set_quality_profiles([profile], overwrite_all=False)
 
-    def set_quality_profiles(
-        self, profiles: list[dict[str, Any]], overwrite_all: bool = True
-    ) -> bool:
+    def set_quality_profiles(self, profiles: list[dict[str, Any]], overwrite_all: bool = True) -> bool:
         """Persist quality profiles and steps relationally into quality_profiles and quality_profile_steps."""
         try:
             import json
@@ -1831,9 +1720,7 @@ class ConfigDatabase:
                             "DELETE FROM quality_profile_steps WHERE profile_id = ?",
                             (pid,),
                         )
-                        cursor.execute(
-                            "DELETE FROM quality_profiles WHERE id = ?", (pid,)
-                        )
+                        cursor.execute("DELETE FROM quality_profiles WHERE id = ?", (pid,))
 
                     cursor.execute(
                         "INSERT INTO quality_profiles (id, name, prefer_max_quality) VALUES (?, ?, ?)",
@@ -1850,9 +1737,7 @@ class ConfigDatabase:
 
                     # Store advanced_filters if provided
                     if p.get("advanced_filters"):
-                        adv_rules = json.dumps(
-                            {"advanced_filters": p["advanced_filters"]}
-                        )
+                        adv_rules = json.dumps({"advanced_filters": p["advanced_filters"]})
                         cursor.execute(
                             "INSERT INTO quality_profile_steps (profile_id, priority, rules) VALUES (?, ?, ?)",
                             (pid, 9999, adv_rules),

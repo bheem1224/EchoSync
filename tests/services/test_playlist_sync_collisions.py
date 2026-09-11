@@ -17,9 +17,7 @@ def test_resolve_duplicate_matches_winner_take_all_and_relegation():
             "match_score": 95.0,
             "library_match": "Found",
             "target_identifier": "plex://123",
-            "candidate_matches": [
-                {"id": 8149, "score": 95.0, "target_identifier": "plex://123"}
-            ],
+            "candidate_matches": [{"id": 8149, "score": 95.0, "target_identifier": "plex://123"}],
         },
         {
             "title": "Rewrite The Stars",
@@ -28,9 +26,7 @@ def test_resolve_duplicate_matches_winner_take_all_and_relegation():
             "match_score": 75.0,
             "library_match": "Found (score: 75%)",
             "target_identifier": "plex://123",
-            "candidate_matches": [
-                {"id": 8149, "score": 75.0, "target_identifier": "plex://123"}
-            ],
+            "candidate_matches": [{"id": 8149, "score": 75.0, "target_identifier": "plex://123"}],
         },
     ]
 
@@ -60,9 +56,7 @@ def test_resolve_duplicate_matches_fallback_to_second_candidate():
             "match_score": 92.0,
             "library_match": "Found",
             "target_identifier": "plex://100",
-            "candidate_matches": [
-                {"id": 100, "score": 92.0, "target_identifier": "plex://100"}
-            ],
+            "candidate_matches": [{"id": 100, "score": 92.0, "target_identifier": "plex://100"}],
         },
         {
             "title": "Song A",
@@ -141,9 +135,7 @@ def test_version_family_extraction_karaoke_and_sea_shanty():
     assert get_version_family("Karaoke Version") == "karaoke"
     assert get_version_family("Sea Shanty") == "sea_shanty"
     assert get_version_family("Wellerman (Sea Shanty)") == "sea_shanty"
-    assert (
-        get_version_family("Acoustic Version") == "piano"
-    )  # grouped under acoustic/piano
+    assert get_version_family("Acoustic Version") == "piano"  # grouped under acoustic/piano
 
 
 def test_wellerman_sea_shanty_version_equivalence():
@@ -167,10 +159,7 @@ def test_wellerman_sea_shanty_version_equivalence():
     result = engine.calculate_match(source, candidate)
     assert result.passed_version_check is True
     assert result.confidence_score >= 85.0
-    assert (
-        "Subtitle descriptor equivalence" in result.reasoning
-        or result.version_penalty_applied == 0.0
-    )
+    assert "Subtitle descriptor equivalence" in result.reasoning or result.version_penalty_applied == 0.0
 
 
 def test_tier2_escalation_blocked_on_distinct_artist_cover():
@@ -398,9 +387,7 @@ def test_tier2_evaluates_only_new_candidates():
         ),
     ]
 
-    tier2_candidates = filter_unevaluated_candidates(
-        tier2_raw_candidates, evaluated_candidate_ids
-    )
+    tier2_candidates = filter_unevaluated_candidates(tier2_raw_candidates, evaluated_candidate_ids)
     assert len(tier2_candidates) == 1
     assert tier2_candidates[0][0] == 102
 
@@ -724,11 +711,7 @@ def test_ingestion_remixer_extraction_to_junction(tmp_path):
         assert mellen is not None
         assert tommee is not None
 
-        remixer_links = (
-            session.query(TrackArtist)
-            .filter_by(track_id=db_track.id, role="remixer")
-            .all()
-        )
+        remixer_links = session.query(TrackArtist).filter_by(track_id=db_track.id, role="remixer").all()
         remixer_artist_ids = {link.artist_id for link in remixer_links}
         assert mellen.id in remixer_artist_ids
         assert tommee.id in remixer_artist_ids
@@ -782,11 +765,7 @@ def test_unidentifiable_file_ejection_and_cascade_purge(tmp_path, monkeypatch):
     monkeypatch.setattr(
         config_manager,
         "get",
-        lambda k: (
-            str(lib_dir)
-            if "library_dir" in k
-            else (str(dl_dir) if "download_dir" in k else orig_get(k))
-        ),
+        lambda k: str(lib_dir) if "library_dir" in k else (str(dl_dir) if "download_dir" in k else orig_get(k)),
     )
 
     # Seed the DB with a record pointing to bad_file to test cascade purge
@@ -826,9 +805,7 @@ def test_unidentifiable_file_ejection_and_cascade_purge(tmp_path, monkeypatch):
         assert session.query(Track).count() == 0
 
 
-def test_tightened_ejection_preserves_valid_tagged_and_inferred_tracks(
-    tmp_path, monkeypatch
-):
+def test_tightened_ejection_preserves_valid_tagged_and_inferred_tracks(tmp_path, monkeypatch):
     """Verify tracks with valid tags or filename structure (e.g. Bobby McFerrin) are NOT ejected to quarantine."""
     import echosync_core
 
@@ -886,11 +863,7 @@ def test_tightened_ejection_preserves_valid_tagged_and_inferred_tracks(
     monkeypatch.setattr(
         config_manager,
         "get",
-        lambda k: (
-            str(lib_dir)
-            if "library_dir" in k
-            else (str(dl_dir) if "download_dir" in k else orig_get(k))
-        ),
+        lambda k: str(lib_dir) if "library_dir" in k else (str(dl_dir) if "download_dir" in k else orig_get(k)),
     )
 
     service = LibrarySyncService(database_path=str(db_file))
@@ -927,11 +900,7 @@ def test_library_sync_and_auto_importer_mutual_exclusion_lock(tmp_path, monkeypa
     monkeypatch.setattr(
         config_manager,
         "get",
-        lambda k: (
-            str(lib_dir)
-            if "library_dir" in k
-            else (str(dl_dir) if "download_dir" in k else orig_get(k))
-        ),
+        lambda k: str(lib_dir) if "library_dir" in k else (str(dl_dir) if "download_dir" in k else orig_get(k)),
     )
 
     lock_acquired = threading.Event()
@@ -1006,6 +975,7 @@ def test_acoustid_duration_integer_rounding():
     provider.resolve_fingerprint_details("dummy_fingerprint", 384.44)
     assert dummy_http.last_data["duration"] == 384
     assert isinstance(dummy_http.last_data["duration"], int)
+    assert dummy_http.last_data["meta"] == "recordings recordingids releases releasegroups tracks compress"
 
 
 def test_filename_hyphen_parsing():
@@ -1029,9 +999,7 @@ def test_filename_hyphen_parsing():
     assert track.title == "A Drawing-Down of Blinds"
 
     # Test Artist - Title with internal hyphens
-    track_with_artist = parser.parse_filename(
-        "01 - The Artist - A Drawing-Down of Blinds.flac"
-    )
+    track_with_artist = parser.parse_filename("01 - The Artist - A Drawing-Down of Blinds.flac")
     assert track_with_artist is not None
     assert track_with_artist.artist_name.lower() == "the artist"
     assert track_with_artist.title == "A Drawing-Down of Blinds"
@@ -1127,9 +1095,7 @@ def test_seeb_remix_filepath_edition_detection(tmp_path, monkeypatch):
 
     with db.session_scope() as session:
         artist = Artist(name="Mike Posner", normalized_name="mike posner")
-        album = Album(
-            title="At Night, Alone.", normalized_title="at night alone", artist=artist
-        )
+        album = Album(title="At Night, Alone.", normalized_title="at night alone", artist=artist)
         session.add_all([artist, album])
         session.flush()
 
