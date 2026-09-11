@@ -51,11 +51,7 @@ def _extract_release_details(
         return fallback_year, fallback_track, fallback_disc
 
     if not isinstance(meta, dict):
-        year = (
-            getattr(meta, "year", None)
-            or getattr(meta, "release_year", None)
-            or fallback_year
-        )
+        year = getattr(meta, "year", None) or getattr(meta, "release_year", None) or fallback_year
         track_num = getattr(meta, "track_number", None) or fallback_track
         disc_num = getattr(meta, "disc_number", None) or fallback_disc
         return year, track_num, disc_num
@@ -103,21 +99,12 @@ def _extract_release_details(
 
     # If track or disc is missing, inspect nested releases and media
     if extracted_track is None or extracted_disc is None:
-        rec_id = (
-            recording_id
-            or meta.get("recording_id")
-            or meta.get("id")
-            or meta.get("musicbrainz_track_id")
-        )
+        rec_id = recording_id or meta.get("recording_id") or meta.get("id") or meta.get("musicbrainz_track_id")
         releases = meta.get("releases") or []
         target_rel_id = meta.get("release_id") or meta.get("musicbrainz_release_id")
 
-        target_releases = [
-            r for r in releases if isinstance(r, dict) and r.get("id") == target_rel_id
-        ]
-        candidate_releases = (
-            target_releases if target_releases else [r for r in releases if isinstance(r, dict)]
-        )
+        target_releases = [r for r in releases if isinstance(r, dict) and r.get("id") == target_rel_id]
+        candidate_releases = target_releases if target_releases else [r for r in releases if isinstance(r, dict)]
 
         for rel in candidate_releases:
             if extracted_year is None and rel.get("date"):
@@ -157,6 +144,21 @@ def _extract_release_details(
     final_disc = extracted_disc if extracted_disc is not None else fallback_disc
 
     return extracted_year, final_track, final_disc
+
+
+def calculate_acoustid_duration_weight(track_duration: float, candidate_duration: float) -> float:
+    delta = abs(track_duration - candidate_duration)
+    if delta > 2.0:
+        return 0.0
+    # Progressive parabolic curve: 1.0 at 0s, 0.75 at 1s, 0.0 at 2s
+    return max(0.0, 1.0 - (delta / 2.0) ** 2)
+
+
+def calculate_text_duration_weight(track_duration: float, candidate_duration: float) -> float:
+    delta = abs(track_duration - candidate_duration)
+    if delta > 8.0:
+        return 0.0
+    return max(0.0, 1.0 - (delta / 8.0))
 
 
 class MetadataResolutionEngine:
@@ -202,16 +204,12 @@ class MetadataResolutionEngine:
             return plugin
 
         # Check by capability
-        plugins = PluginRegistry.get_plugins_with_capability(
-            Capability.RESOLVE_FINGERPRINT
-        )
+        plugins = PluginRegistry.get_plugins_with_capability(Capability.RESOLVE_FINGERPRINT)
         for p in plugins:
             caps = getattr(p, "capabilities", None)
             if caps:
                 algos = getattr(caps, "fingerprint_algorithms", []) or []
-                if "chromaprint" in algos or getattr(
-                    caps, "supports_fingerprinting", False
-                ):
+                if "chromaprint" in algos or getattr(caps, "supports_fingerprinting", False):
                     return p
         return None
 
@@ -240,21 +238,23 @@ class MetadataResolutionEngine:
         """Score AcoustID recording candidate by duration proximity, variant disambiguation penalties,
         and canonical studio release weighting using WeightedMatchingEngine(PROFILE_EXACT_SYNC).
         """
-        cand_dur = (
-            candidate.get("length")
-            or candidate.get("duration_ms")
-            or candidate.get("duration")
-        )
+        cand_dur = candidate.get("length") or candidate.get("duration_ms") or candidate.get("duration")
         cand_dur_ms: int | None = None
+        duration_weight = 1.0
+        delta_sec = 0.0
         if cand_dur:
             try:
                 cand_dur_val = float(cand_dur)
                 if 0 < cand_dur_val < 10000:
                     cand_dur_val *= 1000.0
                 cand_dur_ms = int(cand_dur_val)
-                delta = abs(cand_dur_val - file_duration_ms)
-                if delta > 2000:
-                    return 0.0  # Outside strict AcoustID duration window
+                if file_duration_ms > 0:
+                    track_dur_sec = file_duration_ms / 1000.0
+                    cand_dur_sec = cand_dur_ms / 1000.0
+                    delta_sec = abs(track_dur_sec - cand_dur_sec)
+                    duration_weight = calculate_acoustid_duration_weight(track_dur_sec, cand_dur_sec)
+                    if duration_weight <= 0.0 or delta_sec > 2.0:
+                        return 0.0  # Hard AcoustID duration gate (reject delta > 2.0s)
             except (ValueError, TypeError):
                 pass
 
@@ -262,25 +262,13 @@ class MetadataResolutionEngine:
         c_artist = str(candidate.get("artist") or candidate.get("artist_name") or "")
         c_album = str(candidate.get("album") or candidate.get("album_title") or "")
 
-        # Candidate title MUST match the filename stem or baseline title with confidence >= 0.70
         clean_file_title = clean_title_from_filename(filename) if filename else ""
-        title_similarities = []
-        if baseline_title and baseline_title.strip():
-            sim_b = difflib.SequenceMatcher(
-                None, c_title.lower().strip(), baseline_title.lower().strip()
-            ).ratio()
-            title_similarities.append(sim_b)
-        if clean_file_title and not is_generic_title(clean_file_title):
-            sim_f = difflib.SequenceMatcher(
-                None, c_title.lower().strip(), clean_file_title.lower().strip()
-            ).ratio()
-            title_similarities.append(sim_f)
-
-        if title_similarities and max(title_similarities) < 0.70:
-            return 0.0
+        query_title = (
+            clean_file_title if (clean_file_title and not is_generic_title(clean_file_title)) else baseline_title
+        )
 
         query_track = EchosyncTrack(
-            raw_title=baseline_title or clean_file_title,
+            raw_title=query_title or c_title,
             artist_name=baseline_artist or c_artist,
             album_title=baseline_album or c_album,
             duration=file_duration_ms if file_duration_ms > 0 else None,
@@ -293,26 +281,33 @@ class MetadataResolutionEngine:
             version=candidate.get("disambiguation") or candidate.get("version"),
         )
         match_res = self.matcher.calculate_match(query_track, cand_track)
-        score = match_res.confidence_score if match_res else 0.0
+        matcher_score = match_res.confidence_score if match_res else 0.0
 
         # Preference for canonical studio release groups
-        release_group = (
-            candidate.get("release_group") or candidate.get("release-group") or {}
-        )
+        release_group = candidate.get("release_group") or candidate.get("release-group") or {}
         if not release_group and candidate.get("releases"):
             for r in candidate.get("releases") or []:
                 if isinstance(r, dict):
                     rg = r.get("release-group") or r.get("release_group") or {}
-                    if (
-                        rg.get("primary_type") == "Album"
-                        or rg.get("primary-type") == "Album"
-                    ):
+                    if rg.get("primary_type") == "Album" or rg.get("primary-type") == "Album":
                         release_group = rg
                         break
 
         p_type = release_group.get("primary_type") or release_group.get("primary-type")
-        if p_type == "Album":
-            score += 5.0
+        album_bonus = 5.0 if p_type == "Album" else 0.0
+
+        # Base physical acoustic evidence grants high confidence when tags are corrupted
+        base_score = matcher_score if matcher_score > 0.0 else 80.0
+        score = base_score + album_bonus
+
+        # Progressive Duration Multiplier:
+        # If delta <= 1.0s, duration weight yields maximum weight (dominates candidate ranking
+        # and preserves canonical release group advantages).
+        # Beyond 1.0s, steep progressive parabolic decay applies.
+        if delta_sec <= 1.0:
+            score = score * (0.95 + 0.05 * duration_weight)
+        else:
+            score = score * duration_weight
 
         return max(score, 0.0)
 
@@ -324,9 +319,7 @@ class MetadataResolutionEngine:
         result.alias_proposals = self._resolve_aliases(request, result)
         return result
 
-    def _resolve_aliases(
-        self, request: ResolutionRequest, result: ResolutionResult
-    ) -> list[EntityAliasProposal]:
+    def _resolve_aliases(self, request: ResolutionRequest, result: ResolutionResult) -> list[EntityAliasProposal]:
         """Stage 6: Query active language packs and plugins for entity alias proposals."""
         if not result.sync_id and request.sync_id:
             result.sync_id = request.sync_id
@@ -354,9 +347,7 @@ class MetadataResolutionEngine:
         )
 
         try:
-            hook_results = self.hook_manager.execute_hook(
-                "resolve_entity_aliases", context
-            )
+            hook_results = self.hook_manager.execute_hook("resolve_entity_aliases", context)
             valid_proposals: list[EntityAliasProposal] = []
             for prop in hook_results:
                 try:
@@ -377,9 +368,7 @@ class MetadataResolutionEngine:
                     )
             return valid_proposals
         except Exception as e:
-            logger.warning(
-                f"[metadata_engine] Error resolving entity aliases for sync_id={result.sync_id}: {e}"
-            )
+            logger.warning(f"[metadata_engine] Error resolving entity aliases for sync_id={result.sync_id}: {e}")
             return []
 
     def _execute_waterfall(self, request: ResolutionRequest) -> ResolutionResult:
@@ -434,9 +423,7 @@ class MetadataResolutionEngine:
         elif raw_tags.get("duration") is not None:
             try:
                 d_sec = float(raw_tags["duration"])
-                duration_ms = (
-                    round(d_sec * 1000) if d_sec < 10000 else round(d_sec)
-                )
+                duration_ms = round(d_sec * 1000) if d_sec < 10000 else round(d_sec)
             except (ValueError, TypeError):
                 duration_ms = 0
 
@@ -450,9 +437,7 @@ class MetadataResolutionEngine:
             )
         else:
             try:
-                chromaprint, fp_dur = FingerprintGenerator.generate_with_duration(
-                    str(file_path)
-                )
+                chromaprint, fp_dur = FingerprintGenerator.generate_with_duration(str(file_path))
                 if fp_dur and (duration_ms <= 0):
                     duration_ms = round(float(fp_dur) * 1000)
             except Exception as fp_err:
@@ -498,22 +483,12 @@ class MetadataResolutionEngine:
             or (str(tag_title).strip() if tag_title else None)
             or sanitize_title_from_filename(file_path.name)
         )
-        baseline_artist = (
-            request.baseline_artist
-            or (str(tag_artist).strip() if tag_artist else None)
-            or ""
-        )
-        baseline_album = (
-            request.baseline_album
-            or (str(tag_album).strip() if tag_album else None)
-            or ""
-        )
+        baseline_artist = request.baseline_artist or (str(tag_artist).strip() if tag_artist else None) or ""
+        baseline_album = request.baseline_album or (str(tag_album).strip() if tag_album else None) or ""
 
         # Extract clean title directly from physical filename
         sanitized_file_title = clean_title_from_filename(file_path.name)
-        filename_is_identifiable = bool(
-            sanitized_file_title and not is_generic_title(sanitized_file_title)
-        )
+        filename_is_identifiable = bool(sanitized_file_title and not is_generic_title(sanitized_file_title))
 
         # Check if physical filename stem contradicts the requested baseline_title
         filename_contradicts_baseline = False
@@ -590,11 +565,7 @@ class MetadataResolutionEngine:
                 try:
                     meta = mb_plugin.get_metadata(str(embedded_mbid).strip())
                     if meta:
-                        c_title = (
-                            meta.get("title")
-                            if isinstance(meta, dict)
-                            else getattr(meta, "title", None)
-                        )
+                        c_title = meta.get("title") if isinstance(meta, dict) else getattr(meta, "title", None)
                         baseline_check = request.baseline_title or baseline_title
 
                         contradicts_filename = False
@@ -611,12 +582,16 @@ class MetadataResolutionEngine:
                                     f"'{sanitized_file_title}' (similarity={sim:.2f}). Rejecting embedded hit."
                                 )
 
-                        if not c_title or contradicts_filename or not verify_title_trust_gate(
-                            candidate_title=c_title,
-                            baseline_title=baseline_check,
-                            filename=file_path.name,
-                            tag_title=tag_title,
-                            min_similarity=0.60,
+                        if (
+                            not c_title
+                            or contradicts_filename
+                            or not verify_title_trust_gate(
+                                candidate_title=c_title,
+                                baseline_title=baseline_check,
+                                filename=file_path.name,
+                                tag_title=tag_title,
+                                min_similarity=0.60,
+                            )
                         ):
                             logger.warning(
                                 f"[resolution_engine] Embedded MBID {embedded_mbid} rejected by Trust Gate "
@@ -627,18 +602,12 @@ class MetadataResolutionEngine:
                             c_artist = (
                                 (meta.get("artist") or meta.get("artist_name"))
                                 if isinstance(meta, dict)
-                                else (
-                                    getattr(meta, "artist_name", None)
-                                    or getattr(meta, "artist", None)
-                                )
+                                else (getattr(meta, "artist_name", None) or getattr(meta, "artist", None))
                             )
                             c_album = (
                                 (meta.get("album") or meta.get("album_title"))
                                 if isinstance(meta, dict)
-                                else (
-                                    getattr(meta, "album_title", None)
-                                    or getattr(meta, "album", None)
-                                )
+                                else (getattr(meta, "album_title", None) or getattr(meta, "album", None))
                             )
                             c_rel_id = (
                                 meta.get("release_id")
@@ -676,15 +645,11 @@ class MetadataResolutionEngine:
                                 resolution_method="embedded_mbid",
                             )
                 except Exception as e_mb:
-                    logger.debug(
-                        "[resolution_engine] Embedded MBID lookup failed: %s", e_mb
-                    )
+                    logger.debug("[resolution_engine] Embedded MBID lookup failed: %s", e_mb)
 
         # ── Stage 2: Local Chromaprint Cache ──────────────────────────────────
         if chromaprint and not request.ignore_cache:
-            cached_meta = self._check_local_chromaprint_cache(
-                chromaprint, sync_id=request.sync_id
-            )
+            cached_meta = self._check_local_chromaprint_cache(chromaprint, sync_id=request.sync_id)
             if cached_meta:
                 cand_title = cached_meta.get("title")
 
@@ -703,12 +668,16 @@ class MetadataResolutionEngine:
                         )
                         self.invalidate_cache(chromaprint)
 
-                if cand_title and not contradicts_filename and verify_title_trust_gate(
-                    candidate_title=cand_title,
-                    baseline_title=request.baseline_title or baseline_title,
-                    filename=file_path.name,
-                    tag_title=tag_title,
-                    min_similarity=0.60,
+                if (
+                    cand_title
+                    and not contradicts_filename
+                    and verify_title_trust_gate(
+                        candidate_title=cand_title,
+                        baseline_title=request.baseline_title or baseline_title,
+                        filename=file_path.name,
+                        tag_title=tag_title,
+                        min_similarity=0.60,
+                    )
                 ):
                     logger.info(
                         "[resolution_engine] Stage 2 HIT (local chromaprint cache): %s → MBID %s",
@@ -717,8 +686,7 @@ class MetadataResolutionEngine:
                     )
                     c_year, c_track, c_disc = _extract_release_details(
                         cached_meta,
-                        recording_id=cached_meta.get("musicbrainz_id")
-                        or cached_meta.get("musicbrainz_track_id"),
+                        recording_id=cached_meta.get("musicbrainz_id") or cached_meta.get("musicbrainz_track_id"),
                         fallback_year=parsed_year,
                         fallback_track=parsed_track_num,
                         fallback_disc=parsed_disc_num,
@@ -768,9 +736,7 @@ class MetadataResolutionEngine:
                     title=acoustid_res["title"],
                     artist=acoustid_res["artist"],
                     album=acoustid_res.get("album") or baseline_album,
-                    year=acoustid_res.get("year")
-                    if acoustid_res.get("year") is not None
-                    else parsed_year,
+                    year=acoustid_res.get("year") if acoustid_res.get("year") is not None else parsed_year,
                     track_number=acoustid_res.get("track_number")
                     if acoustid_res.get("track_number") is not None
                     else parsed_track_num,
@@ -881,9 +847,7 @@ class MetadataResolutionEngine:
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 
-    def _check_local_chromaprint_cache(
-        self, chromaprint: str, sync_id: str | None = None
-    ) -> dict[str, Any] | None:
+    def _check_local_chromaprint_cache(self, chromaprint: str, sync_id: str | None = None) -> dict[str, Any] | None:
         """Inspect in-memory cache and query music_library.db for peer tracks sharing the chromaprint."""
         if not chromaprint or len(chromaprint.strip()) < 50:
             return None
@@ -926,9 +890,7 @@ class MetadataResolutionEngine:
 
                 artist_name = peer_track.artist.name if peer_track.artist else None
                 album_title = peer_track.album.title if peer_track.album else None
-                release_mbid = (
-                    peer_track.album.mb_release_id if peer_track.album else None
-                )
+                release_mbid = peer_track.album.mb_release_id if peer_track.album else None
 
                 res = {
                     "title": peer_track.title,
@@ -946,9 +908,7 @@ class MetadataResolutionEngine:
                 self._chromaprint_cache[chromaprint] = res
                 return res
         except Exception as exc:
-            logger.debug(
-                "[resolution_engine] Local chromaprint DB lookup failed: %s", exc
-            )
+            logger.debug("[resolution_engine] Local chromaprint DB lookup failed: %s", exc)
             return None
 
     def _resolve_acoustid(
@@ -969,9 +929,7 @@ class MetadataResolutionEngine:
 
         duration_sec = round(file_duration_ms / 1000.0)
         try:
-            details = acoustid_plugin.resolve_fingerprint_details(
-                chromaprint, duration_sec
-            )
+            details = acoustid_plugin.resolve_fingerprint_details(chromaprint, duration_sec)
             if not isinstance(details, dict):
                 return None
             acoustid_id = details.get("acoustid_id")
@@ -1051,6 +1009,14 @@ class MetadataResolutionEngine:
                         if 0 < rec_dur_val < 10000:
                             rec_dur_val *= 1000.0
                         dur_delta = abs(rec_dur_val - file_duration_ms)
+                        # Hard duration gate: reject delta > 2.0s (2000ms) before MusicBrainz fetch
+                        if dur_delta > 2000.0:
+                            logger.debug(
+                                "[resolution_engine] Pre-filter discarded AcoustID candidate MBID %s (duration delta %.1f ms > 2000ms)",
+                                mbid_str,
+                                dur_delta,
+                            )
+                            continue
                     except (ValueError, TypeError):
                         dur_delta = 999999.0
                 else:
@@ -1073,16 +1039,7 @@ class MetadataResolutionEngine:
                 if not isinstance(cand_meta, dict):
                     continue
 
-                cand_title = cand_meta.get("title")
-                # Trust Gate Title Verification
-                if cand_title and not verify_title_trust_gate(
-                    candidate_title=cand_title,
-                    baseline_title=baseline_title,
-                    filename=filename,
-                    tag_title=tag_title,
-                    min_similarity=0.60,
-                ):
-                    continue
+                # Title similarity gate removed: physical audio proof overrides bad tags
 
                 cand_score = self.score_candidate(
                     candidate=cand_meta,
@@ -1105,12 +1062,8 @@ class MetadataResolutionEngine:
 
                 return {
                     "title": best_candidate.get("title") or baseline_title,
-                    "artist": best_candidate.get("artist")
-                    or best_candidate.get("artist_name")
-                    or "",
-                    "album": best_candidate.get("album")
-                    or best_candidate.get("album_title")
-                    or "",
+                    "artist": best_candidate.get("artist") or best_candidate.get("artist_name") or "",
+                    "album": best_candidate.get("album") or best_candidate.get("album_title") or "",
                     "year": cand_year,
                     "track_number": cand_track,
                     "disc_number": cand_disc,
@@ -1198,9 +1151,7 @@ class MetadataResolutionEngine:
             return None
 
         # Sanitize track prefixes (e.g., "01 - Title", "01. Title")
-        sanitized_title = re.sub(
-            r"^(?:(?:\d{1,2}[.-])?\d{1,3}[\s\-_.]{1,3}\s*)+", "", str(baseline_title)
-        ).strip()
+        sanitized_title = re.sub(r"^(?:(?:\d{1,2}[.-])?\d{1,3}[\s\-_.]{1,3}\s*)+", "", str(baseline_title)).strip()
         if not sanitized_title:
             sanitized_title = baseline_title
 
@@ -1217,11 +1168,7 @@ class MetadataResolutionEngine:
 
         try:
             # Strict query via MusicBrainzClient
-            results = (
-                mb_client.search_metadata(query_track, limit=5)
-                if hasattr(mb_client, "search_metadata")
-                else None
-            )
+            results = mb_client.search_metadata(query_track, limit=5) if hasattr(mb_client, "search_metadata") else None
             if not results:
                 # Block artist-only discography leaks
                 return None
@@ -1235,9 +1182,7 @@ class MetadataResolutionEngine:
                     cand_t = item
                     mbid = item.musicbrainz_id
                     if not mbid and isinstance(item.identifiers, dict):
-                        mbid = item.identifiers.get(
-                            "musicbrainz_recording_id"
-                        ) or item.identifiers.get("mbid")
+                        mbid = item.identifiers.get("musicbrainz_recording_id") or item.identifiers.get("mbid")
                 elif isinstance(item, dict):
                     mbid = item.get("recording_id") or item.get("mbid")
                     cand_t = EchosyncTrack(
@@ -1268,8 +1213,23 @@ class MetadataResolutionEngine:
                 ):
                     continue
 
+                # Stage 5 MusicBrainz Text Waterfall Duration Decay Curve
+                text_dur_weight = 1.0
+                if file_duration_ms > 0 and cand.duration:
+                    try:
+                        cand_dur_val = float(cand.duration)
+                        cand_dur_sec = cand_dur_val / 1000.0 if cand_dur_val > 1000 else cand_dur_val
+                        track_dur_sec = file_duration_ms / 1000.0
+                        text_dur_weight = calculate_text_duration_weight(track_dur_sec, cand_dur_sec)
+                        if text_dur_weight <= 0.0:
+                            # Complete failure threshold: delta > 8.0s -> 0.0
+                            continue
+                    except (ValueError, TypeError):
+                        pass
+
                 match_res = matcher.calculate_match(query_track, cand)
                 score = match_res.confidence_score if match_res else 0.0
+                score = score * text_dur_weight
                 if score > best_score:
                     best_score = score
                     best_cand = cand
@@ -1284,11 +1244,7 @@ class MetadataResolutionEngine:
                     logger.debug("[resolution_engine] Metadata fetch failed for %s: %s", best_mbid, meta_err)
 
                 final_title = (
-                    (
-                        meta.get("title")
-                        if isinstance(meta, dict)
-                        else getattr(meta, "title", None)
-                    )
+                    (meta.get("title") if isinstance(meta, dict) else getattr(meta, "title", None))
                     or best_cand.title
                     or sanitized_title
                 )
@@ -1296,10 +1252,7 @@ class MetadataResolutionEngine:
                     (
                         (meta.get("artist") or meta.get("artist_name"))
                         if isinstance(meta, dict)
-                        else (
-                            getattr(meta, "artist_name", None)
-                            or getattr(meta, "artist", None)
-                        )
+                        else (getattr(meta, "artist_name", None) or getattr(meta, "artist", None))
                     )
                     or best_cand.artist_name
                     or baseline_artist
@@ -1308,18 +1261,13 @@ class MetadataResolutionEngine:
                     (
                         (meta.get("album") or meta.get("album_title"))
                         if isinstance(meta, dict)
-                        else (
-                            getattr(meta, "album_title", None)
-                            or getattr(meta, "album", None)
-                        )
+                        else (getattr(meta, "album_title", None) or getattr(meta, "album", None))
                     )
                     or best_cand.album_title
                     or baseline_album
                 )
                 final_release_id = (
-                    meta.get("release_id")
-                    if isinstance(meta, dict)
-                    else getattr(meta, "mb_release_id", None)
+                    meta.get("release_id") if isinstance(meta, dict) else getattr(meta, "mb_release_id", None)
                 )
 
                 final_year, final_track, final_disc = _extract_release_details(

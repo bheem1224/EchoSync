@@ -616,9 +616,7 @@ def test_resolve_track_bypasses_cache_when_ignore_cache_true(monkeypatch, tmp_pa
     assert mock_acoustid.resolve_fingerprint_details.called
 
 
-def test_trust_gate_rejects_candidate_matching_dirty_baseline_but_contradicting_filename(
-    monkeypatch, tmp_path
-):
+def test_trust_gate_rejects_candidate_matching_dirty_baseline_but_contradicting_filename(monkeypatch, tmp_path):
     """Simulates file '01 - There's Nothing Holdin' Me Back.flac' with dirty DB baseline
 
     'Where Were You in the Morning?' and asserts that candidate 'Where Were You in the Morning?'
@@ -710,10 +708,7 @@ def test_trust_gate_rejects_candidate_matching_dirty_baseline_but_contradicting_
     result = engine.resolve_track(req)
 
     # Verify poisoned cache entry was rejected and removed from cache
-    assert (
-        dummy_cp not in engine._chromaprint_cache
-        or engine._chromaprint_cache[dummy_cp]["title"] != candidate_bad
-    )
+    assert dummy_cp not in engine._chromaprint_cache or engine._chromaprint_cache[dummy_cp]["title"] != candidate_bad
     # Verify result resolved via AcoustID with correct title
     assert result.resolution_method == "acoustid"
     assert result.title == "There's Nothing Holdin' Me Back"
@@ -721,9 +716,7 @@ def test_trust_gate_rejects_candidate_matching_dirty_baseline_but_contradicting_
     assert mock_acoustid.resolve_fingerprint_details.called
 
 
-def test_acoustid_prefilters_unrelated_artists_without_musicbrainz_fetches(
-    monkeypatch, tmp_path
-):
+def test_acoustid_prefilters_unrelated_artists_without_musicbrainz_fetches(monkeypatch, tmp_path):
     """Mocks AcoustID returning MBIDs for Metro Station, Jonas Blue, and Shawn Mendes.
     Asserts MusicBrainz client is only called for the Shawn Mendes MBID.
     """
@@ -811,9 +804,7 @@ def test_acoustid_prefilters_unrelated_artists_without_musicbrainz_fetches(
     assert result.resolution_method == "acoustid"
 
 
-def test_acoustid_matching_engine_selects_correct_title_over_same_album_track(
-    monkeypatch, tmp_path
-):
+def test_acoustid_matching_engine_selects_correct_title_over_same_album_track(monkeypatch, tmp_path):
     """Simulates candidates for 'Where Were You in the Morning?' and 'There's Nothing Holdin' Me Back'.
     Verifies 'There's Nothing Holdin' Me Back' is selected when the filename is
     '01 - There's Nothing Holdin' Me Back.flac'.
@@ -911,4 +902,153 @@ def test_acoustid_matching_engine_selects_correct_title_over_same_album_track(
     assert result.confidence_score >= 0.70
 
 
+def test_acoustid_zero_trust_corrupted_tags_selects_true_recording(monkeypatch, tmp_path):
+    """Verifies that a track with corrupted embedded tags and a 201s duration matches
+    an AcoustID candidate of 200.6s ('There's Nothing Holdin' Me Back') over an AcoustID
+    candidate of 205s ('Where Were You in the Morning?') outside the 2.0s duration window.
+    """
+    audio_file = tmp_path / "corrupted_track.mp3"
+    audio_file.write_bytes(b"dummy audio content")
 
+    file_dur_ms = 201000  # 201.0s
+    dummy_cp = "H" * 60
+
+    # Corrupted embedded tags: title is tagged as "Where Were You in the Morning?"
+    monkeypatch.setattr(
+        echosync_core,
+        "extract_metadata",
+        lambda p: {
+            "title": "Where Were You in the Morning?",
+            "artist": "Shawn Mendes",
+            "duration_ms": file_dur_ms,
+            "channels": 2,
+        },
+    )
+    monkeypatch.setattr(
+        FingerprintGenerator,
+        "generate_with_duration",
+        lambda p: (dummy_cp, file_dur_ms / 1000.0),
+    )
+
+    # Candidate 1: matches corrupted tag title, but duration is 205.0s (delta = 4.0s > 2.0s)
+    # Candidate 2: true physical acoustic match, duration is 200.6s (delta = 0.4s <= 1.0s)
+    mock_acoustid = MagicMock()
+    mock_acoustid.resolve_fingerprint_details.return_value = {
+        "acoustid_id": "acoustid-cluster-shawn",
+        "mbids": [
+            "mbid-corrupt-title",
+            "mbid-true-acoustic",
+        ],
+        "recordings": [
+            {
+                "id": "mbid-corrupt-title",
+                "title": "Where Were You in the Morning?",
+                "artist": "Shawn Mendes",
+                "duration": 205,
+            },
+            {
+                "id": "mbid-true-acoustic",
+                "title": "There's Nothing Holdin' Me Back",
+                "artist": "Shawn Mendes",
+                "duration": 200.6,
+            },
+        ],
+    }
+
+    mock_mb = MagicMock()
+
+    def mb_meta(mbid):
+        if mbid == "mbid-corrupt-title":
+            return {
+                "title": "Where Were You in the Morning?",
+                "artist": "Shawn Mendes",
+                "album": "Shawn Mendes",
+                "recording_id": "mbid-corrupt-title",
+                "duration_ms": 205000,
+                "release_group": {"primary_type": "Album"},
+            }
+        elif mbid == "mbid-true-acoustic":
+            return {
+                "title": "There's Nothing Holdin' Me Back",
+                "artist": "Shawn Mendes",
+                "album": "Illuminate",
+                "recording_id": "mbid-true-acoustic",
+                "duration_ms": 200600,
+                "release_group": {"primary_type": "Album"},
+            }
+        return None
+
+    mock_mb.get_metadata.side_effect = mb_meta
+
+    engine = MetadataResolutionEngine(
+        acoustid_provider=mock_acoustid,
+        metadata_provider=mock_mb,
+    )
+
+    req = ResolutionRequest(
+        media_id="test_corrupted_tag_override",
+        file_path=audio_file,
+        baseline_title="Where Were You in the Morning?",  # Dirty baseline title
+        baseline_artist="Shawn Mendes",
+        ignore_cache=True,
+    )
+
+    result = engine.resolve_track(req)
+
+    # Candidate 'There's Nothing Holdin' Me Back' (200.6s) must be chosen via AcoustID
+    # Candidate 'Where Were You in the Morning?' (205s) must be rejected (>2.0s duration window)
+    assert result.musicbrainz_track_id == "mbid-true-acoustic"
+    assert result.title == "There's Nothing Holdin' Me Back"
+    assert result.resolution_method == "acoustid"
+
+
+def test_acoustid_duration_gate_and_weight_curve():
+    """Verifies calculate_acoustid_duration_weight parabolic curve and hard 2.0s gate."""
+    from core.metadata.engine import calculate_acoustid_duration_weight
+
+    # Delta = 0s -> 1.0
+    assert calculate_acoustid_duration_weight(200.0, 200.0) == 1.0
+
+    # Delta = 1s -> 1.0 - (1.0/2.0)^2 = 0.75
+    assert calculate_acoustid_duration_weight(200.0, 201.0) == 0.75
+
+    # Delta = 2s -> 1.0 - (2.0/2.0)^2 = 0.0
+    assert calculate_acoustid_duration_weight(200.0, 202.0) == 0.0
+
+    # Delta > 2.0s -> 0.0 (Hard gate)
+    assert calculate_acoustid_duration_weight(200.0, 202.1) == 0.0
+    assert calculate_acoustid_duration_weight(200.0, 205.0) == 0.0
+    assert calculate_acoustid_duration_weight(200.0, 190.0) == 0.0
+
+    # Engine score_candidate rejects delta > 2.0s
+    engine = MetadataResolutionEngine()
+    cand_rejected = {
+        "title": "Song",
+        "artist": "Artist",
+        "duration_ms": 202500,  # delta = 2.5s > 2.0s
+    }
+    score = engine.score_candidate(
+        candidate=cand_rejected,
+        baseline_title="Song",
+        file_duration_ms=200000,
+    )
+    assert score == 0.0
+
+
+def test_text_waterfall_duration_decay_and_cutoff():
+    """Verifies calculate_text_duration_weight linear decay curve and 8.0s failure cutoff."""
+    from core.metadata.engine import calculate_text_duration_weight
+
+    # Delta = 0s -> 1.0
+    assert calculate_text_duration_weight(200.0, 200.0) == 1.0
+
+    # Delta = 4s -> 1.0 - 4.0/8.0 = 0.5
+    assert calculate_text_duration_weight(200.0, 204.0) == 0.5
+
+    # Delta = 8s -> 1.0 - 8.0/8.0 = 0.0
+    assert calculate_text_duration_weight(200.0, 208.0) == 0.0
+
+    # Delta > 8.0s -> 0.0 (Failure threshold)
+    assert calculate_text_duration_weight(200.0, 208.1) == 0.0
+    assert calculate_text_duration_weight(200.0, 215.0) == 0.0
+    assert calculate_text_duration_weight(200.0, 180.0) == 0.0

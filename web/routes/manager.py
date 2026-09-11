@@ -90,9 +90,7 @@ DEFAULT_AUTO_ROUTE_INTENTS: dict[int, frozenset[str]] = {
     # Level 1: Only deterministic hygiene actions are auto-routed to Pending Actions.
     1: frozenset({"HYGIENE_DUPLICATION", "HYGIENE_QUALITY_UPGRADE"}),
     # Level 2: Adds heuristic upgrade suggestions.
-    2: frozenset(
-        {"HYGIENE_DUPLICATION", "HYGIENE_QUALITY_UPGRADE", "SYSTEM_UPGRADE_SUGGESTION"}
-    ),
+    2: frozenset({"HYGIENE_DUPLICATION", "HYGIENE_QUALITY_UPGRADE", "SYSTEM_UPGRADE_SUGGESTION"}),
     # Level 3: Adds heuristic delete suggestions (full automation).
     3: frozenset(
         {
@@ -162,9 +160,7 @@ def _resolve_track_preview(sync_id: str):
         }
 
 
-def _resolve_working_user_for_trends(
-    user_id: int | None = None, account_id: int | None = None
-):
+def _resolve_working_user_for_trends(user_id: int | None = None, account_id: int | None = None):
     """Resolve the working DB user for trends filtering.
 
     Resolution order:
@@ -182,9 +178,7 @@ def _resolve_working_user_for_trends(
 
     with working_db.session_scope() as session:
         if requested_user_id:
-            resolved_user = (
-                session.query(User).filter(Account.id == requested_user_id).first()
-            )
+            resolved_user = session.query(User).filter(Account.id == requested_user_id).first()
             if resolved_user:
                 session.expunge(resolved_user)
                 return resolved_user, None, "user_id"
@@ -203,32 +197,18 @@ def _resolve_working_user_for_trends(
                 resolved_account_id = account.get("id")
                 plex_user_id = str(account.get("user_id") or "").strip()
                 if plex_user_id:
-                    resolved_user = (
-                        session.query(User)
-                        .filter(Account.provider_identifier == plex_user_id)
-                        .first()
-                    )
+                    resolved_user = session.query(User).filter(Account.provider_identifier == plex_user_id).first()
                 if not resolved_user:
-                    display_name = (
-                        account.get("display_name") or account.get("account_name") or ""
-                    ).strip()
+                    display_name = (account.get("display_name") or account.get("account_name") or "").strip()
                     if display_name:
-                        resolved_user = (
-                            session.query(User)
-                            .filter(Account.username == display_name)
-                            .first()
-                        )
+                        resolved_user = session.query(User).filter(Account.username == display_name).first()
                 if resolved_user:
                     session.expunge(resolved_user)
                     return resolved_user, resolved_account_id, "account_id"
 
         plex_service_id = config_db.get_or_create_service_id("plex")
-        active_accounts = config_db.get_accounts(
-            service_id=plex_service_id, is_active=True
-        )
-        fallback_account = next(
-            (acc for acc in active_accounts if acc.get("user_id")), None
-        )
+        active_accounts = config_db.get_accounts(service_id=plex_service_id, is_active=True)
+        fallback_account = next((acc for acc in active_accounts if acc.get("user_id")), None)
         if fallback_account is None and active_accounts:
             fallback_account = active_accounts[0]
 
@@ -236,23 +216,13 @@ def _resolve_working_user_for_trends(
             resolved_account_id = fallback_account.get("id")
             plex_user_id = str(fallback_account.get("user_id") or "").strip()
             if plex_user_id:
-                resolved_user = (
-                    session.query(User)
-                    .filter(Account.provider_identifier == plex_user_id)
-                    .first()
-                )
+                resolved_user = session.query(User).filter(Account.provider_identifier == plex_user_id).first()
             if not resolved_user:
                 display_name = (
-                    fallback_account.get("display_name")
-                    or fallback_account.get("account_name")
-                    or ""
+                    fallback_account.get("display_name") or fallback_account.get("account_name") or ""
                 ).strip()
                 if display_name:
-                    resolved_user = (
-                        session.query(User)
-                        .filter(Account.username == display_name)
-                        .first()
-                    )
+                    resolved_user = session.query(User).filter(Account.username == display_name).first()
 
         # Expunge before the session closes so commit() does not expire the object's
         # attributes and callers can safely access .id / .username after this function returns.
@@ -322,9 +292,7 @@ def manager_settings(
 
 
 @router.api_route("/ui-beta", methods=["GET", "POST"])
-def ui_beta_opt(
-    request: Request, payload: UIBetaRequest | None = None, _=Depends(require_auth)
-):
+def ui_beta_opt(request: Request, payload: UIBetaRequest | None = None, _=Depends(require_auth)):
     """Get or set the UI plugin beta opt-in flag stored in config.json.
 
     GET: returns { beta_opt_in: bool, dev_mode: bool }
@@ -376,10 +344,7 @@ def get_suggestion_candidates(limit: int = Query(100), _=Depends(require_auth)):
 
     try:
         with work_db.session_scope() as session:
-            rated_sync_ids = [
-                row[0]
-                for row in session.query(WorkingUserRating.sync_id).distinct().all()
-            ]
+            rated_sync_ids = [row[0] for row in session.query(WorkingUserRating.sync_id).distinct().all()]
 
             delete_candidates = []
             upgrade_candidates = []
@@ -397,9 +362,7 @@ def get_suggestion_candidates(limit: int = Query(100), _=Depends(require_auth)):
                     "score_10": round(avg_score * 2.0, 1),
                     "ratings_count": ratings_count,
                     "preview": preview,
-                    "admin_exempt_deletion": lifecycle.get(
-                        "admin_exempt_deletion", False
-                    ),
+                    "admin_exempt_deletion": lifecycle.get("admin_exempt_deletion", False),
                     "admin_force_upgrade": lifecycle.get("admin_force_upgrade", False),
                 }
 
@@ -408,12 +371,8 @@ def get_suggestion_candidates(limit: int = Query(100), _=Depends(require_auth)):
                 elif avg_score <= 4.0:
                     upgrade_candidates.append(candidate)
 
-            delete_candidates.sort(
-                key=lambda item: (item["score_10"], -item["ratings_count"])
-            )
-            upgrade_candidates.sort(
-                key=lambda item: (item["score_10"], -item["ratings_count"])
-            )
+            delete_candidates.sort(key=lambda item: (item["score_10"], -item["ratings_count"]))
+            upgrade_candidates.sort(key=lambda item: (item["score_10"], -item["ratings_count"]))
 
             return {
                 "success": True,
@@ -477,19 +436,11 @@ def toggle_suggestion_candidate_override(payload: dict, _=Depends(require_auth))
 
             session.flush()
 
-            all_states = (
-                session.query(UserTrackState)
-                .filter(UserTrackState.sync_id == sync_id)
-                .all()
-            )
+            all_states = session.query(UserTrackState).filter(UserTrackState.sync_id == sync_id).all()
             response_state = {
                 "sync_id": sync_id,
-                "admin_exempt_deletion": any(
-                    state.admin_exempt_deletion for state in all_states
-                ),
-                "admin_force_upgrade": any(
-                    state.admin_force_upgrade for state in all_states
-                ),
+                "admin_exempt_deletion": any(state.admin_exempt_deletion for state in all_states),
+                "admin_force_upgrade": any(state.admin_force_upgrade for state in all_states),
             }
 
             return {"success": True, "state": response_state}
@@ -524,10 +475,7 @@ def run_manager_scan(_=Depends(require_auth)):
         staged_upgrades = 0
 
         with work_db.session_scope() as session:
-            rated_sync_ids = [
-                row[0]
-                for row in session.query(WorkingUserRating.sync_id).distinct().all()
-            ]
+            rated_sync_ids = [row[0] for row in session.query(WorkingUserRating.sync_id).distinct().all()]
 
         consensus_map = {}
         for sync_id in rated_sync_ids:
@@ -587,9 +535,7 @@ def get_duplicates(_=Depends(require_auth)):
         result = service.find_duplicates()
         # Combine both types — auto_resolve groups are sorted by quality (recommended_keep_id set),
         # manual_review groups have recommended_keep_id=None. Both have a unified 'tracks' list.
-        all_duplicates = result.get("auto_resolve", []) + result.get(
-            "manual_review", []
-        )
+        all_duplicates = result.get("auto_resolve", []) + result.get("manual_review", [])
         return {"success": True, "duplicates": all_duplicates}
     except Exception as e:
         logger.error(f"Error getting duplicates: {e}", exc_info=True)
@@ -606,11 +552,7 @@ def get_action_queue(_=Depends(require_auth)):
         with work_db.session_scope() as session:
             states = (
                 session.query(UserTrackState)
-                .filter(
-                    UserTrackState.lifecycle_action.in_(
-                        ["DELETE_MONTH_END", "UPGRADE_WEEK_END"]
-                    )
-                )
+                .filter(UserTrackState.lifecycle_action.in_(["DELETE_MONTH_END", "UPGRADE_WEEK_END"]))
                 .all()
             )
 
@@ -626,16 +568,10 @@ def get_action_queue(_=Depends(require_auth)):
                     "admin_force_upgrade": False,
                 },
             )
-            if state.lifecycle_queued_at and (
-                row["queued_at"] is None or state.lifecycle_queued_at < row["queued_at"]
-            ):
+            if state.lifecycle_queued_at and (row["queued_at"] is None or state.lifecycle_queued_at < row["queued_at"]):
                 row["queued_at"] = state.lifecycle_queued_at
-            row["admin_exempt_deletion"] = row["admin_exempt_deletion"] or bool(
-                state.admin_exempt_deletion
-            )
-            row["admin_force_upgrade"] = row["admin_force_upgrade"] or bool(
-                state.admin_force_upgrade
-            )
+            row["admin_exempt_deletion"] = row["admin_exempt_deletion"] or bool(state.admin_exempt_deletion)
+            row["admin_force_upgrade"] = row["admin_force_upgrade"] or bool(state.admin_force_upgrade)
 
         queue = []
         for item in grouped.values():
@@ -685,11 +621,7 @@ def force_delete_track(track_id: int, _=Depends(require_auth)):
             from database.working_database import SuggestionStagingQueue
 
             with work_db.session_scope() as session:
-                intent = (
-                    session.query(SuggestionStagingQueue)
-                    .filter_by(sync_id=sync_id)
-                    .first()
-                )
+                intent = session.query(SuggestionStagingQueue).filter_by(sync_id=sync_id).first()
                 if intent:
                     session.delete(intent)
 
@@ -752,9 +684,7 @@ def force_upgrade_track(track_id: int, _=Depends(require_auth)):
         from database.working_database import SuggestionStagingQueue
 
         with work_db.session_scope() as session:
-            intent = (
-                session.query(SuggestionStagingQueue).filter_by(sync_id=sync_id).first()
-            )
+            intent = session.query(SuggestionStagingQueue).filter_by(sync_id=sync_id).first()
             if intent:
                 session.delete(intent)
 
@@ -789,11 +719,7 @@ def fetch_metadata(track_id: int, _=Depends(require_auth)):
 
             artist_name = track.artist.name if track.artist else "Unknown Artist"
             album_title = track.album.title if track.album else "Unknown Album"
-            release_year = (
-                track.album.release_date.year
-                if (track.album and track.album.release_date)
-                else None
-            )
+            release_year = track.album.release_date.year if (track.album and track.album.release_date) else None
 
             track_dict = {
                 "title": track.title,
@@ -816,9 +742,7 @@ def fetch_metadata(track_id: int, _=Depends(require_auth)):
         enhancer = get_metadata_enhancer()
         identified_metadata, confidence = enhancer.identify_file(Path(file_path))
 
-        detected = (
-            dict(identified_metadata) if identified_metadata else dict(track_dict)
-        )
+        detected = dict(identified_metadata) if identified_metadata else dict(track_dict)
         if not detected.get("artist"):
             detected["artist"] = artist_name
         if not detected.get("title"):
@@ -827,11 +751,7 @@ def fetch_metadata(track_id: int, _=Depends(require_auth)):
             detected["album"] = album_title
 
         with working_db.session_scope() as w_session:
-            task = (
-                w_session.query(ReviewTask)
-                .filter(ReviewTask.file_path == file_path)
-                .first()
-            )
+            task = w_session.query(ReviewTask).filter(ReviewTask.file_path == file_path).first()
             if not task:
                 task = ReviewTask(
                     file_path=file_path,
@@ -846,9 +766,7 @@ def fetch_metadata(track_id: int, _=Depends(require_auth)):
                 task.status = "pending"
                 task.track_data = track_dict
                 task.detected_metadata = detected
-                task.confidence_score = (
-                    confidence if confidence is not None else task.confidence_score
-                )
+                task.confidence_score = confidence if confidence is not None else task.confidence_score
                 flag_modified(task, "track_data")
                 w_session.flush()
 
@@ -863,16 +781,101 @@ def fetch_metadata(track_id: int, _=Depends(require_auth)):
             "confidence": confidence or 0.5,
         }
     except Exception as e:
-        logger.error(
-            f"Error fetching metadata for track {track_id}: {e}", exc_info=True
-        )
+        logger.error(f"Error fetching metadata for track {track_id}: {e}", exc_info=True)
         return {"error": "Failed to fetch track metadata"}
 
 
+@router.post("/track/{track_id}/edit_metadata")
+def edit_metadata(track_id: str, _=Depends(require_auth)):
+    """Instantly creates or retrieves a ReviewTask for a library track from its existing metadata
+    WITHOUT triggering the slow background identification waterfall, so the user can immediately
+    edit and review metadata in the Metadata Editor."""
+    import os
+
+    from sqlalchemy.orm.attributes import flag_modified
+
+    from database.music_database import Track, get_database
+    from database.working_database import ReviewTask, get_working_database
+
+    db = get_database()
+    working_db = get_working_database()
+    try:
+        with db.session_scope() as session:
+            track = None
+            try:
+                t_int_id = int(track_id)
+                track = session.query(Track).filter(Track.id == t_int_id).first()
+            except (ValueError, TypeError):
+                pass
+            if not track:
+                track = session.query(Track).filter(Track.sync_id == track_id).first()
+            if not track:
+                return {"error": "Track not found"}
+
+            file_path = track.file_path
+            if not file_path or not os.path.exists(file_path):
+                return {"error": f"Track file not found on disk: {file_path}"}
+
+            artist_name = track.artist.name if track.artist else "Unknown Artist"
+            album_title = track.album.title if track.album else "Unknown Album"
+            release_year = track.album.release_date.year if (track.album and track.album.release_date) else None
+
+            track_dict = {
+                "title": track.title,
+                "raw_title": track.title,
+                "display_title": track.title,
+                "artist": artist_name,
+                "artist_name": artist_name,
+                "album": album_title,
+                "album_title": album_title,
+                "year": release_year,
+                "release_year": release_year,
+                "track_number": track.track_number,
+                "disc_number": track.disc_number,
+                "duration": track.duration,
+                "musicbrainz_id": track.musicbrainz_id,
+                "isrc": track.isrc,
+                "file_path": file_path,
+                "sync_id": track.sync_id,
+            }
+
+        with working_db.session_scope() as w_session:
+            task = w_session.query(ReviewTask).filter(ReviewTask.file_path == file_path).first()
+            detected = dict(track_dict)
+            if not task:
+                task = ReviewTask(
+                    file_path=file_path,
+                    status="pending",
+                    confidence_score=1.0,
+                    track_data=track_dict,
+                )
+                task.detected_metadata = detected
+                w_session.add(task)
+                w_session.flush()
+            else:
+                task.status = "pending"
+                task.track_data = track_dict
+                if not task.detected_metadata:
+                    task.detected_metadata = detected
+                flag_modified(task, "track_data")
+                w_session.flush()
+
+            from web.routes.metadata_review import _serialize_task
+
+            serialized_task = _serialize_task(task, detected_metadata=task.detected_metadata or detected)
+
+        return {
+            "success": True,
+            "task": serialized_task,
+            "metadata": detected,
+        }
+    except Exception as e:
+        logger.error(f"Error opening metadata editor for track {track_id}: {e}", exc_info=True)
+        return {"error": "Failed to open track metadata editor"}
+
+
 @router.post("/track/{track_id}/override")
-def override_track(
-    track_id: int, payload: TrackOverrideRequest, _=Depends(require_auth)
-):
+def override_track(track_id: int, payload: TrackOverrideRequest, _=Depends(require_auth)):
     """DEPRECATED: Manual overrides removed in Phase 3.
 
     Phase 3 Suggestion Engine uses event-driven consensus, not system flags.
@@ -920,10 +923,7 @@ def resolve_conflict(payload: ConflictResolveRequest, _=Depends(require_auth)):
                         sync_id
                         or c.get("keep_id") == keep_id
                         or keep_id in c.get("delete_ids", [])
-                        or (
-                            c.get("winner_track")
-                            and c["winner_track"].get("id") == keep_id
-                        )
+                        or (c.get("winner_track") and c["winner_track"].get("id") == keep_id)
                     ):
                         it.status = "resolved"
             return {"success": True}
@@ -954,13 +954,9 @@ def get_trends(
             ).filter(WorkingUserRating.rating.isnot(None))
 
             if target_user:
-                distribution_stmt = distribution_stmt.filter(
-                    WorkingUserRating.user_id == target_user.id
-                )
+                distribution_stmt = distribution_stmt.filter(WorkingUserRating.user_id == target_user.id)
 
-            distribution_query = distribution_stmt.group_by(
-                func.round(WorkingUserRating.rating)
-            ).all()
+            distribution_query = distribution_stmt.group_by(func.round(WorkingUserRating.rating)).all()
 
             distribution = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0}
             total_filtered = 0
@@ -1023,28 +1019,26 @@ def set_manager_settings(payload: ManagerSettingsRequest, _=Depends(require_auth
 def _format_track_dict(track_obj=None, raw_dict=None) -> dict[str, Any]:
     raw = raw_dict or {}
     if track_obj:
-        best_media = (
-            track_obj.get_best_media()
-            if hasattr(track_obj, "get_best_media")
-            else None
-        )
+        best_media = track_obj.get_best_media() if hasattr(track_obj, "get_best_media") else None
         if not best_media and getattr(track_obj, "media_files", None):
             best_media = track_obj.media_files[0]
-        artist_name = (
-            track_obj.artist.name if getattr(track_obj, "artist", None) else None
-        )
-        album_name = (
-            track_obj.album.title if getattr(track_obj, "album", None) else None
-        )
+        artist_name = track_obj.artist.name if getattr(track_obj, "artist", None) else None
+        album_name = track_obj.album.title if getattr(track_obj, "album", None) else None
         return {
             "id": track_obj.id,
             "title": track_obj.title or raw.get("title") or "Unknown Title",
             "artist": artist_name or raw.get("artist") or raw.get("artist_name") or "Unknown Artist",
             "album": album_name or raw.get("album") or raw.get("album_title") or "Unknown Album",
-            "format": (best_media.file_format if best_media else None) or raw.get("format") or raw.get("file_format") or "Unknown",
+            "format": (best_media.file_format if best_media else None)
+            or raw.get("format")
+            or raw.get("file_format")
+            or "Unknown",
             "bitrate": (best_media.bitrate if best_media else None) or raw.get("bitrate"),
             "sample_rate": (getattr(best_media, "sample_rate", None) if best_media else None) or raw.get("sample_rate"),
-            "file_path": (best_media.file_path if best_media else track_obj.file_path) or raw.get("file_path") or raw.get("path") or "",
+            "file_path": (best_media.file_path if best_media else track_obj.file_path)
+            or raw.get("file_path")
+            or raw.get("path")
+            or "",
             "duration": track_obj.duration or raw.get("duration"),
         }
     return {
@@ -1060,9 +1054,7 @@ def _format_track_dict(track_obj=None, raw_dict=None) -> dict[str, Any]:
     }
 
 
-def _hydrate_duplicate_tracks(
-    ctx: dict, sync_id: str | None = None
-) -> tuple[dict | None, dict | None, str | None]:
+def _hydrate_duplicate_tracks(ctx: dict, sync_id: str | None = None) -> tuple[dict | None, dict | None, str | None]:
     subtype = ctx.get("subtype") or ctx.get("event") or ""
     confidence = ctx.get("confidence_score")
 
@@ -1094,9 +1086,7 @@ def _hydrate_duplicate_tracks(
                 loser_raw = t
 
     keep_id = ctx.get("keep_id") or (winner_raw.get("id") if winner_raw else None)
-    delete_ids = ctx.get("delete_ids") or (
-        [loser_raw.get("id")] if loser_raw and loser_raw.get("id") else []
-    )
+    delete_ids = ctx.get("delete_ids") or ([loser_raw.get("id")] if loser_raw and loser_raw.get("id") else [])
     loser_id = delete_ids[0] if delete_ids else None
 
     # Database hydration
@@ -1124,14 +1114,10 @@ def _hydrate_duplicate_tracks(
             logger.debug("Failed querying tracks for suggestion hydration: %s", e)
 
     winner_track = (
-        _format_track_dict(track_obj=track_map.get(keep_id), raw_dict=winner_raw)
-        if (keep_id or winner_raw)
-        else None
+        _format_track_dict(track_obj=track_map.get(keep_id), raw_dict=winner_raw) if (keep_id or winner_raw) else None
     )
     loser_track = (
-        _format_track_dict(track_obj=track_map.get(loser_id), raw_dict=loser_raw)
-        if (loser_id or loser_raw)
-        else None
+        _format_track_dict(track_obj=track_map.get(loser_id), raw_dict=loser_raw) if (loser_id or loser_raw) else None
     )
 
     # Handle 1:N relational duplicates (media-level duplicates for a single track)
@@ -1198,11 +1184,7 @@ def get_suggestion_queue(_=Depends(require_auth)):
     try:
         with work_db.session_scope() as session:
             # Use SuggestionStagingQueue (the real table) instead of invented SuggestionIntent
-            items = (
-                session.query(SuggestionStagingQueue)
-                .filter(SuggestionStagingQueue.status == "pending")
-                .all()
-            )
+            items = session.query(SuggestionStagingQueue).filter(SuggestionStagingQueue.status == "pending").all()
             suggestions = []
             for item in items:
                 ctx = item.context_data or {}
@@ -1222,8 +1204,8 @@ def get_suggestion_queue(_=Depends(require_auth)):
                 loser_track = None
                 comparison_reason = None
                 if is_duplicate:
-                    winner_track, loser_track, comparison_reason = (
-                        _hydrate_duplicate_tracks(ctx, getattr(item, "sync_id", None))
+                    winner_track, loser_track, comparison_reason = _hydrate_duplicate_tracks(
+                        ctx, getattr(item, "sync_id", None)
                     )
 
                 # Format clear card title
@@ -1232,10 +1214,7 @@ def get_suggestion_queue(_=Depends(require_auth)):
                     or ctx.get("artist")
                     or ctx.get("artist_name")
                 )
-                track_title = (
-                    (winner_track.get("title") if winner_track else None)
-                    or ctx.get("title")
-                )
+                track_title = (winner_track.get("title") if winner_track else None) or ctx.get("title")
 
                 if is_duplicate:
                     if (
@@ -1261,16 +1240,11 @@ def get_suggestion_queue(_=Depends(require_auth)):
                     {
                         "sync_id": getattr(item, "sync_id", None),
                         "type": reason_type,
-                        "intent_type": getattr(
-                            item, "intent_type", getattr(item, "reason", None)
-                        ),
+                        "intent_type": getattr(item, "intent_type", getattr(item, "reason", None)),
                         "originator": ctx.get("originator", "Consensus Engine"),
                         "title": card_title,
                         "artist": artist_name,
-                        "album": (
-                            winner_track.get("album") if winner_track else None
-                        )
-                        or ctx.get("album"),
+                        "album": (winner_track.get("album") if winner_track else None) or ctx.get("album"),
                         "score": ctx.get("score") or ctx.get("confidence_score"),
                         "status": getattr(item, "status", "pending"),
                         "track_id": getattr(
@@ -1283,9 +1257,7 @@ def get_suggestion_queue(_=Depends(require_auth)):
                             ),
                         ),
                         "action_needed": ctx.get("action_needed", "SUGGESTION"),
-                        "user_id": getattr(
-                            item, "user_id", getattr(item, "account_id", None)
-                        ),
+                        "user_id": getattr(item, "user_id", getattr(item, "account_id", None)),
                         "account_id": getattr(item, "account_id", None),
                         "winner_track": winner_track,
                         "loser_track": loser_track,
@@ -1312,11 +1284,7 @@ def swap_suggestion_tracks(sync_id: str, _=Depends(require_auth)):
     work_db = get_working_database()
     try:
         with work_db.session_scope() as session:
-            item = (
-                session.query(SuggestionStagingQueue)
-                .filter_by(sync_id=sync_id)
-                .first()
-            )
+            item = session.query(SuggestionStagingQueue).filter_by(sync_id=sync_id).first()
             if not item:
                 return {"error": "Suggestion not found"}
 
@@ -1362,9 +1330,7 @@ def swap_suggestion_tracks(sync_id: str, _=Depends(require_auth)):
                 "loser_track": loser,
             }
     except Exception as e:
-        logger.error(
-            f"Error swapping duplicate suggestion {sync_id}: {e}", exc_info=True
-        )
+        logger.error(f"Error swapping duplicate suggestion {sync_id}: {e}", exc_info=True)
         return {"error": "Failed to swap duplicate suggestion"}
 
 
@@ -1382,9 +1348,7 @@ def override_suggestion_candidate(payload: OverrideRequest, _=Depends(require_au
     work_db = get_working_database()
     try:
         with work_db.session_scope() as session:
-            item = (
-                session.query(SuggestionStagingQueue).filter_by(sync_id=sync_id).first()
-            )
+            item = session.query(SuggestionStagingQueue).filter_by(sync_id=sync_id).first()
             if not item:
                 return {"error": "Suggestion not found"}
 
@@ -1420,9 +1384,7 @@ def veto_suggestion(payload: VetoRequest, _=Depends(require_auth)):
     try:
         with work_db.session_scope() as session:
             # Upsert into the blacklist table
-            existing = (
-                session.query(SuggestionBlacklist).filter_by(sync_id=sync_id).first()
-            )
+            existing = session.query(SuggestionBlacklist).filter_by(sync_id=sync_id).first()
             if existing is None:
                 session.add(SuggestionBlacklist(sync_id=sync_id, reason=reason or None))
             else:
@@ -1430,9 +1392,7 @@ def veto_suggestion(payload: VetoRequest, _=Depends(require_auth)):
                     existing.reason = reason
 
             # Mark any pending suggestions as vetoed
-            items = (
-                session.query(SuggestionStagingQueue).filter_by(sync_id=sync_id).all()
-            )
+            items = session.query(SuggestionStagingQueue).filter_by(sync_id=sync_id).all()
             for item in items:
                 item.status = "vetoed"
 
@@ -1469,9 +1429,7 @@ def execute_pending_action(payload: ExecuteRequest, _=Depends(require_auth)):
                 session.query(UserTrackState)
                 .filter(
                     UserTrackState.sync_id == sync_id,
-                    UserTrackState.lifecycle_action.in_(
-                        ["DELETE_MONTH_END", "UPGRADE_WEEK_END"]
-                    ),
+                    UserTrackState.lifecycle_action.in_(["DELETE_MONTH_END", "UPGRADE_WEEK_END"]),
                 )
                 .all()
             )
@@ -1500,14 +1458,12 @@ def execute_pending_action(payload: ExecuteRequest, _=Depends(require_auth)):
 
         # Clear the lifecycle action from working DB rows
         with work_db.session_scope() as session:
-            session.query(UserTrackState).filter(
-                UserTrackState.sync_id == sync_id
-            ).update({"lifecycle_action": None, "lifecycle_queued_at": None})
+            session.query(UserTrackState).filter(UserTrackState.sync_id == sync_id).update(
+                {"lifecycle_action": None, "lifecycle_queued_at": None}
+            )
 
         logger.info(f"Executed pending action {action} for sync_id={sync_id}")
         return {"success": True, "sync_id": sync_id, "executed_action": action}
     except Exception as e:
-        logger.error(
-            f"Error executing pending action for {sync_id}: {e}", exc_info=True
-        )
+        logger.error(f"Error executing pending action for {sync_id}: {e}", exc_info=True)
         return {"error": "Failed to execute pending action"}

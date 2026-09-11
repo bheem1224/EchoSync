@@ -222,10 +222,10 @@
     }
   }
 
-  async function fetchMetadata(trackId) {
+  async function openMetadataEditor(trackRef) {
     try {
       const res = await apiClient.post(
-        `/system/manager/track/${trackId}/fetch_metadata`,
+        `/system/manager/track/${trackRef}/edit_metadata`,
       );
       if (res.data && res.data.task) {
         reviewTask = res.data.task;
@@ -237,7 +237,7 @@
         );
       }
     } catch (err) {
-      alert(`Failed to fetch metadata: ${err.message}`);
+      alert(`Failed to open metadata editor: ${err.message}`);
     }
   }
 
@@ -370,7 +370,8 @@
                     {album}
                     onPlay={playTrack}
                     onDelete={deleteTrack}
-                    onFetchMetadata={fetchMetadata}
+                    {openMetadataEditor}
+                    onFetchMetadata={openMetadataEditor}
                     onForceUpgrade={forceUpgradeTrack}
                     onForceDelete={forceDeleteTrack}
                   />

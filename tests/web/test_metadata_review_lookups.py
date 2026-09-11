@@ -76,9 +76,7 @@ def test_musicbrainz_lookup_response_structure_on_no_match(tmp_path):
         mock_provider = MagicMock()
         mock_get_plugin.return_value = mock_provider
 
-        req = MusicBrainzLookupRequest(
-            metadata={"artist": "Nonexistent", "title": "SongXYZ"}
-        )
+        req = MusicBrainzLookupRequest(metadata={"artist": "Nonexistent", "title": "SongXYZ"})
         res = lookup_review_queue_item_musicbrainz(task_id, req)
 
         assert res["success"] is True
@@ -110,10 +108,14 @@ def test_acoustid_contribution_trigger_on_approval(tmp_path):
 
 def test_import_single_file_updates_existing_track_and_local_media(tmp_path):
     from database import _canonicalize_path
-    from database.music_database import Album, Artist, LocalMedia, Track, get_database
+    from database.music_database import Album, Artist, Base, LocalMedia, Track, get_database
+    from database.working_database import WorkingBase, get_working_database
     from web.routes.metadata_review import _import_single_file
 
     music_db = get_database()
+    Base.metadata.create_all(music_db.engine)
+    WorkingBase.metadata.create_all(get_working_database().engine)
+
     old_file = tmp_path / "old_artist" / "old_album" / "song.flac"
     old_file.parent.mkdir(parents=True, exist_ok=True)
     old_file.write_bytes(b"audio")
@@ -130,9 +132,7 @@ def test_import_single_file_updates_existing_track_and_local_media(tmp_path):
     # Seed an existing track with Unknown Artist
     with music_db.session_scope() as session:
         artist = Artist(name="Unknown Artist", normalized_name="unknown artist")
-        album = Album(
-            title="Unknown Album", normalized_title="unknown album", artist=artist
-        )
+        album = Album(title="Unknown Album", normalized_title="unknown album", artist=artist)
         track = Track(
             title="Black Rover",
             normalized_title="black rover",

@@ -1109,9 +1109,9 @@ def lookup_review_queue_item_acoustid(task_id: int, _=Depends(require_auth)):
             req = ResolutionRequest(
                 media_id=str(task.id),
                 file_path=Path(file_path),
-                baseline_title=None,  # Do not pass corrupt DB title as ground truth
-                baseline_artist=track_obj.artist_name,
-                baseline_album=track_obj.album_title,
+                baseline_title=None,  # Zero-trust fingerprint semantics: audio proof overrides corrupt DB title
+                baseline_artist=None,  # Zero-trust: audio proof determines true artist without dirty baseline bias
+                baseline_album=None,
                 ignore_embedded_mbid=True,
                 ignore_cache=True,
             )
