@@ -36,12 +36,29 @@ def is_generic_title(title: str | Path | None) -> bool:
         "dummy",
         "temp",
         "music",
+        "corrupted",
+        "corrupted track",
+        "corrupted song",
     }
     if t_clean in generic_words:
         return True
     tokens = set(t_clean.split())
     return tokens.issubset(
-        {"cached", "song", "with", "tag", "test", "audio", "track", "file", "dummy", "temp", "surround", "sound"}
+        {
+            "cached",
+            "song",
+            "with",
+            "tag",
+            "test",
+            "audio",
+            "track",
+            "file",
+            "dummy",
+            "temp",
+            "surround",
+            "sound",
+            "corrupted",
+        }
     )
 
 
@@ -136,11 +153,7 @@ def verify_title_trust_gate(
             difflib.SequenceMatcher(None, norm_baseline, norm_file).ratio(),
         )
         # If DB baseline contradicts physical filename stem and candidate also contradicts filename stem:
-        if (
-            base_file_sim < min_similarity
-            and file_sim < min_similarity
-            and tag_cand_sim < min_similarity
-        ):
+        if base_file_sim < min_similarity and file_sim < min_similarity and tag_cand_sim < min_similarity:
             return False
 
     ratios = []

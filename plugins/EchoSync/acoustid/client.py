@@ -164,7 +164,7 @@ class AcoustIDProvider(PluginBase):
                 logger.debug("AcoustID lookup succeeded but found 0 matches for fingerprint.")
             mbids: list[str] = []
             recordings_list: list[dict[str, Any]] = []
-            seen_mbid = set()
+            seen_ids = set()
             best_result: dict[str, Any] | None = None
             best_score = -1.0
 
@@ -181,50 +181,46 @@ class AcoustIDProvider(PluginBase):
                     best_result = result
                     best_score = score
 
-                for recording in result.get("recordings", []) or []:
-                    if not isinstance(recording, dict):
+                for rec in result.get("recordings", []) or []:
+                    if not isinstance(rec, dict):
                         continue
-                    rec_id = str(recording.get("id") or "").strip()
-                    if rec_id and rec_id not in seen_mbid:
-                        seen_mbid.add(rec_id)
+                    rec_id = str(rec.get("id") or "").strip()
+                    if rec_id and rec_id not in seen_ids:
+                        seen_ids.add(rec_id)
                         mbids.append(rec_id)
 
-                    # Robust artist extraction: joined array > "artist" field fallback
-                    artist_names = []
-                    for a in recording.get("artists", []) or []:
-                        if isinstance(a, dict) and a.get("name"):
-                            artist_names.append(str(a["name"]))
-                        elif isinstance(a, str) and a.strip():
-                            artist_names.append(a.strip())
-                    if artist_names:
-                        artist_str: str | None = ", ".join(artist_names)
-                    else:
-                        # Tertiary fallback: bare "artist" string (non-standard responses)
-                        artist_str = recording.get("artist") or None
+                        # Extract artist string safely
+                        artists = rec.get("artists", []) or []
+                        artist_names = [str(a["name"]) for a in artists if isinstance(a, dict) and a.get("name")]
+                        if artist_names:
+                            artist_name = ", ".join(artist_names)
+                        else:
+                            artist_name = str(rec.get("artist") or "")
 
-                    # Guarantee duration is always present (as float or None) for pre-filtering
-                    raw_duration = recording.get("duration")
-                    try:
-                        duration_val: float | None = float(raw_duration) if raw_duration is not None else None
-                    except (ValueError, TypeError):
-                        duration_val = None
+                        # Duration normalization (seconds as float or None)
+                        raw_duration = rec.get("duration")
+                        try:
+                            duration_val: float | None = float(raw_duration) if raw_duration is not None else None
+                        except (ValueError, TypeError):
+                            duration_val = None
 
-                    recordings_list.append(
-                        {
-                            "id": rec_id or recording.get("id"),
-                            "title": recording.get("title"),
-                            "artist": artist_str,
-                            "artists": artist_names,
-                            "duration": duration_val,
-                            "score": score,
-                        }
-                    )
+                        recordings_list.append(
+                            {
+                                "id": rec_id,
+                                "title": rec.get("title", "") or "",
+                                "artist": artist_name,
+                                "artists": artist_names,
+                                "duration": duration_val,
+                                "score": score,
+                                "releasegroups": rec.get("releasegroups", []) or [],
+                            }
+                        )
 
                 # Also collect any bare recordingids if present
                 for rid in result.get("recordingids", []) or []:
                     rid_s = str(rid).strip()
-                    if rid_s and rid_s not in seen_mbid:
-                        seen_mbid.add(rid_s)
+                    if rid_s and rid_s not in seen_ids:
+                        seen_ids.add(rid_s)
                         mbids.append(rid_s)
 
             acoustid_id = None

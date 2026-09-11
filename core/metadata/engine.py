@@ -20,6 +20,7 @@ from core.enums import Capability
 from core.matching_engine.fingerprinting import FingerprintGenerator
 from core.matching_engine.matching_engine import WeightedMatchingEngine
 from core.matching_engine.scoring_profile import PROFILE_EXACT_SYNC
+from core.matching_engine.text_utils import normalize_title
 from core.matching_engine.trust_gate import (
     clean_title_from_filename,
     is_cross_script,
@@ -1154,11 +1155,23 @@ class MetadataResolutionEngine:
                     seen_mbids.add(mbid_s)
                     ordered_mbids.append(mbid_s)
 
-            # ── Step A: Pre-network Duration Gate ─────────────────────────────
-            # ── Step B: Pre-network Artist Token Filter ───────────────────────
-            # Both filters execute against the lightweight AcoustID recording metadata
-            # (no MusicBrainz API calls), dropping ineligible candidates immediately.
-            viable_candidates: list[tuple[str, float]] = []
+            # ── Pre-network In-Memory Filtering & Ranking ─────────────────────
+            # Fast in-memory filtering against AcoustID candidate metadata:
+            # 1. Hard duration gate (<= 2.0s cutoff)
+            # 2. Artist token overlap check
+            # 3. Filename stem title similarity (prune < 0.40, rank by title + duration)
+            has_identifiable_filename = bool(filename_stem and not is_generic_title(filename_stem))
+            fn_lower = filename_stem.lower().strip() if has_identifiable_filename else ""
+            norm_fn = normalize_title(fn_lower) if fn_lower else ""
+            fn_tokens = {w for w in re.findall(r"\w+", fn_lower) if len(w) > 1} if fn_lower else set()
+
+            logger.info(
+                "[resolution_engine] Filtering %d AcoustID candidate(s) against filename stem: '%s'",
+                len(ordered_mbids),
+                filename_stem or "(none)",
+            )
+
+            viable_candidates: list[tuple[str, float, float, float]] = []  # (mbid, rank_score, dur_delta, title_sim)
 
             for mbid_str in ordered_mbids:
                 if not mbid_str:
@@ -1186,9 +1199,9 @@ class MetadataResolutionEngine:
                             )
                             continue
                     except (ValueError, TypeError):
-                        dur_delta_sec = 0.0  # Unknown duration — pass through for MB fetch
+                        dur_delta_sec = 0.0  # Unknown duration — pass through
                 else:
-                    dur_delta_sec = 0.0  # Unknown duration — pass through for MB fetch
+                    dur_delta_sec = 0.0  # Unknown duration — pass through
 
                 # Step B: Artist token filter (pre-network)
                 cand_artist = rec_meta.get("artist") or ""
@@ -1214,17 +1227,59 @@ class MetadataResolutionEngine:
                             )
                             continue
 
-                viable_candidates.append((mbid_str, dur_delta_sec))
-                if len(viable_candidates) >= 3:
-                    break  # Cap at 3 MusicBrainz lookups
+                # Step C: Fast in-memory title check against filename stem
+                cand_title = str(rec_meta.get("title") or "").strip()
+                if cand_title and has_identifiable_filename:
+                    c_lower = cand_title.lower().strip()
+                    sim = difflib.SequenceMatcher(None, fn_lower, c_lower).ratio()
+                    norm_c = normalize_title(c_lower)
+                    if norm_fn and norm_c:
+                        sim = max(sim, difflib.SequenceMatcher(None, norm_fn, norm_c).ratio())
+                    c_tokens = {w for w in re.findall(r"\w+", c_lower) if len(w) > 1}
+                    if fn_tokens and c_tokens:
+                        token_overlap = len(fn_tokens & c_tokens) / max(len(fn_tokens), len(c_tokens))
+                        sim = max(sim, token_overlap)
 
-            # Sort by duration proximity so the closest candidate is fetched first
-            viable_candidates.sort(key=lambda x: x[1])
-            top_mbids = [item[0] for item in viable_candidates]
+                    # Pruning Rule: Discard any candidate where title similarity < 0.40
+                    if sim < 0.40:
+                        logger.debug(
+                            "[resolution_engine] Title pre-filter DROPPED MBID %s '%s': "
+                            "title similarity %.2f < 0.40 against filename '%s'",
+                            mbid_str,
+                            cand_title,
+                            sim,
+                            filename_stem,
+                        )
+                        continue
+                else:
+                    sim = 0.50  # Neutral similarity for untagged candidates or generic filenames
 
-            logger.debug(
-                "[resolution_engine] Stage 3: %d AcoustID candidate(s) survive pre-network filters; "
-                "querying MusicBrainz for: %s",
+                # Ranking score: 70% title similarity + 30% duration proximity
+                dur_prox = max(0.0, 1.0 - (dur_delta_sec / 2.0))
+                pre_rank_score = (sim * 0.7) + (dur_prox * 0.3)
+
+                viable_candidates.append((mbid_str, pre_rank_score, dur_delta_sec, sim))
+
+            # Exit immediately if no candidates match
+            if not viable_candidates:
+                logger.info(
+                    "[resolution_engine] No AcoustID candidate matched filename '%s' with >= 0.40 similarity. "
+                    "Skipping MusicBrainz network calls.",
+                    filename_stem or "(none)",
+                )
+                return None
+
+            # Sort descending by composite pre_rank_score
+            viable_candidates.sort(key=lambda x: x[1], reverse=True)
+
+            # Cap at top 2 viable candidates for MusicBrainz detail lookup
+            top_candidates = viable_candidates[:2]
+            top_mbids = [item[0] for item in top_candidates]
+
+            logger.info(
+                "[resolution_engine] Stage 3: %d candidate(s) passed pre-network filters; "
+                "querying MusicBrainz for top %d: %s",
+                len(viable_candidates),
                 len(top_mbids),
                 top_mbids,
             )

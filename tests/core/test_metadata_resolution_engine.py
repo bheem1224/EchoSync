@@ -1159,3 +1159,107 @@ def test_acoustid_resolves_filename_when_embedded_tag_is_corrupted(monkeypatch, 
         f"but get_metadata was called with: {queried_mbids}"
     )
     assert "d2555d82" in queried_mbids, "Candidate d2555d82 (200.6s, within 2.0s gate) must be queried from MusicBrainz"
+
+
+def test_acoustid_multi_cluster_in_memory_title_prefilter_eliminates_mismatched_mb_fetches(monkeypatch, tmp_path):
+    """Verifies that when AcoustID returns multiple clusters with mismatched songs
+    sharing similar durations (Control, Where Were You..., Perfect Strangers),
+    in-memory title pre-filtering drops all mismatched songs BEFORE network egress,
+    and queries MusicBrainz ONLY for the filename-matching candidate across all clusters.
+    """
+    audio_file = tmp_path / "01 - There's Nothing Holdin' Me Back.flac"
+    audio_file.write_bytes(b"dummy audio content")
+
+    file_dur_ms = 201000  # 201.0s
+    dummy_cp = "F" * 60
+
+    monkeypatch.setattr(
+        echosync_core,
+        "extract_metadata",
+        lambda p: {
+            "title": "Corrupted Tag Title",
+            "artist": "Shawn Mendes",
+            "duration_ms": file_dur_ms,
+            "channels": 2,
+        },
+    )
+    monkeypatch.setattr(
+        FingerprintGenerator,
+        "generate_with_duration",
+        lambda p: (dummy_cp, file_dur_ms / 1000.0),
+    )
+
+    # 4 candidates across clusters:
+    # 3 mismatched titles within the 2.0s duration window (Control, Where Were You..., Perfect Strangers)
+    # 1 matching title (There's Nothing Holdin' Me Back)
+    mock_acoustid = MagicMock()
+    mock_acoustid.resolve_fingerprint_details.return_value = {
+        "acoustid_id": "cluster-1",
+        "mbids": ["mbid-control", "mbid-where-were-you", "mbid-perfect-strangers", "mbid-holdin-me-back"],
+        "recordings": [
+            {
+                "id": "mbid-control",
+                "title": "Control",
+                "artist": "Zoe Wees",
+                "duration": 201.0,
+            },
+            {
+                "id": "mbid-where-were-you",
+                "title": "Where Were You in the Morning?",
+                "artist": "Shawn Mendes",
+                "duration": 201.0,
+            },
+            {
+                "id": "mbid-perfect-strangers",
+                "title": "Perfect Strangers",
+                "artist": "Jonas Blue",
+                "duration": 201.2,
+            },
+            {
+                "id": "mbid-holdin-me-back",
+                "title": "There's Nothing Holdin' Me Back",
+                "artist": "Shawn Mendes",
+                "duration": 200.6,
+            },
+        ],
+    }
+
+    mock_mb = MagicMock()
+    mock_mb.get_metadata.return_value = {
+        "title": "There's Nothing Holdin' Me Back",
+        "artist": "Shawn Mendes",
+        "album": "Illuminate",
+        "recording_id": "mbid-holdin-me-back",
+        "duration_ms": 200600,
+        "release_group": {"primary_type": "Album"},
+    }
+
+    engine = MetadataResolutionEngine(
+        acoustid_provider=mock_acoustid,
+        metadata_provider=mock_mb,
+    )
+
+    req = ResolutionRequest(
+        media_id="test_multi_cluster",
+        file_path=audio_file,
+        baseline_title=None,
+        baseline_artist="Shawn Mendes",
+        ignore_cache=True,
+    )
+
+    result = engine.resolve_track(req)
+
+    # Winner must be "There's Nothing Holdin' Me Back"
+    assert result.musicbrainz_track_id == "mbid-holdin-me-back"
+    assert result.title == "There's Nothing Holdin' Me Back"
+    assert result.resolution_method == "acoustid"
+
+    # Crucial assertion: MusicBrainz was NEVER called for the 3 mismatched songs
+    queried_mbids = [call.args[0] for call in mock_mb.get_metadata.call_args_list]
+    assert "mbid-control" not in queried_mbids
+    assert "mbid-where-were-you" not in queried_mbids
+    assert "mbid-perfect-strangers" not in queried_mbids
+
+    # MusicBrainz was called ONLY for the matching song
+    assert queried_mbids == ["mbid-holdin-me-back"]
+    assert len(queried_mbids) == 1
