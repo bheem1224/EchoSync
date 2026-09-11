@@ -150,6 +150,11 @@ class AcoustIDProvider(PluginBase):
                 return {"acoustid_id": None, "mbids": [], "score": None, "match_status": "UNRESOLVED"}
 
             data = response.json()
+            logger.info(
+                "[AcoustID Raw Response] results_count=%d, results=%s",
+                len(data.get("results", [])),
+                data.get("results", []),
+            )
             if data.get("status") != "ok":
                 logger.error(f"AcoustID API returned error status: {data}")
                 return {"acoustid_id": None, "mbids": [], "score": None, "match_status": "UNRESOLVED"}

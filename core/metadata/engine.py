@@ -334,13 +334,170 @@ class MetadataResolutionEngine:
 
         return max(score, 0.0)
 
-    def resolve_track(self, request: ResolutionRequest) -> ResolutionResult:
-        """Resolve track metadata through the authoritative 6-stage resolution waterfall."""
+    def resolve_track(
+        self,
+        request: ResolutionRequest,
+        enabled_stages: list[str] | None = None,
+    ) -> ResolutionResult:
+        """Resolve track metadata through the authoritative 6-stage resolution waterfall.
+
+        When ``enabled_stages`` is provided, only the listed stages are executed.
+        Currently supports ``["acoustid"]`` for strict manual fingerprint lookups that
+        must not leak into ISRC or text-waterfall fallback stages.
+        """
+        # ── Acoustid-only isolated path ────────────────────────────────────────
+        if enabled_stages and enabled_stages == ["acoustid"]:
+            return self._resolve_acoustid_isolated(request)
+
+        # ── Standard full waterfall ────────────────────────────────────────────
         result = self._execute_waterfall(request)
 
         # ── Stage 6: Entity Alias Resolution ──────────────────────────────────
         result.alias_proposals = self._resolve_aliases(request, result)
         return result
+
+    def _resolve_acoustid_isolated(self, request: ResolutionRequest) -> ResolutionResult:
+        """Execute Stage 3 (AcoustID) in strict isolation.
+
+        Performs the minimum physical inspection required to obtain a chromaprint and
+        duration, then calls AcoustID directly.  If no match is found the method returns
+        a zero-confidence stub with the generated fingerprint preserved so the caller
+        can save it and present a 'submit to AcoustID' option without corrupting metadata.
+
+        Stages that are intentionally skipped:
+          Stage 0 — ECHOSYNC_SIGNATURE verification
+          Fast-path — Embedded MBID lookup
+          Stage 2 — Local chromaprint cache
+          Stage 4 — ISRC resolution
+          Stage 5 — Scoped text waterfall
+        """
+        file_path = Path(request.file_path)
+
+        # ── Minimal physical inspection ────────────────────────────────────────
+        raw_tags: dict[str, Any] = {}
+        try:
+            import echosync_core
+
+            raw_tags = echosync_core.extract_metadata(str(file_path)) or {}
+        except Exception as exc:
+            logger.debug(
+                "[resolution_engine] [acoustid-isolated] Tag extraction failed for %s: %s",
+                file_path.name,
+                exc,
+            )
+
+        # Duration from header tags or fingerprint generator
+        duration_ms = 0
+        raw_dur = raw_tags.get("duration_ms")
+        if raw_dur is not None:
+            try:
+                duration_ms = int(raw_dur)
+            except (ValueError, TypeError):
+                duration_ms = 0
+        elif raw_tags.get("duration") is not None:
+            try:
+                d_sec = float(raw_tags["duration"])
+                duration_ms = round(d_sec * 1000) if d_sec < 10000 else round(d_sec)
+            except (ValueError, TypeError):
+                duration_ms = 0
+
+        # Channel check: skip fingerprinting for multi-channel audio
+        channels = 2
+        try:
+            raw_ch = raw_tags.get("channels")
+            if raw_ch is not None:
+                channels = int(raw_ch)
+        except (ValueError, TypeError):
+            channels = 2
+
+        chromaprint: str | None = None
+        if channels > 2:
+            logger.info(
+                "[resolution_engine] [acoustid-isolated] Multi-channel audio (%d ch) on %s; skipping Chromaprint.",
+                channels,
+                file_path.name,
+            )
+        else:
+            try:
+                chromaprint, fp_dur = FingerprintGenerator.generate_with_duration(str(file_path))
+                if fp_dur and duration_ms <= 0:
+                    duration_ms = round(float(fp_dur) * 1000)
+            except Exception as fp_err:
+                logger.warning(
+                    "[resolution_engine] [acoustid-isolated] Fingerprint generation failed for %s: %s",
+                    file_path.name,
+                    fp_err,
+                )
+
+        # ── Stage 3: AcoustID (isolated) ─────────────────────────────────────
+        acoustid_res: dict[str, Any] | None = None
+        if chromaprint and duration_ms > 0:
+            logger.info(
+                "[resolution_engine] [acoustid-isolated] Running Stage 3 for %s (fingerprint_len=%d, duration_ms=%d)",
+                file_path.name,
+                len(chromaprint),
+                duration_ms,
+            )
+            baseline_title = request.baseline_title or ""
+            baseline_artist = request.baseline_artist or ""
+            baseline_album = request.baseline_album or ""
+            tag_title = raw_tags.get("title")
+            acoustid_res = self._resolve_acoustid(
+                chromaprint=chromaprint,
+                file_duration_ms=duration_ms,
+                baseline_title=baseline_title,
+                filename=file_path.name,
+                tag_title=tag_title,
+                baseline_artist=baseline_artist or None,
+                baseline_album=baseline_album or None,
+            )
+
+        # ── Result assembly ────────────────────────────────────────────────────
+        if acoustid_res and acoustid_res.get("candidate_score", 0.0) >= 60.0:
+            logger.info(
+                "[resolution_engine] [acoustid-isolated] HIT: %s → MBID %s (score=%.1f)",
+                file_path.name,
+                acoustid_res["musicbrainz_track_id"],
+                acoustid_res["candidate_score"],
+            )
+            tag_isrc = raw_tags.get("isrc") or request.baseline_isrc
+            return ResolutionResult(
+                media_id=request.media_id,
+                sync_id=request.sync_id,
+                title=acoustid_res["title"],
+                artist=acoustid_res["artist"],
+                album=acoustid_res.get("album") or baseline_album,
+                year=acoustid_res.get("year"),
+                track_number=acoustid_res.get("track_number"),
+                disc_number=acoustid_res.get("disc_number"),
+                musicbrainz_track_id=acoustid_res["musicbrainz_track_id"],
+                musicbrainz_release_id=acoustid_res.get("musicbrainz_release_id"),
+                acoustid_id=acoustid_res.get("acoustid_id"),
+                chromaprint=chromaprint,
+                duration_ms=duration_ms,
+                isrc=acoustid_res.get("isrc") or tag_isrc,
+                confidence_score=0.95,
+                resolution_method="acoustid",
+            )
+
+        # ── Zero-confidence stub: preserve fingerprint, no metadata contamination ─
+        logger.warning(
+            "[resolution_engine] [acoustid-isolated] MISS for %s — no AcoustID match "
+            "(chromaprint_len=%s, duration_ms=%d). Returning stub.",
+            file_path.name,
+            len(chromaprint) if chromaprint else "None",
+            duration_ms,
+        )
+        return ResolutionResult(
+            media_id=request.media_id,
+            sync_id=request.sync_id,
+            title="",
+            artist="",
+            chromaprint=chromaprint,
+            duration_ms=duration_ms,
+            confidence_score=0.0,
+            resolution_method="acoustid",
+        )
 
     def _resolve_aliases(self, request: ResolutionRequest, result: ResolutionResult) -> list[EntityAliasProposal]:
         """Stage 6: Query active language packs and plugins for entity alias proposals."""

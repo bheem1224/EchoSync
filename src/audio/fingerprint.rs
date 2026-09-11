@@ -107,6 +107,7 @@ pub fn generate_fingerprint(file_path: &str, trim_silence: bool) -> Result<(Stri
         return Err("Audio is completely silent".to_string());
     }
 
+    // Full track duration derived from total decoded samples (unaffected by fingerprint window)
     let duration_seconds = (samples.len() as f64) / (original_sample_rate as f64);
 
     // Convert f32 PCM to 16-bit signed integer samples for Chromaprint
@@ -118,13 +119,23 @@ pub fn generate_fingerprint(file_path: &str, trim_silence: bool) -> Result<(Stri
         })
         .collect();
 
+    // AcoustID / fpcalc standard: fingerprint only the first 120 seconds of audio.
+    // Feeding more samples produces a hash that diverges from the AcoustID cluster index.
+    const CHROMAPRINT_MAX_SECONDS: f64 = 120.0;
+    let max_samples = (CHROMAPRINT_MAX_SECONDS * original_sample_rate as f64) as usize;
+    let fingerprint_window: &[i16] = if i16_samples.len() > max_samples {
+        &i16_samples[..max_samples]
+    } else {
+        &i16_samples[..]
+    };
+
     let config = Configuration::preset_test2();
     let mut printer = Fingerprinter::new(&config);
     printer
         .start(original_sample_rate, 1)
         .map_err(|e| format!("Failed to start fingerprinter: {e:?}"))?;
 
-    printer.consume(&i16_samples);
+    printer.consume(fingerprint_window);
     printer.finish();
 
     let raw_fp = printer.fingerprint();

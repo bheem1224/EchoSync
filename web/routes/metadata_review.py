@@ -1115,19 +1115,23 @@ def lookup_review_queue_item_acoustid(task_id: int, _=Depends(require_auth)):
                 ignore_embedded_mbid=True,
                 ignore_cache=True,
             )
-            res = engine.resolve_track(req)
+            res = engine.resolve_track(req, enabled_stages=["acoustid"])
 
             if res.chromaprint:
                 track_obj.fingerprint = res.chromaprint
 
-            if res.confidence_score == 0.0 or res.resolution_method != "acoustid":
+            if res.confidence_score < 60.0:
+                # Persist fingerprint even on miss so user can submit to AcoustID
+                if res.chromaprint:
+                    task.track_data = track_obj.to_dict()
+                    flag_modified(task, "track_data")
                 logger.warning(
-                    f"AcoustID scan for task {task_id}: verification failed or not resolved via acoustid "
-                    f"(method={res.resolution_method}, score={res.confidence_score})"
+                    f"AcoustID scan for task {task_id}: no verified match found "
+                    f"(score={res.confidence_score}, fingerprint_len={len(res.chromaprint or '')})"
                 )
                 raise HTTPException(
                     status_code=404,
-                    detail="AcoustID could not verify a matching track for this audio file",
+                    detail="AcoustID found no verified matching recording for this acoustic fingerprint.",
                 )
 
             # Match found
