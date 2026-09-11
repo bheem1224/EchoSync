@@ -1052,3 +1052,110 @@ def test_text_waterfall_duration_decay_and_cutoff():
     assert calculate_text_duration_weight(200.0, 208.1) == 0.0
     assert calculate_text_duration_weight(200.0, 215.0) == 0.0
     assert calculate_text_duration_weight(200.0, 180.0) == 0.0
+
+
+def test_acoustid_resolves_filename_when_embedded_tag_is_corrupted(monkeypatch, tmp_path):
+    """Verifies that when embedded tags are corrupted, candidate scoring is anchored to
+    the physical filename stem (zero-trust semantics) and that the 2.0s hard duration gate
+    rejects candidates before any MusicBrainz network call is made.
+
+    Scenario:
+      - File: "01 - There's Nothing Holdin' Me Back.flac"  (201.0s)
+      - Embedded title tag: "Where Were You in the Morning?" (CORRUPTED)
+      - Candidate 2aeeb920: title "Where Were You in the Morning?", duration 205.0s
+          -> MUST be rejected by Step A pre-network duration gate (delta = 4.0s > 2.0s)
+          -> MusicBrainz get_metadata MUST NEVER be called for this MBID
+      - Candidate d2555d82: title "There's Nothing Holdin' Me Back", duration 200.6s
+          -> Survives duration gate (delta = 0.4s)
+          -> Scores high against filename stem "There's Nothing Holdin' Me Back"
+          -> MUST be the winning resolution
+    """
+    audio_file = tmp_path / "01 - There's Nothing Holdin' Me Back.flac"
+    audio_file.write_bytes(b"dummy audio content")
+
+    file_dur_ms = 201000  # 201.0s
+    dummy_cp = "F" * 60
+
+    # Corrupted embedded tags
+    monkeypatch.setattr(
+        echosync_core,
+        "extract_metadata",
+        lambda p: {
+            "title": "Where Were You in the Morning?",
+            "artist": "Shawn Mendes",
+            "duration_ms": file_dur_ms,
+            "channels": 2,
+        },
+    )
+    monkeypatch.setattr(
+        FingerprintGenerator,
+        "generate_with_duration",
+        lambda p: (dummy_cp, file_dur_ms / 1000.0),
+    )
+
+    mock_acoustid = MagicMock()
+    mock_acoustid.resolve_fingerprint_details.return_value = {
+        "acoustid_id": "acoustid-holdin-cluster",
+        "mbids": ["2aeeb920", "d2555d82"],
+        "recordings": [
+            {
+                "id": "2aeeb920",
+                "title": "Where Were You in the Morning?",
+                "artist": "Shawn Mendes",
+                "duration": 205.0,  # seconds — delta = 4.0s > 2.0s  -> MUST be filtered
+            },
+            {
+                "id": "d2555d82",
+                "title": "There's Nothing Holdin' Me Back",
+                "artist": "Shawn Mendes",
+                "duration": 200.6,  # seconds — delta = 0.4s <= 2.0s  -> passes gate
+            },
+        ],
+    }
+
+    mock_mb = MagicMock()
+
+    def mb_meta(mbid):
+        if mbid == "d2555d82":
+            return {
+                "title": "There's Nothing Holdin' Me Back",
+                "artist": "Shawn Mendes",
+                "album": "Illuminate",
+                "recording_id": "d2555d82",
+                "duration_ms": 200600,
+                "release_group": {"primary_type": "Album"},
+            }
+        # 2aeeb920 should never be queried — return None to catch accidental calls
+        return None
+
+    mock_mb.get_metadata.side_effect = mb_meta
+
+    engine = MetadataResolutionEngine(
+        acoustid_provider=mock_acoustid,
+        metadata_provider=mock_mb,
+    )
+
+    req = ResolutionRequest(
+        media_id="test_filename_zero_trust",
+        file_path=audio_file,
+        baseline_title="Where Were You in the Morning?",  # Corrupted embedded tag
+        baseline_artist="Shawn Mendes",
+        ignore_cache=True,
+    )
+
+    result = engine.resolve_track(req)
+
+    # ── Assertion 1: correct winner ────────────────────────────────────────────
+    assert result.musicbrainz_track_id == "d2555d82", (
+        f"Expected d2555d82 (filename-matched), got {result.musicbrainz_track_id}"
+    )
+    assert result.title == "There's Nothing Holdin' Me Back", f"Expected filename-matched title, got '{result.title}'"
+    assert result.resolution_method == "acoustid"
+
+    # ── Assertion 2: pre-network gate — 2aeeb920 MUST NEVER reach MusicBrainz ─
+    queried_mbids = [call.args[0] for call in mock_mb.get_metadata.call_args_list]
+    assert "2aeeb920" not in queried_mbids, (
+        f"Candidate 2aeeb920 (205s, delta=4.0s) must be dropped before MusicBrainz, "
+        f"but get_metadata was called with: {queried_mbids}"
+    )
+    assert "d2555d82" in queried_mbids, "Candidate d2555d82 (200.6s, within 2.0s gate) must be queried from MusicBrainz"

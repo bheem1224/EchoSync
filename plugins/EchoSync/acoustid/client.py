@@ -20,9 +20,7 @@ class AcoustIDProvider(PluginBase):
     capabilities = ProviderCapabilities(
         name="EchoSync.acoustid",
         supports_playlists=PlaylistSupport.NONE,
-        search=SearchCapabilities(
-            tracks=False, artists=False, albums=False, playlists=False
-        ),
+        search=SearchCapabilities(tracks=False, artists=False, albums=False, playlists=False),
         metadata=MetadataRichness.LOW,
         supports_cover_art=False,
         supports_lyrics=False,
@@ -55,9 +53,7 @@ class AcoustIDProvider(PluginBase):
                 from core.security import decrypt_string
 
                 api_key = decrypt_string(api_key)
-            logger.debug(
-                f"AcoustID API key loaded from namespaced storage (length={len(api_key)})"
-            )
+            logger.debug(f"AcoustID API key loaded from namespaced storage (length={len(api_key)})")
             return api_key or None
 
         # Fallback to global config (legacy)
@@ -68,9 +64,7 @@ class AcoustIDProvider(PluginBase):
                 from core.security import decrypt_string
 
                 api_key = decrypt_string(api_key)
-            logger.debug(
-                f"AcoustID API key loaded from global config (length={len(api_key)})"
-            )
+            logger.debug(f"AcoustID API key loaded from global config (length={len(api_key)})")
         return api_key or None
 
     def _get_submit_keys(self) -> tuple[str | None, str | None]:
@@ -99,9 +93,7 @@ class AcoustIDProvider(PluginBase):
         return client_key or None, user_key or None
 
     @plugin_cache(ttl_seconds=2592000)
-    def resolve_fingerprint_details(
-        self, fingerprint: str, duration: int
-    ) -> dict[str, Any]:
+    def resolve_fingerprint_details(self, fingerprint: str, duration: int) -> dict[str, Any]:
         """
         Resolve fingerprint and return both AcoustID result ID and MBID candidates.
 
@@ -135,9 +127,7 @@ class AcoustIDProvider(PluginBase):
         duration_int = round(duration_val)
 
         if duration_int <= 0:
-            logger.warning(
-                "[system] - Aborting AcoustID lookup: Invalid track duration (0s) detected."
-            )
+            logger.warning("[system] - Aborting AcoustID lookup: Invalid track duration (0s) detected.")
             return {"acoustid_id": None, "mbids": [], "score": None, "match_status": "UNRESOLVED"}
         payload = {
             "client": api_key,
@@ -154,13 +144,9 @@ class AcoustIDProvider(PluginBase):
 
             if response.status_code != 200:
                 if response.status_code == 400:
-                    logger.warning(
-                        f"AcoustID lookup rejected (400). Response: {response.text[:200]}"
-                    )
+                    logger.warning(f"AcoustID lookup rejected (400). Response: {response.text[:200]}")
                 else:
-                    logger.error(
-                        f"AcoustID API error: {response.status_code} - {response.text[:200]}"
-                    )
+                    logger.error(f"AcoustID API error: {response.status_code} - {response.text[:200]}")
                 return {"acoustid_id": None, "mbids": [], "score": None, "match_status": "UNRESOLVED"}
 
             data = response.json()
@@ -170,9 +156,7 @@ class AcoustIDProvider(PluginBase):
 
             results = data.get("results") or []
             if not results:
-                logger.debug(
-                    "AcoustID lookup succeeded but found 0 matches for fingerprint."
-                )
+                logger.debug("AcoustID lookup succeeded but found 0 matches for fingerprint.")
             mbids: list[str] = []
             recordings_list: list[dict[str, Any]] = []
             seen_mbid = set()
@@ -200,12 +184,23 @@ class AcoustIDProvider(PluginBase):
                         seen_mbid.add(mbid)
                         mbids.append(mbid)
 
-                        # Extract artist string from artist credits
+                        # Robust artist extraction: joined array > "artist" field fallback
                         artist_names = []
                         for a in recording.get("artists", []) or []:
                             if isinstance(a, dict) and a.get("name"):
                                 artist_names.append(str(a["name"]))
-                        artist_str = ", ".join(artist_names) if artist_names else None
+                        if artist_names:
+                            artist_str: str | None = ", ".join(artist_names)
+                        else:
+                            # Tertiary fallback: bare "artist" string (non-standard responses)
+                            artist_str = recording.get("artist") or None
+
+                        # Guarantee duration is always present (as float or None) for pre-filtering
+                        raw_duration = recording.get("duration")
+                        try:
+                            duration_val: float | None = float(raw_duration) if raw_duration is not None else None
+                        except (ValueError, TypeError):
+                            duration_val = None
 
                         recordings_list.append(
                             {
@@ -213,7 +208,7 @@ class AcoustIDProvider(PluginBase):
                                 "title": recording.get("title"),
                                 "artist": artist_str,
                                 "artists": artist_names,
-                                "duration": recording.get("duration"),
+                                "duration": duration_val,
                                 "score": score,
                             }
                         )
@@ -264,12 +259,7 @@ class AcoustIDProvider(PluginBase):
             logger.debug("Skipping AcoustID submission: auto_contribute is disabled")
             return False
 
-        if (
-            not fingerprint
-            or not str(fingerprint).strip()
-            or not mbid
-            or not str(mbid).strip()
-        ):
+        if not fingerprint or not str(fingerprint).strip() or not mbid or not str(mbid).strip():
             logger.debug("Skipping AcoustID submit: missing fingerprint or MBID")
             return False
 
@@ -295,9 +285,7 @@ class AcoustIDProvider(PluginBase):
         try:
             response = self.http.post(f"{self.api_base}/submit", data=payload)
             if response.status_code != 200:
-                logger.warning(
-                    f"AcoustID submit failed ({response.status_code}): {response.text[:200]}"
-                )
+                logger.warning(f"AcoustID submit failed ({response.status_code}): {response.text[:200]}")
                 return False
 
             data = response.json() or {}
@@ -333,9 +321,7 @@ class AcoustIDProvider(PluginBase):
     def authenticate(self, **kwargs) -> bool:
         return True
 
-    def search(
-        self, query: str, type: str = "track", limit: int = 10
-    ) -> list[EchosyncTrack]:
+    def search(self, query: str, type: str = "track", limit: int = 10) -> list[EchosyncTrack]:
         return []
 
     def get_track(self, track_id: str) -> EchosyncTrack | None:
