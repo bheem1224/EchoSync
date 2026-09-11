@@ -38,6 +38,7 @@ from core.matching_engine.trust_gate import (
     sanitize_title_from_filename,
     verify_title_trust_gate,
 )
+from core.metadata.schemas import ResolutionRequest
 from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
 from core.tiered_logger import get_logger
 from database.working_database import (
@@ -658,6 +659,17 @@ class RetroactiveEnhancer:
     def __init__(self):
         self._local_chromaprint_cache: dict[str, dict[str, Any]] = {}
 
+    @property
+    def resolution_engine(self) -> Any:
+        from core.enums import Capability
+        from core.metadata.engine import MetadataResolutionEngine
+
+        return MetadataResolutionEngine(
+            acoustid_provider=self._get_plugin(Capability.RESOLVE_FINGERPRINT, required_algorithm="chromaprint"),
+            metadata_provider=self._get_mb_plugin() or self._get_plugin(Capability.FETCH_METADATA),
+            spotify_provider=self._get_spotify_plugin(),
+        )
+
     def backfill_missing_fingerprints(
         self,
         batch_size: int = 50,
@@ -998,31 +1010,32 @@ class RetroactiveEnhancer:
 
         On failure: Returns (None, 0.0) - file will be marked for manual review.
         """
-        from core.metadata.engine import MetadataResolutionEngine
         from core.metadata.schemas import ResolutionRequest
 
         path = Path(file_path)
-        engine = MetadataResolutionEngine(
-            acoustid_provider=self._get_plugin(Capability.RESOLVE_FINGERPRINT, required_algorithm="chromaprint"),
-            metadata_provider=self._get_mb_plugin() or self._get_plugin(Capability.FETCH_METADATA),
-        )
         req = ResolutionRequest(
             media_id=f"media_{path.stem}",
             file_path=path,
         )
-        result = engine.resolve_track(req)
-        if result.confidence_score <= 0.0 or not result.musicbrainz_track_id:
+        result = self.resolution_engine.resolve_track(req)
+        if not result or result.confidence_score < 0.60 or not result.musicbrainz_track_id:
             return None, 0.0
         return result.to_dict(), result.confidence_score
 
-    def enhance_track(self, track_id: int, session: Any | None = None) -> Any | None:
+    def enhance_track(
+        self,
+        track_id: int,
+        session: Any | None = None,
+        file_path: str | Path | None = None,
+        sync_id: str | None = None,
+        media_id: str | None = None,
+    ) -> Any | None:
         """Authoritative single-track enhancement delegating resolution to MetadataResolutionEngine.
 
         Atomically persists chromaprint and acoustid_id to database and writes verified physical tags.
         """
         from core.database.repositories.track_repo import TrackRepository
         from core.db.echo_sync_track import EchosyncTrack
-        from core.metadata.engine import MetadataResolutionEngine
         from core.metadata.schemas import ResolutionRequest
         from core.utils import PathMapper
         from database.music_database import (
@@ -1039,31 +1052,61 @@ class RetroactiveEnhancer:
                 return None
 
             media_files = track.media_files or sess.query(LocalMedia).filter_by(track_id=track.id).all()
-            if not media_files:
-                logger.warning("[enhancer] enhance_track: No media files for Track ID %d", track_id)
-                return None
+            if file_path:
+                local_path = Path(file_path)
+                first_media = media_files[0] if media_files else None
+            else:
+                if not media_files:
+                    logger.warning("[enhancer] enhance_track: No media files for Track ID %d", track_id)
+                    return None
+                first_media = media_files[0]
+                local_path_str = PathMapper.to_local(first_media.file_path) or first_media.file_path
+                local_path = Path(local_path_str)
 
-            first_media = media_files[0]
-            local_path_str = PathMapper.to_local(first_media.file_path) or first_media.file_path
-            local_path = Path(local_path_str)
             if not local_path.exists():
                 logger.warning("[enhancer] enhance_track: File %s does not exist", local_path)
                 return None
 
-            engine = MetadataResolutionEngine(
-                acoustid_provider=self._get_plugin(Capability.RESOLVE_FINGERPRINT, required_algorithm="chromaprint"),
-                metadata_provider=self._get_mb_plugin() or self._get_plugin(Capability.FETCH_METADATA),
+            # Fetch existing fingerprint from database if available
+            existing_fp = (
+                sess.query(AudioFingerprint).filter_by(media_id=first_media.media_id).first() if first_media else None
             )
+            chromaprint = (
+                existing_fp.chromaprint
+                if (existing_fp and existing_fp.chromaprint)
+                else getattr(track, "fingerprint", None)
+            )
+
+            duration_sec = None
+            if not chromaprint:
+                try:
+                    chromaprint, dur = FingerprintGenerator.generate_with_duration(str(local_path))
+                    if dur:
+                        duration_sec = float(dur)
+                except Exception as e:
+                    logger.debug("Fingerprint generation failed: %s", e)
+
+            if not duration_sec and track.duration:
+                duration_sec = track.duration / 1000.0 if track.duration > 1000 else float(track.duration)
+            elif not duration_sec and first_media and getattr(first_media, "duration", None):
+                d_val = float(first_media.duration)
+                duration_sec = d_val / 1000.0 if d_val > 1000 else d_val
+
+            duration_ms = round(duration_sec * 1000) if duration_sec else (track.duration or 0)
+
             req = ResolutionRequest(
-                media_id=first_media.media_id,
-                sync_id=track.sync_id,
+                media_id=media_id or (first_media.media_id if first_media else f"media_{track.id}"),
+                sync_id=sync_id or track.sync_id,
                 file_path=local_path,
                 baseline_title=track.title,
                 baseline_artist=track.artist.name if track.artist else None,
                 baseline_album=track.album.title if track.album else None,
                 baseline_isrc=track.isrc,
+                chromaprint=chromaprint,
+                duration=duration_sec,
+                duration_ms=duration_ms,
             )
-            result = engine.resolve_track(req)
+            result = self.resolution_engine.resolve_track(req)
 
             # Persist fingerprints atomically for all media associated with this track
             for media in media_files:
@@ -1082,7 +1125,7 @@ class RetroactiveEnhancer:
                         if result.acoustid_id:
                             fp.acoustid_id = result.acoustid_id
 
-            if result.confidence_score > 0 and result.musicbrainz_track_id:
+            if result and result.confidence_score >= 0.60 and result.musicbrainz_track_id:
                 track.title = result.title
                 track.musicbrainz_id = result.musicbrainz_track_id
                 if result.isrc:
@@ -1776,7 +1819,7 @@ class RetroactiveEnhancer:
 
         db = get_database()
 
-        fingerprint_provider = self._get_plugin(Capability.RESOLVE_FINGERPRINT, required_algorithm="chromaprint")
+        self._get_plugin(Capability.RESOLVE_FINGERPRINT, required_algorithm="chromaprint")
         self._get_plugin(Capability.FETCH_METADATA)
 
         total_processed = 0
@@ -2180,10 +2223,19 @@ class RetroactiveEnhancer:
                                 t_track.fingerprint = existing_fp
                             if not duration or duration <= 0:
                                 try:
-                                    _, dur_sec = FingerprintGenerator.generate_with_duration(str(local_path))
-                                    if dur_sec:
-                                        duration = round(float(dur_sec) * 1000)
+                                    meta_d = echosync_core.extract_metadata(str(local_path))
+                                    if meta_d and meta_d.get("duration"):
+                                        dur_s = float(meta_d["duration"])
+                                        duration = round(dur_s * 1000) if dur_s < 10000 else round(dur_s)
                                         t_track.duration = duration
+                                    elif meta_d and meta_d.get("duration_ms"):
+                                        duration = int(meta_d["duration_ms"])
+                                        t_track.duration = duration
+                                    else:
+                                        _, dur_sec = FingerprintGenerator.generate_with_duration(str(local_path))
+                                        if dur_sec:
+                                            duration = round(float(dur_sec) * 1000)
+                                            t_track.duration = duration
                                 except Exception:
                                     pass
 
@@ -2259,14 +2311,6 @@ class RetroactiveEnhancer:
                     # Authoritative candidate resolution via MetadataResolutionEngine
                     if not new_musicbrainz_id:
                         try:
-                            from core.metadata.engine import MetadataResolutionEngine
-                            from core.metadata.schemas import ResolutionRequest
-
-                            resolution_engine = MetadataResolutionEngine(
-                                acoustid_provider=fingerprint_provider,
-                                metadata_provider=mb_client or self._get_mb_plugin(),
-                                spotify_provider=self._get_spotify_plugin(),
-                            )
                             _first_media, first_local_path = valid_media_paths[0] if valid_media_paths else (None, None)
                             baseline_title = t_track.title or getattr(t_track, "raw_title", None)
 
@@ -2275,6 +2319,7 @@ class RetroactiveEnhancer:
                                 if (duration and duration > 10000)
                                 else (round(float(duration) * 1000) if duration else 0)
                             )
+                            file_dur_sec = file_dur_ms / 1000.0 if file_dur_ms else None
                             res_req = ResolutionRequest(
                                 media_id=_first_media.media_id if _first_media else f"media_{t_track.id}",
                                 sync_id=t_track.sync_id if hasattr(t_track, "sync_id") else None,
@@ -2283,10 +2328,11 @@ class RetroactiveEnhancer:
                                 baseline_artist=t_track.artist or getattr(t_track, "artist_name", None),
                                 baseline_album=t_track.album_title if hasattr(t_track, "album_title") else None,
                                 baseline_isrc=t_track.isrc if hasattr(t_track, "isrc") else None,
-                                chromaprint=t_track.fingerprint,
+                                chromaprint=target_cp or t_track.fingerprint,
+                                duration=file_dur_sec,
                                 duration_ms=file_dur_ms,
                             )
-                            res_result = resolution_engine.resolve_track(res_req)
+                            res_result = self.resolution_engine.resolve_track(res_req)
 
                             if res_result and res_result.confidence_score >= 0.60 and res_result.musicbrainz_track_id:
                                 new_musicbrainz_id = res_result.musicbrainz_track_id

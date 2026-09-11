@@ -15,7 +15,9 @@ def is_generic_title(title: str | Path | None) -> bool:
     t_clean = re.sub(r"[\s\-_.]+", " ", t).strip()
     if not t_clean:
         return True
-    if re.fullmatch(r"^(?:track|audio|title|disc|side|cd|song|file)?\s*[a-z\d]*$", t_clean):
+    if re.fullmatch(r"^(?:track|audio|title|disc|side|cd|song|file)(?:\s*\d+)*$", t_clean) or re.fullmatch(
+        r"^\d+$", t_clean
+    ):
         return True
     generic_words = {
         "unknown",

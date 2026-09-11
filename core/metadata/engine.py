@@ -421,32 +421,33 @@ class MetadataResolutionEngine:
         except (ValueError, TypeError):
             channels = 2
 
-        chromaprint: str | None = None
-        if channels > 2:
-            logger.info(
-                "[resolution_engine] [acoustid-isolated] Multi-channel audio (%d ch) on %s; skipping Chromaprint.",
-                channels,
-                file_path.name,
-            )
-        else:
-            try:
-                chromaprint, fp_dur = FingerprintGenerator.generate_with_duration(str(file_path))
-                if fp_dur and duration_ms <= 0:
-                    duration_ms = round(float(fp_dur) * 1000)
-            except Exception as fp_err:
-                logger.warning(
-                    "[resolution_engine] [acoustid-isolated] Fingerprint generation failed for %s: %s",
-                    file_path.name,
-                    fp_err,
-                )
-
         if request.duration_ms and duration_ms <= 0:
             duration_ms = request.duration_ms
         elif request.duration and duration_ms <= 0:
             d_val = float(request.duration)
             duration_ms = round(d_val * 1000) if d_val < 10000 else round(d_val)
-        if request.chromaprint and not chromaprint:
-            chromaprint = request.chromaprint
+
+        chromaprint: str | None = request.chromaprint
+        if not chromaprint:
+            if channels > 2:
+                logger.info(
+                    "[resolution_engine] [acoustid-isolated] Multi-channel audio (%d ch) on %s; skipping Chromaprint.",
+                    channels,
+                    file_path.name,
+                )
+            else:
+                try:
+                    chromaprint, fp_dur = FingerprintGenerator.generate_with_duration(str(file_path))
+                    if fp_dur and duration_ms <= 0:
+                        duration_ms = round(float(fp_dur) * 1000)
+                    if chromaprint:
+                        request.chromaprint = chromaprint
+                except Exception as fp_err:
+                    logger.warning(
+                        "[resolution_engine] [acoustid-isolated] Fingerprint generation failed for %s: %s",
+                        file_path.name,
+                        fp_err,
+                    )
 
         # ── Stage 3: AcoustID (isolated) ─────────────────────────────────────
         acoustid_res: dict[str, Any] | None = None
@@ -469,6 +470,7 @@ class MetadataResolutionEngine:
                 tag_title=tag_title,
                 baseline_artist=baseline_artist or None,
                 baseline_album=baseline_album or None,
+                request=request,
             )
 
         # ── Result assembly ────────────────────────────────────────────────────
@@ -626,34 +628,35 @@ class MetadataResolutionEngine:
             except (ValueError, TypeError):
                 duration_ms = 0
 
-        # Invariant: Multi-channel audio (>2 channels) must skip fingerprinting until native downmixing
-        chromaprint: str | None = None
-        if channels > 2:
-            logger.info(
-                "[resolution_engine] Multi-channel audio detected (%d channels) for %s; skipping Chromaprint extraction.",
-                channels,
-                file_path.name,
-            )
-        else:
-            try:
-                chromaprint, fp_dur = FingerprintGenerator.generate_with_duration(str(file_path))
-                if fp_dur and (duration_ms <= 0):
-                    duration_ms = round(float(fp_dur) * 1000)
-            except Exception as fp_err:
-                logger.warning(
-                    "[resolution_engine] Fingerprint generation failed for %s: %s",
-                    file_path.name,
-                    fp_err,
-                )
-                chromaprint = None
-
         if request.duration_ms and duration_ms <= 0:
             duration_ms = request.duration_ms
         elif request.duration and duration_ms <= 0:
             d_val = float(request.duration)
             duration_ms = round(d_val * 1000) if d_val < 10000 else round(d_val)
-        if request.chromaprint and not chromaprint:
-            chromaprint = request.chromaprint
+
+        # Invariant: Multi-channel audio (>2 channels) must skip fingerprinting until native downmixing
+        chromaprint: str | None = request.chromaprint
+        if not chromaprint:
+            if channels > 2:
+                logger.info(
+                    "[resolution_engine] Multi-channel audio detected (%d channels) for %s; skipping Chromaprint extraction.",
+                    channels,
+                    file_path.name,
+                )
+            else:
+                try:
+                    chromaprint, fp_dur = FingerprintGenerator.generate_with_duration(str(file_path))
+                    if fp_dur and (duration_ms <= 0):
+                        duration_ms = round(float(fp_dur) * 1000)
+                    if chromaprint:
+                        request.chromaprint = chromaprint
+                except Exception as fp_err:
+                    logger.warning(
+                        "[resolution_engine] Fingerprint generation failed for %s: %s",
+                        file_path.name,
+                        fp_err,
+                    )
+                    chromaprint = None
 
         tag_title = raw_tags.get("title")
         tag_artist = raw_tags.get("artist") or raw_tags.get("artist_name")
@@ -929,6 +932,7 @@ class MetadataResolutionEngine:
                 tag_title=tag_title,
                 baseline_artist=baseline_artist,
                 baseline_album=baseline_album,
+                request=request,
             )
             if acoustid_res:
                 logger.info(
@@ -1121,13 +1125,14 @@ class MetadataResolutionEngine:
 
     def _resolve_acoustid(
         self,
-        chromaprint: str,
-        file_duration_ms: int,
-        baseline_title: str,
-        filename: str,
-        tag_title: str | None,
+        chromaprint: str | None = None,
+        file_duration_ms: int = 0,
+        baseline_title: str = "",
+        filename: str = "",
+        tag_title: str | None = None,
         baseline_artist: str | None = None,
         baseline_album: str | None = None,
+        request: ResolutionRequest | None = None,
     ) -> dict[str, Any] | None:
         """Query AcoustID, pre-filter candidate recordings before network egress, and pick
         the highest scoring candidate using filename-first zero-trust title semantics.
@@ -1143,6 +1148,36 @@ class MetadataResolutionEngine:
         if not acoustid_plugin or not mb_plugin:
             return None
 
+        if request is not None:
+            if request.chromaprint:
+                chromaprint = request.chromaprint
+            elif not chromaprint and request.file_path:
+                try:
+                    chromaprint, fp_dur = FingerprintGenerator.generate_with_duration(str(request.file_path))
+                    if fp_dur and file_duration_ms <= 0:
+                        file_duration_ms = round(float(fp_dur) * 1000)
+                    if chromaprint:
+                        request.chromaprint = chromaprint
+                except Exception as fp_err:
+                    logger.warning("[resolution_engine] Fingerprint generation failed in _resolve_acoustid: %s", fp_err)
+
+            if not filename and request.file_path:
+                filename = Path(request.file_path).name
+            if not baseline_title and request.baseline_title:
+                baseline_title = request.baseline_title
+            if not baseline_artist and request.baseline_artist:
+                baseline_artist = request.baseline_artist
+            if not baseline_album and request.baseline_album:
+                baseline_album = request.baseline_album
+            if request.duration_ms and file_duration_ms <= 0:
+                file_duration_ms = request.duration_ms
+            elif request.duration and file_duration_ms <= 0:
+                d_val = float(request.duration)
+                file_duration_ms = round(d_val * 1000) if d_val < 10000 else round(d_val)
+
+        if not chromaprint:
+            return None
+
         # Derive zero-trust title target from physical filename (ignores embedded tags)
         filename_stem = extract_filename_title(filename) if filename else ""
         logger.info(
@@ -1150,11 +1185,14 @@ class MetadataResolutionEngine:
             filename_stem,
         )
 
-        file_duration_sec = file_duration_ms / 1000.0
+        file_duration_sec = file_duration_ms / 1000.0 if file_duration_ms > 0 else 0.0
         duration_sec = round(file_duration_sec)
 
         try:
-            details = acoustid_plugin.resolve_fingerprint_details(chromaprint, duration_sec)
+            try:
+                details = acoustid_plugin.resolve_fingerprint_details(fingerprint=chromaprint, duration=duration_sec)
+            except TypeError:
+                details = acoustid_plugin.resolve_fingerprint_details(chromaprint, duration_sec)
             if not isinstance(details, dict):
                 return None
             acoustid_id = details.get("acoustid_id")
@@ -1325,7 +1363,9 @@ class MetadataResolutionEngine:
             best_mbid: str | None = None
             best_score = 0.0
 
-            for mbid_str in top_mbids:
+            for cand_info in top_candidates:
+                mbid_str = cand_info[0]
+                cand_sim = cand_info[3]
                 cand_meta = mb_plugin.get_metadata(mbid_str)
                 if not isinstance(cand_meta, dict):
                     continue
@@ -1408,6 +1448,19 @@ class MetadataResolutionEngine:
                     best_score = cand_score
                     best_candidate = cand_meta
                     best_mbid = mbid_str
+
+                # Short-circuit on clear filename match to enforce HTTP request cap (<= 1 on clear match)
+                if (matcher_score >= 80.0 or best_score >= 85.0 or cand_score >= 80.0) and cand_sim >= 0.60:
+                    logger.info(
+                        "[resolution_engine] Clear filename match confirmed for MBID %s '%s' "
+                        "(matcher=%.1f, score=%.1f, sim=%.2f). Terminating candidate inspection.",
+                        mbid_str,
+                        c_title,
+                        matcher_score,
+                        cand_score,
+                        cand_sim,
+                    )
+                    break
 
             if best_candidate and best_mbid:
                 cand_year, cand_track, cand_disc = _extract_release_details(
