@@ -6,9 +6,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
-ResolutionMethod = Literal[
-    "local_cache", "acoustid", "isrc", "text_waterfall", "embedded_mbid"
-]
+ResolutionMethod = Literal["local_cache", "acoustid", "isrc", "text_waterfall", "embedded_mbid"]
 
 
 @dataclass
@@ -19,9 +17,7 @@ class EntityAliasProposal:
     value: str  # The localized, romanized, or sort string
     language: str  # ISO 639-1 / 639-2: e.g. "ja", "ko", "zh", "ru"
     script: str  # ISO 15924: e.g. "Jpan", "Hang", "Hani", "Cyrl", "Latn"
-    alias_type: Literal[
-        "transliteration", "translation", "official_romanization", "sort_name"
-    ]
+    alias_type: Literal["transliteration", "translation", "official_romanization", "sort_name"]
     entity_id: str | int | None = None  # Target database ID or MBID
 
     def to_dict(self) -> dict[str, Any]:
@@ -53,6 +49,9 @@ class ResolutionRequest:
     baseline_artist: str | None = None
     baseline_album: str | None = None
     baseline_isrc: str | None = None
+    chromaprint: str | None = None
+    duration: float | None = None
+    duration_ms: int | None = None
     ignore_embedded_mbid: bool = False
     ignore_cache: bool = False
 

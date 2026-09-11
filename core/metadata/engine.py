@@ -195,10 +195,12 @@ class MetadataResolutionEngine:
         self,
         acoustid_provider: Any | None = None,
         metadata_provider: Any | None = None,
+        spotify_provider: Any | None = None,
         hook_manager: Any | None = None,
     ) -> None:
         self._acoustid_provider = acoustid_provider
         self._metadata_provider = metadata_provider
+        self._spotify_provider = spotify_provider
         self._hook_manager = hook_manager
         self._chromaprint_cache: dict[str, dict[str, Any]] = {}
         self.matcher = WeightedMatchingEngine(PROFILE_EXACT_SYNC)
@@ -222,8 +224,12 @@ class MetadataResolutionEngine:
         if self._acoustid_provider is not None:
             return self._acoustid_provider
 
-        # Check by plugin id
-        plugin = PluginRegistry.get_plugin(generate_plugin_id("EchoSync.acoustid"))
+        # Check by plugin id / alias
+        plugin = (
+            PluginRegistry.get_plugin(generate_plugin_id("EchoSync.acoustid"))
+            or PluginRegistry.get_plugin("EchoSync.acoustid")
+            or PluginRegistry.get_plugin("acoustid")
+        )
         if plugin:
             return plugin
 
@@ -235,14 +241,18 @@ class MetadataResolutionEngine:
                 algos = getattr(caps, "fingerprint_algorithms", []) or []
                 if "chromaprint" in algos or getattr(caps, "supports_fingerprinting", False):
                     return p
-        return None
+        return plugins[0] if plugins else None
 
     def _get_mb_plugin(self) -> Any | None:
         if self._metadata_provider is not None:
             return self._metadata_provider
 
-        # Check by plugin id
-        plugin = PluginRegistry.get_plugin(generate_plugin_id("EchoSync.musicbrainz"))
+        # Check by plugin id / alias
+        plugin = (
+            PluginRegistry.get_plugin(generate_plugin_id("EchoSync.musicbrainz"))
+            or PluginRegistry.get_plugin("EchoSync.musicbrainz")
+            or PluginRegistry.get_plugin("musicbrainz")
+        )
         if plugin:
             return plugin
 
@@ -429,6 +439,14 @@ class MetadataResolutionEngine:
                     file_path.name,
                     fp_err,
                 )
+
+        if request.duration_ms and duration_ms <= 0:
+            duration_ms = request.duration_ms
+        elif request.duration and duration_ms <= 0:
+            d_val = float(request.duration)
+            duration_ms = round(d_val * 1000) if d_val < 10000 else round(d_val)
+        if request.chromaprint and not chromaprint:
+            chromaprint = request.chromaprint
 
         # ── Stage 3: AcoustID (isolated) ─────────────────────────────────────
         acoustid_res: dict[str, Any] | None = None
@@ -628,6 +646,14 @@ class MetadataResolutionEngine:
                     fp_err,
                 )
                 chromaprint = None
+
+        if request.duration_ms and duration_ms <= 0:
+            duration_ms = request.duration_ms
+        elif request.duration and duration_ms <= 0:
+            d_val = float(request.duration)
+            duration_ms = round(d_val * 1000) if d_val < 10000 else round(d_val)
+        if request.chromaprint and not chromaprint:
+            chromaprint = request.chromaprint
 
         tag_title = raw_tags.get("title")
         tag_artist = raw_tags.get("artist") or raw_tags.get("artist_name")
@@ -975,6 +1001,7 @@ class MetadataResolutionEngine:
             file_duration_ms=duration_ms,
             filename=file_path.name,
             tag_title=tag_title,
+            baseline_isrc=tag_isrc or request.baseline_isrc,
         )
         if text_res:
             logger.info(
@@ -1476,6 +1503,7 @@ class MetadataResolutionEngine:
         file_duration_ms: int,
         filename: str,
         tag_title: str | None,
+        baseline_isrc: str | None = None,
     ) -> dict[str, Any] | None:
         """Scoped text search waterfall with prefix sanitization and strict recording: + artist: matching.
 
@@ -1612,6 +1640,12 @@ class MetadataResolutionEngine:
                     fallback_disc=getattr(best_cand, "disc_number", None),
                 )
 
+                final_isrc = (
+                    (meta.get("isrc") if isinstance(meta, dict) else getattr(meta, "isrc", None))
+                    or getattr(best_cand, "isrc", None)
+                    or baseline_isrc
+                )
+
                 return {
                     "title": final_title,
                     "artist": final_artist,
@@ -1621,6 +1655,7 @@ class MetadataResolutionEngine:
                     "disc_number": final_disc,
                     "musicbrainz_track_id": best_mbid,
                     "musicbrainz_release_id": final_release_id,
+                    "isrc": final_isrc,
                     "confidence_score": best_score / 100.0,
                 }
         except Exception as exc:

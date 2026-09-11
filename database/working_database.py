@@ -63,11 +63,7 @@ class Account(WorkingBase):
     remote_account_id: Mapped[str] = mapped_column(String(255), index=True)
     username: Mapped[str | None] = mapped_column(String)
 
-    __table_args__ = (
-        UniqueConstraint(
-            "plugin_id", "remote_account_id", name="uq_account_plugin_remote"
-        ),
-    )
+    __table_args__ = (UniqueConstraint("plugin_id", "remote_account_id", name="uq_account_plugin_remote"),)
 
     track_states: Mapped[list[UserTrackState]] = relationship(
         back_populates="account",
@@ -77,27 +73,17 @@ class Account(WorkingBase):
     artist_ratings: Mapped[list[UserArtistRating]] = relationship(
         back_populates="account", cascade="all, delete-orphan"
     )
-    album_ratings: Mapped[list[UserAlbumRating]] = relationship(
-        back_populates="account", cascade="all, delete-orphan"
-    )
+    album_ratings: Mapped[list[UserAlbumRating]] = relationship(back_populates="account", cascade="all, delete-orphan")
 
 
 class UserRating(WorkingBase):
     __tablename__ = "user_ratings"
-    __table_args__ = (
-        UniqueConstraint("account_id", "sync_id", name="uq_user_sync_id"),
-    )
+    __table_args__ = (UniqueConstraint("account_id", "sync_id", name="uq_user_sync_id"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    account_id: Mapped[int] = mapped_column(
-        ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False, index=True
-    )
-    sync_id: Mapped[str] = mapped_column(
-        String, nullable=False, index=True
-    )  # 8-character Base62 NanoID
-    rating: Mapped[float | None] = mapped_column(
-        Float, nullable=True
-    )  # 1-5, or system flags 0.1, 2.1, 3.1
+    account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False, index=True)
+    sync_id: Mapped[str] = mapped_column(String, nullable=False, index=True)  # 8-character Base62 NanoID
+    rating: Mapped[float | None] = mapped_column(Float, nullable=True)  # 1-5, or system flags 0.1, 2.1, 3.1
     play_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     timestamp: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
 
@@ -109,17 +95,13 @@ class WatchlistArtist(WorkingBase):
     __tablename__ = "watchlist_artists"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    spotify_artist_id: Mapped[str] = mapped_column(
-        String, nullable=False, unique=True, index=True
-    )
+    spotify_artist_id: Mapped[str] = mapped_column(String, nullable=False, unique=True, index=True)
     artist_name: Mapped[str] = mapped_column(String, nullable=False)
     last_scan_timestamp: Mapped[datetime | None] = mapped_column(UTCDateTime())
     image_url: Mapped[str | None] = mapped_column(String)
 
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
-    updated_at: Mapped[datetime] = mapped_column(
-        UTCDateTime(), default=utc_now, onupdate=utc_now
-    )
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now, onupdate=utc_now)
 
 
 class ReviewTask(WorkingBase):
@@ -130,16 +112,12 @@ class ReviewTask(WorkingBase):
     id: Mapped[int] = mapped_column(primary_key=True)
     file_path: Mapped[str] = mapped_column(String, nullable=False, index=True)
     track_data: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
-    status: Mapped[str] = mapped_column(
-        String, default="pending", nullable=False
-    )  # pending, approved, ignored
+    status: Mapped[str] = mapped_column(String, default="pending", nullable=False)  # pending, approved, ignored
     confidence_score: Mapped[float] = mapped_column(Float, default=0.0)
     retry_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     last_checked_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
-    updated_at: Mapped[datetime] = mapped_column(
-        UTCDateTime(), default=utc_now, onupdate=utc_now
-    )
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now, onupdate=utc_now)
 
     @property
     def detected_metadata(self) -> dict | None:
@@ -152,11 +130,9 @@ class ReviewTask(WorkingBase):
             "year": self.track_data.get("release_year") or self.track_data.get("year"),
             "track_number": self.track_data.get("track_number"),
             "disc_number": self.track_data.get("disc_number"),
-            "musicbrainz_id": self.track_data.get("mbid")
-            or self.track_data.get("musicbrainz_id"),
+            "musicbrainz_id": self.track_data.get("mbid") or self.track_data.get("musicbrainz_id"),
             "isrc": self.track_data.get("isrc"),
-            "acoustid_id": self.track_data.get("acoustid")
-            or self.track_data.get("acoustid_id"),
+            "acoustid_id": self.track_data.get("acoustid") or self.track_data.get("acoustid_id"),
             "mb_release_id": self.track_data.get("mb_release_id"),
             "fingerprint": self.track_data.get("fingerprint"),
         }
@@ -209,6 +185,14 @@ class ReviewTask(WorkingBase):
         flag_modified(self, "track_data")
 
     @property
+    def proposed_metadata(self) -> dict | None:
+        return self.detected_metadata
+
+    @proposed_metadata.setter
+    def proposed_metadata(self, val: dict | None):
+        self.detected_metadata = val
+
+    @property
     def media_id(self) -> str:
         return self.file_path
 
@@ -219,59 +203,35 @@ class ReviewTask(WorkingBase):
 
 class UserTrackState(WorkingBase):
     __tablename__ = "user_track_states"
-    __table_args__ = (
-        UniqueConstraint("account_id", "sync_id", name="uq_user_track_state"),
-    )
+    __table_args__ = (UniqueConstraint("account_id", "sync_id", name="uq_user_track_state"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    account_id: Mapped[int] = mapped_column(
-        ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False, index=True
-    )
-    sync_id: Mapped[str] = mapped_column(
-        String, nullable=False, index=True
-    )  # 8-character Base62 NanoID
+    account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False, index=True)
+    sync_id: Mapped[str] = mapped_column(String, nullable=False, index=True)  # 8-character Base62 NanoID
 
     is_unlinked: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    is_hard_deleted: Mapped[bool] = mapped_column(
-        Boolean, default=False, nullable=False
-    )
+    is_hard_deleted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     sponsor_id: Mapped[int | None] = mapped_column(
         ForeignKey("accounts.id", ondelete="SET NULL"), nullable=True, index=True
     )
-    admin_exempt_deletion: Mapped[bool] = mapped_column(
-        Boolean, default=False, nullable=False
-    )
-    admin_force_upgrade: Mapped[bool] = mapped_column(
-        Boolean, default=False, nullable=False
-    )
-    lifecycle_action: Mapped[str | None] = mapped_column(
-        String, nullable=True, index=True
-    )
-    lifecycle_queued_at: Mapped[datetime | None] = mapped_column(
-        UTCDateTime(), nullable=True
-    )
+    admin_exempt_deletion: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    admin_force_upgrade: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    lifecycle_action: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
+    lifecycle_queued_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
 
-    updated_at: Mapped[datetime] = mapped_column(
-        UTCDateTime(), default=utc_now, onupdate=utc_now
-    )
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now, onupdate=utc_now)
 
-    account: Mapped[Account] = relationship(
-        back_populates="track_states", foreign_keys=[account_id]
-    )
+    account: Mapped[Account] = relationship(back_populates="track_states", foreign_keys=[account_id])
     sponsor: Mapped[Account | None] = relationship(foreign_keys=[sponsor_id])
 
 
 # TODO: Defer to v2.8.0 Entity Overhaul
 class UserArtistRating(WorkingBase):
     __tablename__ = "user_artist_ratings"
-    __table_args__ = (
-        UniqueConstraint("account_id", "artist_urn", name="uq_user_artist_rating"),
-    )
+    __table_args__ = (UniqueConstraint("account_id", "artist_urn", name="uq_user_artist_rating"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    account_id: Mapped[int] = mapped_column(
-        ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False, index=True
-    )
+    account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False, index=True)
     artist_urn: Mapped[str] = mapped_column(String, nullable=False, index=True)
     rating: Mapped[float] = mapped_column(Float)
     is_monitored: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
@@ -282,14 +242,10 @@ class UserArtistRating(WorkingBase):
 # TODO: Defer to v2.8.0 Entity Overhaul
 class UserAlbumRating(WorkingBase):
     __tablename__ = "user_album_ratings"
-    __table_args__ = (
-        UniqueConstraint("account_id", "album_urn", name="uq_user_album_rating"),
-    )
+    __table_args__ = (UniqueConstraint("account_id", "album_urn", name="uq_user_album_rating"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    account_id: Mapped[int] = mapped_column(
-        ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False, index=True
-    )
+    account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False, index=True)
     album_urn: Mapped[str] = mapped_column(String, nullable=False, index=True)
     rating: Mapped[float] = mapped_column(Float)
 
@@ -298,18 +254,12 @@ class UserAlbumRating(WorkingBase):
 
 class PlaybackHistory(WorkingBase):
     __tablename__ = "playback_history"
-    __table_args__ = (
-        UniqueConstraint(
-            "user_id", "plugin_item_id", "listened_at", name="uq_playback_history"
-        ),
-    )
+    __table_args__ = (UniqueConstraint("user_id", "plugin_item_id", "listened_at", name="uq_playback_history"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
     plugin_item_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
-    listened_at: Mapped[datetime] = mapped_column(
-        UTCDateTime(), default=utc_now, index=True
-    )
+    listened_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now, index=True)
 
 
 class SuggestionStagingQueue(WorkingBase):
@@ -324,25 +274,17 @@ class SuggestionStagingQueue(WorkingBase):
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    account_id: Mapped[int] = mapped_column(
-        ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False, index=True
-    )
-    sync_id: Mapped[str | None] = mapped_column(
-        String, nullable=True, index=True
-    )  # NanoID
+    account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False, index=True)
+    sync_id: Mapped[str | None] = mapped_column(String, nullable=True, index=True)  # NanoID
     reason: Mapped[str] = mapped_column(String, nullable=False, index=True)
 
     intent_type: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
     ui_label: Mapped[str] = mapped_column(String, nullable=False)
     context_data: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    status: Mapped[str] = mapped_column(
-        String, nullable=False, default="pending", index=True
-    )
+    status: Mapped[str] = mapped_column(String, nullable=False, default="pending", index=True)
 
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
-    updated_at: Mapped[datetime] = mapped_column(
-        UTCDateTime(), default=utc_now, onupdate=utc_now
-    )
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now, onupdate=utc_now)
 
     @property
     def raw_payload(self) -> dict | None:
@@ -363,12 +305,8 @@ class SuggestionBlacklist(WorkingBase):
     __tablename__ = "suggestion_blacklist"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    sync_id: Mapped[str] = mapped_column(
-        String, nullable=False, unique=True, index=True
-    )  # NanoID
-    reason: Mapped[str | None] = mapped_column(
-        String, nullable=True
-    )  # Optional admin note
+    sync_id: Mapped[str] = mapped_column(String, nullable=False, unique=True, index=True)  # NanoID
+    reason: Mapped[str | None] = mapped_column(String, nullable=True)  # Optional admin note
 
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
 
@@ -392,9 +330,7 @@ class VirtualTrackCache(WorkingBase):
     raw_metadata: Mapped[dict] = mapped_column(JSON, nullable=False)
 
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
-    updated_at: Mapped[datetime] = mapped_column(
-        UTCDateTime(), default=utc_now, onupdate=utc_now
-    )
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now, onupdate=utc_now)
 
 
 class PluginStateKVS(WorkingBase):
@@ -454,9 +390,7 @@ class PluginDatabaseFactory:
             connect_args={"check_same_thread": False},
         )
         event.listen(self.engine, "connect", _sqlite_pragmas)
-        self.SessionLocal = sessionmaker(
-            bind=self.engine, expire_on_commit=False, future=True
-        )
+        self.SessionLocal = sessionmaker(bind=self.engine, expire_on_commit=False, future=True)
 
     def get_engine(self):
         """Return the underlying engine. Future-proofs for returning a Postgres schema engine."""
@@ -497,11 +431,7 @@ class WorkingDatabase:
             self.database_path.parent.mkdir(parents=True, exist_ok=True)
             engine_url = f"sqlite:///{self.database_path}"
 
-        connect_args = (
-            {"timeout": 30.0, "check_same_thread": False}
-            if engine_url.startswith("sqlite")
-            else {}
-        )
+        connect_args = {"timeout": 30.0, "check_same_thread": False} if engine_url.startswith("sqlite") else {}
 
         self.engine = create_engine(
             engine_url,
@@ -512,9 +442,7 @@ class WorkingDatabase:
         )
         if engine_url.startswith("sqlite"):
             event.listen(self.engine, "connect", _sqlite_pragmas)
-        self.SessionLocal = sessionmaker(
-            bind=self.engine, expire_on_commit=False, future=True
-        )
+        self.SessionLocal = sessionmaker(bind=self.engine, expire_on_commit=False, future=True)
 
     def create_all(self) -> None:
         pass
@@ -540,18 +468,12 @@ class WorkingDatabase:
     def count_pending_reviews(self) -> int:
         """Count how many review tasks are pending."""
         with self.session_scope() as session:
-            return (
-                session.query(ReviewTask).filter(ReviewTask.status == "pending").count()
-            )
+            return session.query(ReviewTask).filter(ReviewTask.status == "pending").count()
 
     def get_system_user_id(self) -> int:
         """Get or create the system user ID for automated flags."""
         with self.session_scope() as session:
-            account = (
-                session.query(Account)
-                .filter(Account.username == "Echosync System")
-                .first()
-            )
+            account = session.query(Account).filter(Account.username == "Echosync System").first()
             if account:
                 return account.id
 

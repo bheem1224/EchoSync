@@ -1105,7 +1105,10 @@ def lookup_review_queue_item_acoustid(task_id: int, _=Depends(require_auth)):
 
             track_obj = EchosyncTrack.from_dict(task.track_data or {})
 
-            engine = MetadataResolutionEngine()
+            engine = MetadataResolutionEngine(
+                acoustid_provider=_get_fingerprint_provider(),
+                metadata_provider=_get_metadata_provider(),
+            )
             req = ResolutionRequest(
                 media_id=str(task.id),
                 file_path=Path(file_path),
@@ -1120,14 +1123,14 @@ def lookup_review_queue_item_acoustid(task_id: int, _=Depends(require_auth)):
             if res.chromaprint:
                 track_obj.fingerprint = res.chromaprint
 
-            if res.confidence_score < 60.0:
+            if not res or res.confidence_score < 0.60:
                 # Persist fingerprint even on miss so user can submit to AcoustID
-                if res.chromaprint:
+                if res and res.chromaprint:
                     task.track_data = track_obj.to_dict()
                     flag_modified(task, "track_data")
                 logger.warning(
                     f"AcoustID scan for task {task_id}: no verified match found "
-                    f"(score={res.confidence_score}, fingerprint_len={len(res.chromaprint or '')})"
+                    f"(score={res.confidence_score if res else 0.0}, fingerprint_len={len(res.chromaprint or '') if res else 0})"
                 )
                 raise HTTPException(
                     status_code=404,
@@ -1161,6 +1164,7 @@ def lookup_review_queue_item_acoustid(task_id: int, _=Depends(require_auth)):
             track_obj.identifiers["source"] = "acoustid_lookup"
             task.track_data = track_obj.to_dict()
             task.detected_metadata = res.to_dict()
+            task.proposed_metadata = res.to_dict()
             task.confidence_score = res.confidence_score
             flag_modified(task, "track_data")
 
@@ -1189,12 +1193,14 @@ def lookup_review_queue_item_acoustid(task_id: int, _=Depends(require_auth)):
             serialized = _serialize_task(task, detected_metadata=task.detected_metadata)
             return {
                 "success": True,
+                "status": "success",
                 "match_found": True,
                 "acoustid_match": bool(res.acoustid_id),
                 "updated_fields": list(dict.fromkeys(updated_fields)),
                 "metadata": serialized["detected_metadata"],
                 "message": "Match found",
                 "task": serialized,
+                "data": serialized,
                 "resolution_result": res.to_dict(),
             }
     except HTTPException:

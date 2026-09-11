@@ -13,6 +13,7 @@ It does NOT move files or scan directories (see AutoImportService).
 """
 
 import datetime
+import difflib
 import re
 from pathlib import Path
 from typing import Any
@@ -30,6 +31,7 @@ from core.matching_engine.fingerprinting import FingerprintGenerator
 from core.matching_engine.matching_engine import WeightedMatchingEngine
 from core.matching_engine.scoring_profile import PROFILE_EXACT_SYNC
 from core.matching_engine.text_utils import (
+    normalize_title,
     normalize_track_comparison_fields,
 )
 from core.matching_engine.trust_gate import (
@@ -61,14 +63,14 @@ _NETWORK_DISABLED = False
 
 
 def _title_similarity(a: str, b: str) -> float:
-    """Jaccard word-set similarity for comparing track titles (case-insensitive)."""
-    if a == b:
-        return 1.0
-    words_a = set(a.split())
-    words_b = set(b.split())
-    if not words_a or not words_b:
+    """Compare track titles using normalize_title and sequence matching."""
+    if not a or not b:
         return 0.0
-    return len(words_a & words_b) / len(words_a | words_b)
+    norm_a = normalize_title(str(a).lower().strip())
+    norm_b = normalize_title(str(b).lower().strip())
+    if norm_a == norm_b:
+        return 1.0
+    return difflib.SequenceMatcher(None, norm_a, norm_b).ratio()
 
 
 def _track_entry_to_metadata(track: dict[str, Any]) -> dict[str, Any]:
@@ -549,77 +551,6 @@ def revert_track_metadata_from_disk(track_id: int, session: Any | None = None) -
             return _execute(sess)
 
 
-def score_recording_candidate(
-    candidate: dict[str, Any],
-    baseline_title: str | None = None,
-    filename: str | None = None,
-    tag_title: str | None = None,
-    duration_delta_ms: int | None = None,
-) -> int:
-    """Score a candidate recording from AcoustID / MusicBrainz.
-
-    - Penalizes variant versions (remix, mix, edit, country, acoustic, live)
-      by 30 points if the original baseline context lacks those keywords.
-    - Favors primary studio albums over singles/compilations (+25 points).
-    - Penalizes duration discrepancy.
-    """
-    score = 100
-    if duration_delta_ms is not None:
-        score -= int(duration_delta_ms / 100.0)
-
-    disambiguation = str(candidate.get("disambiguation") or "").lower()
-    title = str(candidate.get("title") or "").lower()
-
-    # Baseline comparison context (baseline title, filename, and embedded tag title)
-    baseline_context = " ".join(str(s).lower() for s in [baseline_title, filename, tag_title] if s)
-
-    variant_keywords = [
-        "remix",
-        "country mix",
-        "acoustic",
-        "live",
-        "edit",
-        "club mix",
-        "country",
-        "mix",
-    ]
-    penalized = False
-    for kw in variant_keywords:
-        if (kw in disambiguation or kw in title) and kw not in baseline_context and not penalized:
-            score -= 30
-            penalized = True
-
-    # Check releases attached to candidate
-    releases = candidate.get("releases") or []
-    has_official_studio_album = False
-    has_compilation_or_remix = False
-    for r in releases:
-        if not isinstance(r, dict):
-            continue
-        rg = r.get("release-group") or {}
-        p_type = str(rg.get("primary-type") or "").strip().lower()
-        s_types = [str(st).strip().lower() for st in (rg.get("secondary-types") or [])]
-        status = str(r.get("status") or "").strip().lower()
-
-        if (
-            p_type == "album"
-            and (status in ("official", ""))
-            and not any(st in ("remix", "compilation") for st in s_types)
-        ):
-            has_official_studio_album = True
-        if "remix" in s_types or "compilation" in s_types or p_type in ("single",):
-            has_compilation_or_remix = True
-
-    if has_official_studio_album:
-        score += 25
-    elif has_compilation_or_remix:
-        score -= 10
-    elif any(str(r.get("status") or "").strip().lower() == "official" for r in releases if isinstance(r, dict)):
-        score += 15
-
-    return score
-
-
 def select_best_acoustid_recording(
     candidate_mbids: list[str],
     file_duration_ms: float | None,
@@ -629,9 +560,8 @@ def select_best_acoustid_recording(
     tag_title: str | None = None,
     max_duration_delta_ms: int = 2000,
 ) -> tuple[dict[str, Any] | None, str | None, float]:
-    """Select the best AcoustID candidate recording by enforcing duration delta and scoring
-
-    candidates with variant disambiguation penalties and canonical studio album weighting.
+    """Select the best AcoustID candidate recording by delegating candidate evaluation
+    to MetadataResolutionEngine.score_candidate using WeightedMatchingEngine(PROFILE_EXACT_SYNC).
 
     Args:
         candidate_mbids: List of MusicBrainz recording IDs returned by AcoustID.
@@ -649,23 +579,21 @@ def select_best_acoustid_recording(
     if not candidate_mbids or not metadata_provider or not hasattr(metadata_provider, "get_metadata"):
         return None, None, 0.0
 
-    best_cand_meta = None
-    best_cand_mbid = None
-    best_cand_score = -float("inf")
-    best_dur_delta = float("inf")
+    from core.metadata.engine import MetadataResolutionEngine
 
-    fallback_cand_meta = None
-    fallback_cand_mbid = None
-    fallback_cand_score = -float("inf")
-    fallback_dur_delta = float("inf")
+    engine = MetadataResolutionEngine(metadata_provider=metadata_provider)
 
-    clean_file_dur_ms: int | None = None
+    clean_file_dur_ms: int = 0
     if file_duration_ms is not None:
         try:
             f_dur = float(file_duration_ms)
             clean_file_dur_ms = round(f_dur * 1000) if 0 < f_dur < 10000 else round(f_dur)
         except (ValueError, TypeError):
-            clean_file_dur_ms = None
+            clean_file_dur_ms = 0
+
+    best_cand_meta = None
+    best_cand_mbid = None
+    best_cand_score = 0.0
 
     for mbid in candidate_mbids:
         mbid_str = str(mbid).strip()
@@ -693,71 +621,34 @@ def select_best_acoustid_recording(
                 )
                 continue
 
-            # 2. Duration Delta Evaluation
-            mb_dur = meta.get("length") or meta.get("duration_ms") or meta.get("duration")
-            mb_dur_ms: int | None = None
-            if mb_dur is not None:
-                try:
-                    m_val = float(mb_dur)
-                    mb_dur_ms = round(m_val * 1000) if 0 < m_val < 10000 else round(m_val)
-                except (ValueError, TypeError):
-                    mb_dur_ms = None
-
-            if clean_file_dur_ms and mb_dur_ms:
-                delta = abs(clean_file_dur_ms - mb_dur_ms)
-            else:
-                delta = 0
-
-            # 3. Candidate Scoring (Disambiguation penalty, canonical album boost, delta penalty)
-            cand_score = score_recording_candidate(
+            # 2. Authoritative Candidate Scoring via MetadataResolutionEngine & WeightedMatchingEngine
+            score = engine.score_candidate(
                 candidate=meta,
-                baseline_title=baseline_title,
+                baseline_title=baseline_title or "",
+                file_duration_ms=clean_file_dur_ms,
                 filename=filename,
-                tag_title=tag_title,
-                duration_delta_ms=delta,
             )
 
-            # Check if within max_duration_delta_ms window
-            if delta <= max_duration_delta_ms:
-                if cand_score > best_cand_score or (cand_score == best_cand_score and delta < best_dur_delta):
-                    best_cand_score = cand_score
-                    best_dur_delta = delta
-                    best_cand_meta = meta
-                    best_cand_mbid = mbid_str
-            else:
-                if cand_score > fallback_cand_score or (
-                    cand_score == fallback_cand_score and delta < fallback_dur_delta
-                ):
-                    fallback_cand_score = cand_score
-                    fallback_dur_delta = delta
-                    fallback_cand_meta = meta
-                    fallback_cand_mbid = mbid_str
+            if score > best_cand_score:
+                best_cand_score = score
+                best_cand_meta = meta
+                best_cand_mbid = mbid_str
 
         except Exception as exc:
             logger.debug("Failed evaluating AcoustID candidate %s: %s", mbid_str, exc)
             continue
 
-    if best_cand_mbid:
+    if best_cand_mbid and best_cand_score > 0.0:
+        confidence = min(round(best_cand_score / 100.0, 4), 1.0)
         logger.info(
-            "✓ AcoustID candidate selected: MBID %s ('%s', disambiguation: '%s', score: %d) with duration delta %dms (<= %dms window)",
+            "✓ AcoustID candidate selected: MBID %s ('%s', score: %.1f, confidence: %.2f)",
             best_cand_mbid,
             best_cand_meta.get("title") if best_cand_meta else "",
-            best_cand_meta.get("disambiguation") if best_cand_meta else "",
             best_cand_score,
-            best_dur_delta,
-            max_duration_delta_ms,
+            confidence,
         )
-        return best_cand_meta, best_cand_mbid, 0.95
+        return best_cand_meta, best_cand_mbid, confidence
 
-    # If file duration was unknown, allow best fallback passing trust gate
-    if clean_file_dur_ms is None and fallback_cand_mbid:
-        return fallback_cand_meta, fallback_cand_mbid, 0.85
-
-    logger.warning(
-        "[enhancer] No AcoustID candidate fell within ±%dms window (best delta: %sms)",
-        max_duration_delta_ms,
-        str(fallback_dur_delta) if fallback_dur_delta != float("inf") else "N/A",
-    )
     return None, None, 0.0
 
 
@@ -2365,190 +2256,82 @@ class RetroactiveEnhancer:
                                         fp_val["acoustid_id"] = cached_meta["acoustid_id"]
                                 resolved_from_cache = True
 
-                    # 1. Acoustic Fingerprint Resolution
-                    if not new_musicbrainz_id and fingerprint_provider and t_track.fingerprint and duration:
+                    # Authoritative candidate resolution via MetadataResolutionEngine
+                    if not new_musicbrainz_id:
                         try:
-                            duration_secs = int(duration / 1000) if duration > 10000 else duration
-                            details = fingerprint_provider.resolve_fingerprint_details(
-                                t_track.fingerprint, duration_secs
-                            )  # type: ignore[attr-defined]
-                            ac_id = details.get("acoustid_id") if isinstance(details, dict) else None
-                            if ac_id:
-                                t_track.acoustid_id = ac_id
-                                for mid, fp_val in item["new_fingerprints"].items():
-                                    fp_val["acoustid_id"] = ac_id
-                                for mid, fp_val in item.get("fingerprints", {}).items():
-                                    fp_val["acoustid_id"] = ac_id
+                            from core.metadata.engine import MetadataResolutionEngine
+                            from core.metadata.schemas import ResolutionRequest
 
-                            cand_mbids = details.get("mbids") if isinstance(details, dict) else []
-                            if cand_mbids and mb_client:
-                                _first_media, first_local_path = (
-                                    valid_media_paths[0] if valid_media_paths else (None, None)
-                                )
-                                first_filename = first_local_path.name if first_local_path else None
-                                first_tag_title = None
-                                for _m, _p, _tags in all_file_tags:
-                                    if _tags.get("title"):
-                                        first_tag_title = _tags.get("title")
-                                        break
-                                baseline_title = t_track.title or getattr(t_track, "raw_title", None)
-                                file_dur_ms = duration if duration > 10000 else round(float(duration) * 1000)
-                                best_meta, best_mbid, _conf = select_best_acoustid_recording(
-                                    candidate_mbids=cand_mbids,
-                                    file_duration_ms=file_dur_ms,
-                                    metadata_provider=mb_client,
-                                    baseline_title=baseline_title,
-                                    filename=first_filename,
-                                    tag_title=first_tag_title,
-                                    max_duration_delta_ms=2000,
-                                )
-                                if best_mbid and best_meta:
-                                    new_musicbrainz_id = best_mbid
-                                    resolved_meta = best_meta
-                                    if best_meta.get("title"):
-                                        t_track.title = best_meta["title"]
-                                    if best_meta.get("artist"):
-                                        t_track.artist_name = best_meta["artist"]
-                                    if best_meta.get("album"):
-                                        t_track.album_title = best_meta["album"]
-                                    if best_meta.get("release_id"):
-                                        t_track.mb_release_id = best_meta["release_id"]
-                                    if best_meta.get("release_group_id"):
-                                        t_track.release_group_id = best_meta["release_group_id"]
-                                    if best_meta.get("isrc"):
-                                        t_track.isrc = best_meta["isrc"]
-                                    item["metadata_changed"] = True
-                        except Exception as res_err:
-                            logger.debug(f"Fingerprint resolution error for {t_track.title}: {res_err}")
-
-                    # 2. Text-Based Search Waterfall Fallback if AcoustID yields no matches
-                    resolved_meta = None
-                    if (
-                        not new_musicbrainz_id
-                        and (t_track.title or getattr(t_track, "raw_title", None))
-                        and (t_track.artist or getattr(t_track, "artist_name", None))
-                    ):
-                        try:
-                            logger.info(
-                                "AcoustID returned no matches for '%s' by '%s'; executing text waterfall search.",
-                                t_track.title,
-                                t_track.artist_name,
+                            resolution_engine = MetadataResolutionEngine(
+                                acoustid_provider=fingerprint_provider,
+                                metadata_provider=mb_client or self._get_mb_plugin(),
+                                spotify_provider=self._get_spotify_plugin(),
                             )
-                            resolved_meta = self.search_metadata_waterfall(t_track)
-                            if resolved_meta:
-                                cand_title = (
-                                    resolved_meta.title
-                                    if isinstance(resolved_meta, EchosyncTrack)
-                                    else resolved_meta.get("title")
-                                )
-                                baseline_title = t_track.title or getattr(t_track, "raw_title", None)
-                                _first_media, first_local_path = (
-                                    valid_media_paths[0] if valid_media_paths else (None, None)
-                                )
-                                first_filename = first_local_path.name if first_local_path else None
-                                first_tag_title = None
-                                for _m, _p, _tags in all_file_tags:
-                                    if _tags.get("title"):
-                                        first_tag_title = _tags.get("title")
-                                        break
+                            _first_media, first_local_path = valid_media_paths[0] if valid_media_paths else (None, None)
+                            baseline_title = t_track.title or getattr(t_track, "raw_title", None)
 
-                                if cand_title and not verify_title_trust_gate(
-                                    candidate_title=cand_title,
-                                    baseline_title=baseline_title,
-                                    filename=first_filename,
-                                    tag_title=first_tag_title,
-                                    min_similarity=0.60,
-                                ):
-                                    logger.warning(
-                                        "[enhancer] Trust Gate REJECTED text waterfall candidate '%s' vs baseline '%s' (file: %s)",
-                                        cand_title,
-                                        baseline_title,
-                                        first_filename,
-                                    )
-                                    stage_metadata_divergence(
-                                        sync_id=t_track.sync_id if hasattr(t_track, "sync_id") else None,
-                                        candidate_metadata=(
-                                            resolved_meta
-                                            if isinstance(resolved_meta, dict)
-                                            else (
-                                                resolved_meta.to_dict()
-                                                if hasattr(resolved_meta, "to_dict")
-                                                else {"title": cand_title}
-                                            )
-                                        ),
-                                        file_path=first_local_path or "",
-                                        original_title=baseline_title or first_tag_title,
-                                    )
-                                    resolved_meta = None
-                                else:
-                                    if isinstance(resolved_meta, EchosyncTrack):
-                                        new_musicbrainz_id = resolved_meta.musicbrainz_id
-                                        if not t_track.isrc and resolved_meta.isrc:
-                                            t_track.isrc = resolved_meta.isrc
-                                        if resolved_meta.title:
-                                            t_track.title = resolved_meta.title
-                                        if resolved_meta.artist:
-                                            t_track.artist_name = resolved_meta.artist
-                                        if resolved_meta.album:
-                                            t_track.album_title = resolved_meta.album
-                                    elif isinstance(resolved_meta, dict):
-                                        new_musicbrainz_id = (
-                                            resolved_meta.get("musicbrainz_id")
-                                            or resolved_meta.get("mbid")
-                                            or resolved_meta.get("recording_id")
-                                        )
-                                        if not t_track.isrc and resolved_meta.get("isrc"):
-                                            t_track.isrc = resolved_meta.get("isrc")
-                                        if resolved_meta.get("title"):
-                                            t_track.title = resolved_meta.get("title")
-                                        if resolved_meta.get("artist"):
-                                            t_track.artist_name = resolved_meta.get("artist")
-                                        if resolved_meta.get("album"):
-                                            t_track.album_title = resolved_meta.get("album")
-                        except Exception as waterfall_err:
-                            logger.warning(f"Text waterfall fallback failed for {t_track.title}: {waterfall_err}")
+                            file_dur_ms = (
+                                duration
+                                if (duration and duration > 10000)
+                                else (round(float(duration) * 1000) if duration else 0)
+                            )
+                            res_req = ResolutionRequest(
+                                media_id=_first_media.media_id if _first_media else f"media_{t_track.id}",
+                                sync_id=t_track.sync_id if hasattr(t_track, "sync_id") else None,
+                                file_path=first_local_path,
+                                baseline_title=baseline_title,
+                                baseline_artist=t_track.artist or getattr(t_track, "artist_name", None),
+                                baseline_album=t_track.album_title if hasattr(t_track, "album_title") else None,
+                                baseline_isrc=t_track.isrc if hasattr(t_track, "isrc") else None,
+                                chromaprint=t_track.fingerprint,
+                                duration_ms=file_dur_ms,
+                            )
+                            res_result = resolution_engine.resolve_track(res_req)
 
-                    if new_musicbrainz_id and mb_client and not resolved_meta and not resolved_from_cache:
-                        try:
-                            meta = mb_client.get_metadata(new_musicbrainz_id)
-                            if meta:
-                                cand_title = meta.get("title")
-                                baseline_title = t_track.title or getattr(t_track, "raw_title", None)
-                                _first_media, first_local_path = (
-                                    valid_media_paths[0] if valid_media_paths else (None, None)
+                            if res_result and res_result.confidence_score >= 0.60 and res_result.musicbrainz_track_id:
+                                new_musicbrainz_id = res_result.musicbrainz_track_id
+                                if res_result.title:
+                                    t_track.title = res_result.title
+                                if res_result.artist:
+                                    t_track.artist_name = res_result.artist
+                                if res_result.album:
+                                    t_track.album_title = res_result.album
+                                if res_result.musicbrainz_release_id:
+                                    t_track.mb_release_id = res_result.musicbrainz_release_id
+                                if res_result.isrc:
+                                    t_track.isrc = res_result.isrc
+                                rg_id = getattr(res_result, "release_group_id", None) or (
+                                    res_result.extra_metadata.get("release_group_id")
+                                    if res_result.extra_metadata
+                                    else None
                                 )
-                                first_filename = first_local_path.name if first_local_path else None
-                                first_tag_title = None
-                                for _m, _p, _tags in all_file_tags:
-                                    if _tags.get("title"):
-                                        first_tag_title = _tags.get("title")
-                                        break
-
-                                if cand_title and not verify_title_trust_gate(
-                                    candidate_title=cand_title,
-                                    baseline_title=baseline_title,
-                                    filename=first_filename,
-                                    tag_title=first_tag_title,
-                                    min_similarity=0.60,
-                                ):
-                                    logger.warning(
-                                        "[enhancer] Trust Gate REJECTED AcoustID candidate '%s' vs baseline '%s' (file: %s)",
-                                        cand_title,
-                                        baseline_title,
-                                        first_filename,
-                                    )
-                                    stage_metadata_divergence(
-                                        sync_id=t_track.sync_id if hasattr(t_track, "sync_id") else None,
-                                        candidate_metadata=meta,
-                                        file_path=first_local_path or "",
-                                        original_title=baseline_title or first_tag_title,
-                                    )
-                                    new_musicbrainz_id = None
-                                else:
-                                    if not t_track.isrc and meta.get("isrc"):
-                                        t_track.isrc = meta.get("isrc")
-                        except Exception:
-                            pass
+                                if rg_id:
+                                    t_track.release_group_id = rg_id
+                                if res_result.year:
+                                    try:
+                                        t_track.release_year = int(res_result.year)
+                                    except Exception:
+                                        pass
+                                if res_result.track_number is not None:
+                                    t_track.track_number = res_result.track_number
+                                if res_result.disc_number is not None:
+                                    t_track.disc_number = res_result.disc_number
+                                if res_result.acoustid_id:
+                                    t_track.acoustid_id = res_result.acoustid_id
+                                    for mid, fp_val in item["new_fingerprints"].items():
+                                        fp_val["acoustid_id"] = res_result.acoustid_id
+                                    for mid, fp_val in item.get("fingerprints", {}).items():
+                                        fp_val["acoustid_id"] = res_result.acoustid_id
+                                if res_result.chromaprint:
+                                    for mid, fp_val in item["new_fingerprints"].items():
+                                        if not fp_val.get("chromaprint"):
+                                            fp_val["chromaprint"] = res_result.chromaprint
+                                    for mid, fp_val in item.get("fingerprints", {}).items():
+                                        if not fp_val.get("chromaprint"):
+                                            fp_val["chromaprint"] = res_result.chromaprint
+                                item["metadata_changed"] = True
+                        except Exception as res_err:
+                            logger.debug("Candidate resolution error for %s: %s", t_track.title, res_err)
 
                     if new_musicbrainz_id:
                         t_track.musicbrainz_id = new_musicbrainz_id
