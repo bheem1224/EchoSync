@@ -1163,7 +1163,7 @@ class MetadataResolutionEngine:
             has_identifiable_filename = bool(filename_stem and not is_generic_title(filename_stem))
             fn_lower = filename_stem.lower().strip() if has_identifiable_filename else ""
             norm_fn = normalize_title(fn_lower) if fn_lower else ""
-            fn_tokens = {w for w in re.findall(r"\w+", fn_lower) if len(w) > 1} if fn_lower else set()
+            fn_tokens = {w for w in re.findall(r"\w+", fn_lower) if len(w) > 2} if fn_lower else set()
 
             logger.info(
                 "[resolution_engine] Filtering %d AcoustID candidate(s) against filename stem: '%s'",
@@ -1235,35 +1235,43 @@ class MetadataResolutionEngine:
                     norm_c = normalize_title(c_lower)
                     if norm_fn and norm_c:
                         sim = max(sim, difflib.SequenceMatcher(None, norm_fn, norm_c).ratio())
-                    c_tokens = {w for w in re.findall(r"\w+", c_lower) if len(w) > 1}
+                    c_tokens = {w for w in re.findall(r"\w+", c_lower) if len(w) > 2}
                     if fn_tokens and c_tokens:
-                        token_overlap = len(fn_tokens & c_tokens) / max(len(fn_tokens), len(c_tokens))
-                        sim = max(sim, token_overlap)
+                        common_tokens = fn_tokens & c_tokens
+                        if not common_tokens:
+                            # Completely disjoint titles sharing no significant words
+                            sim = min(sim, 0.15)
+                        else:
+                            token_overlap = len(common_tokens) / max(len(fn_tokens), len(c_tokens))
+                            sim = max(sim, token_overlap)
 
-                    # Pruning Rule: Discard any candidate where title similarity < 0.40
-                    if sim < 0.40:
+                    # Pruning Rule: Discard any candidate where title similarity < 0.35
+                    if sim < 0.35:
                         logger.debug(
                             "[resolution_engine] Title pre-filter DROPPED MBID %s '%s': "
-                            "title similarity %.2f < 0.40 against filename '%s'",
+                            "title similarity %.2f < 0.35 against filename '%s'",
                             mbid_str,
                             cand_title,
                             sim,
                             filename_stem,
                         )
                         continue
+
                 else:
                     sim = 0.50  # Neutral similarity for untagged candidates or generic filenames
 
-                # Ranking score: 70% title similarity + 30% duration proximity
-                dur_prox = max(0.0, 1.0 - (dur_delta_sec / 2.0))
-                pre_rank_score = (sim * 0.7) + (dur_prox * 0.3)
+                # Ranking score: 80% title similarity + 20% AcoustID cluster score
+                cand_score = float(rec_meta.get("score") or 0.0)
+                if cand_score > 1.0:
+                    cand_score /= 100.0
+                pre_rank_score = (sim * 0.8) + (cand_score * 0.2)
 
                 viable_candidates.append((mbid_str, pre_rank_score, dur_delta_sec, sim))
 
             # Exit immediately if no candidates match
             if not viable_candidates:
                 logger.info(
-                    "[resolution_engine] No AcoustID candidate matched filename '%s' with >= 0.40 similarity. "
+                    "[resolution_engine] No AcoustID candidate matched filename '%s' with >= 0.35 similarity. "
                     "Skipping MusicBrainz network calls.",
                     filename_stem or "(none)",
                 )

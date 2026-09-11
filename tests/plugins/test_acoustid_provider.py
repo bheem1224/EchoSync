@@ -109,3 +109,66 @@ def test_acoustid_response_recordings_ingestion():
     assert rec2["artist"] == "Fallback Artist"
     assert rec2["duration"] == 205.5
     assert rec2["score"] == 0.85
+
+
+def test_acoustid_deep_title_and_artist_extraction_from_releasegroups():
+    """Verify that when a recording omits top-level title and artists,
+    metadata is deeply extracted from nested releasegroups.releases.mediums.tracks.
+    """
+    nested_response = {
+        "status": "ok",
+        "results": [
+            {
+                "id": "e00bfad7-nested-cluster",
+                "score": 0.956,
+                "recordings": [
+                    {
+                        "id": "d2555d82-deep-extraction",
+                        "duration": 200.6,
+                        # Intentionally omitting top-level "title" and "artists"
+                        "releasegroups": [
+                            {
+                                "id": "rg-shawn-illuminate",
+                                "title": "Illuminate",
+                                "type": "Album",
+                                "artists": [{"id": "art-shawn", "name": "Shawn Mendes"}],
+                                "releases": [
+                                    {
+                                        "id": "rel-illuminate-deluxe",
+                                        "mediums": [
+                                            {
+                                                "tracks": [
+                                                    {
+                                                        "id": "trk-1",
+                                                        "title": "There's Nothing Holdin' Me Back",
+                                                        "artists": [{"name": "Shawn Mendes"}],
+                                                    }
+                                                ]
+                                            }
+                                        ],
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ],
+            }
+        ],
+    }
+
+    provider = AcoustIDProvider()
+    dummy_http = DummyHTTP(nested_response)
+    provider.http = dummy_http
+    provider.config = {"api_key": "test_key"}
+
+    res = provider.resolve_fingerprint_details("AQAA_deep_fp", 201)
+
+    recordings = res.get("recordings", [])
+    assert len(recordings) == 1
+
+    rec = recordings[0]
+    assert rec["id"] == "d2555d82-deep-extraction"
+    assert rec["title"] == "There's Nothing Holdin' Me Back"
+    assert rec["artist"] == "Shawn Mendes"
+    assert rec["duration"] == 200.6
+    assert rec["score"] == 0.956

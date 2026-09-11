@@ -1263,3 +1263,147 @@ def test_acoustid_multi_cluster_in_memory_title_prefilter_eliminates_mismatched_
     # MusicBrainz was called ONLY for the matching song
     assert queried_mbids == ["mbid-holdin-me-back"]
     assert len(queried_mbids) == 1
+
+
+def test_acoustid_resolves_nested_releasegroups_with_single_mb_call(monkeypatch, tmp_path):
+    """Verifies that when the true recording in cluster 2 has nested metadata inside releasegroups,
+    it is extracted, matched against the filename stem in-memory, and resolved with exactly ONE MusicBrainz call.
+    """
+    from plugins.EchoSync.acoustid.client import AcoustIDProvider
+
+    audio_file = tmp_path / "01 - There's Nothing Holdin' Me Back.flac"
+    audio_file.write_bytes(b"dummy audio content")
+
+    file_dur_ms = 201000  # 201.0s
+    dummy_cp = "Z" * 60
+
+    monkeypatch.setattr(
+        echosync_core,
+        "extract_metadata",
+        lambda p: {
+            "title": "Corrupted Tag",
+            "artist": "Shawn Mendes",
+            "duration_ms": file_dur_ms,
+            "channels": 2,
+        },
+    )
+    monkeypatch.setattr(
+        FingerprintGenerator,
+        "generate_with_duration",
+        lambda p: (dummy_cp, file_dur_ms / 1000.0),
+    )
+
+    # Real-world AcoustID payload shape:
+    # Cluster 1: score 0.974, contains "Where Were You in the Morning?" (sim ~0.15) and "Control" (sim ~0.05)
+    # Cluster 2: score 0.956, contains d2555d82 with title only inside releasegroups.releases.mediums.tracks
+    raw_acoustid_response = {
+        "status": "ok",
+        "results": [
+            {
+                "id": "bc645d59-cluster-1",
+                "score": 0.974,
+                "recordings": [
+                    {
+                        "id": "2aeeb920-where-were-you",
+                        "title": "Where Were You in the Morning?",
+                        "artists": [{"name": "Shawn Mendes"}],
+                        "duration": 201.0,
+                    },
+                    {
+                        "id": "5e751612-control",
+                        "title": "Control",
+                        "artists": [{"name": "Zoe Wees"}],
+                        "duration": 201.0,
+                    },
+                ],
+            },
+            {
+                "id": "e00bfad7-cluster-2",
+                "score": 0.956,
+                "recordings": [
+                    {
+                        "id": "d2555d82-true-track",
+                        "duration": 200.6,
+                        # No top-level title or artists
+                        "releasegroups": [
+                            {
+                                "id": "rg-1",
+                                "title": "Illuminate",
+                                "artists": [{"name": "Shawn Mendes"}],
+                                "releases": [
+                                    {
+                                        "mediums": [
+                                            {
+                                                "tracks": [
+                                                    {
+                                                        "title": "There's Nothing Holdin' Me Back",
+                                                        "artists": [{"name": "Shawn Mendes"}],
+                                                    }
+                                                ]
+                                            }
+                                        ]
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ],
+            },
+        ],
+    }
+
+    acoustid_provider = AcoustIDProvider()
+
+    class DummyHTTP:
+        def post(self, url, data):
+            class DummyResp:
+                status_code = 200
+
+                def json(self):
+                    return raw_acoustid_response
+
+            return DummyResp()
+
+    acoustid_provider.http = DummyHTTP()
+    acoustid_provider.config = {"api_key": "test_key"}
+
+    mock_mb = MagicMock()
+    mock_mb.get_metadata.return_value = {
+        "title": "There's Nothing Holdin' Me Back",
+        "artist": "Shawn Mendes",
+        "album": "Illuminate",
+        "recording_id": "d2555d82-true-track",
+        "duration_ms": 200600,
+        "release_group": {"primary_type": "Album"},
+    }
+
+    engine = MetadataResolutionEngine(
+        acoustid_provider=acoustid_provider,
+        metadata_provider=mock_mb,
+    )
+
+    req = ResolutionRequest(
+        media_id="test_nested_real_world",
+        file_path=audio_file,
+        baseline_title=None,
+        baseline_artist="Shawn Mendes",
+        ignore_cache=True,
+    )
+
+    result = engine.resolve_track(req)
+
+    # 1. Winning resolution
+    assert result.musicbrainz_track_id == "d2555d82-true-track"
+    assert result.title == "There's Nothing Holdin' Me Back"
+    assert result.artist == "Shawn Mendes"
+    assert result.resolution_method == "acoustid"
+    assert result.confidence_score >= 0.90
+
+    # 2. Pre-filter verification: 2aeeb920 and 5e751612 were discarded BEFORE network calls
+    queried_mbids = [call.args[0] for call in mock_mb.get_metadata.call_args_list]
+    assert "2aeeb920-where-were-you" not in queried_mbids
+    assert "5e751612-control" not in queried_mbids
+
+    # 3. Only ONE MusicBrainz call made
+    assert queried_mbids == ["d2555d82-true-track"]
+    assert len(queried_mbids) == 1

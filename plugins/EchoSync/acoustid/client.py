@@ -14,6 +14,68 @@ from core.tiered_logger import get_logger
 logger = get_logger("provider.acoustid")
 
 
+def _extract_recording_meta(rec: dict[str, Any]) -> tuple[str, str, list[str]]:
+    """Extract (title, artist_name, artist_names) from recording or its nested releasegroups."""
+    title = str(rec.get("title") or "").strip()
+    artist_names = [str(a["name"]) for a in rec.get("artists", []) or [] if isinstance(a, dict) and a.get("name")]
+    artist = ", ".join(artist_names) if artist_names else str(rec.get("artist") or "").strip()
+
+    # Fallback to nested releasegroups structure when title or artist is omitted
+    if not title or not artist:
+        for rg in rec.get("releasegroups", []) or []:
+            if not isinstance(rg, dict):
+                continue
+
+            # Fallback 1: Extract artist from releasegroup
+            if not artist:
+                rg_artists = [
+                    str(a["name"]) for a in rg.get("artists", []) or [] if isinstance(a, dict) and a.get("name")
+                ]
+                if rg_artists:
+                    artist_names = rg_artists
+                    artist = ", ".join(rg_artists)
+                elif rg.get("artist"):
+                    artist = str(rg.get("artist")).strip()
+
+            # Fallback 2: Extract title from deep tracks in mediums
+            if not title:
+                for rel in rg.get("releases", []) or []:
+                    if not isinstance(rel, dict):
+                        continue
+                    for med in rel.get("mediums", []) or []:
+                        if not isinstance(med, dict):
+                            continue
+                        for trk in med.get("tracks", []) or []:
+                            if not isinstance(trk, dict):
+                                continue
+                            t_val = str(trk.get("title") or "").strip()
+                            if t_val:
+                                title = t_val
+                                if not artist and trk.get("artists"):
+                                    trk_artists = [
+                                        str(a["name"])
+                                        for a in trk.get("artists", []) or []
+                                        if isinstance(a, dict) and a.get("name")
+                                    ]
+                                    if trk_artists:
+                                        artist_names = trk_artists
+                                        artist = ", ".join(trk_artists)
+                                break
+                        if title:
+                            break
+                    if title:
+                        break
+
+            # Fallback 3: Use releasegroup title (e.g. Single releases)
+            if not title and rg.get("title"):
+                title = str(rg.get("title")).strip()
+
+            if title and artist:
+                break
+
+    return title, artist, artist_names
+
+
 class AcoustIDProvider(PluginBase):
     name = "EchoSync.acoustid"
     service_type = "metadata"
@@ -189,13 +251,7 @@ class AcoustIDProvider(PluginBase):
                         seen_ids.add(rec_id)
                         mbids.append(rec_id)
 
-                        # Extract artist string safely
-                        artists = rec.get("artists", []) or []
-                        artist_names = [str(a["name"]) for a in artists if isinstance(a, dict) and a.get("name")]
-                        if artist_names:
-                            artist_name = ", ".join(artist_names)
-                        else:
-                            artist_name = str(rec.get("artist") or "")
+                        resolved_title, resolved_artist, artist_names = _extract_recording_meta(rec)
 
                         # Duration normalization (seconds as float or None)
                         raw_duration = rec.get("duration")
@@ -207,8 +263,8 @@ class AcoustIDProvider(PluginBase):
                         recordings_list.append(
                             {
                                 "id": rec_id,
-                                "title": rec.get("title", "") or "",
-                                "artist": artist_name,
+                                "title": resolved_title or "",
+                                "artist": resolved_artist or "",
                                 "artists": artist_names,
                                 "duration": duration_val,
                                 "score": score,
