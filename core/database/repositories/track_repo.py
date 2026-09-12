@@ -64,14 +64,42 @@ class TrackRepository:
         return session.query(Track).filter_by(sync_id=clean_sync_id).first()
 
     @staticmethod
+    def get_track_with_media(session: Session, sync_id: str) -> tuple[Track | None, list[LocalMedia]]:
+        """Fetch Track and its LocalMedia files ordered deterministically by quality (bitrate DESC, sample_rate DESC, bit_depth DESC)."""
+        clean_sync_id = sync_id.split("?")[0]
+        track = session.query(Track).filter_by(sync_id=clean_sync_id).first()
+        if not track:
+            return None, []
+        media_list = (
+            session.query(LocalMedia)
+            .filter_by(track_id=track.id)
+            .order_by(
+                LocalMedia.bitrate.desc().nullslast(),
+                LocalMedia.sample_rate.desc().nullslast(),
+                LocalMedia.bit_depth.desc().nullslast(),
+            )
+            .all()
+        )
+        return track, media_list
+
+    @staticmethod
     def get_media_by_media_id(session: Session, media_id: str) -> LocalMedia | None:
         """Fetch a LocalMedia record by its canonical media_id (NanoID)."""
         return session.query(LocalMedia).filter_by(media_id=media_id).first()
 
     @staticmethod
     def get_media_for_track(session: Session, track_id: int) -> list[LocalMedia]:
-        """Fetch all LocalMedia records associated with a Track by its internal PK."""
-        return session.query(LocalMedia).filter_by(track_id=track_id).all()
+        """Fetch all LocalMedia records associated with a Track by its internal PK ordered by quality."""
+        return (
+            session.query(LocalMedia)
+            .filter_by(track_id=track_id)
+            .order_by(
+                LocalMedia.bitrate.desc().nullslast(),
+                LocalMedia.sample_rate.desc().nullslast(),
+                LocalMedia.bit_depth.desc().nullslast(),
+            )
+            .all()
+        )
 
     @classmethod
     def purge_ejected_media_cascade(cls, session: Session, file_path: str) -> None:
@@ -151,6 +179,7 @@ class TrackRepository:
         check_all_files: bool = False,
         force_refresh: bool = False,
         require_signature: bool = False,
+        missing_plugin: str | None = None,
     ) -> list[Track]:
         from sqlalchemy import case
 
@@ -234,7 +263,13 @@ class TrackRepository:
             else_=8,
         )
 
-        if not force_refresh:
+        if missing_plugin:
+            missing_plugin_cond = or_(
+                func.json_extract(Track.metadata_status, "$.satisfied_plugins").is_(None),
+                not_(func.json_extract(Track.metadata_status, "$.satisfied_plugins").like(f'%"{missing_plugin}"%')),
+            )
+            query = query.filter(missing_plugin_cond)
+        elif not force_refresh:
             MAX_REATTEMPTS = 5
             base_unenhanced = or_(
                 Track.metadata_enhanced.is_(False),

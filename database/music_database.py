@@ -295,7 +295,12 @@ class Track(Base):
         viewonly=True,
     )
     aliases: Mapped[list[TrackAlias]] = relationship(back_populates="track", cascade="all, delete-orphan")
-    media_files: Mapped[list[LocalMedia]] = relationship(back_populates="track", cascade="all, delete-orphan")
+    media_files: Mapped[list[LocalMedia]] = relationship(
+        "LocalMedia",
+        back_populates="track",
+        cascade="all, delete-orphan",
+        order_by="desc(LocalMedia.bitrate), desc(LocalMedia.sample_rate), desc(LocalMedia.bit_depth)",
+    )
     external_identifiers: Mapped[list[ExternalIdentifier]] = relationship(
         "ExternalIdentifier",
         secondary="local_media",
@@ -315,27 +320,27 @@ class Track(Base):
 
     @property
     def file_format(self) -> str | None:
-        return self.media_files[0].file_format if self.media_files else None
+        return self.local_media[0].file_format if self.local_media else None
 
     @property
     def bitrate(self) -> int | None:
-        return self.media_files[0].bitrate if self.media_files else None
+        return self.local_media[0].bitrate if self.local_media else None
 
     @property
     def sample_rate(self) -> int | None:
-        return self.media_files[0].sample_rate if self.media_files else None
+        return self.local_media[0].sample_rate if self.local_media else None
 
     @property
     def bit_depth(self) -> int | None:
-        return self.media_files[0].bit_depth if self.media_files else None
+        return self.local_media[0].bit_depth if self.local_media else None
 
     @property
     def channels(self) -> int | None:
-        return self.media_files[0].channels if self.media_files else None
+        return self.local_media[0].channels if self.local_media else None
 
     @property
     def file_size_bytes(self) -> int | None:
-        return self.media_files[0].file_size_bytes if self.media_files else None
+        return self.local_media[0].file_size_bytes if self.local_media else None
 
     def get_best_media(self) -> LocalMedia | None:
         """Return the highest-quality LocalMedia file attached to this track."""
@@ -351,9 +356,44 @@ class Track(Base):
         return max(self.media_files, key=_quality_key)
 
     @property
+    def local_media(self) -> list[LocalMedia]:
+        """Return attached LocalMedia files ordered deterministically by quality (bitrate DESC, sample_rate DESC, bit_depth DESC)."""
+        return sorted(
+            self.media_files or [],
+            key=lambda m: (
+                m.bitrate or 0,
+                m.sample_rate or 0,
+                m.bit_depth or 0,
+            ),
+            reverse=True,
+        )
+
+    @property
     def media(self) -> list[LocalMedia]:
-        """Backwards-compatible accessor. Returns all attached media files."""
-        return self.media_files
+        """Backwards-compatible accessor. Returns quality-ordered media files."""
+        return self.local_media
+
+    @property
+    def satisfied_plugins(self) -> list[str]:
+        """List of plugin identifiers whose enhancement has been satisfied for this track."""
+        if self.metadata_status and isinstance(self.metadata_status, dict):
+            return list(self.metadata_status.get("satisfied_plugins", []))
+        return []
+
+    def is_plugin_satisfied(self, plugin_key: str) -> bool:
+        """Check if a given plugin has run and been recorded as satisfied."""
+        return plugin_key in self.satisfied_plugins
+
+    def mark_plugin_satisfied(self, plugin_key: str) -> None:
+        """Record a plugin key as satisfied in metadata_status."""
+        if not self.metadata_status or not isinstance(self.metadata_status, dict):
+            self.metadata_status = {}
+        satisfied = set(self.metadata_status.get("satisfied_plugins", []))
+        satisfied.add(plugin_key)
+        self.metadata_status["satisfied_plugins"] = sorted(satisfied)
+        from sqlalchemy.orm.attributes import flag_modified
+
+        flag_modified(self, "metadata_status")
 
     @property
     def file_path(self) -> str | None:
@@ -614,6 +654,24 @@ def _sqlite_pragmas(dbapi_connection, _connection_record) -> None:
     cursor.close()
 
 
+def _ensure_artist_alias_schema(engine) -> None:
+    """Ensure artist_aliases table has alias_type column idempotently."""
+    try:
+        with engine.connect() as conn:
+            try:
+                cols = [row[1] for row in conn.exec_driver_sql("PRAGMA table_info(artist_aliases);").fetchall()]
+                if cols and "alias_type" not in cols:
+                    conn.exec_driver_sql(
+                        "ALTER TABLE artist_aliases ADD COLUMN alias_type VARCHAR(50) DEFAULT 'default';"
+                    )
+                    conn.commit()
+            except Exception:
+                # Gracefully ignore if already applied concurrently
+                pass
+    except Exception:
+        pass
+
+
 class MusicDatabase:
     """Helper for creating the engine/session and managing the schema."""
 
@@ -648,6 +706,7 @@ class MusicDatabase:
         if engine_url.startswith("sqlite"):
             event.listen(self.engine, "connect", _sqlite_pragmas)
         self.SessionLocal = sessionmaker(bind=self.engine, expire_on_commit=False, future=True)
+        _ensure_artist_alias_schema(self.engine)
         self._sanitize_existing_metadata()
 
     def _sanitize_existing_metadata(self) -> None:
@@ -1155,6 +1214,14 @@ def close_database() -> None:
         _db_instance = None
 
 
+def init_music_db(engine=None) -> None:
+    """Initialize or migrate the music database schema."""
+    if engine is None:
+        db = get_database()
+        engine = db.engine
+    _ensure_artist_alias_schema(engine)
+
+
 music_session_registry = scoped_session(lambda: get_database().SessionLocal)
 
 
@@ -1171,7 +1238,9 @@ __all__ = [
     "TrackArtist",
     "TrackArtistAlias",
     "TrackAudioFeatures",
+    "_ensure_artist_alias_schema",
     "close_database",
     "get_database",
+    "init_music_db",
     "music_session_registry",
 ]

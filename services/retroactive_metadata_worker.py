@@ -22,6 +22,7 @@ def run_retroactive_metadata_worker(
     limit: int | None = None,
     force_refresh: bool = False,
     require_signature: bool = True,
+    target_plugin: str | None = None,
     progress_callback: Callable[[int, int, str], None] | None = None,
 ) -> None:
     """Execute scheduled or manual retroactive metadata enhancement across library tracks.
@@ -32,16 +33,18 @@ def run_retroactive_metadata_worker(
         limit: Optional maximum number of tracks to enhance before halting.
         force_refresh: If True, re-evaluates even tracks already stamped as enhanced.
         require_signature: If True, considers tracks missing v2.5 echosync_signature as needing enhancement.
+        target_plugin: If provided, runs a lightweight plugin-only enrichment pass without DSP audio decoding.
         progress_callback: Optional callback(current, total, status) reporting progress.
     """
     logger.info(
         "Starting retroactive metadata enhancement worker (batch_size=%d, check_all_files=%s, "
-        "limit=%s, force_refresh=%s, require_signature=%s)",
+        "limit=%s, force_refresh=%s, require_signature=%s, target_plugin=%s)",
         batch_size,
         check_all_files,
         limit,
         force_refresh,
         require_signature,
+        target_plugin,
     )
 
     try:
@@ -66,6 +69,21 @@ def run_retroactive_metadata_worker(
         cb = progress_callback or _default_progress
 
         enhancer = RetroactiveEnhancer()
+
+        if target_plugin:
+            logger.info("Executing targeted plugin enrichment pass for plugin: %s...", target_plugin)
+            processed_count = enhancer.enrich_plugin_metadata(
+                target_plugin=target_plugin,
+                batch_size=batch_size,
+                limit=limit,
+                progress_callback=cb,
+            )
+            logger.info(
+                "Targeted plugin enrichment complete: %d tracks processed for %s",
+                processed_count,
+                target_plugin,
+            )
+            return
 
         # Phase 1: Native Rust audio fingerprinting pre-pass
         logger.info("Executing Phase 1: Native Rust fingerprinting pre-pass...")

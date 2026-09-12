@@ -188,9 +188,7 @@ def test_track_artist_alias_persistence(memory_session):
 
     # 4. Verify primary artist alias
     artist_alias = (
-        memory_session.query(ArtistAlias)
-        .filter_by(artist_id=primary_artist.id, name="Kenshi Yonezu")
-        .first()
+        memory_session.query(ArtistAlias).filter_by(artist_id=primary_artist.id, name="Kenshi Yonezu").first()
     )
     assert artist_alias is not None
     assert artist_alias.language == "ja"
@@ -344,3 +342,45 @@ def test_hook_manager_execute_hook_contracts():
 
     results = hm.execute_hook("test_hook", "input_data")
     assert results == [1, 2, 3]
+
+
+def test_ensure_artist_alias_schema_adds_missing_column(tmp_path):
+    """Verifies that _ensure_artist_alias_schema adds alias_type when missing and is idempotent."""
+    from database.music_database import _ensure_artist_alias_schema, init_music_db
+
+    db_path = tmp_path / "legacy_test.db"
+    engine = create_engine(f"sqlite:///{db_path}")
+
+    with engine.connect() as conn:
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE artist_aliases (
+                id INTEGER PRIMARY KEY,
+                artist_id INTEGER NOT NULL,
+                name VARCHAR NOT NULL,
+                locale VARCHAR,
+                script VARCHAR,
+                is_primary_for_locale BOOLEAN DEFAULT 0
+            );
+            """
+        )
+        conn.commit()
+
+        # Confirm alias_type is absent
+        cols_before = [row[1] for row in conn.exec_driver_sql("PRAGMA table_info(artist_aliases);").fetchall()]
+        assert "alias_type" not in cols_before
+
+    # Run migration
+    _ensure_artist_alias_schema(engine)
+
+    with engine.connect() as conn:
+        cols_after = [row[1] for row in conn.exec_driver_sql("PRAGMA table_info(artist_aliases);").fetchall()]
+        assert "alias_type" in cols_after
+
+    # Run second time for idempotency
+    _ensure_artist_alias_schema(engine)
+    init_music_db(engine)
+
+    with engine.connect() as conn:
+        cols_final = [row[1] for row in conn.exec_driver_sql("PRAGMA table_info(artist_aliases);").fetchall()]
+        assert cols_final.count("alias_type") == 1

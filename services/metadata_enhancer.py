@@ -1189,6 +1189,7 @@ class RetroactiveEnhancer:
                     logger.debug("[enhancer] Failed to generate audio signature for track %d: %s", track_id, sig_err)
 
                 track.metadata_status = meta_status
+                track.mark_plugin_satisfied("EchoSync.cjk")
                 flag_modified(track, "metadata_status")
 
                 # Persist localized entity aliases strictly in database
@@ -2679,8 +2680,80 @@ class RetroactiveEnhancer:
 
                     # Always apply post-metadata enrichment hooks so that the cjk_restored stamp is set and aliases are persisted
                     track = hook_manager.apply_filters("post_metadata_enrichment", track)
+                    track.mark_plugin_satisfied("EchoSync.cjk")
                     flag_modified(track, "metadata_status")
                     total_processed += 1
+
+    def enrich_plugin_metadata(
+        self,
+        target_plugin: str = "EchoSync.cjk",
+        batch_size: int = 50,
+        limit: int | None = None,
+        progress_callback: Any | None = None,
+    ) -> int:
+        """Lightweight retroactive plugin enrichment pass without DSP audio decoding or fingerprint generation.
+
+        Iterates through tracks where `target_plugin` is not recorded in `metadata_status["satisfied_plugins"]`,
+        executes plugin hooks (such as `post_metadata_enrichment`), marks the plugin satisfied, and commits in batches.
+        """
+        from database.music_database import get_database
+
+        db = get_database()
+        total_processed = 0
+        processed_track_ids: set[int] = set()
+        MAX_ITERATIONS = 500
+
+        logger.info(
+            "Starting targeted plugin enrichment pass for plugin: %s (batch_size: %d, limit: %s)",
+            target_plugin,
+            batch_size,
+            str(limit) if limit is not None else "None",
+        )
+
+        for _iteration in range(MAX_ITERATIONS):
+            if limit is not None and total_processed >= limit:
+                logger.info("Reached target limit of %d tracks for plugin enrichment. Halting.", limit)
+                break
+
+            current_batch_size = min(batch_size, limit - total_processed) if limit is not None else batch_size
+            if current_batch_size <= 0:
+                break
+
+            with db.session_scope() as session:
+                from core.database.repositories.track_repo import TrackRepository
+
+                candidates = TrackRepository.get_tracks_for_enhancement(
+                    session,
+                    batch_size=current_batch_size,
+                    missing_plugin=target_plugin,
+                )
+                tracks_to_process = [t for t in candidates if t.id not in processed_track_ids]
+
+                if not tracks_to_process:
+                    if total_processed > 0:
+                        logger.info(
+                            "Plugin enrichment complete for %s. Total tracks processed: %d",
+                            target_plugin,
+                            total_processed,
+                        )
+                    else:
+                        logger.info("No tracks require plugin enrichment for %s.", target_plugin)
+                    break
+
+                for track in tracks_to_process:
+                    processed_track_ids.add(track.id)
+                    # Apply enrichment hooks
+                    track = hook_manager.apply_filters("post_metadata_enrichment", track)
+                    track.mark_plugin_satisfied(target_plugin)
+                    total_processed += 1
+
+                if progress_callback:
+                    try:
+                        progress_callback(total_processed)
+                    except Exception as cb_err:
+                        logger.debug("Progress callback failed in enrich_plugin_metadata: %s", cb_err)
+
+        return total_processed
 
 
 class MetadataEnhancerService(RetroactiveEnhancer):

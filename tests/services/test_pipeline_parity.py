@@ -384,3 +384,291 @@ def test_review_task_to_dict_includes_proposed_and_detected_metadata():
     assert d["proposed_metadata"]["title"] == "Song Title"
     assert d["proposed_metadata"]["musicbrainz_id"] == "mbid_12345"
     assert d["confidence_score"] == 0.92
+
+
+def test_track_local_media_quality_sorting(tmp_path):
+    """Verify that Track.local_media and TrackRepository deterministic quality sorting
+    orders media files by (bitrate DESC, sample_rate DESC, bit_depth DESC).
+    """
+    from core.database.repositories.track_repo import TrackRepository
+    from database.music_database import Base, LocalMedia, MusicDatabase, Track
+
+    db = MusicDatabase(tmp_path / "music_sorting.db")
+    Base.metadata.create_all(db.engine)
+
+    with db.session_scope() as session:
+        art = Artist(id=1, name="Test Artist", normalized_name="test artist")
+        session.add(art)
+        session.flush()
+        t = Track(id=1, title="Test Track", sync_id="sync_qual_1", artist_id=art.id)
+        session.add(t)
+        session.flush()
+
+        # Add 3 media files: low, medium, high quality
+        m_low = LocalMedia(
+            track_id=1,
+            media_id="m_low",
+            file_path="/music/low.mp3",
+            file_format="mp3",
+            bitrate=128000,
+            sample_rate=44100,
+            bit_depth=16,
+        )
+        m_med = LocalMedia(
+            track_id=1,
+            media_id="m_med",
+            file_path="/music/med.mp3",
+            file_format="mp3",
+            bitrate=320000,
+            sample_rate=44100,
+            bit_depth=16,
+        )
+        m_high = LocalMedia(
+            track_id=1,
+            media_id="m_high",
+            file_path="/music/high.flac",
+            file_format="flac",
+            bitrate=1411000,
+            sample_rate=96000,
+            bit_depth=24,
+        )
+        session.add_all([m_low, m_med, m_high])
+
+    with db.session_scope() as session:
+        track = session.get(Track, 1)
+        assert track is not None
+        assert len(track.local_media) == 3
+        # In-memory and SQL ordered property: highest bitrate is first
+        assert track.local_media[0].media_id == "m_high"
+        assert track.local_media[1].media_id == "m_med"
+        assert track.local_media[2].media_id == "m_low"
+
+        # Track proxy properties delegate to highest quality
+        assert track.file_format == "flac"
+        assert track.bitrate == 1411000
+        assert track.sample_rate == 96000
+        assert track.bit_depth == 24
+
+        # TrackRepository.get_media_for_track returns sorted
+        repo_media = TrackRepository.get_media_for_track(session, 1)
+        assert [m.media_id for m in repo_media] == ["m_high", "m_med", "m_low"]
+
+        # TrackRepository.get_track_with_media returns sorted
+        t_obj, media_list = TrackRepository.get_track_with_media(session, "sync_qual_1")
+        assert t_obj is not None
+        assert [m.media_id for m in media_list] == ["m_high", "m_med", "m_low"]
+
+
+def test_track_repo_missing_plugin_filter(tmp_path):
+    """Verify that TrackRepository.get_tracks_for_enhancement filters tracks missing a target plugin."""
+    from core.database.repositories.track_repo import TrackRepository
+    from database.music_database import Base, MusicDatabase, Track
+
+    db = MusicDatabase(tmp_path / "music_plugin.db")
+    Base.metadata.create_all(db.engine)
+
+    with db.session_scope() as session:
+        art = Artist(id=2, name="Plugin Artist", normalized_name="plugin artist")
+        session.add(art)
+        session.flush()
+
+        # Track 1: missing all satisfied_plugins, marked enhanced=True
+        t1 = Track(
+            id=1,
+            title="Track 1",
+            sync_id="sync_p1",
+            artist_id=art.id,
+            metadata_enhanced=True,
+            metadata_status={"enhanced": True},
+        )
+        # Track 2: has EchoSync.cjk satisfied
+        t2 = Track(
+            id=2,
+            title="Track 2",
+            sync_id="sync_p2",
+            artist_id=art.id,
+            metadata_enhanced=True,
+            metadata_status={"satisfied_plugins": ["EchoSync.cjk"]},
+        )
+        # Track 3: has other plugin satisfied, but missing EchoSync.cjk
+        t3 = Track(
+            id=3,
+            title="Track 3",
+            sync_id="sync_p3",
+            artist_id=art.id,
+            metadata_enhanced=True,
+            metadata_status={"satisfied_plugins": ["EchoSync.other"]},
+        )
+        # Track 4: no metadata_status at all
+        t4 = Track(
+            id=4,
+            title="Track 4",
+            sync_id="sync_p4",
+            artist_id=art.id,
+            metadata_enhanced=False,
+            metadata_status=None,
+        )
+        session.add_all([t1, t2, t3, t4])
+        session.flush()
+
+        for idx, trk_id in enumerate([1, 2, 3, 4], start=1):
+            session.add(
+                LocalMedia(
+                    track_id=trk_id,
+                    media_id=f"m_plugin_{idx}",
+                    file_path=f"/music/p_{idx}.flac",
+                    bitrate=320000,
+                )
+            )
+
+    with db.session_scope() as session:
+        # Query specifically for missing "EchoSync.cjk"
+        candidates = TrackRepository.get_tracks_for_enhancement(
+            session,
+            batch_size=10,
+            missing_plugin="EchoSync.cjk",
+        )
+        candidate_ids = {c.id for c in candidates}
+        assert 1 in candidate_ids
+        assert 3 in candidate_ids
+        assert 4 in candidate_ids
+        assert 2 not in candidate_ids  # Track 2 already satisfied EchoSync.cjk
+
+
+def test_manager_file_mutation_media_id_enforcement():
+    """Verify that file mutations (retag, rename) strictly require media_id and return 400 when missing."""
+    import pytest
+    from fastapi import HTTPException
+
+    from web.routes.manager import RenameFileRequest, RetagRequest, rename_track, retag_track
+
+    # Missing payload
+    with pytest.raises(HTTPException) as exc_info:
+        retag_track(track_id="1", payload=None)
+    assert exc_info.value.status_code == 400
+    assert "media_id is required" in exc_info.value.detail
+
+    # Payload with empty media_id
+    with pytest.raises(HTTPException) as exc_info:
+        retag_track(track_id="1", payload=RetagRequest(media_id="", tags={"title": "New"}))
+    assert exc_info.value.status_code == 400
+    assert "media_id is required" in exc_info.value.detail
+
+    # Rename missing payload
+    with pytest.raises(HTTPException) as exc_info:
+        rename_track(track_id="1", payload=None)
+    assert exc_info.value.status_code == 400
+    assert "media_id is required" in exc_info.value.detail
+
+    # Rename with empty media_id
+    with pytest.raises(HTTPException) as exc_info:
+        rename_track(track_id="1", payload=RenameFileRequest(media_id="", new_filename="test.flac"))
+    assert exc_info.value.status_code == 400
+    assert "media_id is required" in exc_info.value.detail
+
+
+def test_manager_streaming_resolution(tmp_path, monkeypatch):
+    """Verify stream_manager_track resolves media_id directly or falls back to track.local_media[0]."""
+    from database.music_database import Base, LocalMedia, MusicDatabase, Track
+    from web.routes.manager import stream_manager_track
+
+    f_high = tmp_path / "high.flac"
+    f_high.write_bytes(b"high audio")
+    f_low = tmp_path / "low.mp3"
+    f_low.write_bytes(b"low audio")
+
+    db = MusicDatabase(tmp_path / "stream_test.db")
+    Base.metadata.create_all(db.engine)
+
+    with db.session_scope() as session:
+        art = Artist(id=3, name="Stream Artist", normalized_name="stream artist")
+        session.add(art)
+        session.flush()
+        t = Track(id=10, title="Stream Track", sync_id="sync_stream_10", artist_id=art.id)
+        session.add(t)
+        session.flush()
+
+        m_low = LocalMedia(
+            track_id=10,
+            media_id="m_stream_low",
+            file_path=str(f_low),
+            bitrate=128000,
+        )
+        m_high = LocalMedia(
+            track_id=10,
+            media_id="m_stream_high",
+            file_path=str(f_high),
+            bitrate=320000,
+        )
+        session.add_all([m_low, m_high])
+
+    monkeypatch.setattr("web.routes.manager.get_database", lambda: db)
+
+    # 1. Resolve explicitly by media_id
+    resp_low = stream_manager_track(media_id="m_stream_low")
+    assert resp_low.path == str(f_low)
+
+    # 2. Resolve by track_id omitting media_id -> falls back to highest quality
+    resp_best = stream_manager_track(track_id="10")
+    assert resp_best.path == str(f_high)
+
+    # 3. Resolve by sync_id omitting media_id -> falls back to highest quality
+    resp_sync = stream_manager_track(sync_id="sync_stream_10")
+    assert resp_sync.path == str(f_high)
+
+
+def test_retroactive_worker_targeted_plugin_pass(tmp_path, monkeypatch):
+    """Verify run_retroactive_metadata_worker with target_plugin runs enrich_plugin_metadata
+    and skips Phase 1 DSP fingerprinting.
+    """
+    from database.music_database import Base, MusicDatabase, Track
+    from services.retroactive_metadata_worker import run_retroactive_metadata_worker
+
+    db = MusicDatabase(tmp_path / "worker_plugin.db")
+    Base.metadata.create_all(db.engine)
+
+    with db.session_scope() as session:
+        art = Artist(id=4, name="Jay Chou", normalized_name="jay chou")
+        session.add(art)
+        session.flush()
+        t = Track(
+            id=100,
+            title="Anime Song 晴天",
+            sync_id="sync_cjk_100",
+            artist_id=art.id,
+            metadata_enhanced=True,
+            metadata_status={"enhanced": True},
+        )
+        session.add(t)
+        session.flush()
+
+        session.add(
+            LocalMedia(
+                track_id=100,
+                media_id="m_cjk_100",
+                file_path="/music/cjk_100.flac",
+                bitrate=320000,
+            )
+        )
+
+    monkeypatch.setattr("database.music_database.get_database", lambda: db)
+    monkeypatch.setattr("database.get_database", lambda: db)
+
+    fp_called = []
+    monkeypatch.setattr(
+        "services.metadata_enhancer.RetroactiveEnhancer.backfill_missing_fingerprints",
+        lambda self, *a, **kw: fp_called.append(True),
+    )
+
+    # Execute worker with target_plugin="EchoSync.cjk"
+    run_retroactive_metadata_worker(target_plugin="EchoSync.cjk")
+
+    # Assert Phase 1 was skipped
+    assert len(fp_called) == 0
+
+    # Assert track now has satisfied_plugins containing "EchoSync.cjk"
+    with db.session_scope() as session:
+        updated_track = session.get(Track, 100)
+        assert updated_track is not None
+        assert updated_track.is_plugin_satisfied("EchoSync.cjk")
+        assert "EchoSync.cjk" in updated_track.satisfied_plugins

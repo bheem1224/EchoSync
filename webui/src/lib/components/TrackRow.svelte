@@ -1,13 +1,17 @@
 <script>
-  export let track;
-  export let artist = null;
-  export let album = null;
-  export let onPlay = null;
-  export let onDelete = null;
-  export let onFetchMetadata = null;
-  export let openMetadataEditor = null;
-  export let onForceUpgrade = null;
-  export let onForceDelete = null;
+  let {
+    track,
+    artist = null,
+    album = null,
+    onPlay = null,
+    onplay = null,
+    onDelete = null,
+    onFetchMetadata = null,
+    openMetadataEditor = null,
+    onedit = null,
+    onForceUpgrade = null,
+    onForceDelete = null,
+  } = $props();
 
   function formatDuration(ms) {
     if (!ms) return "-:--";
@@ -17,8 +21,21 @@
     return `${m}:${s.toString().padStart(2, "0")}`;
   }
 
-  let showMenu = false;
-  let menuPos = null; // null for popover attached to button, or { x, y } for contextmenu
+  let showMenu = $state(false);
+  let menuPos = $state(null); // null for popover attached to button, or { x, y } for contextmenu
+  let isDrawerOpen = $state(false);
+
+  const sortedMedia = $derived(
+    [...(track?.local_media || track?.media || [])].sort((a, b) => {
+      if ((b.bitrate || 0) !== (a.bitrate || 0)) {
+        return (b.bitrate || 0) - (a.bitrate || 0);
+      }
+      if ((b.sample_rate || 0) !== (a.sample_rate || 0)) {
+        return (b.sample_rate || 0) - (a.sample_rate || 0);
+      }
+      return (b.bit_depth || 0) - (a.bit_depth || 0);
+    }),
+  );
 
   function toggleMenu(e) {
     if (e) e.stopPropagation();
@@ -40,11 +57,19 @@
 
   function handleAction(action) {
     closeMenu();
-    if (action === "play" && onPlay) onPlay(track, artist, album);
+    if (action === "play") {
+      if (onplay) {
+        onplay(track.sync_id || track.id);
+      } else if (onPlay) {
+        onPlay(track, artist, album);
+      }
+    }
     if (action === "delete" && onDelete) onDelete(track.id, album);
     if (action === "metadata" || action === "edit_metadata") {
       const trackRef = track.sync_id || track.id;
-      if (openMetadataEditor) {
+      if (onedit) {
+        onedit(trackRef);
+      } else if (openMetadataEditor) {
         openMetadataEditor(trackRef);
       } else if (onFetchMetadata) {
         onFetchMetadata(trackRef);
@@ -52,6 +77,26 @@
     }
     if (action === "upgrade" && onForceUpgrade) onForceUpgrade(track.id);
     if (action === "force_delete" && onForceDelete) onForceDelete(track.id);
+  }
+
+  function handlePlayEdition(mediaId) {
+    const trackRef = track.sync_id || track.id;
+    if (onplay) {
+      onplay(trackRef, mediaId);
+    } else if (onPlay) {
+      onPlay(track, artist, album, mediaId);
+    }
+  }
+
+  function handleEditEdition(mediaId) {
+    const trackRef = track.sync_id || track.id;
+    if (onedit) {
+      onedit(trackRef, mediaId);
+    } else if (openMetadataEditor) {
+      openMetadataEditor(trackRef, mediaId);
+    } else if (onFetchMetadata) {
+      onFetchMetadata(trackRef, mediaId);
+    }
   }
 
   // Simple click outside handler
@@ -74,6 +119,8 @@
 <div
   class="track-row group hover:bg-white/5 rounded-md px-3 py-2 grid grid-cols-[40px_2fr_1fr_1fr_auto_60px_auto] items-center gap-2 transition-colors relative cursor-pointer"
   oncontextmenu={handleContextMenu}
+  onclick={() => handleAction("play")}
+  onkeydown={(e) => e.key === "Enter" && handleAction("play")}
   role="row"
   tabindex="0"
 >
@@ -102,8 +149,8 @@
   <div
     class="flex items-center gap-1.5 justify-end opacity-60 group-hover:opacity-100 transition-opacity"
   >
-    {#if track.media && track.media.length > 0}
-      {@const m = track.media[0]}
+    {#if sortedMedia.length > 0}
+      {@const m = sortedMedia[0]}
       {#if m.channels}
         <span
           class="px-1.5 py-0.5 rounded bg-blue-900/40 text-blue-300 text-[10px] font-semibold tracking-wider whitespace-nowrap"
@@ -115,13 +162,33 @@
               : m.channels + " Ch"}
         </span>
       {/if}
-      {#if m.file_format}
-        <span
-          class="px-1.5 py-0.5 rounded bg-gray-800 text-gray-300 border border-gray-700 text-[10px] font-medium tracking-wider whitespace-nowrap"
+
+      {#if sortedMedia.length > 1}
+        <button
+          type="button"
+          class="px-2 py-0.5 text-xs font-mono rounded bg-slate-800 hover:bg-slate-700 text-cyan-400 border border-slate-700 flex items-center gap-1 transition-colors"
+          onclick={(e) => {
+            e.stopPropagation();
+            isDrawerOpen = !isDrawerOpen;
+          }}
+          title="Click to view all {sortedMedia.length} audio editions"
         >
-          {m.file_format}
+          <span>{m.file_format ? m.file_format.toUpperCase() : "AUDIO"}</span>
+          <span class="text-[10px] text-cyan-300 font-bold"
+            >+{sortedMedia.length - 1}</span
+          >
+          <span class="text-[9px] text-slate-400"
+            >{isDrawerOpen ? "▲" : "▼"}</span
+          >
+        </button>
+      {:else if m.file_format}
+        <span
+          class="px-2 py-0.5 text-xs font-mono rounded bg-slate-900 text-slate-400 border border-slate-800"
+        >
+          {m.file_format.toUpperCase()}
         </span>
       {/if}
+
       {#if m.bit_depth}
         <span
           class="px-1.5 py-0.5 rounded bg-gray-800 text-gray-300 border border-gray-700 text-[10px] font-medium tracking-wider whitespace-nowrap"
@@ -225,6 +292,71 @@
       {/if}
     </div>
   </div>
+
+  {#if isDrawerOpen && sortedMedia.length > 1}
+    <div
+      class="col-span-full bg-slate-950/80 border-t border-b border-slate-800/60 p-3 pl-12 flex flex-col gap-2 mt-2 -mx-3 -mb-2 cursor-default"
+      onclick={(e) => e.stopPropagation()}
+      role="region"
+      aria-label="Available File Editions"
+    >
+      <div
+        class="text-[11px] font-semibold uppercase tracking-wider text-slate-400"
+      >
+        Available File Editions ({sortedMedia.length})
+      </div>
+      {#each sortedMedia as media, idx}
+        <div
+          class="flex items-center justify-between py-1.5 px-3 rounded-lg bg-slate-900/60 border border-slate-800/40 hover:border-slate-700/60 transition-colors"
+        >
+          <div class="flex items-center gap-3">
+            <span class="text-xs font-bold font-mono text-cyan-400"
+              >{media.file_format ? media.file_format.toUpperCase() : ""}</span
+            >
+            <span class="text-xs text-slate-300 font-mono">
+              {media.bitrate ? `${media.bitrate} kbps` : "VBR"} · {media.sample_rate
+                ? `${media.sample_rate / 1000} kHz`
+                : ""} · {media.bit_depth ? `${media.bit_depth}-bit` : ""}
+            </span>
+            <span
+              class="text-[11px] text-slate-500 truncate max-w-md"
+              title={media.file_path}
+            >
+              {media.file_path ? media.file_path.split(/[\\/]/).pop() : ""}
+            </span>
+            {#if idx === 0}
+              <span
+                class="px-1.5 py-0.2 text-[9px] font-semibold bg-emerald-950/80 text-emerald-400 border border-emerald-800/50 rounded"
+                >DEFAULT</span
+              >
+            {/if}
+          </div>
+          <div class="flex items-center gap-2">
+            <button
+              type="button"
+              class="px-2.5 py-1 text-xs font-medium rounded bg-cyan-600 hover:bg-cyan-500 text-white transition-colors flex items-center gap-1"
+              onclick={(e) => {
+                e.stopPropagation();
+                handlePlayEdition(media.media_id || media.id);
+              }}
+            >
+              ▶ Play
+            </button>
+            <button
+              type="button"
+              class="px-2.5 py-1 text-xs font-medium rounded bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-colors flex items-center gap-1"
+              onclick={(e) => {
+                e.stopPropagation();
+                handleEditEdition(media.media_id || media.id);
+              }}
+            >
+              ✏ Edit
+            </button>
+          </div>
+        </div>
+      {/each}
+    </div>
+  {/if}
 </div>
 
 {#if showMenu && menuPos}
