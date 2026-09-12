@@ -92,9 +92,7 @@ class _JobsSDKFacade:
     ):
         from core.job_queue import job_queue
 
-        prefixed_name = (
-            f"{self.plugin_id}.{name}" if not name.startswith(self.plugin_id) else name
-        )
+        prefixed_name = f"{self.plugin_id}.{name}" if not name.startswith(self.plugin_id) else name
         job_queue.register_job(
             name=prefixed_name,
             func=func,
@@ -111,9 +109,7 @@ class _JobsSDKFacade:
     def dispatch_job(self, name: str) -> bool:
         from core.job_queue import job_queue
 
-        prefixed_name = (
-            f"{self.plugin_id}.{name}" if not name.startswith(self.plugin_id) else name
-        )
+        prefixed_name = f"{self.plugin_id}.{name}" if not name.startswith(self.plugin_id) else name
         return job_queue.execute_job_now(prefixed_name)
 
 
@@ -167,27 +163,15 @@ class _AccountsSDKFacade:
         try:
             import json
 
-            manifest_path = (
-                config_manager.get_plugins_dir() / caller_plugin_id / "manifest.json"
-            )
+            manifest_path = config_manager.get_plugins_dir() / caller_plugin_id / "manifest.json"
             if manifest_path.exists():
                 manifest = json.loads(manifest_path.read_text())
                 privileged = manifest.get("privileged", False)
         except Exception:
             pass
 
-        owner_lower = (
-            account_owner_plugin_id.lower()
-            .replace("echosync.", "")
-            .replace("echosync/", "")
-            .strip()
-        )
-        caller_lower = (
-            caller_plugin_id.lower()
-            .replace("echosync.", "")
-            .replace("echosync/", "")
-            .strip()
-        )
+        owner_lower = account_owner_plugin_id.lower().replace("echosync.", "").replace("echosync/", "").strip()
+        caller_lower = caller_plugin_id.lower().replace("echosync.", "").replace("echosync/", "").strip()
 
         if (
             caller_lower == owner_lower
@@ -214,9 +198,7 @@ class _AccountsSDKFacade:
     ):
         from database.config_database import get_config_database
 
-        get_config_database().save_account_token(
-            account_id, access_token, refresh_token, token_type, expires_at, scope
-        )
+        get_config_database().save_account_token(account_id, access_token, refresh_token, token_type, expires_at, scope)
 
     def get_all(self):
         """Return all accounts associated with the calling plugin."""
@@ -408,18 +390,14 @@ class _FileSDKFacade:
                         from core.tiered_logger import get_logger
 
                         logger = get_logger("plugin_SDK")
-                        logger.error(
-                            f"Security violation: Attempted soft delete outside music_dir: {p}"
-                        )
+                        logger.error(f"Security violation: Attempted soft delete outside music_dir: {p}")
                         return False
                 except AttributeError:
                     if not str(p).startswith(str(music_dir)):
                         from core.tiered_logger import get_logger
 
                         logger = get_logger("plugin_SDK")
-                        logger.error(
-                            f"Security violation: Attempted soft delete outside music_dir: {p}"
-                        )
+                        logger.error(f"Security violation: Attempted soft delete outside music_dir: {p}")
                         return False
             else:
                 music_dir = p.parent
@@ -432,9 +410,7 @@ class _FileSDKFacade:
             dest = trash_dir / p.name
             from core.io_gatekeeper import Gatekeeper
 
-            Gatekeeper.authorize_and_execute(
-                {"operation": "safe_move", "src": str(p), "dst": str(dest)}
-            )
+            Gatekeeper.authorize_and_execute({"operation": "safe_move", "src": str(p), "dst": str(dest)})
             return True
         except Exception as e:
             from core.tiered_logger import get_logger
@@ -498,16 +474,26 @@ class _NetworkSDKFacade:
             if self.plugin_id == "core" or self.plugin_id.startswith("core."):
                 return
 
-            manifest_path = (
-                config_manager.get_plugins_dir()
-                / self.plugin_id.replace("plugin.", "")
-                / "manifest.json"
-            )
+            manifest_path = config_manager.get_plugins_dir() / self.plugin_id.replace("plugin.", "") / "manifest.json"
             if not manifest_path.exists():
                 raise PermissionError(f"Plugin manifest not found for {self.plugin_id}")
 
             manifest = json.loads(manifest_path.read_text())
-            allowlist = manifest.get("network_domains", [])
+            if manifest.get("privileged") is True or manifest.get("privileged_mode") is True:
+                return
+            if (
+                isinstance(manifest.get("permissions"), dict)
+                and manifest.get("permissions", {}).get("privileged_mode") is True
+            ):
+                return
+
+            allowlist = manifest.get("network_domains")
+            if allowlist is None:
+                perms = manifest.get("permissions")
+                if isinstance(perms, dict):
+                    allowlist = perms.get("network_domains", [])
+                else:
+                    allowlist = []
 
             if "*" in allowlist:
                 return
@@ -523,9 +509,7 @@ class _NetworkSDKFacade:
                 elif domain == pattern:
                     return
 
-            raise PermissionError(
-                f"Network access to '{domain}' blocked. Domain not in 'network_domains' allowlist."
-            )
+            raise PermissionError(f"Network access to '{domain}' blocked. Domain not in 'network_domains' allowlist.")
         except Exception as e:
             if isinstance(e, PermissionError):
                 raise
@@ -607,9 +591,7 @@ class _HealthCheckSDKFacade:
                     return HealthCheckResult(
                         service_name=service_name,
                         status="healthy" if res else "unhealthy",
-                        message="Service check succeeded"
-                        if res
-                        else "Service check failed",
+                        message="Service check succeeded" if res else "Service check failed",
                     )
                 else:
                     return HealthCheckResult(
@@ -618,9 +600,7 @@ class _HealthCheckSDKFacade:
                         message=str(res),
                     )
             except Exception as e:
-                return HealthCheckResult(
-                    service_name=service_name, status="unhealthy", message=str(e)
-                )
+                return HealthCheckResult(service_name=service_name, status="unhealthy", message=str(e))
 
         health_check_registry.register_check_with_job(
             service_name=service_name,
@@ -630,9 +610,106 @@ class _HealthCheckSDKFacade:
         )
 
 
+def check_plugin_permission(plugin_id: str, scope: str) -> bool:
+    """Check whether a plugin has been granted a particular permission scope.
+
+    Supported scopes:
+      - "privileged_mode"
+      - "network_domains"
+      - "database.read_library"
+      - "database.mutate_aliases"
+      - "database.mutate_attributes"
+      - "wasm_fs_access"
+    """
+    if not plugin_id or plugin_id in ("core", "system") or plugin_id.startswith("core."):
+        return True
+
+    import json
+    from core.settings import config_manager
+    from database.config_database import get_config_database
+
+    # 1. Check services table in config.db first
+    try:
+        db = get_config_database()
+        conn = db._open_connection()
+        try:
+            c = conn.cursor()
+            c.execute(
+                "SELECT permissions, privileged_mode FROM services WHERE name=? OR plugin_id=?",
+                (plugin_id, plugin_id),
+            )
+            row = c.fetchone()
+            if row:
+                if row[1]:  # privileged_mode flag enabled
+                    return True
+                if row[0]:
+                    try:
+                        perms = json.loads(row[0])
+                        if isinstance(perms, dict):
+                            if perms.get("privileged_mode"):
+                                return True
+                            if scope.startswith("database."):
+                                db_key = scope.split(".", 1)[1]
+                                db_perms = perms.get("database", {})
+                                if isinstance(db_perms, dict) and db_perms.get(db_key):
+                                    return True
+                                if perms.get(scope) or perms.get(db_key):
+                                    return True
+                            elif scope in perms and perms[scope]:
+                                return True
+                    except Exception:
+                        pass
+        finally:
+            conn.close()
+    except Exception:
+        pass
+
+    # 2. Check physical manifest.json
+    try:
+        clean_name = plugin_id.replace("plugin.", "").replace(".", "/")
+        manifest_path = config_manager.get_plugins_dir() / clean_name / "manifest.json"
+        if not manifest_path.exists():
+            clean_name = plugin_id.replace("plugin.", "")
+            manifest_path = config_manager.get_plugins_dir() / clean_name / "manifest.json"
+
+        if manifest_path.exists():
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            if manifest.get("privileged") is True or manifest.get("privileged_mode") is True:
+                return True
+            perms = manifest.get("permissions", {})
+            if isinstance(perms, dict):
+                if perms.get("privileged_mode") is True:
+                    return True
+                if scope.startswith("database."):
+                    db_key = scope.split(".", 1)[1]
+                    db_perms = perms.get("database", {})
+                    if isinstance(db_perms, dict) and db_perms.get(db_key) is True:
+                        return True
+                    if perms.get(scope) is True or perms.get(db_key) is True:
+                        return True
+                elif perms.get(scope):
+                    return True
+    except Exception:
+        pass
+
+    return False
+
+
 class _DatabaseFacade:
     def __init__(self, plugin_id: str):
         self.plugin_id = plugin_id
+
+    def check_permission(self, scope: str) -> bool:
+        return check_plugin_permission(self.plugin_id, scope)
+
+    def can_read_library(self) -> bool:
+        return check_plugin_permission(self.plugin_id, "database.read_library")
+
+    def can_mutate_aliases(self) -> bool:
+        return check_plugin_permission(self.plugin_id, "database.mutate_aliases")
+
+    def can_mutate_attributes(self) -> bool:
+        return check_plugin_permission(self.plugin_id, "database.mutate_attributes")
 
     def get_plugin_session(self):
         from database.working_database import get_working_database
@@ -699,9 +776,7 @@ class _SDK:
         while frame:
             mod = frame.f_globals.get("__name__", "")
             if mod and not mod.startswith("core.nexus_framework"):
-                if not mod.startswith("importlib") and not mod.startswith(
-                    "_frozen_importlib"
-                ):
+                if not mod.startswith("importlib") and not mod.startswith("_frozen_importlib"):
                     if mod.startswith("plugins."):
                         caller_mod = mod
                         break
@@ -718,9 +793,7 @@ class _SDK:
             # parts[0] is 'plugins', parts[1] is author, parts[2] is plugin_name
             if len(parts) >= 3:
                 return f"{parts[1]}.{parts[2]}"
-            return (
-                parts[1] if len(parts) > 1 else caller_mod
-            )  # fallback for single-part names
+            return parts[1] if len(parts) > 1 else caller_mod  # fallback for single-part names
 
         # Handle core.providers.{name}
         if caller_mod.startswith("core.providers."):
@@ -728,7 +801,7 @@ class _SDK:
 
         return caller_mod.replace("plugins.", "").replace("core.", "").split(".")[0]
 
-    def get_database_connection(self, write_access: bool = False):
+    def get_database_connection(self, write_access: bool = False, require_library: bool = True):
         """
         Returns an SQLAlchemy engine connected to the calling plugin's isolated SQLite database.
         It also securely mounts the core databases (music_library.db, working.db) as attached databases.
@@ -741,19 +814,17 @@ class _SDK:
         from database.config_database import get_config_database
 
         plugin_name = self._get_plugin_id()
+        if require_library and not check_plugin_permission(plugin_name, "database.read_library"):
+            raise PermissionError(f"Plugin '{plugin_name}' lacks 'permissions.database.read_library' permission.")
         db = get_config_database()
         plugin_id_int = db.get_service_id(plugin_name)
         if not plugin_id_int:
             import binascii
 
-            plugin_id_int = (
-                binascii.crc32(plugin_name.lower().encode("utf-8")) & 0xFFFFFFFF
-            )
+            plugin_id_int = binascii.crc32(plugin_name.lower().encode("utf-8")) & 0xFFFFFFFF
 
         channel = config_manager.get_plugin_channel(plugin_name) or "stable"
-        db_file_name = (
-            f"{plugin_id_int}@beta.db" if channel == "beta" else f"{plugin_id_int}.db"
-        )
+        db_file_name = f"{plugin_id_int}@beta.db" if channel == "beta" else f"{plugin_id_int}.db"
 
         plugin_data_dir = "/data/plugins/data/"
         os.makedirs(plugin_data_dir, exist_ok=True)
@@ -766,14 +837,10 @@ class _SDK:
             cursor = dbapi_connection.cursor()
             try:
                 if os.path.exists("/data/music.db"):
-                    cursor.execute(
-                        "ATTACH DATABASE 'file:/data/music.db?mode=ro' AS music_lib"
-                    )
+                    cursor.execute("ATTACH DATABASE 'file:/data/music.db?mode=ro' AS music_lib")
                 working_mode = "rw" if write_access else "ro"
                 if os.path.exists("/data/working.db"):
-                    cursor.execute(
-                        f"ATTACH DATABASE 'file:/data/working.db?mode={working_mode}' AS working"
-                    )
+                    cursor.execute(f"ATTACH DATABASE 'file:/data/working.db?mode={working_mode}' AS working")
             except Exception:
                 pass
             finally:
@@ -848,9 +915,7 @@ class WasmPluginWrapper:
         except Exception as e:
             from core.tiered_logger import get_logger
 
-            get_logger("wasm_sandbox").error(
-                f"Failed to instantiate WASM runtime sandbox for {self.wasm_path}: {e}"
-            )
+            get_logger("wasm_sandbox").error(f"Failed to instantiate WASM runtime sandbox for {self.wasm_path}: {e}")
 
 
 def _verify_caller(expected_plugin_id: str):
@@ -861,19 +926,12 @@ def _verify_caller(expected_plugin_id: str):
         filename = frame_info.filename.replace("\\", "/")
 
         # If the execution frame originates from the trusted system directories or tests, grant absolute authority
-        if (
-            "/app/core/" in filename
-            or "/app/web/" in filename
-            or "/tests/" in filename
-            or "tests/" in filename
-        ):
+        if "/app/core/" in filename or "/app/web/" in filename or "/tests/" in filename or "tests/" in filename:
             return  # The Core and tests are omnipotent; allow bypass
 
         # Once we hit a plugin boundary in the stack, we stop looking for a core bypass
         # and proceed to the standard plugin-to-plugin isolation checks below.
-        if "/plugins/" in filename and (
-            "/data/plugins/" in filename or "/app/plugins/" in filename
-        ):
+        if "/plugins/" in filename and ("/data/plugins/" in filename or "/app/plugins/" in filename):
             break
 
     frame = inspect.currentframe()
@@ -911,9 +969,7 @@ def _verify_caller(expected_plugin_id: str):
     base_expected = norm_expected.split(".")[-1]
 
     if caller_id.lower() != base_expected and caller_id.lower() != norm_expected:
-        raise PermissionError(
-            f"Namespace Isolation Violation: {caller_mod} attempted to access {expected_plugin_id}"
-        )
+        raise PermissionError(f"Namespace Isolation Violation: {caller_mod} attempted to access {expected_plugin_id}")
 
 
 # KVS class removed
@@ -952,9 +1008,7 @@ class StateKVS:
             from sqlalchemy.sql import text
 
             res = session.execute(
-                text(
-                    "SELECT value FROM plugin_state_kvs WHERE plugin_id=:ns AND key=:k"
-                ),
+                text("SELECT value FROM plugin_state_kvs WHERE plugin_id=:ns AND key=:k"),
                 {"ns": self.plugin_id, "k": key},
             ).fetchone()
             if res:
@@ -969,9 +1023,7 @@ class StateKVS:
             from sqlalchemy.sql import text
 
             session.execute(
-                text(
-                    "INSERT OR REPLACE INTO plugin_state_kvs (plugin_id, key, value) VALUES (:ns, :k, :v)"
-                ),
+                text("INSERT OR REPLACE INTO plugin_state_kvs (plugin_id, key, value) VALUES (:ns, :k, :v)"),
                 {"ns": self.plugin_id, "k": key, "v": value},
             )
 
@@ -1039,15 +1091,11 @@ class PluginBase(ABC):
     """
 
     name: str  # Unique provider name (e.g., 'spotify', 'tidal', 'plex')
-    category: str = (
-        "provider"  # 'provider' (bundled, stable) or 'plugin' (community, unstable)
-    )
+    category: str = "provider"  # 'provider' (bundled, stable) or 'plugin' (community, unstable)
     supports_downloads: bool = False  # Indicates if provider supports downloads
     enabled: bool = True  # Flag to enable/disable provider without deleting files
     version: str = "Unknown"  # Version string for the provider/plugin
-    metadata_quality_score: int = (
-        50  # Quality score of metadata from this provider (0-100)
-    )
+    metadata_quality_score: int = 50  # Quality score of metadata from this provider (0-100)
 
     # Set to True in providers that can resolve metadata by ISRC code.
     # Providers that set this to True MUST implement search_by_isrc().
@@ -1090,7 +1138,7 @@ class PluginBase(ABC):
         """Cancel an active or queued download transfer on the provider. Returns True if cancelled."""
         return False
 
-    def get_database_connection(self, write_access: bool = False):
+    def get_database_connection(self, write_access: bool = False, require_library: bool = True):
         """
         Returns an SQLAlchemy engine connected to the plugin's isolated SQLite database.
         It also securely mounts the core databases (music_library.db, working.db) as attached databases.
@@ -1103,6 +1151,9 @@ class PluginBase(ABC):
         from core.settings import config_manager
         from database.config_database import get_config_database
 
+        if require_library and not check_plugin_permission(self.name, "database.read_library"):
+            raise PermissionError(f"Plugin '{self.name}' lacks 'permissions.database.read_library' permission.")
+
         # Resolve the strict plugin_id integer
         db = get_config_database()
         plugin_id_int = db.get_service_id(self.name)
@@ -1110,14 +1161,10 @@ class PluginBase(ABC):
             # Fallback to crc32 of name if not yet registered during boot
             import binascii
 
-            plugin_id_int = (
-                binascii.crc32(self.name.lower().encode("utf-8")) & 0xFFFFFFFF
-            )
+            plugin_id_int = binascii.crc32(self.name.lower().encode("utf-8")) & 0xFFFFFFFF
 
         channel = config_manager.get_plugin_channel(self.name) or "stable"
-        db_file_name = (
-            f"{plugin_id_int}@beta.db" if channel == "beta" else f"{plugin_id_int}.db"
-        )
+        db_file_name = f"{plugin_id_int}@beta.db" if channel == "beta" else f"{plugin_id_int}.db"
 
         # Ensure directory exists
         plugin_data_dir = "/data/plugins/data/"
@@ -1132,16 +1179,12 @@ class PluginBase(ABC):
 
             # Attach core databases
             try:
-                cursor.execute(
-                    "ATTACH DATABASE 'file:/data/music.db?mode=ro' AS music_lib"
-                )
+                cursor.execute("ATTACH DATABASE 'file:/data/music.db?mode=ro' AS music_lib")
 
                 working_mode = "rw" if write_access else "ro"
                 if working_mode not in ("ro", "rw", "rwc"):
                     raise ValueError(f"Invalid attach database mode: {working_mode}")
-                cursor.execute(
-                    f"ATTACH DATABASE 'file:/data/working.db?mode={working_mode}' AS working"
-                )
+                cursor.execute(f"ATTACH DATABASE 'file:/data/working.db?mode={working_mode}' AS working")
             except Exception:
                 pass
             cursor.close()
@@ -1207,9 +1250,7 @@ class PluginBase(ABC):
         Returns:
             A Flask response (string, tuple, or redirect)
         """
-        raise NotImplementedError(
-            "This provider does not implement handle_oauth_callback"
-        )
+        raise NotImplementedError("This provider does not implement handle_oauth_callback")
 
     def authenticate(self, **kwargs) -> bool:
         """Authenticate the provider (OAuth, API key, etc.)."""
@@ -1257,9 +1298,7 @@ class PluginBase(ABC):
     def get_playlist_tracks(self, playlist_id: str) -> list[EchosyncTrack]:
         """Fetch tracks for a playlist. Must return List[EchosyncTrack]."""
 
-    def add_tracks_to_playlist(
-        self, playlist_id: str, provider_track_ids: list[str]
-    ) -> bool:
+    def add_tracks_to_playlist(self, playlist_id: str, provider_track_ids: list[str]) -> bool:
         """Add tracks to a playlist using provider-specific IDs (e.g., Plex ratingKeys, Spotify URIs).
 
         This is the RECOMMENDED method for adding tracks to playlists.
@@ -1273,13 +1312,9 @@ class PluginBase(ABC):
             True if successful, False otherwise
         """
         # Default implementation: not supported by this provider
-        raise NotImplementedError(
-            f"add_tracks_to_playlist not implemented for {self.name} provider"
-        )
+        raise NotImplementedError(f"add_tracks_to_playlist not implemented for {self.name} provider")
 
-    def remove_tracks_from_playlist(
-        self, playlist_id: str, provider_track_ids: list[str]
-    ) -> bool:
+    def remove_tracks_from_playlist(self, playlist_id: str, provider_track_ids: list[str]) -> bool:
         """Remove tracks from a playlist using provider-specific IDs.
 
         Args:
@@ -1289,9 +1324,7 @@ class PluginBase(ABC):
         Returns:
             True if successful, False otherwise
         """
-        raise NotImplementedError(
-            f"remove_tracks_from_playlist not implemented for {self.name} provider"
-        )
+        raise NotImplementedError(f"remove_tracks_from_playlist not implemented for {self.name} provider")
 
     def is_configured(self) -> bool:
         """Return True if provider is configured and ready to use."""
@@ -1408,17 +1441,11 @@ class PluginBase(ABC):
         album_str = _coerce_to_str(album)
 
         # Extract edition info from title (remaster, live, remix, etc.)
-        clean_title, edition = (
-            text_utils.extract_edition(title_str) if title_str else (None, None)
-        )
+        clean_title, edition = text_utils.extract_edition(title_str) if title_str else (None, None)
 
         # Normalize text fields (handle None inputs)
-        normalized_title = (
-            text_utils.normalize_title(clean_title) if clean_title else None
-        )
-        normalized_artist = (
-            text_utils.normalize_artist(artist_str) if artist_str else None
-        )
+        normalized_title = text_utils.normalize_title(clean_title) if clean_title else None
+        normalized_artist = text_utils.normalize_artist(artist_str) if artist_str else None
         normalized_album = text_utils.normalize_album(album_str) if album_str else None
 
         # Validate required fields after normalization

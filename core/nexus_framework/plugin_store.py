@@ -17,12 +17,109 @@ logger = logging.getLogger(__name__)
 
 
 class PrivilegeEscalationError(Exception):
-    def __init__(self, escalations):
+    def __init__(self, escalations, plugin_id=None):
         self.escalations = escalations
+        self.plugin_id = plugin_id
         super().__init__("Privilege escalation detected")
 
 
+def compute_permission_delta(current_manifest: dict, new_manifest: dict) -> list[dict]:
+    """
+    Computes newly requested permissions between current_manifest and new_manifest.
+    Returns a list of escalation dictionaries:
+      [
+        {
+          "scope": str,
+          "description": str,
+          ...
+        }
+      ]
+    """
+    escalations: list[dict] = []
+
+    current_manifest = current_manifest or {}
+    new_manifest = new_manifest or {}
+
+    curr_perms = current_manifest.get("permissions") if isinstance(current_manifest.get("permissions"), dict) else {}
+    new_perms = new_manifest.get("permissions") if isinstance(new_manifest.get("permissions"), dict) else {}
+
+    # 1. Privileged Mode
+    curr_priv = bool(
+        current_manifest.get("privileged")
+        or current_manifest.get("privileged_mode")
+        or curr_perms.get("privileged_mode")
+    )
+    new_priv = bool(
+        new_manifest.get("privileged") or new_manifest.get("privileged_mode") or new_perms.get("privileged_mode")
+    )
+    if new_priv and not curr_priv:
+        escalations.append(
+            {
+                "scope": "privileged_mode",
+                "description": "Requests privileged operating system and subprocess access.",
+            }
+        )
+
+    # 2. Network Domains
+    curr_domains_raw = current_manifest.get("network_domains")
+    if curr_domains_raw is None:
+        curr_domains_raw = curr_perms.get("network_domains", [])
+    curr_domains = set(curr_domains_raw if isinstance(curr_domains_raw, list) else [])
+
+    new_domains_raw = new_manifest.get("network_domains")
+    if new_domains_raw is None:
+        new_domains_raw = new_perms.get("network_domains", [])
+    new_domains = set(new_domains_raw if isinstance(new_domains_raw, list) else [])
+
+    added_domains = sorted(list(new_domains - curr_domains))
+    if added_domains:
+        escalations.append(
+            {
+                "scope": "network_domains",
+                "added": added_domains,
+                "description": f"Requests network egress to new domains: {', '.join(added_domains)}",
+            }
+        )
+
+    # 3. Database Scopes (read_library, mutate_aliases, mutate_attributes)
+    curr_db = curr_perms.get("database") if isinstance(curr_perms.get("database"), dict) else {}
+    new_db = new_perms.get("database") if isinstance(new_perms.get("database"), dict) else {}
+
+    db_descriptions = {
+        "read_library": "Requests permission to read canonical library data.",
+        "mutate_aliases": "Requests permission to write entity aliases to library.",
+        "mutate_attributes": "Requests permission to write entity attributes to library.",
+    }
+
+    all_db_keys = set(list(db_descriptions.keys()) + list(new_db.keys()))
+    for key in sorted(all_db_keys):
+        is_curr = bool(curr_db.get(key) or curr_perms.get(f"database.{key}") or curr_perms.get(key))
+        is_new = bool(new_db.get(key) or new_perms.get(f"database.{key}") or new_perms.get(key))
+        if is_new and not is_curr:
+            desc = db_descriptions.get(key, f"Requests permission to access database scope {key}.")
+            escalations.append({"scope": f"database.{key}", "description": desc})
+
+    # 4. WASM File System Access
+    curr_fs_raw = current_manifest.get("wasm_fs_access") or curr_perms.get("wasm_fs_access", [])
+    curr_fs = set(curr_fs_raw if isinstance(curr_fs_raw, list) else [])
+    new_fs_raw = new_manifest.get("wasm_fs_access") or new_perms.get("wasm_fs_access", [])
+    new_fs = set(new_fs_raw if isinstance(new_fs_raw, list) else [])
+    added_fs = sorted(list(new_fs - curr_fs))
+    if added_fs:
+        escalations.append(
+            {
+                "scope": "wasm_fs_access",
+                "added": added_fs,
+                "description": f"Requests file system access to paths: {', '.join(added_fs)}",
+            }
+        )
+
+    return escalations
+
+
 class PluginStore:
+    compute_permission_delta = staticmethod(compute_permission_delta)
+
     def __init__(self):
         self.plugins_dir = Path(config_manager.get_plugins_dir())
         self.default_repo = "https://raw.githubusercontent.com/bheem1224/EchoSync/main/plugins/store-manifest.json"
@@ -75,6 +172,7 @@ class PluginStore:
 
     def scan_repository(self, repo_url: str) -> list[dict]:
         import urllib.parse
+
         try:
             parsed_u = urllib.parse.urlsplit(str(repo_url))
             if parsed_u.username or parsed_u.password:
@@ -111,18 +209,12 @@ class PluginStore:
                 if repo_url in etags:
                     headers["If-None-Match"] = etags[repo_url]["etag"]
 
-                resp = req_mgr.get(
-                    repo_url, headers=headers, timeout=10, allow_redirects=False
-                )
+                resp = req_mgr.get(repo_url, headers=headers, timeout=10, allow_redirects=False)
                 if resp.status_code == 304:
                     plugins = etags[repo_url].get("plugins", [])
                 elif resp.status_code == 200:
                     data = resp.json()
-                    plugins = (
-                        data["plugins"]
-                        if isinstance(data, dict) and "plugins" in data
-                        else data
-                    )
+                    plugins = data["plugins"] if isinstance(data, dict) and "plugins" in data else data
                     if not isinstance(plugins, list):
                         plugins = [plugins]
 
@@ -156,9 +248,7 @@ class PluginStore:
                     else:
                         folder_name = p.get("path") or clean_id.replace(".", "/")
 
-                    p["_folder_path"] = (
-                        f"{subfolder}/{folder_name}" if subfolder else folder_name
-                    )
+                    p["_folder_path"] = f"{subfolder}/{folder_name}" if subfolder else folder_name
 
                     repo_raw_base = f"https://raw.githubusercontent.com/{user}/{repo}/{branch}/{p['_folder_path']}"
                     if "download_url" not in p:
@@ -169,13 +259,9 @@ class PluginStore:
                     filtered_plugins.append(p)
                 return filtered_plugins
             except Exception as e:
-                logger.error(
-                    "Rollback operation halted: Atomic state restoration failed."
-                )
+                logger.error("Rollback operation halted: Atomic state restoration failed.")
                 logger.debug(f"Raw exception data: {e}", exc_info=True)
-                logger.debug(
-                    "Rollback operation halted: Atomic state restoration failed."
-                )
+                logger.debug("Rollback operation halted: Atomic state restoration failed.")
                 logger.debug(f"Raw exception data: {e}", exc_info=True)
                 return []
 
@@ -200,8 +286,10 @@ class PluginStore:
                 # Try store-manifest.json first, then manifest.json
                 manifest_files = ["store-manifest.json", "manifest.json"]
                 for m_file in manifest_files:
-                    check_url = f"https://raw.githubusercontent.com/{user}/{repo}/{branch}/{subfolder}/{m_file}".replace(
-                        f"//{m_file}", f"/{m_file}"
+                    check_url = (
+                        f"https://raw.githubusercontent.com/{user}/{repo}/{branch}/{subfolder}/{m_file}".replace(
+                            f"//{m_file}", f"/{m_file}"
+                        )
                     )
 
                     headers = {}
@@ -223,11 +311,7 @@ class PluginStore:
                             if "plugins" in manifest_data:
                                 plugins = manifest_data["plugins"]
                             else:
-                                plugins = (
-                                    manifest_data
-                                    if isinstance(manifest_data, list)
-                                    else [manifest_data]
-                                )
+                                plugins = manifest_data if isinstance(manifest_data, list) else [manifest_data]
 
                             if "ETag" in resp.headers:
                                 etags[check_url] = {
@@ -238,19 +322,13 @@ class PluginStore:
                                     json.dump(etags, f)
                             break
                     except Exception as e:
-                        logger.debug(
-                            "Rollback operation halted: Atomic state restoration failed."
-                        )
+                        logger.debug("Rollback operation halted: Atomic state restoration failed.")
                         logger.debug(f"Raw exception data: {e}", exc_info=True)
-                        logger.debug(
-                            "Rollback operation halted: Atomic state restoration failed."
-                        )
+                        logger.debug("Rollback operation halted: Atomic state restoration failed.")
                         logger.debug(f"Raw exception data: {e}", exc_info=True)
 
                 if not plugins:
-                    return self._scan_github_api(
-                        user, repo, branch, subfolder, repo_url
-                    )
+                    return self._scan_github_api(user, repo, branch, subfolder, repo_url)
 
                 filtered_plugins = []
                 for p in plugins:
@@ -269,9 +347,7 @@ class PluginStore:
                     else:
                         folder_name = p.get("path") or clean_id.replace(".", "/")
 
-                    p["_folder_path"] = (
-                        f"{subfolder}/{folder_name}" if subfolder else folder_name
-                    )
+                    p["_folder_path"] = f"{subfolder}/{folder_name}" if subfolder else folder_name
 
                     repo_raw_base = f"https://raw.githubusercontent.com/{user}/{repo}/{branch}/{p['_folder_path']}"
 
@@ -285,19 +361,13 @@ class PluginStore:
                     filtered_plugins.append(p)
                 return filtered_plugins
             except Exception as e:
-                logger.error(
-                    "Rollback operation halted: Atomic state restoration failed."
-                )
+                logger.error("Rollback operation halted: Atomic state restoration failed.")
                 logger.debug(f"Raw exception data: {e}", exc_info=True)
-                logger.debug(
-                    "Rollback operation halted: Atomic state restoration failed."
-                )
+                logger.debug("Rollback operation halted: Atomic state restoration failed.")
                 logger.debug(f"Raw exception data: {e}", exc_info=True)
         return []
 
-    def _scan_github_api(
-        self, user: str, repo: str, branch: str, subfolder: str, original_repo_url: str
-    ) -> list[dict]:
+    def _scan_github_api(self, user: str, repo: str, branch: str, subfolder: str, original_repo_url: str) -> list[dict]:
         api_url = f"https://api.github.com/repos/{user}/{repo}/contents"
         if subfolder:
             api_url += f"/{subfolder}"
@@ -311,9 +381,7 @@ class PluginStore:
                 for item in contents:
                     if item.get("type") == "dir":
                         dir_url = item.get("url")
-                        dir_resp = requests.get(
-                            dir_url, timeout=10, allow_redirects=False
-                        )
+                        dir_resp = requests.get(dir_url, timeout=10, allow_redirects=False)
                         if dir_resp.status_code == 200:
                             dir_contents = dir_resp.json()
                             for file_item in dir_contents:
@@ -326,12 +394,12 @@ class PluginStore:
                                     if manifest_resp.status_code == 200:
                                         plugin_info = manifest_resp.json()
                                         plugin_info["_source_repo"] = original_repo_url
-                                        plugin_id = plugin_info.get(
-                                            "id", item.get("name")
-                                        )
+                                        plugin_id = plugin_info.get("id", item.get("name"))
 
                                         # Use the archive for legacy API scan fallback
-                                        archive_url = f"https://github.com/{user}/{repo}/archive/refs/heads/{branch}.zip"
+                                        archive_url = (
+                                            f"https://github.com/{user}/{repo}/archive/refs/heads/{branch}.zip"
+                                        )
                                         plugin_info["download_url"] = archive_url
                                         plugin_info["beta_url"] = archive_url
                                         plugin_info["_folder_path"] = item.get("path")
@@ -428,9 +496,7 @@ class PluginStore:
                     local_version = plugin["installed_version"] or "0.0.0"
                     remote_version = plugin.get("version", "0.0.0")
                     # If on beta track, compare against beta version
-                    if plugin["installed_channel"] == "beta" and plugin.get(
-                        "beta_version"
-                    ):
+                    if plugin["installed_channel"] == "beta" and plugin.get("beta_version"):
                         remote_version = plugin.get("beta_version")
 
                     try:
@@ -441,9 +507,7 @@ class PluginStore:
                         remote_numeric = re.sub(r"[^0-9.]", "", str(remote_version))
                         local_numeric = re.sub(r"[^0-9.]", "", str(local_version))
                         try:
-                            if version.parse(remote_numeric) > version.parse(
-                                local_numeric
-                            ):
+                            if version.parse(remote_numeric) > version.parse(local_numeric):
                                 plugin["update_available"] = True
                         except Exception:
                             # Final fallback: simple inequality
@@ -460,20 +524,14 @@ class PluginStore:
                 # Convert unix timestamp to ISO format for frontend compatibility
                 import datetime
 
-                dt = datetime.datetime.fromtimestamp(
-                    snapshot["expires_at"], datetime.UTC
-                )
+                dt = datetime.datetime.fromtimestamp(snapshot["expires_at"], datetime.UTC)
                 plugin["archive_expiry_date"] = dt.isoformat()
 
         return all_plugins
 
-    def install_plugin(
-        self, plugin_info: dict, channel: str = "stable", force_consent: bool = False
-    ) -> bool:
+    def install_plugin(self, plugin_info: dict, channel: str = "stable", force_consent: bool = False) -> bool:
         """First-time installation of a plugin."""
-        return self.download_plugin(
-            plugin_info, channel, force_consent, is_update=False
-        )
+        return self.download_plugin(plugin_info, channel, force_consent, is_update=False)
 
     def update_plugin(self, plugin_id: int, force_consent: bool = False) -> bool:
         """Downloads the update and hot swaps it."""
@@ -483,16 +541,12 @@ class PluginStore:
         conn = db._open_connection()
         try:
             c = conn.cursor()
-            c.execute(
-                "SELECT name, beta_opt_in FROM services WHERE plugin_id=?", (plugin_id,)
-            )
+            c.execute("SELECT name, beta_opt_in FROM services WHERE plugin_id=?", (plugin_id,))
             row = c.fetchone()
         finally:
             conn.close()
             if not row:
-                logger.error(
-                    f"Cannot update plugin: ID {plugin_id} not found in database."
-                )
+                logger.error(f"Cannot update plugin: ID {plugin_id} not found in database.")
                 return False
 
             plugin_name = row[0]
@@ -500,19 +554,11 @@ class PluginStore:
             if local_beta is not None:
                 channel = "beta" if local_beta else "stable"
             else:
-                channel = (
-                    "beta"
-                    if config_manager.get("ui.beta_plugin_ui", False)
-                    else "stable"
-                )
+                channel = "beta" if config_manager.get("ui.beta_plugin_ui", False) else "stable"
 
         store_plugins = self.get_all_store_plugins()
         plugin_info = next(
-            (
-                p
-                for p in store_plugins
-                if p.get("id") == plugin_name or p.get("name") == plugin_name
-            ),
+            (p for p in store_plugins if p.get("id") == plugin_name or p.get("name") == plugin_name),
             None,
         )
 
@@ -540,27 +586,19 @@ class PluginStore:
             c.execute("SELECT name FROM services WHERE plugin_id=?", (plugin_id,))
             row = c.fetchone()
             if not row:
-                logger.error(
-                    f"Cannot rollback plugin: ID {plugin_id} not found in database."
-                )
+                logger.error(f"Cannot rollback plugin: ID {plugin_id} not found in database.")
                 return False
 
             plugin_name = row[0]
             # Force opt out of beta for this plugin
-            c.execute(
-                "UPDATE services SET beta_opt_in = 0 WHERE plugin_id=?", (plugin_id,)
-            )
+            c.execute("UPDATE services SET beta_opt_in = 0 WHERE plugin_id=?", (plugin_id,))
             conn.commit()
         finally:
             conn.close()
 
         store_plugins = self.get_all_store_plugins()
         plugin_info = next(
-            (
-                p
-                for p in store_plugins
-                if p.get("id") == plugin_name or p.get("name") == plugin_name
-            ),
+            (p for p in store_plugins if p.get("id") == plugin_name or p.get("name") == plugin_name),
             None,
         )
 
@@ -597,17 +635,13 @@ class PluginStore:
         # STEP 2: Update the Installer Logic (Manifest URL Priority)
         # Primary Route: Check if parsed plugin data contains the explicit URL for that channel
         if channel == "beta":
-            download_url = plugin_info.get("beta_url") or plugin_info.get(
-                "download_url"
-            )
+            download_url = plugin_info.get("beta_url") or plugin_info.get("download_url")
         else:
             download_url = plugin_info.get("download_url")
 
         # Fallback Route: If explicit URL is completely missing
         if not download_url:
-            plugin_id = plugin_info.get(
-                "id", plugin_info.get("plugin_id", "unknown_plugin")
-            )
+            plugin_id = plugin_info.get("id", plugin_info.get("plugin_id", "unknown_plugin"))
             clean_id = str(plugin_id)
             parts = clean_id.split(".")
             if len(parts) >= 2:
@@ -615,7 +649,9 @@ class PluginStore:
                 name = ".".join(parts[1:])
                 base_url = f"https://raw.githubusercontent.com/bheem1224/EchoSync/main/plugins/{author}/{name}"
             else:
-                base_url = f"https://raw.githubusercontent.com/bheem1224/EchoSync/main/plugins/{clean_id.replace('.', '/')}"
+                base_url = (
+                    f"https://raw.githubusercontent.com/bheem1224/EchoSync/main/plugins/{clean_id.replace('.', '/')}"
+                )
 
             if channel == "beta":
                 download_url = f"{base_url}/beta.zip"
@@ -624,14 +660,10 @@ class PluginStore:
                 download_url = f"{base_url}/releases/v{v}.zip"
 
         if not download_url:
-            logger.error(
-                f"No artifact URL found for plugin {plugin_info.get('id')} on channel {channel}"
-            )
+            logger.error(f"No artifact URL found for plugin {plugin_info.get('id')} on channel {channel}")
             return False
 
-        plugin_id = plugin_info.get(
-            "id", plugin_info.get("plugin_id", "unknown_plugin")
-        )
+        plugin_id = plugin_info.get("id", plugin_info.get("plugin_id", "unknown_plugin"))
         import binascii
 
         # Resolve target plugin's numerical key early to avoid scope panic
@@ -656,57 +688,43 @@ class PluginStore:
         else:
             target_dir = dest_dir
 
-        tmp_dir = Path(
-            tempfile.mkdtemp(prefix="plugin_tmp_", dir=str(self.plugins_dir.resolve()))
-        )
+        tmp_dir = Path(tempfile.mkdtemp(prefix="plugin_tmp_", dir=str(self.plugins_dir.resolve())))
 
         try:
-            logger.info(
-                f"Direct downloading {plugin_id} ({channel}) from {download_url}"
-            )
+            logger.info(f"Direct downloading {plugin_id} ({channel}) from {download_url}")
 
             import urllib.parse
 
             parsed_url = urllib.parse.urlparse(download_url)
             if parsed_url.scheme not in ("https",):
-                logger.error(
-                    "Installation halted: Security validation failed (Invalid URL scheme)."
-                )
+                logger.error("Installation halted: Security validation failed (Invalid URL scheme).")
                 return False
             if parsed_url.netloc not in (
                 "github.com",
                 "raw.githubusercontent.com",
                 "api.github.com",
             ):
-                logger.error(
-                    "Installation halted: Security validation failed (Untrusted hostname)."
-                )
+                logger.error("Installation halted: Security validation failed (Untrusted hostname).")
                 return False
 
             import urllib.parse
 
             parsed_url = urllib.parse.urlparse(download_url)
             if parsed_url.scheme not in ("https",):
-                logger.error(
-                    "Installation halted: Security validation failed (Invalid URL scheme)."
-                )
+                logger.error("Installation halted: Security validation failed (Invalid URL scheme).")
                 return False
             if parsed_url.netloc not in (
                 "github.com",
                 "raw.githubusercontent.com",
                 "api.github.com",
             ):
-                logger.error(
-                    "Installation halted: Security validation failed (Untrusted hostname)."
-                )
+                logger.error("Installation halted: Security validation failed (Untrusted hostname).")
                 return False
             req_mgr = RequestManager(provider="system")
             resp = req_mgr.get(download_url, timeout=30, allow_redirects=False)
 
             if resp.status_code in (301, 302, 307):
-                logger.error(
-                    "Installation halted: Untrusted remote redirection detected (SSRF Prevention)."
-                )
+                logger.error("Installation halted: Untrusted remote redirection detected (SSRF Prevention).")
                 return False
 
             if resp.status_code != 200:
@@ -722,20 +740,14 @@ class PluginStore:
                     resp = req_mgr.get(stable_url, timeout=30, allow_redirects=False)
 
                     if resp.status_code in (301, 302, 307):
-                        logger.error(
-                            "Installation halted: Untrusted remote redirection detected (SSRF Prevention)."
-                        )
+                        logger.error("Installation halted: Untrusted remote redirection detected (SSRF Prevention).")
                         return False
                     download_url = stable_url
                     if resp.status_code != 200:
-                        logger.error(
-                            f"Fallback stable artifact download also failed with status {resp.status_code}"
-                        )
+                        logger.error(f"Fallback stable artifact download also failed with status {resp.status_code}")
                         return False
                 else:
-                    logger.error(
-                        f"Artifact download failed with status {resp.status_code}"
-                    )
+                    logger.error(f"Artifact download failed with status {resp.status_code}")
                     return False
 
             if tmp_dir.exists():
@@ -770,13 +782,9 @@ class PluginStore:
                         finally:
                             conn.close()
                     except Exception as e:
-                        logger.error(
-                            "Rollback operation halted: Atomic state restoration failed."
-                        )
+                        logger.error("Rollback operation halted: Atomic state restoration failed.")
                         logger.debug(f"Raw exception data: {e}", exc_info=True)
-                        logger.debug(
-                            "Rollback operation halted: Atomic state restoration failed."
-                        )
+                        logger.debug("Rollback operation halted: Atomic state restoration failed.")
                         logger.debug(f"Raw exception data: {e}", exc_info=True)
 
                 # Task 2: Artifact Extraction (Direct Root Level)
@@ -786,9 +794,7 @@ class PluginStore:
                             # Zip Slip Prevention via Path Sanitizer
                             validate_zip_entry(tmp_dir, zi.filename)
                         except PathTraversalError as pte:
-                            logger.error(
-                                f"Malicious Zip Slip path traversal in artifact: {zi.filename} - {pte}"
-                            )
+                            logger.error(f"Malicious Zip Slip path traversal in artifact: {zi.filename} - {pte}")
                             return False
                         z.extract(zi, tmp_dir)
 
@@ -796,15 +802,11 @@ class PluginStore:
                 try:
                     manifest_file = resolve_safe_path(tmp_dir, "manifest.json")
                 except PathTraversalError as pte:
-                    logger.error(
-                        f"Security violation: manifest.json resolves outside temporary directory: {pte}"
-                    )
+                    logger.error(f"Security violation: manifest.json resolves outside temporary directory: {pte}")
                     return False
 
                 if not manifest_file.exists():
-                    logger.error(
-                        f"Validation failed: Clean artifact missing manifest.json at root for {plugin_id}"
-                    )
+                    logger.error(f"Validation failed: Clean artifact missing manifest.json at root for {plugin_id}")
                     # If this happens, we might be downloading a full repo zip by mistake
                     return False
 
@@ -813,13 +815,9 @@ class PluginStore:
 
                 # Strict Manifest Parsing (Task 2)
                 required_fields = ["author", "name", "version"]
-                missing = [
-                    field for field in required_fields if not new_manifest.get(field)
-                ]
+                missing = [field for field in required_fields if not new_manifest.get(field)]
                 if missing:
-                    logger.error(
-                        f"Manifest validation failed: missing required fields {missing}"
-                    )
+                    logger.error(f"Manifest validation failed: missing required fields {missing}")
                     return False
 
                 # Store parsed and strict fields for later DB insertion
@@ -829,22 +827,16 @@ class PluginStore:
                 strict_namespace = f"{manifest_author}.{manifest_name}"
                 manifest_desc = new_manifest.get("description", "")
                 manifest_version = new_manifest["version"]
-                manifest_type = new_manifest.get("type") or new_manifest.get(
-                    "category", "provider"
-                )
+                manifest_type = new_manifest.get("type") or new_manifest.get("category", "provider")
 
                 if not re.match(r"^[a-zA-Z0-9_\-]+$", manifest_author) or not re.match(
                     r"^[a-zA-Z0-9_\-]+$", manifest_name
                 ):
-                    logger.error(
-                        f"Invalid characters in manifest author or name: {manifest_author}.{manifest_name}"
-                    )
+                    logger.error(f"Invalid characters in manifest author or name: {manifest_author}.{manifest_name}")
                     return False
 
                 # Dynamically calculate target directories based on strict_namespace
-                dest_dir = resolve_safe_path(
-                    self.plugins_dir, f"{manifest_author}/{manifest_name}"
-                )
+                dest_dir = resolve_safe_path(self.plugins_dir, f"{manifest_author}/{manifest_name}")
 
                 # Check case-insensitively to reuse existing folder names and prevent casing duplicates
                 existing_dest = dest_dir if dest_dir.exists() else None
@@ -862,9 +854,8 @@ class PluginStore:
                     try:
                         with open(manifest_file, "r") as f:
                             new_manifest = json.load(f)
-                        new_perms = new_manifest.get("permissions", {})
 
-                        old_perms = {}
+                        old_manifest = {}
                         if target_plugin_id is not None:
                             # It's an update, fetch granted permissions from config.db
                             from database.config_database import get_config_database
@@ -882,43 +873,24 @@ class PluginStore:
                                     try:
                                         db_perms = json.loads(row[0]) if row[0] else {}
                                         if isinstance(db_perms, dict):
-                                            old_perms = db_perms
+                                            old_manifest["permissions"] = db_perms
                                     except Exception:
                                         pass
                                     if row[1]:
-                                        old_perms["privileged_mode"] = True
+                                        old_manifest["privileged_mode"] = True
+                                        old_manifest["privileged"] = True
                             finally:
                                 conn.close()
 
-                        escalations = {}
-
-                        # 1. Check privileged_mode escalation
-                        if new_perms.get("privileged_mode") and not old_perms.get(
-                            "privileged_mode"
-                        ):
-                            escalations["privileged_mode"] = True
-
-                        # 2. Check network_domains expansion
-                        old_domains = set(old_perms.get("network_domains", []))
-                        new_domains = set(new_perms.get("network_domains", []))
-                        added_domains = list(new_domains - old_domains)
-                        if added_domains:
-                            escalations["network_domains"] = added_domains
-
-                        # 3. Check wasm_fs_access expansion
-                        old_fs = set(old_perms.get("wasm_fs_access", []))
-                        new_fs = set(new_perms.get("wasm_fs_access", []))
-                        added_fs = list(new_fs - old_fs)
-                        if added_fs:
-                            escalations["wasm_fs_access"] = added_fs
+                        escalations = compute_permission_delta(old_manifest, new_manifest)
 
                         if escalations:
                             logger.warning(
-                                f"Aborting install/update for {plugin_id}: Privilege escalation detected. Requires user consent."
+                                f"Aborting install/update for {plugin_id}: Privilege escalation detected ({len(escalations)} scopes). Requires user consent."
                             )
                             if tmp_dir.exists():
                                 shutil.rmtree(tmp_dir, ignore_errors=True)
-                            raise PrivilegeEscalationError(escalations)
+                            raise PrivilegeEscalationError(escalations, plugin_id=int_plugin_id)
                     except PrivilegeEscalationError:
                         raise
                     except Exception as e:
@@ -939,9 +911,7 @@ class PluginStore:
                     # if the zip artifact has a lagging version string
                     if channel == "beta" and plugin_info.get("beta_version"):
                         manifest_data["version"] = plugin_info.get("beta_version")
-                    elif channel in ["stable", "release"] and plugin_info.get(
-                        "version"
-                    ):
+                    elif channel in ["stable", "release"] and plugin_info.get("version"):
                         manifest_data["version"] = plugin_info.get("version")
 
                     with open(manifest_file, "w") as f:
@@ -952,13 +922,9 @@ class PluginStore:
                     # than the stale raw-zip value that was captured earlier.
                     manifest_version = manifest_data.get("version", manifest_version)
                 except Exception as e:
-                    logger.error(
-                        "Rollback operation halted: Atomic state restoration failed."
-                    )
+                    logger.error("Rollback operation halted: Atomic state restoration failed.")
                     logger.debug(f"Raw exception data: {e}", exc_info=True)
-                    logger.debug(
-                        "Rollback operation halted: Atomic state restoration failed."
-                    )
+                    logger.debug("Rollback operation halted: Atomic state restoration failed.")
                     logger.debug(f"Raw exception data: {e}", exc_info=True)
 
                 # PHASE 1: Cross-Database Relational Snapshotting
@@ -979,9 +945,7 @@ class PluginStore:
 
                         if service_id:
                             # 1. Config.db Service Configurations and Plugin Accounts & Tokens using SQLAlchemy ORM
-                            config_engine = create_engine(
-                                f"sqlite:///{db.database_path}"
-                            )
+                            config_engine = create_engine(f"sqlite:///{db.database_path}")
                             ConfigSession = sessionmaker(bind=config_engine)
                             config_session = ConfigSession()
                             try:
@@ -1001,11 +965,7 @@ class PluginStore:
                                 ]
 
                                 # Fetch Accounts
-                                accounts = (
-                                    config_session.query(Account)
-                                    .filter(Account.service_id == service_id)
-                                    .all()
-                                )
+                                accounts = config_session.query(Account).filter(Account.service_id == service_id).all()
                                 state_snapshot["accounts"] = [
                                     {
                                         "id": acc.id,
@@ -1027,9 +987,7 @@ class PluginStore:
                                 if account_ids:
                                     tokens = (
                                         config_session.query(AccountToken)
-                                        .filter(
-                                            AccountToken.account_id.in_(account_ids)
-                                        )
+                                        .filter(AccountToken.account_id.in_(account_ids))
                                         .all()
                                     )
                                     state_snapshot["tokens"] = [
@@ -1053,14 +1011,10 @@ class PluginStore:
                             session = w_db.session()
                             try:
                                 kvs_rows = session.execute(
-                                    text(
-                                        "SELECT key, value FROM plugin_state_kvs WHERE plugin_id=:pid"
-                                    ),
+                                    text("SELECT key, value FROM plugin_state_kvs WHERE plugin_id=:pid"),
                                     {"pid": str(target_plugin_id)},
                                 ).fetchall()
-                                state_snapshot["kvs"] = [
-                                    dict(row._mapping) for row in kvs_rows
-                                ]
+                                state_snapshot["kvs"] = [dict(row._mapping) for row in kvs_rows]
                                 session.flush()
                                 session.commit()
                             except Exception:
@@ -1071,9 +1025,7 @@ class PluginStore:
 
                             # 3. Sandbox Storage DBs
                             sandbox_db_path = dest_dir / f"{manifest_name}.db"
-                            sandbox_backup_path = (
-                                dest_dir / "beta_backup" / f"{manifest_name}.db"
-                            )
+                            sandbox_backup_path = dest_dir / "beta_backup" / f"{manifest_name}.db"
                             if sandbox_db_path.exists():
                                 beta_backup_dir = dest_dir / "beta_backup"
                                 beta_backup_dir.mkdir(exist_ok=True)
@@ -1083,13 +1035,9 @@ class PluginStore:
                                 state_snapshot["sandbox_db_path"] = sandbox_backup_path
 
                     except Exception as e:
-                        logger.error(
-                            "Rollback operation halted: Atomic state restoration failed."
-                        )
+                        logger.error("Rollback operation halted: Atomic state restoration failed.")
                         logger.debug(f"Raw exception data: {e}", exc_info=True)
-                        logger.debug(
-                            "Rollback operation halted: Atomic state restoration failed."
-                        )
+                        logger.debug("Rollback operation halted: Atomic state restoration failed.")
                         logger.debug(f"Raw exception data: {e}", exc_info=True)
 
                 # Task 3: Atomic Swap
@@ -1106,12 +1054,8 @@ class PluginStore:
                         os.rename(str(target_dir), str(backup_dir))
                         logger.info(f"Backed up target_dir to {backup_dir}")
                     except Exception as backup_err:
-                        logger.warning(
-                            "Framework encountered an unexpected error during execution."
-                        )
-                        logger.debug(
-                            "Rollback operation halted: Atomic state restoration failed."
-                        )
+                        logger.warning("Framework encountered an unexpected error during execution.")
+                        logger.debug("Rollback operation halted: Atomic state restoration failed.")
                         logger.debug(f"Raw exception data: {backup_err}", exc_info=True)
                         shutil.rmtree(target_dir, ignore_errors=True)
                         backup_dir = None
@@ -1120,16 +1064,12 @@ class PluginStore:
                     if not target_dir.parent.exists():
                         target_dir.parent.mkdir(parents=True, exist_ok=True)
                     os.rename(str(tmp_dir), str(target_dir))
-                    logger.info(
-                        f"Successfully installed {plugin_id} artifact via atomic swap"
-                    )
+                    logger.info(f"Successfully installed {plugin_id} artifact via atomic swap")
                     if backup_dir and backup_dir.exists():
                         shutil.rmtree(backup_dir, ignore_errors=True)
                 except Exception as swap_err:
                     logger.error("Installation halted: Atomic directory swap failed.")
-                    logger.debug(
-                        "Rollback operation halted: Atomic state restoration failed."
-                    )
+                    logger.debug("Rollback operation halted: Atomic state restoration failed.")
                     logger.debug(f"Raw exception data: {swap_err}", exc_info=True)
                     if backup_dir and backup_dir.exists():
                         os.rename(str(backup_dir), str(target_dir))
@@ -1138,9 +1078,7 @@ class PluginStore:
                 # Task 1: Localized Dependency Installation (Micro-Venv)
                 requirements_file = target_dir / "requirements.txt"
                 if requirements_file.exists():
-                    logger.info(
-                        f"Found requirements.txt for {plugin_id}, installing into micro-venv"
-                    )
+                    logger.info(f"Found requirements.txt for {plugin_id}, installing into micro-venv")
                     micro_venv_dir = target_dir / "micro-venv"
                     try:
                         from core.task_manager.binary_runner import CoreBinaryRunner
@@ -1162,17 +1100,11 @@ class PluginStore:
                             owner_type=OwnerType.PLUGIN,
                         )
                         if ret_code == 0:
-                            logger.info(
-                                f"Successfully installed micro-venv dependencies for {plugin_id}"
-                            )
+                            logger.info(f"Successfully installed micro-venv dependencies for {plugin_id}")
                         else:
-                            logger.error(
-                                f"Failed to install micro-venv dependencies for {plugin_id}: {stderr_out}"
-                            )
+                            logger.error(f"Failed to install micro-venv dependencies for {plugin_id}: {stderr_out}")
                     except Exception as e:
-                        logger.error(
-                            f"Failed to install micro-venv dependencies for {plugin_id}: {e}"
-                        )
+                        logger.error(f"Failed to install micro-venv dependencies for {plugin_id}: {e}")
                         # Depending on strictness, we could return False here, but we will let it continue
                         # and log the error. Usually a broken requirements.txt means the plugin might fail to load.
 
@@ -1192,45 +1124,38 @@ class PluginStore:
                     import urllib.parse
 
                     parsed_dl = urllib.parse.urlparse(download_url)
-                    is_official = (
-                        parsed_dl.netloc == "raw.githubusercontent.com"
-                        and parsed_dl.path.startswith("/bheem1224/EchoSync")
+                    is_official = parsed_dl.netloc == "raw.githubusercontent.com" and parsed_dl.path.startswith(
+                        "/bheem1224/EchoSync"
                     )
-                    manifest_verified = (
-                        1
-                        if (
-                            is_official
-                            or new_manifest.get("verified_source") == "official"
-                        )
-                        else 0
-                    )
+                    manifest_verified = 1 if (is_official or new_manifest.get("verified_source") == "official") else 0
                     manifest_privileged = (
                         1
                         if (
                             new_manifest.get("privileged") is True
-                            or new_manifest.get("permissions", {}).get(
-                                "privileged_mode"
-                            )
-                            is True
+                            or new_manifest.get("permissions", {}).get("privileged_mode") is True
                         )
                         else 0
                     )
 
-                    manifest_permissions = "[]"
+                    manifest_permissions = "{}"
                     m_perms = new_manifest.get("permissions")
                     if m_perms is not None:
-                        if isinstance(m_perms, list):
+                        if isinstance(m_perms, (dict, list)):
                             manifest_permissions = json.dumps(m_perms)
                         elif isinstance(m_perms, str):
                             manifest_permissions = m_perms
-                        elif isinstance(m_perms, dict):
-                            manifest_permissions = json.dumps(m_perms)
+                    else:
+                        synth_perms = {}
+                        if "network_domains" in new_manifest:
+                            synth_perms["network_domains"] = new_manifest["network_domains"]
+                        if "wasm_fs_access" in new_manifest:
+                            synth_perms["wasm_fs_access"] = new_manifest["wasm_fs_access"]
+                        manifest_permissions = json.dumps(synth_perms)
 
                     computed_plugin_id = (
                         target_plugin_id
                         if target_plugin_id
-                        else binascii.crc32(strict_namespace.lower().encode("utf-8"))
-                        & 0xFFFFFFFF
+                        else binascii.crc32(strict_namespace.lower().encode("utf-8")) & 0xFFFFFFFF
                     )
                     int_plugin_id = computed_plugin_id
 
@@ -1251,13 +1176,9 @@ class PluginStore:
                         f"Synchronized database state for plugin {strict_namespace} (CRC32: {computed_plugin_id})"
                     )
                 except Exception as e:
-                    logger.error(
-                        "Rollback operation halted: Atomic state restoration failed."
-                    )
+                    logger.error("Rollback operation halted: Atomic state restoration failed.")
                     logger.debug(f"Raw exception data: {e}", exc_info=True)
-                    logger.debug(
-                        "Rollback operation halted: Atomic state restoration failed."
-                    )
+                    logger.debug("Rollback operation halted: Atomic state restoration failed.")
                     logger.debug(f"Raw exception data: {e}", exc_info=True)
 
                 # Hot-Swap Architecture: Perform Zero-Downtime Reload (Only during updates)
@@ -1268,35 +1189,22 @@ class PluginStore:
                         app_root = Path(__file__).parent.parent
                         loader = PluginLoader(app_root)
                         loader.reload_plugin(int_plugin_id)
-                        logger.info(
-                            f"Live-swap successful for {plugin_id} (int: {int_plugin_id})."
-                        )
+                        logger.info(f"Live-swap successful for {plugin_id} (int: {int_plugin_id}).")
                     except Exception as e:
-                        logger.error(
-                            f"Live-swap failed for {plugin_id}. Initiating rollback..."
-                        )
+                        logger.error(f"Live-swap failed for {plugin_id}. Initiating rollback...")
                         logger.debug(f"Raw exception data: {e}", exc_info=True)
 
                         # Atomic State Rollback
-                        if (
-                            is_update
-                            and target_plugin_id
-                            and "service_config" in state_snapshot
-                        ):
+                        if is_update and target_plugin_id and "service_config" in state_snapshot:
                             try:
-                                logger.info(
-                                    f"Restoring previous state for {plugin_id}..."
-                                )
+                                logger.info(f"Restoring previous state for {plugin_id}...")
 
                                 # 1. Filesystem Rollback
                                 if backup_dir and backup_dir.exists():
                                     shutil.rmtree(target_dir, ignore_errors=True)
                                     os.rename(str(backup_dir), str(target_dir))
 
-                                if (
-                                    "sandbox_db_path" in state_snapshot
-                                    and state_snapshot["sandbox_db_path"].exists()
-                                ):
+                                if "sandbox_db_path" in state_snapshot and state_snapshot["sandbox_db_path"].exists():
                                     shutil.copy2(
                                         state_snapshot["sandbox_db_path"],
                                         dest_dir / f"{manifest_name}.db",
@@ -1316,9 +1224,7 @@ class PluginStore:
                                     ServiceConfig,
                                 )
 
-                                config_engine = create_engine(
-                                    f"sqlite:///{db.database_path}"
-                                )
+                                config_engine = create_engine(f"sqlite:///{db.database_path}")
                                 ConfigSession = sessionmaker(bind=config_engine)
                                 with ConfigSession() as config_session:
                                     try:
@@ -1329,18 +1235,16 @@ class PluginStore:
 
                                         # Delete tokens and accounts
                                         accounts_to_delete = (
-                                            config_session.query(Account)
-                                            .filter(Account.service_id == service_id)
-                                            .all()
+                                            config_session.query(Account).filter(Account.service_id == service_id).all()
                                         )
                                         acc_ids = [acc.id for acc in accounts_to_delete]
                                         if acc_ids:
                                             config_session.query(AccountToken).filter(
                                                 AccountToken.account_id.in_(acc_ids)
                                             ).delete(synchronize_session=False)
-                                        config_session.query(Account).filter(
-                                            Account.service_id == service_id
-                                        ).delete(synchronize_session=False)
+                                        config_session.query(Account).filter(Account.service_id == service_id).delete(
+                                            synchronize_session=False
+                                        )
 
                                         # Restore service configs
                                         for row in state_snapshot["service_config"]:
@@ -1362,12 +1266,8 @@ class PluginStore:
                                                 user_id=row["user_id"],
                                                 account_email=row["account_email"],
                                                 is_active=row["is_active"],
-                                                is_authenticated=row[
-                                                    "is_authenticated"
-                                                ],
-                                                last_authenticated_at=row[
-                                                    "last_authenticated_at"
-                                                ],
+                                                is_authenticated=row["is_authenticated"],
+                                                last_authenticated_at=row["last_authenticated_at"],
                                             )
                                             config_session.add(acc)
 
@@ -1395,9 +1295,7 @@ class PluginStore:
                                 session = w_db.session()
                                 try:
                                     session.execute(
-                                        text(
-                                            "DELETE FROM plugin_state_kvs WHERE plugin_id=:pid"
-                                        ),
+                                        text("DELETE FROM plugin_state_kvs WHERE plugin_id=:pid"),
                                         {"pid": str(target_plugin_id)},
                                     )
                                     for row in state_snapshot["kvs"]:
@@ -1423,13 +1321,9 @@ class PluginStore:
 
                                 # Attempt to resurrect the old plugin module in memory
                                 try:
-                                    logger.info(
-                                        f"Resurrecting old version of {plugin_id} in memory..."
-                                    )
+                                    logger.info(f"Resurrecting old version of {plugin_id} in memory...")
                                     loader.reload_plugin(int_plugin_id)
-                                    logger.info(
-                                        f"Successfully resurrected old version of {plugin_id}."
-                                    )
+                                    logger.info(f"Successfully resurrected old version of {plugin_id}.")
                                 except Exception as resurrect_err:
                                     logger.critical(
                                         f"Failed to resurrect old module. Restart required: {resurrect_err}"
@@ -1437,12 +1331,8 @@ class PluginStore:
                                     system_state.restart_pending = True
 
                             except Exception as rollback_err:
-                                logger.critical(
-                                    "Rollback operation halted: Atomic state restoration failed."
-                                )
-                                logger.debug(
-                                    f"Raw exception data: {rollback_err}", exc_info=True
-                                )
+                                logger.critical("Rollback operation halted: Atomic state restoration failed.")
+                                logger.debug(f"Raw exception data: {rollback_err}", exc_info=True)
                                 system_state.restart_pending = True
                         else:
                             system_state.restart_pending = True
@@ -1450,37 +1340,26 @@ class PluginStore:
                         return False
 
                 else:
-                    logger.info(
-                        f"Fresh installation complete for {plugin_id}. Hot-swap skipped."
-                    )
+                    logger.info(f"Fresh installation complete for {plugin_id}. Hot-swap skipped.")
                     try:
                         import binascii
 
                         plugin_id_int = (
                             target_plugin_id
                             if target_plugin_id
-                            else binascii.crc32(
-                                strict_namespace.lower().encode("utf-8")
-                            )
-                            & 0xFFFFFFFF
+                            else binascii.crc32(strict_namespace.lower().encode("utf-8")) & 0xFFFFFFFF
                         )
                         from core.nexus_framework.plugin_loader import (
                             _sync_ui_components_to_db,
                         )
 
-                        _sync_ui_components_to_db(
-                            plugin_id_int, str(target_dir.resolve())
-                        )
+                        _sync_ui_components_to_db(plugin_id_int, str(target_dir.resolve()))
                         logger.info(
                             f"Dynamically discovered and registered UI components for fresh installed plugin {strict_namespace}"
                         )
                     except Exception as ui_err:
-                        logger.error(
-                            "UI Registry operation failed: Component discovery error."
-                        )
-                        logger.debug(
-                            "Rollback operation halted: Atomic state restoration failed."
-                        )
+                        logger.error("UI Registry operation failed: Component discovery error.")
+                        logger.debug("Rollback operation halted: Atomic state restoration failed.")
                         logger.debug(f"Raw exception data: {ui_err}", exc_info=True)
 
                 return True
@@ -1491,6 +1370,8 @@ class PluginStore:
                 if tmp_dir.exists():
                     shutil.rmtree(tmp_dir, ignore_errors=True)
 
+        except PrivilegeEscalationError:
+            raise
         except Exception as e:
             logger.error("Rollback operation halted: Atomic state restoration failed.")
             logger.debug(f"Raw exception data: {e}", exc_info=True)
@@ -1515,9 +1396,7 @@ class PluginStore:
         results = {}
         plugin_settings = config_manager.get("plugins", {}) or {}
         beta_plugin_ids = [
-            pid
-            for pid, data in plugin_settings.items()
-            if isinstance(data, dict) and data.get("channel") == "beta"
+            pid for pid, data in plugin_settings.items() if isinstance(data, dict) and data.get("channel") == "beta"
         ]
         if not beta_plugin_ids:
             return results
@@ -1536,8 +1415,7 @@ class PluginStore:
                 (
                     p
                     for p in store_plugins
-                    if p.get("id", "").split(".")[-1] == folder_id
-                    or p.get("id", "") == folder_id
+                    if p.get("id", "").split(".")[-1] == folder_id or p.get("id", "") == folder_id
                 ),
                 None,
             )
@@ -1587,9 +1465,7 @@ class PluginStore:
                     conn.close()
 
             if not service_id:
-                logger.error(
-                    f"Cannot uninstall plugin {plugin_id}: service not found in database."
-                )
+                logger.error(f"Cannot uninstall plugin {plugin_id}: service not found in database.")
                 return False
 
             # 1. Get install path, name, plugin_id (CRC32), and modules to purge
@@ -1624,9 +1500,7 @@ class PluginStore:
             if db_plugin_id is None:
                 import binascii
 
-                db_plugin_id = (
-                    binascii.crc32(clean_id.lower().encode("utf-8")) & 0xFFFFFFFF
-                )
+                db_plugin_id = binascii.crc32(clean_id.lower().encode("utf-8")) & 0xFFFFFFFF
 
             # 2. Disable and remove jobs
             try:
@@ -1635,13 +1509,9 @@ class PluginStore:
                 job_queue.kill_jobs_by_plugin(db_plugin_id)
                 job_queue.kill_jobs_by_plugin(service_id)
             except Exception as e:
-                logger.warning(
-                    "Rollback operation halted: Atomic state restoration failed."
-                )
+                logger.warning("Rollback operation halted: Atomic state restoration failed.")
                 logger.debug(f"Raw exception data: {e}", exc_info=True)
-                logger.debug(
-                    "Rollback operation halted: Atomic state restoration failed."
-                )
+                logger.debug("Rollback operation halted: Atomic state restoration failed.")
                 logger.debug(f"Raw exception data: {e}", exc_info=True)
 
             # Unregister health checks for the plugin
@@ -1659,13 +1529,9 @@ class PluginStore:
                 job_queue.unregister_job(f"health_check_{clean_id}")
                 job_queue.unregister_job(f"health_check_{short_name}")
             except Exception as e:
-                logger.warning(
-                    "Rollback operation halted: Atomic state restoration failed."
-                )
+                logger.warning("Rollback operation halted: Atomic state restoration failed.")
                 logger.debug(f"Raw exception data: {e}", exc_info=True)
-                logger.debug(
-                    "Rollback operation halted: Atomic state restoration failed."
-                )
+                logger.debug("Rollback operation halted: Atomic state restoration failed.")
                 logger.debug(f"Raw exception data: {e}", exc_info=True)
 
             # Fallback/Additional check: inspect sys.modules
@@ -1682,9 +1548,7 @@ class PluginStore:
                     logger.debug(f"Hot-unloaded zombie module: {module_name}")
 
             # 3. Dynamic Database and Config Teardown
-            safe_id = re.sub(
-                r"[^a-zA-Z0-9_]", "_", str(db_plugin_id).replace(".", "_")
-            ).lower()
+            safe_id = re.sub(r"[^a-zA-Z0-9_]", "_", str(db_plugin_id).replace(".", "_")).lower()
             prefix = f"plugin_{safe_id}_%"
 
             try:
@@ -1702,28 +1566,20 @@ class PluginStore:
                             from sqlalchemy import text
 
                             tables = conn.execute(
-                                text(
-                                    "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE :prefix"
-                                ),
+                                text("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE :prefix"),
                                 {"prefix": prefix},
                             ).fetchall()
                             for (table_name,) in tables:
                                 if table_name in ("plugin_state_kvs", "config_kvs"):
                                     continue
-                                conn.execute(
-                                    text(f'DROP TABLE IF EXISTS "{table_name}"')
-                                )
+                                conn.execute(text(f'DROP TABLE IF EXISTS "{table_name}"'))
                             conn.commit()
                         except Exception:
                             pass
             except Exception as e:
-                logger.warning(
-                    "Rollback operation halted: Atomic state restoration failed."
-                )
+                logger.warning("Rollback operation halted: Atomic state restoration failed.")
                 logger.debug(f"Raw exception data: {e}", exc_info=True)
-                logger.debug(
-                    "Rollback operation halted: Atomic state restoration failed."
-                )
+                logger.debug("Rollback operation halted: Atomic state restoration failed.")
                 logger.debug(f"Raw exception data: {e}", exc_info=True)
 
             # 4. Delete config keys, UI components, and remove from services table
@@ -1737,18 +1593,12 @@ class PluginStore:
                 c.execute("DELETE FROM config_kvs WHERE plugin_id=?", (service_id,))
 
                 # Delete config keys from service_config table
-                c.execute(
-                    "DELETE FROM service_config WHERE service_id=?", (service_id,)
-                )
+                c.execute("DELETE FROM service_config WHERE service_id=?", (service_id,))
 
                 # Sprint 6: Explicit UI Registry teardown (do NOT rely on FK CASCADE)
-                c.execute(
-                    "DELETE FROM ui_components WHERE plugin_id=?", (db_plugin_id,)
-                )
+                c.execute("DELETE FROM ui_components WHERE plugin_id=?", (db_plugin_id,))
                 c.execute("DELETE FROM ui_components WHERE plugin_id=?", (service_id,))
-                logger.info(
-                    f"[UIRegistry] Purged UI components for plugin {db_plugin_id}"
-                )
+                logger.info(f"[UIRegistry] Purged UI components for plugin {db_plugin_id}")
 
                 c.execute("DELETE FROM services WHERE id=?", (service_id,))
                 conn.commit()
@@ -1788,13 +1638,9 @@ class PluginStore:
                 finally:
                     session.close()
             except Exception as e:
-                logger.warning(
-                    "Rollback operation halted: Atomic state restoration failed."
-                )
+                logger.warning("Rollback operation halted: Atomic state restoration failed.")
                 logger.debug(f"Raw exception data: {e}", exc_info=True)
-                logger.debug(
-                    "Rollback operation halted: Atomic state restoration failed."
-                )
+                logger.debug("Rollback operation halted: Atomic state restoration failed.")
                 logger.debug(f"Raw exception data: {e}", exc_info=True)
 
             # Remove from JSON config if exists
@@ -1802,26 +1648,14 @@ class PluginStore:
                 from core.settings import config_manager
 
                 all_settings = config_manager.get_settings()
-                clean_target = (
-                    clean_id.replace("EchoSync.", "")
-                    .replace("core.", "")
-                    .replace("plugin.", "")
-                    .lower()
-                )
-                if (
-                    "plugins" in all_settings
-                    and clean_target in all_settings["plugins"]
-                ):
+                clean_target = clean_id.replace("EchoSync.", "").replace("core.", "").replace("plugin.", "").lower()
+                if "plugins" in all_settings and clean_target in all_settings["plugins"]:
                     del all_settings["plugins"][clean_target]
                     config_manager.save_settings(all_settings)
             except Exception as e:
-                logger.warning(
-                    "Rollback operation halted: Atomic state restoration failed."
-                )
+                logger.warning("Rollback operation halted: Atomic state restoration failed.")
                 logger.debug(f"Raw exception data: {e}", exc_info=True)
-                logger.debug(
-                    "Rollback operation halted: Atomic state restoration failed."
-                )
+                logger.debug("Rollback operation halted: Atomic state restoration failed.")
                 logger.debug(f"Raw exception data: {e}", exc_info=True)
 
             # 5. Delete physical folder
