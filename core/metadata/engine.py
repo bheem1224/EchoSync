@@ -716,7 +716,7 @@ class MetadataResolutionEngine:
                 filename_contradicts_baseline = True
 
         # ── Stage 0: Zero-Trust Signature Gate (ECHOSYNC_SIGNATURE) ───────────
-        sig_tag = raw_tags.get("echosync_signature")
+        sig_tag = raw_tags.get("echosync_signature") or raw_tags.get("ECHOSYNC_SIGNATURE")
         if sig_tag and not request.ignore_cache and baseline_title and baseline_artist:
             try:
                 import echosync_core

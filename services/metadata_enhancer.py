@@ -245,6 +245,8 @@ def build_native_tag_payload(track: dict[str, Any]) -> dict[str, Any]:
         or "",
         "acoustid_id": track.get("acoustid_id") or "",
         "cover_art_url": track.get("cover_art_url") or "",
+        "echosync_signature": track.get("echosync_signature") or track.get("ECHOSYNC_SIGNATURE") or "",
+        "ECHOSYNC_SIGNATURE": track.get("echosync_signature") or track.get("ECHOSYNC_SIGNATURE") or "",
     }
     return payload
 
@@ -922,6 +924,7 @@ class RetroactiveEnhancer:
         batch_size: int = 100,
         check_all_files: bool = False,
         force_refresh: bool = False,
+        require_signature: bool = False,
     ) -> list[Any]:
         """Fetch candidate tracks for metadata enhancement, optionally bypassing enhanced: true flags."""
         from core.database.repositories.track_repo import TrackRepository
@@ -933,6 +936,7 @@ class RetroactiveEnhancer:
                 batch_size=batch_size,
                 check_all_files=check_all_files,
                 force_refresh=force_refresh,
+                require_signature=require_signature,
             )
         else:
             db = get_database()
@@ -942,7 +946,25 @@ class RetroactiveEnhancer:
                     batch_size=batch_size,
                     check_all_files=check_all_files,
                     force_refresh=force_refresh,
+                    require_signature=require_signature,
                 )
+
+    def get_tracks_needing_enhancement(
+        self,
+        session: Any | None = None,
+        batch_size: int = 100,
+        check_all_files: bool = False,
+        force_refresh: bool = False,
+        require_signature: bool = True,
+    ) -> list[Any]:
+        """Fetch candidate tracks needing metadata enhancement, prioritizing missing signatures."""
+        return self.get_tracks_for_enhancement(
+            session=session,
+            batch_size=batch_size,
+            check_all_files=check_all_files,
+            force_refresh=force_refresh,
+            require_signature=require_signature,
+        )
 
     def revert_track_metadata_from_disk(self, track_id: int, session: Any | None = None) -> bool:
         """Read physical file tags from disk and restore track metadata."""
@@ -1151,6 +1173,21 @@ class RetroactiveEnhancer:
                 meta_status["enhanced"] = True
                 meta_status["resolution_method"] = result.resolution_method
                 meta_status["confidence"] = result.confidence_score
+
+                # Generate content-addressed acoustic proof ECHOSYNC_SIGNATURE
+                result_payload = result.to_dict()
+                try:
+                    import echosync_core
+
+                    sig = echosync_core.generate_audio_signature(str(local_path), result.title, result.artist)
+                    if sig:
+                        meta_status["echosync_signature"] = sig
+                        track.echosync_signature = sig
+                        result_payload["echosync_signature"] = sig
+                        result_payload["ECHOSYNC_SIGNATURE"] = sig
+                except Exception as sig_err:
+                    logger.debug("[enhancer] Failed to generate audio signature for track %d: %s", track_id, sig_err)
+
                 track.metadata_status = meta_status
                 flag_modified(track, "metadata_status")
 
@@ -1166,7 +1203,7 @@ class RetroactiveEnhancer:
                     m_path = Path(m_path_str)
                     if m_path.exists():
                         try:
-                            self.tag_file_verified(m_path, result.to_dict())
+                            self.tag_file_verified(m_path, result_payload)
                         except Exception as tag_err:
                             logger.warning(
                                 "[enhancer] Tagging write failed for %s: %s",
@@ -1800,6 +1837,7 @@ class RetroactiveEnhancer:
         check_all_files: bool = False,
         limit: int | None = None,
         force_refresh: bool = False,
+        require_signature: bool = False,
     ) -> None:
         """Retroactive metadata enhancer following a Local-First, highly efficient 5-Step Pipeline.
 
@@ -1808,6 +1846,8 @@ class RetroactiveEnhancer:
         Adheres strictly to the canonical EchosyncTrack model with nested EchosyncMedia objects.
         """
         from pathlib import Path
+
+        import echosync_core
 
         from core.db.echo_sync_track import EchosyncTrack
         from core.utils import PathMapper
@@ -1823,6 +1863,7 @@ class RetroactiveEnhancer:
         self._get_plugin(Capability.FETCH_METADATA)
 
         total_processed = 0
+        processed_track_ids: set[int] = set()
         MAX_ITERATIONS = 500  # safety cap — prevents infinite loops on persistent failures
 
         required_keys = hook_manager.apply_filters("register_metadata_requirements", [])
@@ -1842,12 +1883,14 @@ class RetroactiveEnhancer:
                 try:
                     from core.database.repositories.track_repo import TrackRepository
 
-                    tracks_to_process = TrackRepository.get_tracks_for_enhancement(
+                    candidates = TrackRepository.get_tracks_for_enhancement(
                         session,
                         current_batch_size,
                         check_all_files,
                         force_refresh=force_refresh,
+                        require_signature=require_signature,
                     )
+                    tracks_to_process = [t for t in candidates if t.id not in processed_track_ids]
                 except OperationalError as _oe:
                     if "database is locked" in str(_oe).lower():
                         logger.critical(
@@ -1855,6 +1898,9 @@ class RetroactiveEnhancer:
                             "Halting job to prevent corruption."
                         )
                     raise
+
+                for t in tracks_to_process:
+                    processed_track_ids.add(t.id)
 
                 if not tracks_to_process:
                     if total_processed > 0:
@@ -2073,6 +2119,32 @@ class RetroactiveEnhancer:
                     t_track = item["track"]
                     logger.info("Absolute Trust Gate Passed: %s", t_track.title)
                     item["metadata_status"]["enhanced"] = True
+
+                    # Generate and stamp echosync_signature if missing
+                    if not item["metadata_status"].get("echosync_signature"):
+                        try:
+                            first_path = valid_media_paths[0][1] if valid_media_paths else None
+                            if first_path and t_track.title and t_track.artist_name:
+                                import echosync_core
+
+                                sig = echosync_core.generate_audio_signature(
+                                    str(first_path), t_track.title, t_track.artist_name
+                                )
+                                if sig:
+                                    item["metadata_status"]["echosync_signature"] = sig
+                                    if hasattr(t_track, "echosync_signature"):
+                                        t_track.echosync_signature = sig
+                                    for media, local_path in valid_media_paths:
+                                        try:
+                                            echosync_core.write_metadata(
+                                                str(local_path),
+                                                {"ECHOSYNC_SIGNATURE": sig, "echosync_signature": sig},
+                                            )
+                                        except Exception as w_err:
+                                            logger.debug("Failed to write signature to %s: %s", local_path.name, w_err)
+                        except Exception as sig_err:
+                            logger.debug("Failed to generate signature for %s: %s", t_track.title, sig_err)
+
                     results_to_commit.append(item)
 
                 # Step 3: Targeted Fetch
@@ -2167,6 +2239,24 @@ class RetroactiveEnhancer:
                                 if t_track.release_year:
                                     update_tags["year"] = str(t_track.release_year)
                                     update_tags["date"] = str(t_track.release_year)
+
+                                # Generate and stamp echosync_signature
+                                try:
+                                    first_path = valid_media_paths[0][1] if valid_media_paths else None
+                                    if first_path and t_track.title and t_track.artist_name:
+                                        import echosync_core
+
+                                        sig = echosync_core.generate_audio_signature(
+                                            str(first_path), t_track.title, t_track.artist_name
+                                        )
+                                        if sig:
+                                            item["metadata_status"]["echosync_signature"] = sig
+                                            if hasattr(t_track, "echosync_signature"):
+                                                t_track.echosync_signature = sig
+                                            update_tags["echosync_signature"] = sig
+                                            update_tags["ECHOSYNC_SIGNATURE"] = sig
+                                except Exception as sig_err:
+                                    logger.debug("Failed to generate signature for %s: %s", t_track.title, sig_err)
 
                                 # Write tags to EVERY associated media file via tag_file_verified
                                 for media, local_path in valid_media_paths:
@@ -2414,6 +2504,24 @@ class RetroactiveEnhancer:
                             update_tags["album"] = t_track.album_title
                         if t_track.isrc:
                             update_tags["isrc"] = t_track.isrc
+
+                        # Generate and stamp echosync_signature
+                        try:
+                            first_path = valid_media_paths[0][1] if valid_media_paths else None
+                            if first_path and t_track.title and t_track.artist_name:
+                                import echosync_core
+
+                                sig = echosync_core.generate_audio_signature(
+                                    str(first_path), t_track.title, t_track.artist_name
+                                )
+                                if sig:
+                                    item["metadata_status"]["echosync_signature"] = sig
+                                    if hasattr(t_track, "echosync_signature"):
+                                        t_track.echosync_signature = sig
+                                    update_tags["echosync_signature"] = sig
+                                    update_tags["ECHOSYNC_SIGNATURE"] = sig
+                        except Exception as sig_err:
+                            logger.debug("Failed to generate signature for %s: %s", t_track.title, sig_err)
 
                         # Write tags to EVERY associated media file via tag_file_verified
                         for media, local_path in valid_media_paths:

@@ -61,33 +61,19 @@ def _get_top_listened_artists(limit: int = 5):
     with working_db.session_scope() as session:
         for p_id in active_servers:
             plugin_cls = PluginRegistry.get_plugin_class(p_id)
-            plugin_name = (
-                getattr(plugin_cls, "name", str(p_id)) if plugin_cls else str(p_id)
-            )
+            plugin_name = getattr(plugin_cls, "name", str(p_id)) if plugin_cls else str(p_id)
             service_id = config_db.get_or_create_service_id(plugin_name)
-            active_accounts = config_db.get_accounts(
-                service_id=service_id, is_active=True
-            )
+            active_accounts = config_db.get_accounts(service_id=service_id, is_active=True)
 
             for account in active_accounts:
                 provider_user_id = str(account.get("user_id") or "").strip()
-                account_name = str(
-                    account.get("display_name") or account.get("account_name") or ""
-                ).strip()
+                account_name = str(account.get("display_name") or account.get("account_name") or "").strip()
 
                 user = None
                 if provider_user_id:
-                    user = (
-                        session.query(User)
-                        .filter(Account.provider_identifier == provider_user_id)
-                        .first()
-                    )
+                    user = session.query(User).filter(Account.provider_identifier == provider_user_id).first()
                 if not user and account_name:
-                    user = (
-                        session.query(User)
-                        .filter(Account.username == account_name)
-                        .first()
-                    )
+                    user = session.query(User).filter(Account.username == account_name).first()
 
                 if user:
                     active_user_ids.add(user.id)
@@ -123,9 +109,7 @@ def register_database_update_job(interval_seconds: int = 21600, enabled: bool = 
         enabled: Whether the job should be enabled by default.
     """
 
-    def run_database_update(
-        full_refresh: bool = False, identifiers_only: bool = False, **kwargs
-    ):
+    def run_database_update(full_refresh: bool = False, identifiers_only: bool = False, **kwargs):
         """Execute a database update, prioritizing Local Server first."""
         try:
             logger.info("Starting scheduled database update job")
@@ -140,9 +124,9 @@ def register_database_update_job(interval_seconds: int = 21600, enabled: bool = 
             local_server_id = generate_plugin_id("echosync.local server")
             local_success = False
 
-            if PluginRegistry.get_plugin_class(
+            if PluginRegistry.get_plugin_class(local_server_id) and not PluginRegistry.is_plugin_disabled(
                 local_server_id
-            ) and not PluginRegistry.is_plugin_disabled(local_server_id):
+            ):
                 try:
                     local_provider = PluginRegistry.create_instance(local_server_id)
                     if local_provider:
@@ -151,9 +135,7 @@ def register_database_update_job(interval_seconds: int = 21600, enabled: bool = 
                             can_connect = local_provider.authenticate()
 
                         if can_connect:
-                            scan_mode = kwargs.get("scan_mode") or (
-                                "full_rebuild" if full_refresh else "incremental"
-                            )
+                            scan_mode = kwargs.get("scan_mode") or ("full_rebuild" if full_refresh else "incremental")
                             logger.info(
                                 f"Step 1: Running primary database update for local_server via LibrarySyncService (mode={scan_mode})"
                             )
@@ -167,9 +149,7 @@ def register_database_update_job(interval_seconds: int = 21600, enabled: bool = 
                         exc_info=True,
                     )
             else:
-                logger.debug(
-                    f"Local server provider '{local_server_id}' not registered or disabled; skipping Step 1."
-                )
+                logger.debug(f"Local server provider '{local_server_id}' not registered or disabled; skipping Step 1.")
 
             # Step 2: Run active media servers
             try:
@@ -177,9 +157,7 @@ def register_database_update_job(interval_seconds: int = 21600, enabled: bool = 
                 from database.config_database import get_config_database
 
                 config_db = get_config_database()
-                for p_id in PluginRegistry.get_plugins_by_type(
-                    "mediaserver", exclude_disabled=True
-                ):
+                for p_id in PluginRegistry.get_plugins_by_type("mediaserver", exclude_disabled=True):
                     plugin_cls = PluginRegistry.get_plugin_class(p_id)
                     if not plugin_cls:
                         continue
@@ -223,9 +201,7 @@ def register_database_update_job(interval_seconds: int = 21600, enabled: bool = 
 
                 # Check if configured
                 if hasattr(provider, "is_configured") and not provider.is_configured():
-                    logger.debug(
-                        f"Media server '{active_server}' is not configured; skipping."
-                    )
+                    logger.debug(f"Media server '{active_server}' is not configured; skipping.")
                     continue
 
                 # Ensure connection
@@ -267,9 +243,7 @@ def register_database_update_job(interval_seconds: int = 21600, enabled: bool = 
                 # Otherwise, we run a full sync.
                 identifiers_only = local_success
 
-                logger.info(
-                    f"Step 2: Remote sync for {active_server} bypassed for delta transition"
-                )
+                logger.info(f"Step 2: Remote sync for {active_server} bypassed for delta transition")
                 total_successful_operations += 1
 
         except Exception as e:
@@ -292,9 +266,7 @@ def register_database_update_job(interval_seconds: int = 21600, enabled: bool = 
     )
 
 
-def register_external_identifier_sync_job(
-    interval_seconds: int = 21600, enabled: bool = True
-):
+def register_external_identifier_sync_job(interval_seconds: int = 21600, enabled: bool = True):
     """
     Register a standalone job that only fetches external identifiers from media servers.
     This runs as a follow-up to the main database update.
@@ -328,9 +300,7 @@ def register_external_identifier_sync_job(
                 from database.config_database import get_config_database
 
                 config_db = get_config_database()
-                for p_id in PluginRegistry.get_plugins_by_type(
-                    "mediaserver", exclude_disabled=True
-                ):
+                for p_id in PluginRegistry.get_plugins_by_type("mediaserver", exclude_disabled=True):
                     plugin_cls = PluginRegistry.get_plugin_class(p_id)
                     if not plugin_cls:
                         continue
@@ -354,9 +324,7 @@ def register_external_identifier_sync_job(
                             f"Skipping unconfigured media server provider '{p_name}' for external identifier sync"
                         )
             except Exception as e:
-                logger.error(
-                    f"Failed to get active media servers for external sync: {e}"
-                )
+                logger.error(f"Failed to get active media servers for external sync: {e}")
 
             db = get_database()
 
@@ -402,25 +370,15 @@ def register_external_identifier_sync_job(
                     logger.error(error_msg)
                     continue
 
-                p_name = (
-                    getattr(provider, "name", "")
-                    or getattr(provider, "plugin_id", "")
-                    or str(active_server)
-                )
+                p_name = getattr(provider, "name", "") or getattr(provider, "plugin_id", "") or str(active_server)
                 p_lower = p_name.lower()
                 source_name = (
                     "plex"
                     if "plex" in p_lower
-                    else (
-                        "jellyfin"
-                        if "jellyfin" in p_lower
-                        else ("navidrome" if "navidrome" in p_lower else p_lower)
-                    )
+                    else ("jellyfin" if "jellyfin" in p_lower else ("navidrome" if "navidrome" in p_lower else p_lower))
                 )
 
-                logger.info(
-                    f"Running external identifier sync for {source_name} ({active_server})"
-                )
+                logger.info(f"Running external identifier sync for {source_name} ({active_server})")
 
                 try:
                     mappings = []
@@ -435,28 +393,19 @@ def register_external_identifier_sync_job(
                             elif hasattr(t, "to_dict"):
                                 mappings.append(t.to_dict())
                             elif hasattr(t, "id") or hasattr(t, "ratingKey"):
-                                item_id = getattr(t, "ratingKey", None) or getattr(
-                                    t, "id", None
-                                )
+                                item_id = getattr(t, "ratingKey", None) or getattr(t, "id", None)
                                 mappings.append(
                                     {
-                                        "file_path": getattr(t, "file_path", None)
-                                        or getattr(t, "path", None),
+                                        "file_path": getattr(t, "file_path", None) or getattr(t, "path", None),
                                         "plugin_source": source_name,
-                                        "plugin_item_id": str(item_id)
-                                        if item_id
-                                        else None,
-                                        "title": getattr(t, "title", None)
-                                        or getattr(t, "name", None),
-                                        "artist_name": getattr(t, "artist", None)
-                                        or getattr(t, "artist_name", None),
+                                        "plugin_item_id": str(item_id) if item_id else None,
+                                        "title": getattr(t, "title", None) or getattr(t, "name", None),
+                                        "artist_name": getattr(t, "artist", None) or getattr(t, "artist_name", None),
                                     }
                                 )
 
                     with db.session_scope() as session:
-                        local_media_rows = session.query(
-                            LocalMedia.media_id, LocalMedia.file_path
-                        ).all()
+                        local_media_rows = session.query(LocalMedia.media_id, LocalMedia.file_path).all()
                         path_to_media_id = {}
                         name_to_media_ids = {}
 
@@ -486,9 +435,7 @@ def register_external_identifier_sync_job(
                         for item in mappings:
                             if not isinstance(item, dict):
                                 continue
-                            item_id = str(
-                                item.get("plugin_item_id") or item.get("id") or ""
-                            )
+                            item_id = str(item.get("plugin_item_id") or item.get("id") or "")
                             if not item_id or item_id in existing_plugin_item_ids:
                                 continue
 
@@ -499,9 +446,7 @@ def register_external_identifier_sync_job(
                                 canon_local = _canonicalize_path(local_fp)
                                 media_id = (
                                     path_to_media_id.get(file_path)
-                                    or path_to_media_id.get(
-                                        _canonicalize_path(file_path)
-                                    )
+                                    or path_to_media_id.get(_canonicalize_path(file_path))
                                     or path_to_media_id.get(local_fp)
                                     or path_to_media_id.get(canon_local)
                                     or path_to_media_id.get(canon_local.lower())
@@ -512,11 +457,7 @@ def register_external_identifier_sync_job(
                                     if len(matching_mids) == 1:
                                         media_id = matching_mids[0]
 
-                            if (
-                                not media_id
-                                and item.get("title")
-                                and item.get("artist_name")
-                            ):
+                            if not media_id and item.get("title") and item.get("artist_name"):
                                 title_clean = str(item["title"]).strip().lower()
                                 artist_clean = str(item["artist_name"]).strip().lower()
                                 matched_track = (
@@ -536,9 +477,7 @@ def register_external_identifier_sync_job(
                                     media_id=media_id,
                                     plugin_source=source_name,
                                     plugin_item_id=item_id,
-                                    raw_data={
-                                        "synced_at": datetime.now(UTC).isoformat()
-                                    },
+                                    raw_data={"synced_at": datetime.now(UTC).isoformat()},
                                 )
                                 session.add(new_ext)
                                 existing_plugin_item_ids.add(item_id)
@@ -595,18 +534,11 @@ def register_media_server_scan_job(interval_seconds: int = 10800, enabled: bool 
             for active_server in active_servers:
                 provider = PluginRegistry.create_instance(active_server)
                 if not provider:
-                    logger.error(
-                        f"Could not create provider instance for active server '{active_server}'"
-                    )
+                    logger.error(f"Could not create provider instance for active server '{active_server}'")
                     continue
 
-                if (
-                    hasattr(provider, "ensure_connection")
-                    and not provider.ensure_connection()
-                ):
-                    logger.error(
-                        f"Could not connect to active media server '{active_server}'"
-                    )
+                if hasattr(provider, "ensure_connection") and not provider.ensure_connection():
+                    logger.error(f"Could not connect to active media server '{active_server}'")
                     continue
 
                 triggered = False
@@ -620,23 +552,16 @@ def register_media_server_scan_job(interval_seconds: int = 10800, enabled: bool 
                         triggered = bool(provider.trigger_library_scan())
 
                 # Fallback for Plex client implementation.
-                if (
-                    not triggered
-                    and getattr(provider, "music_library", None) is not None
-                ):
+                if not triggered and getattr(provider, "music_library", None) is not None:
                     section = getattr(provider, "music_library", None)
                     if section is not None and hasattr(section, "update"):
                         section.update()
                         triggered = True
 
                 if triggered:
-                    logger.info(
-                        f"Successfully triggered library scan on {active_server}"
-                    )
+                    logger.info(f"Successfully triggered library scan on {active_server}")
                 else:
-                    logger.warning(
-                        f"Could not trigger library scan on {active_server} (no supported method found)"
-                    )
+                    logger.warning(f"Could not trigger library scan on {active_server} (no supported method found)")
         except Exception as e:
             logger.error(f"Media server scan job failed: {e}", exc_info=True)
 
@@ -656,9 +581,7 @@ def register_media_server_scan_job(interval_seconds: int = 10800, enabled: bool 
     )
 
 
-def register_suggestion_engine_playlist_job(
-    interval_seconds: int = 86400, enabled: bool = True
-):
+def register_suggestion_engine_playlist_job(interval_seconds: int = 86400, enabled: bool = True):
     """Register daily suggestion playlist generation job (Phase 5)."""
 
     def run_suggestion_playlist_generation(max_mixes: int = 4, **kwargs):
@@ -683,9 +606,7 @@ def register_suggestion_engine_playlist_job(
                                 exc_info=True,
                             )
                 else:
-                    logger.info(
-                        "No active-user listening history available for discovery warm-up"
-                    )
+                    logger.info("No active-user listening history available for discovery warm-up")
             except Exception as discovery_stage_error:
                 logger.warning(
                     f"Pre-playlist discovery stage failed: {discovery_stage_error}",
@@ -693,19 +614,12 @@ def register_suggestion_engine_playlist_job(
                 )
 
             database = get_database()
-            playlists_service = get_personalized_playlists_service(
-                database, spotify_client=None
-            )
+            playlists_service = get_personalized_playlists_service(database, spotify_client=None)
             daily_mixes = playlists_service.get_all_daily_mixes(max_mixes=4)
 
-            logger.info(
-                "Suggestion playlist generation complete: "
-                f"generated {len(daily_mixes)} daily mixes"
-            )
+            logger.info(f"Suggestion playlist generation complete: generated {len(daily_mixes)} daily mixes")
         except Exception as e:
-            logger.error(
-                f"Suggestion playlist generation job failed: {e}", exc_info=True
-            )
+            logger.error(f"Suggestion playlist generation job failed: {e}", exc_info=True)
 
     job_queue.register_job(
         name="suggestion_engine_daily_playlists",
@@ -740,9 +654,7 @@ def register_duplicate_scan_job(interval_seconds: int = 86400, enabled: bool = T
                         "current": current,
                         "total": total,
                         "status": status,
-                        "percentage": round((current / total) * 100, 1)
-                        if total > 0
-                        else 0,
+                        "percentage": round((current / total) * 100, 1) if total > 0 else 0,
                     },
                 )
 
@@ -756,14 +668,10 @@ def register_duplicate_scan_job(interval_seconds: int = 86400, enabled: bool = T
             total = auto_count + manual_count
             if total:
                 subtypes = {}
-                for g in (result or {}).get("auto_resolve", []) + (result or {}).get(
-                    "manual_review", []
-                ):
+                for g in (result or {}).get("auto_resolve", []) + (result or {}).get("manual_review", []):
                     st = g.get("subtype", "unknown")
                     subtypes[st] = subtypes.get(st, 0) + 1
-                subtype_summary = ", ".join(
-                    f"{cnt} {st}" for st, cnt in subtypes.items()
-                )
+                subtype_summary = ", ".join(f"{cnt} {st}" for st, cnt in subtypes.items())
                 logger.info(
                     "Duplicate scan complete: %d group(s) detected (%s) - "
                     "%d auto-resolvable, %d requiring manual review. "
@@ -781,10 +689,7 @@ def register_duplicate_scan_job(interval_seconds: int = 86400, enabled: bool = T
                 staged_deletes = 0
                 staged_upgrades = 0
                 with work_db.session_scope() as session:
-                    rated_sync_ids = [
-                        row[0]
-                        for row in session.query(UserRating.sync_id).distinct().all()
-                    ]
+                    rated_sync_ids = [row[0] for row in session.query(UserRating.sync_id).distinct().all()]
 
                 consensus_map = {}
                 for sync_id in rated_sync_ids:
@@ -812,9 +717,7 @@ def register_duplicate_scan_job(interval_seconds: int = 86400, enabled: bool = T
                         f"Duplicate scan staging: {staged_deletes} staged deletes, {staged_upgrades} staged upgrades"
                     )
             except Exception as e:
-                logger.warning(
-                    f"Failed to stage lifecycle actions during duplicate scan: {e}"
-                )
+                logger.warning(f"Failed to stage lifecycle actions during duplicate scan: {e}")
         except Exception as e:
             logger.error(f"Duplicate scan job failed: {e}", exc_info=True)
 
@@ -860,9 +763,7 @@ def register_stale_track_scan_job(interval_seconds: int = 604800, enabled: bool 
     )
 
 
-def register_process_lifecycle_actions_job(
-    interval_seconds: int = 86400, enabled: bool = True
-):
+def register_process_lifecycle_actions_job(interval_seconds: int = 86400, enabled: bool = True):
     """Register daily lifecycle queue processing job."""
 
     def run_process_lifecycle_actions(dry_run: bool = False, **kwargs):
@@ -888,9 +789,7 @@ def register_process_lifecycle_actions_job(
     )
 
 
-def register_download_manager_queue_job(
-    interval_seconds: int = 21600, enabled: bool = True
-):
+def register_download_manager_queue_job(interval_seconds: int = 21600, enabled: bool = True):
     """Register the download manager queue processing job (every 6 hours)."""
     try:
         from services.download_manager import register_download_manager_job
@@ -901,9 +800,7 @@ def register_download_manager_queue_job(
             f"(interval: {interval_seconds}s = {interval_seconds / 3600:.1f}h, enabled={enabled})"
         )
     except Exception as e:
-        logger.error(
-            f"Failed to register download_manager_queue job: {e}", exc_info=True
-        )
+        logger.error(f"Failed to register download_manager_queue job: {e}", exc_info=True)
 
 
 def register_auto_import_scan_job(interval_seconds: int = 10800, enabled: bool = True):
@@ -977,52 +874,21 @@ def register_retroactive_metadata_enhancement_job(
     ):
         def _worker(batch_size, check_all_files, limit, force_refresh):
             try:
-                from core.event_bus import event_bus
-                from core.tiered_logger import get_logger
-                from services.metadata_enhancer import RetroactiveEnhancer
-
-                logger = get_logger("retroactive_metadata_worker")
-                logger.info(
-                    "Starting scheduled retroactive metadata enhancement job (child process)"
+                from services.retroactive_metadata_worker import (
+                    run_retroactive_metadata_worker,
                 )
 
-                def update_progress(current: int, total: int, status: str = ""):
-                    event_bus.publish(
-                        "job_progress",
-                        {
-                            "job_name": "retroactive_metadata_enhancement",
-                            "phase": "fingerprinting",
-                            "current": current,
-                            "total": total,
-                            "status": status,
-                            "percentage": (
-                                round((current / total) * 100, 1) if total > 0 else 0
-                            ),
-                        },
-                    )
-
-                enhancer = RetroactiveEnhancer()
-                # Phase 1: Native Rust audio fingerprinting pre-pass
-                logger.info("Executing Phase 1: Native Rust fingerprinting pre-pass...")
-                enhancer.backfill_missing_fingerprints(
-                    batch_size=50, progress_callback=update_progress
-                )
-
-                # Phase 2: Metadata enhancement with local cache resolution
-                logger.info("Executing Phase 2: Metadata enhancement...")
-                enhancer.enhance_library_metadata(
+                run_retroactive_metadata_worker(
                     batch_size=batch_size,
                     check_all_files=check_all_files,
                     limit=limit,
                     force_refresh=force_refresh,
+                    require_signature=True,
                 )
-                logger.info("Retroactive metadata enhancement job complete")
             except Exception as e:
                 from core.tiered_logger import get_logger
 
-                get_logger("retroactive_metadata_worker").error(
-                    f"Job failed: {e}", exc_info=True
-                )
+                get_logger("retroactive_metadata_worker").error(f"Job failed: {e}", exc_info=True)
 
         try:
             import multiprocessing
@@ -1054,15 +920,11 @@ def register_retroactive_metadata_enhancement_job(
 
             if p.exitcode and p.exitcode != 0:
                 if p.exitcode == -15:  # SIGTERM
-                    logger.info(
-                        "Retroactive metadata enhancement job was terminated by supervisor"
-                    )
+                    logger.info("Retroactive metadata enhancement job was terminated by supervisor")
                 else:
                     raise RuntimeError(f"Child process exited with code {p.exitcode}")
         except Exception as e:
-            logger.error(
-                f"Retroactive metadata enhancement job failed: {e}", exc_info=True
-            )
+            logger.error(f"Retroactive metadata enhancement job failed: {e}", exc_info=True)
 
     job_queue.register_job(
         name="retroactive_metadata_enhancement",
@@ -1080,9 +942,7 @@ def register_retroactive_metadata_enhancement_job(
     )
 
 
-def register_plugin_update_check_job(
-    interval_seconds: int = 43200, enabled: bool = True
-):
+def register_plugin_update_check_job(interval_seconds: int = 43200, enabled: bool = True):
     """Register a 12-hour job to check for plugin updates and emit UI notifications."""
 
     def run_plugin_update_check(force: bool = False, **kwargs):
@@ -1108,9 +968,7 @@ def register_plugin_update_check_job(
 
                         plugin_id = p.get("id", p.get("name"))
                         target_version = p.get("version", "Unknown")
-                        if p.get("installed_channel") == "beta" and p.get(
-                            "beta_version"
-                        ):
+                        if p.get("installed_channel") == "beta" and p.get("beta_version"):
                             target_version = p.get("beta_version")
 
                         # We just update available_version in DB
@@ -1199,14 +1057,8 @@ def cleanup_orphaned_plugin_databases():
             if absolute_path:
                 try:
                     resolved_path = Path(absolute_path).resolve()
-                    resolved_plugins_dir = Path(
-                        config_manager.get_plugins_dir()
-                    ).resolve()
-                    is_in_plugins_dir = (
-                        str(resolved_path)
-                        .lower()
-                        .startswith(str(resolved_plugins_dir).lower())
-                    )
+                    resolved_plugins_dir = Path(config_manager.get_plugins_dir()).resolve()
+                    is_in_plugins_dir = str(resolved_path).lower().startswith(str(resolved_plugins_dir).lower())
                 except Exception:
                     is_in_plugins_dir = False
 
@@ -1218,9 +1070,7 @@ def cleanup_orphaned_plugin_databases():
                             find_case_insensitive_path,
                         )
 
-                        exists = (
-                            find_case_insensitive_path(Path(absolute_path)) is not None
-                        )
+                        exists = find_case_insensitive_path(Path(absolute_path)) is not None
                     except Exception:
                         exists = False
                 else:
@@ -1248,14 +1098,10 @@ def cleanup_orphaned_plugin_databases():
         file_id = db_file.stem.split("@")[0]  # handle @beta files too
         if file_id not in active_ids:
             try:
-                logger.warning(
-                    f"Sweeper detected orphaned database {db_file.name}. Removing it."
-                )
+                logger.warning(f"Sweeper detected orphaned database {db_file.name}. Removing it.")
                 os.remove(db_file)
             except OSError as e:
-                logger.error(
-                    f"Sweeper failed to remove orphaned database {db_file.name}: {e}"
-                )
+                logger.error(f"Sweeper failed to remove orphaned database {db_file.name}: {e}")
 
 
 def register_all_system_jobs():
@@ -1295,9 +1141,7 @@ def register_all_system_jobs():
         register_user_history_sync_job(interval_seconds=43200, enabled=True)
 
         # Daily retroactive metadata enhancement for tracks missing MusicBrainz IDs.
-        register_retroactive_metadata_enhancement_job(
-            interval_seconds=86400, enabled=True
-        )
+        register_retroactive_metadata_enhancement_job(interval_seconds=86400, enabled=True)
 
         # 12-hour plugin update check
         cleanup_orphaned_plugin_databases()
