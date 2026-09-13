@@ -619,6 +619,8 @@ def check_plugin_permission(plugin_id: str, scope: str) -> bool:
       - "database.read_library"
       - "database.mutate_aliases"
       - "database.mutate_attributes"
+      - "database.mutate_working"
+      - "metadata.read"
       - "wasm_fs_access"
     """
     if not plugin_id or plugin_id in ("core", "system") or plugin_id.startswith("core."):
@@ -627,6 +629,41 @@ def check_plugin_permission(plugin_id: str, scope: str) -> bool:
     import json
     from core.settings import config_manager
     from database.config_database import get_config_database
+    from core.nexus_framework.permissions import SAFE_BASE_SCOPES
+
+    clean_scope = scope.strip()
+    is_base_scope = clean_scope in SAFE_BASE_SCOPES or clean_scope in (
+        "read_library",
+        "metadata",
+        "database.read_library",
+        "metadata.read",
+    )
+    canonical_scope = (
+        "database.read_library"
+        if clean_scope == "read_library"
+        else ("metadata.read" if clean_scope == "metadata" else clean_scope)
+    )
+
+    def _is_explicitly_denied(perms_obj: Any) -> bool:
+        if not isinstance(perms_obj, dict):
+            return False
+        if perms_obj.get(canonical_scope) is False or perms_obj.get(clean_scope) is False:
+            return True
+        if "." in canonical_scope:
+            cat, sub = canonical_scope.split(".", 1)
+            cat_obj = perms_obj.get(cat)
+            if isinstance(cat_obj, dict) and cat_obj.get(sub) is False:
+                return True
+            if perms_obj.get(sub) is False:
+                return True
+        else:
+            db_perms_map = perms_obj.get("database")
+            if isinstance(db_perms_map, dict) and db_perms_map.get(canonical_scope) is False:
+                return True
+        return False
+
+    db_perms = None
+    manifest_perms = None
 
     # 1. Check services table in config.db first
     try:
@@ -655,25 +692,29 @@ def check_plugin_permission(plugin_id: str, scope: str) -> bool:
                     return True
                 if row[0]:
                     try:
-                        perms = json.loads(row[0])
-                        if isinstance(perms, list):
-                            if "privileged_mode" in perms or scope in perms:
+                        db_perms = json.loads(row[0])
+                        if _is_explicitly_denied(db_perms):
+                            return False
+                        if isinstance(db_perms, list):
+                            if "privileged_mode" in db_perms or canonical_scope in db_perms or clean_scope in db_perms:
                                 return True
-                            if "." in scope:
-                                base_cat, sub_key = scope.split(".", 1)
-                                if sub_key in perms:
+                            if "." in canonical_scope:
+                                base_cat, sub_key = canonical_scope.split(".", 1)
+                                if sub_key in db_perms:
                                     return True
-                        elif isinstance(perms, dict):
-                            if perms.get("privileged_mode"):
+                        elif isinstance(db_perms, dict):
+                            if db_perms.get("privileged_mode"):
                                 return True
-                            if "." in scope:
-                                base_cat, sub_key = scope.split(".", 1)
-                                cat_perms = perms.get(base_cat, {})
+                            if "." in canonical_scope:
+                                base_cat, sub_key = canonical_scope.split(".", 1)
+                                cat_perms = db_perms.get(base_cat, {})
                                 if isinstance(cat_perms, dict) and cat_perms.get(sub_key):
                                     return True
-                                if perms.get(scope) or perms.get(sub_key):
+                                if db_perms.get(canonical_scope) or db_perms.get(sub_key):
                                     return True
-                            elif scope in perms and perms[scope]:
+                            elif (clean_scope in db_perms and db_perms[clean_scope]) or (
+                                canonical_scope in db_perms and db_perms[canonical_scope]
+                            ):
                                 return True
                     except Exception:
                         pass
@@ -694,28 +735,40 @@ def check_plugin_permission(plugin_id: str, scope: str) -> bool:
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             if manifest.get("privileged") is True or manifest.get("privileged_mode") is True:
                 return True
-            perms = manifest.get("permissions", {})
-            if isinstance(perms, list):
-                if "privileged_mode" in perms or scope in perms:
+            manifest_perms = manifest.get("permissions", {})
+            if _is_explicitly_denied(manifest_perms):
+                return False
+
+            if isinstance(manifest_perms, list):
+                if (
+                    "privileged_mode" in manifest_perms
+                    or canonical_scope in manifest_perms
+                    or clean_scope in manifest_perms
+                ):
                     return True
-                if "." in scope:
-                    base_cat, sub_key = scope.split(".", 1)
-                    if sub_key in perms:
+                if "." in canonical_scope:
+                    base_cat, sub_key = canonical_scope.split(".", 1)
+                    if sub_key in manifest_perms:
                         return True
-            elif isinstance(perms, dict):
-                if perms.get("privileged_mode") is True:
+            elif isinstance(manifest_perms, dict):
+                if manifest_perms.get("privileged_mode") is True:
                     return True
-                if "." in scope:
-                    base_cat, sub_key = scope.split(".", 1)
-                    cat_perms = perms.get(base_cat, {})
+                if "." in canonical_scope:
+                    base_cat, sub_key = canonical_scope.split(".", 1)
+                    cat_perms = manifest_perms.get(base_cat, {})
                     if isinstance(cat_perms, dict) and cat_perms.get(sub_key) is True:
                         return True
-                    if perms.get(scope) is True or perms.get(sub_key) is True:
+                    if manifest_perms.get(canonical_scope) is True or manifest_perms.get(sub_key) is True:
                         return True
-                elif perms.get(scope):
+                elif manifest_perms.get(clean_scope) or manifest_perms.get(canonical_scope):
                     return True
     except Exception:
         pass
+
+    # 3. Auto-grant default base read scopes if not explicitly denied
+    if is_base_scope:
+        if not _is_explicitly_denied(db_perms) and not _is_explicitly_denied(manifest_perms):
+            return True
 
     return False
 
@@ -1137,6 +1190,13 @@ class _SDK:
         plugin_name = self._get_plugin_id()
         if require_library and not check_plugin_permission(plugin_name, "database.read_library"):
             raise PermissionError(f"Plugin '{plugin_name}' lacks 'permissions.database.read_library' permission.")
+        if write_access and not (
+            check_plugin_permission(plugin_name, "database.mutate_working")
+            or check_plugin_permission(plugin_name, "privileged_mode")
+        ):
+            raise PermissionError(
+                f"Plugin '{plugin_name}' lacks 'permissions.database.mutate_working' or 'privileged_mode' permission for write access."
+            )
         db = get_config_database()
         plugin_id_int = db.get_service_id(plugin_name)
         if not plugin_id_int:
@@ -1477,6 +1537,13 @@ class PluginBase(ABC):
 
         if require_library and not check_plugin_permission(self.name, "database.read_library"):
             raise PermissionError(f"Plugin '{self.name}' lacks 'permissions.database.read_library' permission.")
+        if write_access and not (
+            check_plugin_permission(self.name, "database.mutate_working")
+            or check_plugin_permission(self.name, "privileged_mode")
+        ):
+            raise PermissionError(
+                f"Plugin '{self.name}' lacks 'permissions.database.mutate_working' or 'privileged_mode' permission for write access."
+            )
 
         # Resolve the strict plugin_id integer
         db = get_config_database()

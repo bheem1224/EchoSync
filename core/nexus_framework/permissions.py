@@ -18,10 +18,27 @@ DEFAULT_BASE_PERMISSIONS = list(SAFE_BASE_SCOPES)
 MUTATION_SCOPES = [
     "database.mutate_aliases",
     "database.mutate_attributes",
+    "database.mutate_working",
     "network_domains",
     "privileged_mode",
     "wasm_fs_access",
 ]
+
+
+def is_explicitly_denied(permissions: Any, scope: str) -> bool:
+    """Checks if a scope is explicitly set to False in a permissions payload."""
+    if not isinstance(permissions, dict):
+        return False
+    if permissions.get(scope) is False:
+        return True
+    if "." in scope:
+        base_cat, sub_key = scope.split(".", 1)
+        cat_dict = permissions.get(base_cat)
+        if isinstance(cat_dict, dict) and cat_dict.get(sub_key) is False:
+            return True
+        if permissions.get(sub_key) is False:
+            return True
+    return False
 
 
 def normalize_permissions_payload(permissions: Any) -> list[str]:
@@ -60,10 +77,10 @@ def normalize_permissions_payload(permissions: Any) -> list[str]:
 def seed_base_permissions(existing_permissions: Any) -> list[str]:
     """
     Appends SAFE_BASE_SCOPES to existing permissions if missing, preserving
-    any already granted scopes.
+    any already granted scopes and respecting explicit False opt-outs.
     """
     normalized = normalize_permissions_payload(existing_permissions)
     for scope in SAFE_BASE_SCOPES:
-        if scope not in normalized:
+        if scope not in normalized and not is_explicitly_denied(existing_permissions, scope):
             normalized.append(scope)
     return sorted(normalized)

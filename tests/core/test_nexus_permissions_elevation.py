@@ -17,6 +17,7 @@ from core.nexus_framework.plugin_store import (
     PrivilegeEscalationError,
     compute_permission_delta,
 )
+from core.plugins.sdk import compute_plugin_crc32
 from core.settings import config_manager
 from database.config_database import (
     close_config_database,
@@ -229,11 +230,110 @@ def test_check_plugin_permission_manifest_granted(temp_plugins_env):
     assert facade.can_mutate_attributes() is True
 
 
-def test_sdk_get_database_connection_denied_raises_permission_error(monkeypatch):
+def test_sdk_get_database_connection_denied_raises_permission_error(monkeypatch, temp_plugins_env):
+    plugins_dir = temp_plugins_env["plugins_dir"]
+    plugin_path = plugins_dir / "untrusted_author" / "untrusted_plugin"
+    plugin_path.mkdir(parents=True, exist_ok=True)
+    manifest = {
+        "name": "untrusted_plugin",
+        "author": "untrusted_author",
+        "permissions": {
+            "database": {"read_library": False},
+        },
+    }
+    (plugin_path / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
     monkeypatch.setattr(sdk, "_get_plugin_id", lambda: "untrusted_author.untrusted_plugin")
     with pytest.raises(PermissionError) as exc_info:
         sdk.get_database_connection(require_library=True)
     assert "read_library" in str(exc_info.value)
+
+
+def test_check_plugin_permission_defaults_to_true_for_omitted_base_reads(temp_plugins_env):
+    """Test that plugins with omitted permissions automatically get SAFE_BASE_SCOPES."""
+    plugins_dir = temp_plugins_env["plugins_dir"]
+    plugin_path = plugins_dir / "lazy_author" / "lazy_plugin"
+    plugin_path.mkdir(parents=True, exist_ok=True)
+    manifest = {
+        "name": "lazy_plugin",
+        "author": "lazy_author",
+        "permissions": ["network_domains"],
+    }
+    (plugin_path / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    # Base read scopes default to True
+    assert check_plugin_permission("lazy_author.lazy_plugin", "database.read_library") is True
+    assert check_plugin_permission("lazy_author.lazy_plugin", "metadata.read") is True
+    assert check_plugin_permission("lazy_author.lazy_plugin", "read_library") is True
+
+    # Mutation scopes still require explicit grants and default to False
+    assert check_plugin_permission("lazy_author.lazy_plugin", "database.mutate_aliases") is False
+    assert check_plugin_permission("lazy_author.lazy_plugin", "database.mutate_attributes") is False
+    assert check_plugin_permission("lazy_author.lazy_plugin", "database.mutate_working") is False
+
+
+def test_get_database_connection_write_access_requires_mutate_working(monkeypatch, temp_plugins_env):
+    """Test that sdk.get_database_connection(write_access=True) requires database.mutate_working."""
+    plugins_dir = temp_plugins_env["plugins_dir"]
+    plugin_path = plugins_dir / "normal_author" / "normal_plugin"
+    plugin_path.mkdir(parents=True, exist_ok=True)
+    manifest = {
+        "name": "normal_plugin",
+        "author": "normal_author",
+        "permissions": [],
+    }
+    (plugin_path / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    monkeypatch.setattr(sdk, "_get_plugin_id", lambda: "normal_author.normal_plugin")
+
+    # write_access=False succeeds because read_library is default granted
+    engine_ro = sdk.get_database_connection(write_access=False)
+    assert engine_ro is not None
+
+    # write_access=True fails because database.mutate_working is not granted
+    with pytest.raises(PermissionError) as exc_info:
+        sdk.get_database_connection(write_access=True)
+    assert "database.mutate_working" in str(exc_info.value)
+
+    # Grant database.mutate_working in manifest
+    manifest["permissions"] = ["database.mutate_working"]
+    (plugin_path / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    engine_rw = sdk.get_database_connection(write_access=True)
+    assert engine_rw is not None
+
+
+def test_config_and_secrets_facade_scoped_writes_succeed(monkeypatch, temp_plugins_env):
+    """Test that scoped plugin-isolated writes to config.db succeed without mutation permissions."""
+    plugins_dir = temp_plugins_env["plugins_dir"]
+    plugin_path = plugins_dir / "scoped_author" / "scoped_plugin"
+    plugin_path.mkdir(parents=True, exist_ok=True)
+    manifest = {
+        "id": "scoped_author.scoped_plugin",
+        "name": "scoped_plugin",
+        "author": "scoped_author",
+        "permissions": [],
+    }
+    (plugin_path / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    db = temp_plugins_env["config_db"]
+    crc32_id = compute_plugin_crc32("scoped_author.scoped_plugin")
+    db.register_service(
+        name="scoped_author.scoped_plugin",
+        service_type="provider",
+        description="Scoped Plugin",
+        plugin_id=crc32_id,
+        version="1.0.0",
+        absolute_install_path=str(plugin_path),
+    )
+
+    monkeypatch.setattr(sdk, "_get_plugin_id", lambda: "scoped_author.scoped_plugin")
+    # ConfigFacade set
+    sdk.config.set("custom_key", "custom_val")
+    assert sdk.config.get("custom_key") == "custom_val"
+
+    # SecretsFacade set
+    sdk.secrets.set("secret_key", "secret_val")
+    assert sdk.secrets.get("secret_key") == "secret_val"
 
 
 # ---------------------------------------------------------------------------

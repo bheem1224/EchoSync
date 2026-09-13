@@ -340,5 +340,11 @@ def test_spotify_cache_manager_database_connection_with_seeded_permissions(isola
     )
 
     with patch.object(sdk, "_get_plugin_id", return_value="EchoSync.spotify"):
-        engine = sdk.get_database_connection(write_access=True)
+        # Base read access succeeds
+        engine = sdk.get_database_connection(write_access=False)
         assert engine is not None
+
+        # write_access=True raises PermissionError without database.mutate_working
+        with pytest.raises(PermissionError) as exc_info:
+            sdk.get_database_connection(write_access=True)
+        assert "database.mutate_working" in str(exc_info.value)

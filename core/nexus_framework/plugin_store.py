@@ -92,6 +92,7 @@ def compute_permission_delta(
         "read_library": "Requests permission to read canonical library data.",
         "mutate_aliases": "Requests permission to write entity aliases to library.",
         "mutate_attributes": "Requests permission to write entity attributes to library.",
+        "mutate_working": "Requests permission to modify working database tables.",
     }
 
     all_db_keys = set(list(db_descriptions.keys()) + list(new_db.keys()))
@@ -118,7 +119,11 @@ def compute_permission_delta(
         )
 
     if filter_safe_scopes:
-        escalations = [e for e in escalations if e.get("scope") not in ("database.read_library", "read_library")]
+        escalations = [
+            e
+            for e in escalations
+            if e.get("scope") not in ("database.read_library", "read_library", "metadata.read", "metadata")
+        ]
 
     return escalations
 
