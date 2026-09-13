@@ -112,12 +112,7 @@ def _contains_hanzi(text: str) -> bool:
     """Return True if *text* contains CJK Unified Ideographs (Chinese characters)."""
     for ch in text:
         cp = ord(ch)
-        if (
-            0x4E00 <= cp <= 0x9FFF
-            or 0x3400 <= cp <= 0x4DBF
-            or 0x20000 <= cp <= 0x2A6DF
-            or 0xF900 <= cp <= 0xFAFF
-        ):
+        if 0x4E00 <= cp <= 0x9FFF or 0x3400 <= cp <= 0x4DBF or 0x20000 <= cp <= 0x2A6DF or 0xF900 <= cp <= 0xFAFF:
             return True
     return False
 
@@ -180,9 +175,7 @@ def transliterate_cjk(text: str, **kwargs: Any) -> str:
                 cp = ord(ch)
                 if 0x4E00 <= cp <= 0x9FFF or 0x3400 <= cp <= 0x4DBF:
                     # CJK character → convert to tone-stripped pinyin syllable
-                    pinyin_syllables: list[str] = list(
-                        lazy_pinyin(ch, style=Style.NORMAL)
-                    )
+                    pinyin_syllables: list[str] = list(lazy_pinyin(ch, style=Style.NORMAL))
                     parts.extend(pinyin_syllables)
                 else:
                     parts.append(ch)
@@ -213,9 +206,7 @@ def transliterate_cjk(text: str, **kwargs: Any) -> str:
 
             result = " ".join(p for p in romaji_parts if p)
         except Exception as exc:
-            logger.warning(
-                "CJK Language Pack: Japanese transliteration failed: %s", exc
-            )
+            logger.warning("CJK Language Pack: Japanese transliteration failed: %s", exc)
 
     # ── 3. Korean: Hangul → Revised Romanization ──────────────────────────
     if _contains_hangul(result):
@@ -321,68 +312,51 @@ def extract_mb_aliases(db_track: Any, **kwargs: Any) -> Any:
         return db_track
 
     try:
-        # (removed get_music_database import)
-        from sqlalchemy import text
-
         from core.nexus_framework.plugin_SDK import sdk
 
-        engine = sdk.get_database_connection(write_access=True)
-        with engine.begin() as session:
-            # ── Track aliases ─────────────────────────────────────────────
-            for a in raw_track_aliases:
-                alias_str = str(a.get("name") or a.get("sort-name") or "").strip()
-                locale_str = str(a.get("locale") or "").strip()
-                if not alias_str:
-                    continue
+        proposals = []
+        for a in raw_track_aliases:
+            alias_str = str(a.get("name") or a.get("sort-name") or "").strip()
+            locale_str = str(a.get("locale") or "").strip()
+            if alias_str:
+                proposals.append(
+                    {
+                        "entity_type": "track",
+                        "entity_id": db_track.id,
+                        "name": alias_str,
+                        "locale": locale_str or None,
+                        "script": a.get("script"),
+                        "alias_type": a.get("type") or "musicbrainz_alias",
+                    }
+                )
 
-                # Use raw SQL to avoid direct model imports
-                exists = session.execute(
-                    text(
-                        "SELECT 1 FROM track_aliases WHERE track_id = :tid AND name = :name"
-                    ),
-                    {"tid": db_track.id, "name": alias_str},
-                ).fetchone()
+        for a in raw_artist_aliases:
+            alias_str = str(a.get("name") or a.get("sort-name") or "").strip()
+            locale_str = str(a.get("locale") or "").strip()
+            if alias_str:
+                proposals.append(
+                    {
+                        "entity_type": "artist",
+                        "entity_id": getattr(db_track, "artist_id", None),
+                        "name": alias_str,
+                        "locale": locale_str or None,
+                        "script": a.get("script"),
+                        "alias_type": a.get("type") or "musicbrainz_alias",
+                    }
+                )
 
-                if not exists:
-                    session.execute(
-                        text(
-                            "INSERT INTO track_aliases (track_id, name, locale) VALUES (:tid, :name, :loc)"
-                        ),
-                        {
-                            "tid": db_track.id,
-                            "name": alias_str,
-                            "loc": locale_str or None,
-                        },
-                    )
-
-            # ── Artist aliases ────────────────────────────────────────────
-            for a in raw_artist_aliases:
-                alias_str = str(a.get("name") or a.get("sort-name") or "").strip()
-                locale_str = str(a.get("locale") or "").strip()
-                if not alias_str:
-                    continue
-
-                exists = session.execute(
-                    text(
-                        "SELECT 1 FROM artist_aliases WHERE artist_id = :aid AND name = :name"
-                    ),
-                    {"aid": db_track.artist_id, "name": alias_str},
-                ).fetchone()
-
-                if not exists:
-                    session.execute(
-                        text(
-                            "INSERT INTO artist_aliases (artist_id, name, locale) VALUES (:aid, :name, :loc)"
-                        ),
-                        {
-                            "aid": db_track.artist_id,
-                            "name": alias_str,
-                            "loc": locale_str or None,
-                        },
-                    )
+        if proposals:
+            sdk.aliases.upsert(
+                entity_type="track",
+                entity_id=db_track.id,
+                proposals=proposals,
+                sync_id=getattr(db_track, "sync_id", None),
+            )
+            sdk.attributes.set("track", db_track.id, "cjk_enhanced", True)
+            sdk.attributes.set("track", db_track.id, "cjk_alias_count", len(proposals))
 
         logger.debug(
-            "CJK Language Pack: stored %d track alias(es) and %d artist alias(es) for track %d",
+            "CJK Language Pack: stored %d track alias(es) and %d artist alias(es) for track %d via sdk.aliases",
             len(raw_track_aliases),
             len(raw_artist_aliases),
             db_track.id,
@@ -391,6 +365,99 @@ def extract_mb_aliases(db_track: Any, **kwargs: Any) -> Any:
         logger.warning("CJK Language Pack: extract_mb_aliases failed: %s", exc)
 
     return db_track
+
+
+# ---------------------------------------------------------------------------
+# Plugin Class & Background Worker
+# ---------------------------------------------------------------------------
+
+from core.nexus_framework.plugin_SDK import PluginBase
+from core.task_manager.task_queue import TaskCategory
+
+
+class CJKLanguagePackPlugin(PluginBase):
+    name = "cjk_language_pack"
+    author = "EchoSync"
+    version = "2.4.2"
+    rate_limit = 1.0  # 1 req/s leaky bucket
+
+    async def run_cjk_background_worker(self) -> int:
+        """
+        Background self-healing worker under TaskCategory.BACKGROUND_METADATA.
+        Cooperatively yields, strictly gated on tracks possessing an echosync_signature.
+        """
+        import asyncio
+        from database.music_database import get_database, Track
+
+        music_db = get_database()
+        processed = 0
+
+        with music_db.get_session() as session:
+            tracks = (
+                session.query(Track)
+                .filter(
+                    Track.echosync_signature.isnot(None),
+                    Track.echosync_signature != "",
+                )
+                .all()
+            )
+
+            for track in tracks:
+                await asyncio.sleep(0.01)  # cooperative yield
+
+                title = track.title or ""
+                artist_name = track.artist.name if track.artist else ""
+
+                if not (_contains_cjk(title) or _contains_cjk(artist_name)):
+                    continue
+
+                already_done = self.attributes.get("track", track.id, "cjk_enhanced", session=session)
+                if already_done:
+                    continue
+
+                proposals = []
+                if _contains_cjk(title):
+                    romaji = transliterate_cjk(title)
+                    if romaji and romaji != title:
+                        proposals.append(
+                            {
+                                "entity_type": "track",
+                                "entity_id": track.id,
+                                "name": romaji,
+                                "locale": "en",
+                                "script": "Latn",
+                                "alias_type": "transliteration",
+                            }
+                        )
+
+                if _contains_cjk(artist_name) and track.artist_id:
+                    artist_romaji = transliterate_cjk(artist_name)
+                    if artist_romaji and artist_romaji != artist_name:
+                        proposals.append(
+                            {
+                                "entity_type": "artist",
+                                "entity_id": track.artist_id,
+                                "name": artist_romaji,
+                                "locale": "en",
+                                "script": "Latn",
+                                "alias_type": "transliteration",
+                            }
+                        )
+
+                if proposals:
+                    self.aliases.upsert(
+                        entity_type="track",
+                        entity_id=track.id,
+                        proposals=proposals,
+                        sync_id=track.sync_id,
+                        session=session,
+                    )
+                    self.attributes.set("track", track.id, "cjk_enhanced", True, session=session)
+                    self.attributes.set("track", track.id, "cjk_alias_count", len(proposals), session=session)
+                    processed += 1
+
+            session.commit()
+        return processed
 
 
 # ---------------------------------------------------------------------------
@@ -408,7 +475,4 @@ def setup(hm: HookManager) -> None:
     imported by the PluginLoader.  This function is intentionally a no-op so
     that a second call never produces duplicate filter registrations.
     """
-    logger.debug(
-        "CJK Language Pack plugin.setup() called — hooks already registered "
-        "by __init__.py; no action taken."
-    )
+    logger.debug("CJK Language Pack plugin.setup() called — hooks already registered by __init__.py; no action taken.")

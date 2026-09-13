@@ -21,6 +21,7 @@ class TaskCategory(str, Enum):
     GENERAL = "general"
     CRITICAL = "critical"
     DATABASE_WRITE_HEAVY = "database_write_heavy"
+    BACKGROUND_METADATA = "background_metadata"
 
 
 class TaskState(str, Enum):
@@ -74,12 +75,8 @@ class ScheduledJob:
             duration_s = round(now - self.last_started, 1)
         return {
             "name": self.name,
-            "category": self.category.value
-            if isinstance(self.category, TaskCategory)
-            else str(self.category),
-            "state": self.state.value
-            if isinstance(self.state, TaskState)
-            else str(self.state),
+            "category": self.category.value if isinstance(self.category, TaskCategory) else str(self.category),
+            "state": self.state.value if isinstance(self.state, TaskState) else str(self.state),
             "enabled": self.enabled,
             "running": self.running,
             "next_run": self.next_run,
@@ -161,10 +158,7 @@ class JobQueue:
     def is_db_write_heavy_running(self) -> bool:
         """Check if any DATABASE_WRITE_HEAVY task is currently running."""
         with self._lock:
-            return any(
-                job.running and job.category == TaskCategory.DATABASE_WRITE_HEAVY
-                for job in self._jobs.values()
-            )
+            return any(job.running and job.category == TaskCategory.DATABASE_WRITE_HEAVY for job in self._jobs.values())
 
     def is_job_running(self, name_pattern: str) -> bool:
         """Check if any job matching name_pattern is currently running."""
@@ -173,9 +167,7 @@ class JobQueue:
                 if is_run and name_pattern in job_name:
                     return True
             for job in self._jobs.values():
-                if (
-                    job.running or job.state == TaskState.RUNNING
-                ) and name_pattern in job.name:
+                if (job.running or job.state == TaskState.RUNNING) and name_pattern in job.name:
                     return True
             return False
 
@@ -213,9 +205,7 @@ class JobQueue:
                     job.next_run = time.time() + 5.0
                     return False
             elif "auto_import" in job.name:
-                if self.is_job_running("library_sync") or self.is_job_running(
-                    "database_update"
-                ):
+                if self.is_job_running("library_sync") or self.is_job_running("database_update"):
                     job.state = TaskState.PENDING_BLOCKED
                     job.next_run = time.time() + 5.0
                     return False
@@ -236,9 +226,7 @@ class JobQueue:
             if job.cancel_token and hasattr(job.cancel_token, "cancel"):
                 try:
                     job.cancel_token.cancel()
-                    logger.info(
-                        f"Triggered cross-FFI cancellation token for job: {name}"
-                    )
+                    logger.info(f"Triggered cross-FFI cancellation token for job: {name}")
                 except Exception as e:
                     logger.error(f"Error signaling cancel_token for {name}: {e}")
 
@@ -355,9 +343,7 @@ class JobQueue:
                 return False
 
             if not self.can_execute(job):
-                logger.warning(
-                    f"Job {name} blocked due to collision avoidance (DATABASE_WRITE_HEAVY task running)"
-                )
+                logger.warning(f"Job {name} blocked due to collision avoidance (DATABASE_WRITE_HEAVY task running)")
                 return False
 
             job.manual_next_run = time.time()
@@ -369,9 +355,7 @@ class JobQueue:
             heapq.heappush(self._heap, job)
             return True
 
-    def trigger_job_by_name(
-        self, name: str, params: dict[str, Any] | None = None
-    ) -> bool:
+    def trigger_job_by_name(self, name: str, params: dict[str, Any] | None = None) -> bool:
         """Trigger a job immediately by name or known aliases."""
         alias_map = {
             "download_queue_runner": "download_manager",
@@ -432,9 +416,7 @@ class JobQueue:
                             heapq.heappush(self._heap, job)
 
             for job in to_run:
-                thread = threading.Thread(
-                    target=self._execute_wrapper, args=(job,), daemon=True
-                )
+                thread = threading.Thread(target=self._execute_wrapper, args=(job,), daemon=True)
                 with self._lock:
                     self._active_threads[job.name] = thread
                 thread.start()
@@ -497,9 +479,7 @@ class JobQueue:
         """Cancel all jobs associated with a specific plugin."""
         count = 0
         with self._lock:
-            names_to_cancel = [
-                name for name, job in self._jobs.items() if job.plugin == plugin_id
-            ]
+            names_to_cancel = [name for name, job in self._jobs.items() if job.plugin == plugin_id]
             for name in names_to_cancel:
                 if self.cancel_job(name):
                     count += 1

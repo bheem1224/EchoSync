@@ -719,6 +719,237 @@ class _DatabaseFacade:
         return provider_storage.session_scope()
 
 
+_ATTR_KEY_REGEX = re.compile(r"^[a-zA-Z0-9_.-]{1,100}$")
+
+
+def _validate_attribute_payload(key: str, value: Any) -> None:
+    """Validate attribute key format, JSON-serializability, recursion depth, and byte size."""
+    if not isinstance(key, str) or not _ATTR_KEY_REGEX.match(key):
+        raise ValueError(f"Invalid attribute key '{key}'. Must match pattern ^[a-zA-Z0-9_.-]{{1,100}}$.")
+
+    def _check_depth(v: Any, current_depth: int = 1) -> None:
+        if current_depth > 5:
+            raise ValueError("Attribute value exceeds maximum allowed recursion depth of 5.")
+        if isinstance(v, dict):
+            for sub_v in v.values():
+                _check_depth(sub_v, current_depth + 1)
+        elif isinstance(v, list):
+            for item in v:
+                _check_depth(item, current_depth + 1)
+
+    _check_depth(value)
+
+    try:
+        import json
+
+        serialized = json.dumps(value)
+    except (TypeError, ValueError) as e:
+        raise ValueError(f"Attribute value is not JSON-serializable: {e}") from e
+
+    if len(serialized.encode("utf-8")) > 65536:
+        raise ValueError("Attribute value payload exceeds 64 KB limit.")
+
+
+def _resolve_plugin_id_int(plugin_name: str) -> int:
+    import binascii
+
+    try:
+        from database.config_database import get_config_database
+
+        db = get_config_database()
+        int_id = db.get_service_id(plugin_name)
+        if int_id:
+            return int(int_id)
+    except Exception:
+        pass
+    return binascii.crc32(plugin_name.lower().encode("utf-8")) & 0xFFFFFFFF
+
+
+class _AliasBroker:
+    """Governed SDK broker for mutating track and artist aliases."""
+
+    def __init__(self, plugin_id_str: str):
+        self._plugin_id_str = plugin_id_str
+
+    @property
+    def _plugin_id_int(self) -> int:
+        return _resolve_plugin_id_int(self._plugin_id_str)
+
+    def upsert(
+        self,
+        entity_type: str,
+        entity_id: int | str | None,
+        proposals: list[dict | Any],
+        sync_id: str | None = None,
+        session: Any = None,
+    ) -> int:
+        if not check_plugin_permission(self._plugin_id_str, "database.mutate_aliases"):
+            raise PermissionError(
+                f"Plugin '{self._plugin_id_str}' lacks 'permissions.database.mutate_aliases' permission."
+            )
+        from core.database.repositories.track_repo import TrackRepository
+        from core.metadata.schemas import EntityAliasProposal
+        from database.music_database import get_database
+
+        norm_proposals: list[EntityAliasProposal] = []
+        for p in proposals:
+            if isinstance(p, EntityAliasProposal):
+                norm_proposals.append(p)
+            elif isinstance(p, dict):
+                norm_proposals.append(
+                    EntityAliasProposal(
+                        entity_type=p.get("entity_type", entity_type),
+                        entity_id=p.get("entity_id", entity_id),
+                        value=p.get("value") or p.get("name") or "",
+                        language=p.get("language") or p.get("locale"),
+                        script=p.get("script"),
+                        alias_type=p.get("alias_type"),
+                    )
+                )
+
+        if session:
+            return TrackRepository.upsert_entity_aliases(
+                session=session,
+                proposals=norm_proposals,
+                sync_id=sync_id,
+                plugin_id=self._plugin_id_int,
+                commit=False,
+            )
+        else:
+            music_db = get_database()
+            with music_db.get_session() as sess:
+                return TrackRepository.upsert_entity_aliases(
+                    session=sess,
+                    proposals=norm_proposals,
+                    sync_id=sync_id,
+                    plugin_id=self._plugin_id_int,
+                    commit=True,
+                )
+
+
+class _AttributeBroker:
+    """Governed SDK broker for reading and mutating namespaced entity KVS attributes."""
+
+    def __init__(self, plugin_id_str: str):
+        self._plugin_id_str = plugin_id_str
+
+    @property
+    def _plugin_id_int(self) -> int:
+        return _resolve_plugin_id_int(self._plugin_id_str)
+
+    def set(
+        self,
+        entity_type: str,
+        entity_id: int,
+        key: str,
+        value: Any,
+        session: Any = None,
+    ) -> bool:
+        if not check_plugin_permission(self._plugin_id_str, "database.mutate_attributes"):
+            raise PermissionError(
+                f"Plugin '{self._plugin_id_str}' lacks 'permissions.database.mutate_attributes' permission."
+            )
+        _validate_attribute_payload(key, value)
+        from core.database.repositories.track_repo import TrackRepository
+        from database.music_database import get_database
+
+        if session:
+            return TrackRepository.set_entity_attributes(
+                session=session,
+                entity_type=entity_type,
+                entity_id=entity_id,
+                plugin_id=self._plugin_id_int,
+                key=key,
+                value=value,
+                commit=False,
+            )
+        else:
+            music_db = get_database()
+            with music_db.get_session() as sess:
+                return TrackRepository.set_entity_attributes(
+                    session=sess,
+                    entity_type=entity_type,
+                    entity_id=entity_id,
+                    plugin_id=self._plugin_id_int,
+                    key=key,
+                    value=value,
+                    commit=True,
+                )
+
+    def get(
+        self,
+        entity_type: str,
+        entity_id: int,
+        key: str | None = None,
+        session: Any = None,
+    ) -> Any:
+        if not (
+            check_plugin_permission(self._plugin_id_str, "database.read_library")
+            or check_plugin_permission(self._plugin_id_str, "database.mutate_attributes")
+        ):
+            raise PermissionError(
+                f"Plugin '{self._plugin_id_str}' lacks 'permissions.database.read_library' or 'permissions.database.mutate_attributes' permission."
+            )
+        from core.database.repositories.track_repo import TrackRepository
+        from database.music_database import get_database
+
+        if session:
+            attrs = TrackRepository.get_entity_attributes(
+                session=session,
+                entity_type=entity_type,
+                entity_id=entity_id,
+                plugin_id=self._plugin_id_int,
+            )
+        else:
+            music_db = get_database()
+            with music_db.get_session() as sess:
+                attrs = TrackRepository.get_entity_attributes(
+                    session=sess,
+                    entity_type=entity_type,
+                    entity_id=entity_id,
+                    plugin_id=self._plugin_id_int,
+                )
+
+        if key is not None:
+            return attrs.get(key)
+        return attrs
+
+    def delete(
+        self,
+        entity_type: str,
+        entity_id: int,
+        key: str,
+        session: Any = None,
+    ) -> bool:
+        if not check_plugin_permission(self._plugin_id_str, "database.mutate_attributes"):
+            raise PermissionError(
+                f"Plugin '{self._plugin_id_str}' lacks 'permissions.database.mutate_attributes' permission."
+            )
+        from core.database.repositories.track_repo import TrackRepository
+        from database.music_database import get_database
+
+        if session:
+            return TrackRepository.delete_entity_attribute(
+                session=session,
+                entity_type=entity_type,
+                entity_id=entity_id,
+                plugin_id=self._plugin_id_int,
+                key=key,
+                commit=False,
+            )
+        else:
+            music_db = get_database()
+            with music_db.get_session() as sess:
+                return TrackRepository.delete_entity_attribute(
+                    session=sess,
+                    entity_type=entity_type,
+                    entity_id=entity_id,
+                    plugin_id=self._plugin_id_int,
+                    key=key,
+                    commit=True,
+                )
+
+
 class _SDK:
     def __init__(self):
         # We don't know the plugin_id here yet as it's a global singleton,
@@ -748,6 +979,14 @@ class _SDK:
     @property
     def db(self):
         return _DatabaseFacade(self._get_plugin_id())
+
+    @property
+    def aliases(self):
+        return _AliasBroker(self._get_plugin_id())
+
+    @property
+    def attributes(self):
+        return _AttributeBroker(self._get_plugin_id())
 
     @property
     def accounts(self):
@@ -1132,6 +1371,9 @@ class PluginBase(ABC):
         self.file = _FileSDKFacade()
         self.kvs = StateKVS(self.name)
 
+        self.aliases = _AliasBroker(self.name)
+        self.attributes = _AttributeBroker(self.name)
+        self.db = _DatabaseFacade(self.name)
         self.models = _PluginModelFacade()
 
     async def _async_cancel_download(self, provider_id: str) -> bool:

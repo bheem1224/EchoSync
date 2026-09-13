@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
@@ -36,6 +37,12 @@ class TrackSummarySchema(BaseModel):
 
 class TrackResponseSchema(TrackSummarySchema):
     media: list[EchosyncMediaSchema] = []
+
+
+class TrackRichResponseSchema(TrackResponseSchema):
+    aliases: list[dict[str, Any]] = []
+    artist_aliases: list[dict[str, Any]] = []
+    attributes: dict[str, Any] = {}
 
 
 class SuccessResponse(BaseModel):

@@ -23,14 +23,17 @@ from core.metadata.schemas import EntityAliasProposal
 from database import _canonicalize_path
 from database.music_database import (
     Album,
+    AlbumAttribute,
     Artist,
     ArtistAlias,
+    ArtistAttribute,
     ExternalIdentifier,
     LocalMedia,
     Track,
     TrackAlias,
     TrackArtist,
     TrackArtistAlias,
+    TrackAttribute,
     generate_nanoid,
 )
 
@@ -1103,6 +1106,7 @@ class TrackRepository:
         session: Session,
         proposals: list[EntityAliasProposal],
         sync_id: str | None = None,
+        plugin_id: int | None = None,
         commit: bool = True,
     ) -> int:
         """Upsert a list of EntityAliasProposal records into artist_aliases,
@@ -1174,6 +1178,8 @@ class TrackRepository:
                 if existing:
                     if alias_type:
                         existing.alias_type = alias_type
+                    if plugin_id is not None:
+                        existing.plugin_id = plugin_id
                 else:
                     new_alias = ArtistAlias(
                         artist_id=artist_id,
@@ -1181,6 +1187,7 @@ class TrackRepository:
                         locale=lang,
                         script=script,
                         alias_type=alias_type,
+                        plugin_id=plugin_id,
                     )
                     session.add(new_alias)
                 upserted_count += 1
@@ -1276,12 +1283,19 @@ class TrackRepository:
                     )
                     .first()
                 )
-                if not existing_t:
+                if existing_t:
+                    if alias_type:
+                        existing_t.alias_type = alias_type
+                    if plugin_id is not None:
+                        existing_t.plugin_id = plugin_id
+                else:
                     new_t_alias = TrackAlias(
                         track_id=track_id,
                         name=value,
                         locale=lang,
                         script=script,
+                        alias_type=alias_type,
+                        plugin_id=plugin_id,
                     )
                     session.add(new_t_alias)
                 upserted_count += 1
@@ -1298,11 +1312,157 @@ class TrackRepository:
         self,
         proposals: list[EntityAliasProposal],
         sync_id: str | None = None,
+        plugin_id: int | None = None,
         commit: bool = True,
     ) -> int:
         if self.session is None:
             raise ValueError("TrackRepository instance was initialized without a Session")
-        return self.upsert_entity_aliases(self.session, proposals, sync_id=sync_id, commit=commit)
+        return self.upsert_entity_aliases(self.session, proposals, sync_id=sync_id, plugin_id=plugin_id, commit=commit)
+
+    # --- Entity Attributes (KVS) ---
+
+    @classmethod
+    def set_entity_attributes(
+        cls,
+        session: Session,
+        entity_type: str,
+        entity_id: int,
+        plugin_id: int,
+        key: str,
+        value: Any,
+        commit: bool = True,
+    ) -> bool:
+        """Upsert a plugin-namespaced attribute key-value pair for an entity (track, artist, or album)."""
+        entity_type = entity_type.lower()
+        if entity_type == "track":
+            model = TrackAttribute
+            filter_kwargs = {"track_id": entity_id, "plugin_id": plugin_id, "key": key}
+        elif entity_type == "artist":
+            model = ArtistAttribute
+            filter_kwargs = {"artist_id": entity_id, "plugin_id": plugin_id, "key": key}
+        elif entity_type == "album":
+            model = AlbumAttribute
+            filter_kwargs = {"album_id": entity_id, "plugin_id": plugin_id, "key": key}
+        else:
+            raise ValueError(f"Unsupported entity_type for attributes: {entity_type}")
+
+        attr = session.query(model).filter_by(**filter_kwargs).first()
+        if attr:
+            attr.value = value
+        else:
+            attr = model(**filter_kwargs, value=value)
+            session.add(attr)
+
+        if commit:
+            session.commit()
+        else:
+            session.flush()
+        return True
+
+    @classmethod
+    def get_entity_attributes(
+        cls,
+        session: Session,
+        entity_type: str,
+        entity_id: int,
+        plugin_id: int | None = None,
+    ) -> dict[str, Any]:
+        """Fetch plugin attributes for an entity.
+        If plugin_id is specified, returns {key: value} for that plugin.
+        If plugin_id is None, returns {plugin_id: {key: value}} for all plugins.
+        """
+        entity_type = entity_type.lower()
+        if entity_type == "track":
+            model = TrackAttribute
+            fk = model.track_id
+        elif entity_type == "artist":
+            model = ArtistAttribute
+            fk = model.artist_id
+        elif entity_type == "album":
+            model = AlbumAttribute
+            fk = model.album_id
+        else:
+            raise ValueError(f"Unsupported entity_type for attributes: {entity_type}")
+
+        query = session.query(model).filter(fk == entity_id)
+        if plugin_id is not None:
+            query = query.filter(model.plugin_id == plugin_id)
+            rows = query.all()
+            return {row.key: row.value for row in rows}
+
+        rows = query.all()
+        result: dict[int, dict[str, Any]] = {}
+        for row in rows:
+            if row.plugin_id not in result:
+                result[row.plugin_id] = {}
+            result[row.plugin_id][row.key] = row.value
+        return result
+
+    @classmethod
+    def delete_entity_attribute(
+        cls,
+        session: Session,
+        entity_type: str,
+        entity_id: int,
+        plugin_id: int,
+        key: str,
+        commit: bool = True,
+    ) -> bool:
+        """Delete a plugin-namespaced attribute for an entity."""
+        entity_type = entity_type.lower()
+        if entity_type == "track":
+            model = TrackAttribute
+            filter_kwargs = {"track_id": entity_id, "plugin_id": plugin_id, "key": key}
+        elif entity_type == "artist":
+            model = ArtistAttribute
+            filter_kwargs = {"artist_id": entity_id, "plugin_id": plugin_id, "key": key}
+        elif entity_type == "album":
+            model = AlbumAttribute
+            filter_kwargs = {"album_id": entity_id, "plugin_id": plugin_id, "key": key}
+        else:
+            raise ValueError(f"Unsupported entity_type for attributes: {entity_type}")
+
+        deleted = session.query(model).filter_by(**filter_kwargs).delete()
+        if commit:
+            session.commit()
+        else:
+            session.flush()
+        return deleted > 0
+
+    def set_attribute(
+        self,
+        entity_type: str,
+        entity_id: int,
+        plugin_id: int,
+        key: str,
+        value: Any,
+        commit: bool = True,
+    ) -> bool:
+        if self.session is None:
+            raise ValueError("TrackRepository instance was initialized without a Session")
+        return self.set_entity_attributes(self.session, entity_type, entity_id, plugin_id, key, value, commit=commit)
+
+    def get_attributes(
+        self,
+        entity_type: str,
+        entity_id: int,
+        plugin_id: int | None = None,
+    ) -> dict[str, Any]:
+        if self.session is None:
+            raise ValueError("TrackRepository instance was initialized without a Session")
+        return self.get_entity_attributes(self.session, entity_type, entity_id, plugin_id=plugin_id)
+
+    def delete_attribute(
+        self,
+        entity_type: str,
+        entity_id: int,
+        plugin_id: int,
+        key: str,
+        commit: bool = True,
+    ) -> bool:
+        if self.session is None:
+            raise ValueError("TrackRepository instance was initialized without a Session")
+        return self.delete_entity_attribute(self.session, entity_type, entity_id, plugin_id, key, commit=commit)
 
 
 def bulk_upsert_tracks(session: Session, tracks: list[EchosyncTrack]) -> int:

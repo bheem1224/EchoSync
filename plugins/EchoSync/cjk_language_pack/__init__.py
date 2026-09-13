@@ -52,9 +52,7 @@ from .vgmdb_proxy import get_proxy
 logger = get_logger("plugin.cjk")
 
 # Fast CJK tripwire — same ranges covered by transliterator._CJK_RE
-_CJK_RE = re.compile(
-    r"[\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff\uac00-\ud7af\u1100-\u11ff]"
-)
+_CJK_RE = re.compile(r"[\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff\uac00-\ud7af\u1100-\u11ff]")
 
 # All CJK paired brackets: capture content between each pair.
 # Groups: 《》 「」 『』 〈〉 【】 （） 《》
@@ -215,12 +213,8 @@ def _expand_query(query: str, artist_name: str = "", title: str = "") -> list[st
     lang = detect_language(cjk_title or query)
     if lang == "zh":
         if cjk_artist:
-            _add(
-                f"{tr.to_simplified(cjk_artist)} {tr.to_simplified(cjk_title)}".strip()
-            )
-            _add(
-                f"{tr.to_traditional(cjk_artist)} {tr.to_traditional(cjk_title)}".strip()
-            )
+            _add(f"{tr.to_simplified(cjk_artist)} {tr.to_simplified(cjk_title)}".strip())
+            _add(f"{tr.to_traditional(cjk_artist)} {tr.to_traditional(cjk_title)}".strip())
         else:
             _add(tr.to_simplified(cjk_title))
             _add(tr.to_traditional(cjk_title))
@@ -246,13 +240,10 @@ def _on_pre_provider_search(
       parsing the combined query string.
     """
     # ── Album+title pruning for CJK queries ──────────────────────────────
-    _probe = (
-        query if isinstance(query, str) else " ".join(str(q) for q in (query or []))
-    )
+    _probe = query if isinstance(query, str) else " ".join(str(q) for q in (query or []))
     if strategy_name == "album+title" and _has_cjk(_probe):
         logger.debug(
-            "Pruning album+title strategy for CJK query %r "
-            "(slskd files are not tagged by CJK album name).",
+            "Pruning album+title strategy for CJK query %r (slskd files are not tagged by CJK album name).",
             query,
         )
         return []
@@ -261,11 +252,7 @@ def _on_pre_provider_search(
         out: list[str] = []
         seen: set[str] = set()
         for q in query:
-            for v in (
-                _expand_query(q, artist_name=artist_name, title=title)
-                if _has_cjk(q)
-                else [q]
-            ):
+            for v in _expand_query(q, artist_name=artist_name, title=title) if _has_cjk(q) else [q]:
                 if v not in seen:
                     seen.add(v)
                     out.append(v)
@@ -291,11 +278,7 @@ def _is_ingestion_or_sync() -> bool:
         stack = traceback.extract_stack()
         for frame in reversed(stack):
             filename = frame.filename.replace("\\", "/")
-            if (
-                "bulk_operations" in filename
-                or "database_update_worker" in filename
-                or "plex/client" in filename
-            ):
+            if "bulk_operations" in filename or "database_update_worker" in filename or "plex/client" in filename:
                 return True
     except Exception:
         pass
@@ -440,15 +423,14 @@ def _persist_track_aliases(track_obj: Any, alias_entries: list[dict]) -> None:
     """
     Append TrackAlias rows via the ORM session that already owns *track_obj*.
 
-    Zero-Trust: uses ``object_session(track_obj)`` — no new session opened.
-    The MetadataEnhancerService owns the surrounding ``session_scope`` and
-    commits all pending changes (including these rows) when its block exits.
+    Routes through the governed sdk.aliases broker so that plugin provenance,
+    deduplication, and validation are strictly enforced.
     """
     if not alias_entries:
         return
     try:
-        from sqlalchemy import inspect as sa_inspect
         from sqlalchemy.orm import object_session
+        from core.nexus_framework.plugin_SDK import sdk
 
         session = object_session(track_obj)
         if session is None:
@@ -458,58 +440,30 @@ def _persist_track_aliases(track_obj: Any, alias_entries: list[dict]) -> None:
             )
             return
 
-        rel = sa_inspect(type(track_obj)).relationships.get("aliases")
-        if rel is None:
-            logger.warning("Track ORM has no 'aliases' relationship — skipping.")
-            return
-        TrackAlias = rel.mapper.class_
-
-        from core.settings import config_manager as _cm
-
-        _dev_mode = str(_cm.get("DEV_MODE") or "false").lower() in ("true", "1", "yes")
-
-        # Dev mode: clear existing aliases so they are rebuilt from fresh data,
-        # bypassing the "skip if already present" deduplication guard.
-        # Production mode: the guard remains active (no needless re-inserts).
-        if _dev_mode and track_obj.aliases:
-            for _stale in list(track_obj.aliases):
-                session.delete(_stale)
-            session.flush()
-            track_obj.aliases.clear()
-            logger.debug(
-                "DEV_MODE: Flushed existing TrackAlias rows for Track ID %s — rebuilding.",
-                track_obj.id,
+        proposals = [
+            {
+                "entity_type": "track",
+                "entity_id": track_obj.id,
+                "name": entry.get("name"),
+                "locale": entry.get("locale"),
+                "script": entry.get("script"),
+                "alias_type": "cjk_variant",
+            }
+            for entry in alias_entries
+            if entry.get("name")
+        ]
+        if proposals:
+            sdk.aliases.upsert(
+                entity_type="track",
+                entity_id=track_obj.id,
+                proposals=proposals,
+                sync_id=getattr(track_obj, "sync_id", None),
+                session=session,
             )
-
-        added = 0
-        for entry in alias_entries:
-            name = entry.get("name") or ""
-            if not name:
-                continue
-            if not _dev_mode and any(
-                a.name == name
-                and a.locale == entry.get("locale")
-                and a.script == entry.get("script")
-                for a in track_obj.aliases
-            ):
-                continue
-            track_obj.aliases.append(
-                TrackAlias(
-                    track_id=track_obj.id,
-                    name=name,
-                    locale=entry.get("locale"),
-                    script=entry.get("script"),
-                    is_primary_for_locale=bool(
-                        entry.get("is_primary_for_locale", False)
-                    ),
-                )
-            )
-            added += 1
-
-        if added:
+            sdk.attributes.set("track", track_obj.id, "cjk_restored", True, session=session)
             logger.debug(
-                "Queued %d TrackAlias row(s) for Track ID %s (commit deferred to caller).",
-                added,
+                "Queued %d TrackAlias row(s) for Track ID %s via sdk.aliases.",
+                len(proposals),
                 track_obj.id,
             )
     except Exception as exc:
@@ -524,15 +478,14 @@ def _persist_artist_aliases(track_obj: Any, alias_entries: list[dict]) -> None:
     """
     Append ArtistAlias rows for the artist attached to *track_obj*.
 
-    Accesses ``track_obj.artist`` via the SQLAlchemy lazy-load mechanism —
-    safe because we're always called from inside a ``session_scope`` context.
-    Zero-Trust: no new session opened.
+    Routes through the governed sdk.aliases broker so that plugin provenance,
+    deduplication, and validation are strictly enforced.
     """
     if not alias_entries:
         return
     try:
-        from sqlalchemy import inspect as sa_inspect
         from sqlalchemy.orm import object_session
+        from core.nexus_framework.plugin_SDK import sdk
 
         session = object_session(track_obj)
         if session is None:
@@ -542,56 +495,28 @@ def _persist_artist_aliases(track_obj: Any, alias_entries: list[dict]) -> None:
         if artist_obj is None:
             return
 
-        rel = sa_inspect(type(artist_obj)).relationships.get("aliases")
-        if rel is None:
-            return
-        ArtistAlias = rel.mapper.class_
-
-        from core.settings import config_manager as _cm
-
-        _dev_mode = str(_cm.get("DEV_MODE") or "false").lower() in ("true", "1", "yes")
-
-        # Dev mode: clear existing aliases so they are rebuilt from fresh data,
-        # bypassing the "skip if already present" deduplication guard.
-        if _dev_mode and artist_obj.aliases:
-            for _stale in list(artist_obj.aliases):
-                session.delete(_stale)
-            session.flush()
-            artist_obj.aliases.clear()
-            logger.debug(
-                "DEV_MODE: Flushed existing ArtistAlias rows for Artist ID %s — rebuilding.",
-                artist_obj.id,
+        proposals = [
+            {
+                "entity_type": "artist",
+                "entity_id": artist_obj.id,
+                "name": entry.get("name"),
+                "locale": entry.get("locale"),
+                "script": entry.get("script"),
+                "alias_type": "cjk_variant",
+            }
+            for entry in alias_entries
+            if entry.get("name")
+        ]
+        if proposals:
+            sdk.aliases.upsert(
+                entity_type="artist",
+                entity_id=artist_obj.id,
+                proposals=proposals,
+                session=session,
             )
-
-        added = 0
-        for entry in alias_entries:
-            name = entry.get("name") or ""
-            if not name:
-                continue
-            if not _dev_mode and any(
-                a.name == name
-                and a.locale == entry.get("locale")
-                and a.script == entry.get("script")
-                for a in artist_obj.aliases
-            ):
-                continue
-            artist_obj.aliases.append(
-                ArtistAlias(
-                    artist_id=artist_obj.id,
-                    name=name,
-                    locale=entry.get("locale"),
-                    script=entry.get("script"),
-                    is_primary_for_locale=bool(
-                        entry.get("is_primary_for_locale", False)
-                    ),
-                )
-            )
-            added += 1
-
-        if added:
             logger.debug(
-                "Queued %d ArtistAlias row(s) for Artist ID %s (commit deferred to caller).",
-                added,
+                "Queued %d ArtistAlias row(s) for Artist ID %s via sdk.aliases.",
+                len(proposals),
                 artist_obj.id,
             )
     except Exception as exc:
@@ -660,9 +585,7 @@ def _on_pre_normalize_title(raw_title: str, **kwargs: Any) -> str:
                     # Text before the keyword is the drama/series name.
                     candidate_drama = inner[: kw_match.start()].strip()
                     # Strip common separators left after splitting.
-                    candidate_drama = re.sub(
-                        r"^[\s\-–—·,，、]+|[\s\-–—·,，、]+$", "", candidate_drama
-                    )
+                    candidate_drama = re.sub(r"^[\s\-–—·,，、]+|[\s\-–—·,，、]+$", "", candidate_drama)
                     if candidate_drama and _has_cjk(candidate_drama):
                         plugin_context["cjk_drama"] = candidate_drama
                         return raw_title
@@ -687,11 +610,7 @@ def _on_pre_normalize_title(raw_title: str, **kwargs: Any) -> str:
     match = _ASCII_BRACKET_RE.search(raw_title)
     if match:
         drama = next((g for g in match.groups() if g is not None), None)
-        if (
-            drama
-            and drama.strip()
-            and (_has_cjk(drama) or _OST_KEYWORD_RE.search(drama))
-        ):
+        if drama and drama.strip() and (_has_cjk(drama) or _OST_KEYWORD_RE.search(drama)):
             plugin_context["cjk_drama"] = drama.strip()
 
     return raw_title
@@ -725,12 +644,8 @@ def _on_scoring_modifier(modifier: Any, **kwargs: Any) -> Any:
     if source is None or candidate is None:
         return {"boost": 0, "duration_override": 0}
 
-    local_drama: str = (
-        _safe_getattr(source, "plugin_context", {}).get("cjk_drama", "") or ""
-    )
-    remote_drama: str = (
-        _safe_getattr(candidate, "plugin_context", {}).get("cjk_drama", "") or ""
-    )
+    local_drama: str = _safe_getattr(source, "plugin_context", {}).get("cjk_drama", "") or ""
+    remote_drama: str = _safe_getattr(candidate, "plugin_context", {}).get("cjk_drama", "") or ""
 
     if not local_drama or not remote_drama:
         return {"boost": 0, "duration_override": 0}
@@ -885,13 +800,10 @@ def _on_post_metadata_enrichment(track_obj: Any) -> Any:
     artist_name = ""
     try:
         artist_obj = _safe_getattr(track_obj, "artist", None)
-        artist_name = (
-            (_safe_getattr(artist_obj, "name", "") or "") if artist_obj else ""
-        )
+        artist_name = (_safe_getattr(artist_obj, "name", "") or "") if artist_obj else ""
     except Exception as _exc:
         logger.debug(
-            "CJK plugin: could not load artist for Track ID %s (%s) — "
-            "CJK detection falls back to title-only.",
+            "CJK plugin: could not load artist for Track ID %s (%s) — CJK detection falls back to title-only.",
             _safe_getattr(track_obj, "id", "?"),
             _exc,
         )
@@ -929,9 +841,7 @@ def _on_post_metadata_enrichment(track_obj: Any) -> Any:
 def initialize_plugin() -> None:
     """Wire all hooks into the system. Called automatically on first import."""
     logger.info("CJK Language Pack: initializing hooks...")
-    hook_manager.add_filter(
-        "register_metadata_requirements", _on_register_metadata_requirements
-    )
+    hook_manager.add_filter("register_metadata_requirements", _on_register_metadata_requirements)
     hook_manager.add_filter("pre_provider_search", _on_pre_provider_search)
     hook_manager.add_filter("pre_normalize_text", _on_pre_normalize_text)
     hook_manager.add_filter("pre_normalize_title", _on_pre_normalize_title)

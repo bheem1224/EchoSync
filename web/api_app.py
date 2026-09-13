@@ -54,6 +54,7 @@ from web.routes.sync import router as sync_bp
 from web.routes.system import router as system_bp
 from web.routes.system_tasks import router as system_tasks_bp
 from web.routes.tracks import legacy_router as legacy_tracks_bp
+from web.routes.tracks import library_router as library_tracks_bp
 from web.routes.tracks import router as tracks_bp
 from web.routes.ui_registry import router as ui_registry_bp
 from web.routes.webhooks import router as webhooks_bp
@@ -148,9 +149,7 @@ async def lifespan(app: FastAPI):
             finally:
                 _backend_loop.close()
 
-        _backend_thread = threading.Thread(
-            target=run_backend_services, daemon=True, name="BackendServices"
-        )
+        _backend_thread = threading.Thread(target=run_backend_services, daemon=True, name="BackendServices")
         _backend_thread.start()
         _backend_started = True
         logger.info("Backend services thread started")
@@ -234,6 +233,7 @@ def create_app(testing: bool = False) -> FastAPI:
     app.include_router(dashboards_bp)
     app.include_router(tracks_bp)
     app.include_router(legacy_tracks_bp)
+    app.include_router(library_tracks_bp)
     app.include_router(library_bp)
     app.include_router(media_bp)
     app.include_router(search_bp)
@@ -262,11 +262,7 @@ def create_app(testing: bool = False) -> FastAPI:
     # SPA Support
     custom_ui_path = config_manager.get("custom_ui_path")
     ui_path = os.path.join(os.path.dirname(__file__), "../webui/build")
-    if (
-        custom_ui_path
-        and os.path.isdir(custom_ui_path)
-        and os.path.exists(os.path.join(custom_ui_path, "index.html"))
-    ):
+    if custom_ui_path and os.path.isdir(custom_ui_path) and os.path.exists(os.path.join(custom_ui_path, "index.html")):
         ui_path = custom_ui_path
 
     if os.path.exists(ui_path):
@@ -286,6 +282,4 @@ def create_app(testing: bool = False) -> FastAPI:
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(
-        "web.api_app:create_app", host="0.0.0.0", port=5000, reload=True, factory=True
-    )
+    uvicorn.run("web.api_app:create_app", host="0.0.0.0", port=5000, reload=True, factory=True)

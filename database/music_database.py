@@ -20,6 +20,7 @@ from sqlalchemy import (
     Date,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     UniqueConstraint,
@@ -130,6 +131,7 @@ class Artist(Base):
     tracks: Mapped[list[Track]] = relationship(back_populates="artist", cascade="all, delete-orphan")
     track_associations: Mapped[list[TrackArtist]] = relationship(back_populates="artist", cascade="all, delete-orphan")
     aliases: Mapped[list[ArtistAlias]] = relationship(back_populates="artist", cascade="all, delete-orphan")
+    attributes: Mapped[list[ArtistAttribute]] = relationship(back_populates="artist", cascade="all, delete-orphan")
     parent_artist: Mapped[Artist | None] = relationship("Artist", remote_side=[id], back_populates="sub_artists")
     sub_artists: Mapped[list[Artist]] = relationship("Artist", back_populates="parent_artist")
 
@@ -162,6 +164,7 @@ class Album(Base):
 
     artist: Mapped[Artist] = relationship(back_populates="albums")
     tracks: Mapped[list[Track]] = relationship(back_populates="album", cascade="all, delete-orphan")
+    attributes: Mapped[list[AlbumAttribute]] = relationship(back_populates="album", cascade="all, delete-orphan")
 
     @validates("title")
     def validate_title(self, key, value):
@@ -295,6 +298,7 @@ class Track(Base):
         viewonly=True,
     )
     aliases: Mapped[list[TrackAlias]] = relationship(back_populates="track", cascade="all, delete-orphan")
+    attributes: Mapped[list[TrackAttribute]] = relationship(back_populates="track", cascade="all, delete-orphan")
     media_files: Mapped[list[LocalMedia]] = relationship(
         "LocalMedia",
         back_populates="track",
@@ -530,9 +534,11 @@ class TrackAlias(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     track_id: Mapped[int] = mapped_column(ForeignKey("tracks.id", ondelete="CASCADE"), nullable=False, index=True)
+    plugin_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     name: Mapped[str] = mapped_column(String, nullable=False)
     locale: Mapped[str | None] = mapped_column(String)  # e.g. 'en', 'zh', 'ja'
     script: Mapped[str | None] = mapped_column(String)  # e.g. 'Latn', 'Hant', 'Hans', 'Hrkt'
+    alias_type: Mapped[str | None] = mapped_column(String(30))
     is_primary_for_locale: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
 
     track: Mapped[Track] = relationship(back_populates="aliases")
@@ -546,6 +552,7 @@ class ArtistAlias(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     artist_id: Mapped[int] = mapped_column(ForeignKey("artists.id", ondelete="CASCADE"), nullable=False, index=True)
+    plugin_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     name: Mapped[str] = mapped_column(String, nullable=False)
     locale: Mapped[str | None] = mapped_column(String)
     script: Mapped[str | None] = mapped_column(String)
@@ -569,6 +576,60 @@ class ArtistAlias(Base):
     @alias_name.setter
     def alias_name(self, val: str) -> None:
         self.name = val
+
+
+class TrackAttribute(Base):
+    """Namespaced Key-Value store for plugin metadata attached to a Track."""
+
+    __tablename__ = "track_attributes"
+    __table_args__ = (
+        UniqueConstraint("track_id", "plugin_id", "key", name="uq_track_attr_key"),
+        Index("ix_track_attr_lookup", "track_id", "plugin_id", "key"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    track_id: Mapped[int] = mapped_column(ForeignKey("tracks.id", ondelete="CASCADE"), nullable=False, index=True)
+    plugin_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    key: Mapped[str] = mapped_column(String(100), nullable=False)
+    value: Mapped[dict | list | str | int | float | bool | None] = mapped_column(JSON, nullable=True)
+
+    track: Mapped[Track] = relationship(back_populates="attributes")
+
+
+class ArtistAttribute(Base):
+    """Namespaced Key-Value store for plugin metadata attached to an Artist."""
+
+    __tablename__ = "artist_attributes"
+    __table_args__ = (
+        UniqueConstraint("artist_id", "plugin_id", "key", name="uq_artist_attr_key"),
+        Index("ix_artist_attr_lookup", "artist_id", "plugin_id", "key"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    artist_id: Mapped[int] = mapped_column(ForeignKey("artists.id", ondelete="CASCADE"), nullable=False, index=True)
+    plugin_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    key: Mapped[str] = mapped_column(String(100), nullable=False)
+    value: Mapped[dict | list | str | int | float | bool | None] = mapped_column(JSON, nullable=True)
+
+    artist: Mapped[Artist] = relationship(back_populates="attributes")
+
+
+class AlbumAttribute(Base):
+    """Namespaced Key-Value store for plugin metadata attached to an Album."""
+
+    __tablename__ = "album_attributes"
+    __table_args__ = (
+        UniqueConstraint("album_id", "plugin_id", "key", name="uq_album_attr_key"),
+        Index("ix_album_attr_lookup", "album_id", "plugin_id", "key"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    album_id: Mapped[int] = mapped_column(ForeignKey("albums.id", ondelete="CASCADE"), nullable=False, index=True)
+    plugin_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    key: Mapped[str] = mapped_column(String(100), nullable=False)
+    value: Mapped[dict | list | str | int | float | bool | None] = mapped_column(JSON, nullable=True)
+
+    album: Mapped[Album] = relationship(back_populates="attributes")
 
 
 class TrackArtistAlias(Base):
@@ -654,19 +715,126 @@ def _sqlite_pragmas(dbapi_connection, _connection_record) -> None:
     cursor.close()
 
 
-def _ensure_artist_alias_schema(engine) -> None:
-    """Ensure artist_aliases table has alias_type column idempotently."""
+def _ensure_alias_and_attribute_schema(engine) -> None:
+    """Ensure track_aliases, artist_aliases, and attribute tables exist with correct schema idempotently."""
     try:
         with engine.connect() as conn:
+            # 1. artist_aliases columns
             try:
                 cols = [row[1] for row in conn.exec_driver_sql("PRAGMA table_info(artist_aliases);").fetchall()]
-                if cols and "alias_type" not in cols:
-                    conn.exec_driver_sql(
-                        "ALTER TABLE artist_aliases ADD COLUMN alias_type VARCHAR(50) DEFAULT 'default';"
-                    )
+                if cols:
+                    if "alias_type" not in cols:
+                        conn.exec_driver_sql(
+                            "ALTER TABLE artist_aliases ADD COLUMN alias_type VARCHAR(50) DEFAULT 'default';"
+                        )
+                    if "plugin_id" not in cols:
+                        conn.exec_driver_sql("ALTER TABLE artist_aliases ADD COLUMN plugin_id INTEGER;")
                     conn.commit()
             except Exception:
-                # Gracefully ignore if already applied concurrently
+                pass
+
+            # 2. track_aliases table & columns
+            try:
+                conn.exec_driver_sql("""
+                    CREATE TABLE IF NOT EXISTS track_aliases (
+                        id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+                        track_id INTEGER NOT NULL,
+                        plugin_id INTEGER,
+                        name VARCHAR NOT NULL,
+                        locale VARCHAR,
+                        script VARCHAR,
+                        alias_type VARCHAR(30),
+                        is_primary_for_locale BOOLEAN DEFAULT 0,
+                        CONSTRAINT uq_track_alias UNIQUE (track_id, locale, script, name),
+                        FOREIGN KEY(track_id) REFERENCES tracks (id) ON DELETE CASCADE
+                    );
+                """)
+                conn.commit()
+                cols = [row[1] for row in conn.exec_driver_sql("PRAGMA table_info(track_aliases);").fetchall()]
+                if "plugin_id" not in cols:
+                    conn.exec_driver_sql("ALTER TABLE track_aliases ADD COLUMN plugin_id INTEGER;")
+                if "alias_type" not in cols:
+                    conn.exec_driver_sql("ALTER TABLE track_aliases ADD COLUMN alias_type VARCHAR(30);")
+                conn.commit()
+            except Exception:
+                pass
+
+            # 3. track_attributes table
+            try:
+                conn.exec_driver_sql("""
+                    CREATE TABLE IF NOT EXISTS track_attributes (
+                        id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+                        track_id INTEGER NOT NULL,
+                        plugin_id INTEGER NOT NULL,
+                        key VARCHAR(100) NOT NULL,
+                        value JSON,
+                        CONSTRAINT uq_track_attr_key UNIQUE (track_id, plugin_id, key),
+                        FOREIGN KEY(track_id) REFERENCES tracks (id) ON DELETE CASCADE
+                    );
+                """)
+                conn.exec_driver_sql(
+                    "CREATE INDEX IF NOT EXISTS ix_track_attributes_track_id ON track_attributes (track_id);"
+                )
+                conn.exec_driver_sql(
+                    "CREATE INDEX IF NOT EXISTS ix_track_attributes_plugin_id ON track_attributes (plugin_id);"
+                )
+                conn.exec_driver_sql(
+                    "CREATE INDEX IF NOT EXISTS ix_track_attr_lookup ON track_attributes (track_id, plugin_id, key);"
+                )
+                conn.commit()
+            except Exception:
+                pass
+
+            # 4. artist_attributes table
+            try:
+                conn.exec_driver_sql("""
+                    CREATE TABLE IF NOT EXISTS artist_attributes (
+                        id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+                        artist_id INTEGER NOT NULL,
+                        plugin_id INTEGER NOT NULL,
+                        key VARCHAR(100) NOT NULL,
+                        value JSON,
+                        CONSTRAINT uq_artist_attr_key UNIQUE (artist_id, plugin_id, key),
+                        FOREIGN KEY(artist_id) REFERENCES artists (id) ON DELETE CASCADE
+                    );
+                """)
+                conn.exec_driver_sql(
+                    "CREATE INDEX IF NOT EXISTS ix_artist_attributes_artist_id ON artist_attributes (artist_id);"
+                )
+                conn.exec_driver_sql(
+                    "CREATE INDEX IF NOT EXISTS ix_artist_attributes_plugin_id ON artist_attributes (plugin_id);"
+                )
+                conn.exec_driver_sql(
+                    "CREATE INDEX IF NOT EXISTS ix_artist_attr_lookup ON artist_attributes (artist_id, plugin_id, key);"
+                )
+                conn.commit()
+            except Exception:
+                pass
+
+            # 5. album_attributes table
+            try:
+                conn.exec_driver_sql("""
+                    CREATE TABLE IF NOT EXISTS album_attributes (
+                        id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+                        album_id INTEGER NOT NULL,
+                        plugin_id INTEGER NOT NULL,
+                        key VARCHAR(100) NOT NULL,
+                        value JSON,
+                        CONSTRAINT uq_album_attr_key UNIQUE (album_id, plugin_id, key),
+                        FOREIGN KEY(album_id) REFERENCES albums (id) ON DELETE CASCADE
+                    );
+                """)
+                conn.exec_driver_sql(
+                    "CREATE INDEX IF NOT EXISTS ix_album_attributes_album_id ON album_attributes (album_id);"
+                )
+                conn.exec_driver_sql(
+                    "CREATE INDEX IF NOT EXISTS ix_album_attributes_plugin_id ON album_attributes (plugin_id);"
+                )
+                conn.exec_driver_sql(
+                    "CREATE INDEX IF NOT EXISTS ix_album_attr_lookup ON album_attributes (album_id, plugin_id, key);"
+                )
+                conn.commit()
+            except Exception:
                 pass
     except Exception:
         pass
@@ -706,7 +874,7 @@ class MusicDatabase:
         if engine_url.startswith("sqlite"):
             event.listen(self.engine, "connect", _sqlite_pragmas)
         self.SessionLocal = sessionmaker(bind=self.engine, expire_on_commit=False, future=True)
-        _ensure_artist_alias_schema(self.engine)
+        _ensure_alias_and_attribute_schema(self.engine)
         self._sanitize_existing_metadata()
 
     def _sanitize_existing_metadata(self) -> None:
@@ -799,7 +967,12 @@ class MusicDatabase:
             # OPTIMIZATION: joinedload eliminates N+1 lazy loading queries
 
             # Search Artists
-            artists = session.query(Artist).filter(Artist.name.ilike(search_term)).limit(20).all()
+            artists = (
+                session.query(Artist)
+                .filter((Artist.name.ilike(search_term)) | (Artist.aliases.any(ArtistAlias.name.ilike(search_term))))
+                .limit(20)
+                .all()
+            )
             for artist in artists:
                 results["artists"].append(
                     {
@@ -814,7 +987,11 @@ class MusicDatabase:
                 session.query(Album)
                 .options(joinedload(Album.artist))
                 .join(Artist)
-                .filter((Album.title.ilike(search_term)) | (Artist.name.ilike(search_term)))
+                .filter(
+                    (Album.title.ilike(search_term))
+                    | (Artist.name.ilike(search_term))
+                    | (Artist.aliases.any(ArtistAlias.name.ilike(search_term)))
+                )
                 .limit(20)
                 .all()
             )
@@ -838,7 +1015,9 @@ class MusicDatabase:
                 .join(Album, isouter=True)
                 .filter(
                     (Track.title.ilike(search_term))
+                    | (Track.aliases.any(TrackAlias.name.ilike(search_term)))
                     | (Artist.name.ilike(search_term))
+                    | (Artist.aliases.any(ArtistAlias.name.ilike(search_term)))
                     | (Album.title.ilike(search_term))
                 )
                 .limit(50)
@@ -869,6 +1048,10 @@ class MusicDatabase:
         with self.session_scope() as session:
             # OPTIMIZATION: joinedload and selectinload eliminate N+1 queries during mapping
 
+            title_filter = or_(
+                Track.title.ilike(f"%{title}%"),
+                Track.aliases.any(TrackAlias.name.ilike(f"%{title}%")),
+            )
             query = (
                 session.query(Track)
                 .options(
@@ -878,10 +1061,14 @@ class MusicDatabase:
                 )
                 .join(Artist)
                 .join(Album, isouter=True)
-                .filter(Track.title.ilike(f"%{title}%"))
+                .filter(title_filter)
             )
             if artist:
-                query = query.filter(Artist.name.ilike(f"%{artist}%"))
+                artist_filter = or_(
+                    Artist.name.ilike(f"%{artist}%"),
+                    Artist.aliases.any(ArtistAlias.name.ilike(f"%{artist}%")),
+                )
+                query = query.filter(artist_filter)
             tracks = query.limit(limit).all()
             for t in tracks:
                 from core.db.echo_sync_track import EchosyncTrack
