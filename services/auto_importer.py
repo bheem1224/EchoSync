@@ -370,12 +370,26 @@ class AutoImportService:
                 continue
 
             try:
-                from core.metadata.schemas import ResolutionRequest
+                metadata = None
+                confidence = 0.0
+                res_dict = None
+                if hasattr(self, "enhancer") and hasattr(self.enhancer, "identify_file"):
+                    try:
+                        metadata, confidence = self.enhancer.identify_file(p)
+                        if metadata:
+                            res_dict = metadata
+                    except Exception as enh_err:
+                        logger.debug("enhancer.identify_file failed, falling back to engine: %s", enh_err)
 
-                req = ResolutionRequest(media_id=f"review_{task_id}", file_path=p)
-                res = self.engine.resolve_track(req)
-                metadata = res.to_dict() if (res.success and res.musicbrainz_track_id) else None
-                confidence = res.confidence_score
+                if res_dict is None:
+                    from core.metadata.schemas import ResolutionRequest
+
+                    req = ResolutionRequest(media_id=f"review_{task_id}", file_path=p)
+                    res = self.engine.resolve_track(req)
+                    metadata = res.to_dict() if (res.success and res.musicbrainz_track_id) else None
+                    confidence = res.confidence_score
+                    res_dict = res.to_dict()
+
                 now = utc_now()
                 with work_db.session_scope() as session:
                     task = session.query(ReviewTask).filter(ReviewTask.id == task_id).first()
@@ -384,7 +398,7 @@ class AutoImportService:
                         task.updated_at = now
                         task.retry_count = (task.retry_count or 0) + 1
                         task.confidence_score = confidence
-                        task.detected_metadata = res.to_dict()
+                        task.detected_metadata = res_dict
 
                 if metadata and confidence >= confidence_threshold:
                     if auto_import:

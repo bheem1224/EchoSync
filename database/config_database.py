@@ -544,7 +544,7 @@ class ConfigDatabase:
         except Exception as e:
             logger.error(f"Failed to resolve plugin details for {name}: {e}")
 
-        if not is_matched and name.lower().startswith("echosync."):
+        if not is_matched:
             import re
 
             from core.path_security import PathTraversalError, resolve_safe_path
@@ -552,16 +552,23 @@ class ConfigDatabase:
 
             plugin_name = name.split(".")[-1]
             if re.match(r"^[a-zA-Z0-9_\-]+$", plugin_name):
-                plugins_root = os.path.abspath(
-                    os.path.realpath(str(Path(config_manager.get_plugins_dir()) / "EchoSync"))
-                )
-                bundle_path = os.path.abspath(os.path.realpath(os.path.join(plugins_root, plugin_name)))
-                if os.path.commonpath([bundle_path, plugins_root]) == plugins_root:
+                candidate_roots = [
+                    Path(config_manager.get_plugins_dir()) / "EchoSync",
+                    Path(__file__).resolve().parent.parent / "plugins" / "EchoSync",
+                    Path(config_manager.get_plugins_dir()),
+                    Path(__file__).resolve().parent.parent / "plugins",
+                ]
+                for root in candidate_roots:
+                    plugins_root = os.path.abspath(os.path.realpath(str(root)))
+                    bundle_path = os.path.abspath(os.path.realpath(os.path.join(plugins_root, plugin_name)))
                     if os.path.isdir(bundle_path):
-                        resolved_plugin_id_str = name
+                        resolved_plugin_id_str = (
+                            name if name.lower().startswith("echosync.") else f"EchoSync.{plugin_name}"
+                        )
                         resolved_version = "1.0.0"
                         resolved_path = bundle_path
                         is_matched = True
+                        break
 
         if name.lower() == "system" or is_matched:
             plugin_id_int = binascii.crc32(resolved_plugin_id_str.lower().encode("utf-8")) & 0xFFFFFFFF

@@ -45,7 +45,7 @@ def hookimpl(func: Callable | None = None, **kwargs: Any) -> Callable:
 
 def compute_plugin_crc32(namespace: str) -> int:
     """Compute deterministic CRC32 32-bit integer for a fully qualified namespace."""
-    clean_ns = namespace.strip()
+    clean_ns = str(namespace).strip().lower()
     return zlib.crc32(clean_ns.encode("utf-8")) & 0xFFFFFFFF
 
 
@@ -64,9 +64,7 @@ def get_base_url() -> str:
         db = get_config_database()
         with db._get_connection() as conn:
             c = conn.cursor()
-            c.execute(
-                "SELECT key, value FROM system_settings WHERE key IN ('server.base_url', 'system.base_url')"
-            )
+            c.execute("SELECT key, value FROM system_settings WHERE key IN ('server.base_url', 'system.base_url')")
             rows = dict(c.fetchall())
             if rows.get("server.base_url"):
                 return str(rows["server.base_url"]).rstrip("/")
@@ -78,28 +76,15 @@ def get_base_url() -> str:
     try:
         from core.settings import config_manager
 
-        explicit_url = config_manager.get("server.base_url") or config_manager.get(
-            "base_url"
-        )
+        explicit_url = config_manager.get("server.base_url") or config_manager.get("base_url")
         if explicit_url:
             return str(explicit_url).rstrip("/")
 
         cert_file = config_manager.get("ssl_cert_file")
         key_file = config_manager.get("ssl_key_file")
-        scheme = (
-            "https"
-            if cert_file
-            and key_file
-            and Path(cert_file).exists()
-            and Path(key_file).exists()
-            else "http"
-        )
+        scheme = "https" if cert_file and key_file and Path(cert_file).exists() and Path(key_file).exists() else "http"
 
-        host = (
-            config_manager.get("server.host")
-            or config_manager.get("host")
-            or "localhost"
-        )
+        host = config_manager.get("server.host") or config_manager.get("host") or "localhost"
         if host in ("0.0.0.0", "::"):
             host = "localhost"
         port = config_manager.get("server.port") or config_manager.get("port") or 5000
@@ -186,11 +171,7 @@ class _WebhooksSDKFacade:
 
         headers_yaml = ""
         if secret:
-            headers_yaml = (
-                f"        headers:\n"
-                f'          - name: "X-EchoSync-Secret"\n'
-                f'            value: "{secret}"\n'
-            )
+            headers_yaml = f'        headers:\n          - name: "X-EchoSync-Secret"\n            value: "{secret}"\n'
 
         yaml_template = (
             f"integrations:\n"
@@ -241,9 +222,7 @@ class _WebhooksSDKFacade:
 
             if service_id:
                 config_key = f"webhook:{slug}"
-                db.set_service_config(
-                    service_id, config_key, registration_data, is_sensitive=True
-                )
+                db.set_service_config(service_id, config_key, registration_data, is_sensitive=True)
                 logger.info(
                     "Registered webhook endpoint '%s' for %s (CRC32: %d)",
                     slug,
@@ -255,9 +234,7 @@ class _WebhooksSDKFacade:
 
         return registration_data
 
-    def get_endpoint(
-        self, slug: str, namespace: str | None = None
-    ) -> dict[str, Any] | None:
+    def get_endpoint(self, slug: str, namespace: str | None = None) -> dict[str, Any] | None:
         """Retrieve registered endpoint metadata by slug."""
         if namespace:
             ns = namespace.strip()
@@ -286,9 +263,7 @@ class _WebhooksSDKFacade:
     def list_endpoints(self) -> list[dict[str, Any]]:
         """List all endpoints registered for this plugin."""
         _namespace, crc32_id = self._resolve_namespace_and_id()
-        results = [
-            ep for (p_id, _), ep in _REGISTERED_WEBHOOKS.items() if p_id == crc32_id
-        ]
+        results = [ep for (p_id, _), ep in _REGISTERED_WEBHOOKS.items() if p_id == crc32_id]
         if not results:
             try:
                 from database.config_database import get_config_database
@@ -323,15 +298,11 @@ def lookup_registered_endpoint(plugin_id: int, slug: str) -> dict[str, Any] | No
                 _REGISTERED_WEBHOOKS[(plugin_id, slug)] = val
                 return val
     except Exception as e:
-        logger.warning(
-            "Error looking up endpoint for plugin %d, slug '%s': %s", plugin_id, slug, e
-        )
+        logger.warning("Error looking up endpoint for plugin %d, slug '%s': %s", plugin_id, slug, e)
     return None
 
 
-def register_webhook_handler(
-    plugin_id: int, handler: Callable[[str, dict[str, Any]], Any]
-) -> None:
+def register_webhook_handler(plugin_id: int, handler: Callable[[str, dict[str, Any]], Any]) -> None:
     """Register a callable hook handler for webhooks dispatched to a plugin_id."""
     if plugin_id not in _WEBHOOK_HANDLERS:
         _WEBHOOK_HANDLERS[plugin_id] = []
@@ -394,9 +365,7 @@ async def dispatch_webhook(plugin_id: int, slug: str, payload: dict[str, Any]) -
 
     # 4. Trigger hook_manager
     try:
-        hook_manager.trigger(
-            "ON_WEBHOOK_RECEIVED", plugin_id=plugin_id, slug=slug, payload=payload
-        )
+        hook_manager.trigger("ON_WEBHOOK_RECEIVED", plugin_id=plugin_id, slug=slug, payload=payload)
     except Exception as e:
         logger.warning("Failed to trigger ON_WEBHOOK_RECEIVED hook: %s", e)
 

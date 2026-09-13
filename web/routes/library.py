@@ -453,14 +453,18 @@ def get_library_index(request: Request):
 
 @router.get("/stream/{track_id}")
 @router.get("/tracks/{track_id}/stream")
-def stream_track(track_id: int):
+def stream_track(track_id: str):
     """Stream a track file with HTTP Range support."""
     try:
         file_path = media_manager.get_track_stream(track_id)
-        if not file_path:
+        if not file_path or not Path(file_path).exists():
             raise HTTPException(status_code=404, detail={"error": "Track not found or file missing"})
 
-        return FileResponse(file_path)
+        import mimetypes
+
+        ext = Path(file_path).suffix.lower()
+        media_type = mimetypes.guess_type(file_path)[0] or "audio/mpeg"
+        return FileResponse(file_path, media_type=media_type, filename=Path(file_path).name)
     except HTTPException:
         raise
     except Exception as e:

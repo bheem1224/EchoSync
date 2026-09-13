@@ -34,11 +34,17 @@ logger = get_logger("plugin_loader")
 import zlib
 
 
+def compute_plugin_crc32(namespace: str) -> int:
+    """Compute deterministic CRC32 32-bit integer for a fully qualified namespace."""
+    clean_ns = str(namespace).strip().lower()
+    return zlib.crc32(clean_ns.encode("utf-8")) & 0xFFFFFFFF
+
+
 def generate_plugin_id(name: str) -> int:
     """Generate a consistent 32-bit integer ID from a plugin name."""
     if isinstance(name, str) and "@" in name:
         name = name.split("@")[0]
-    return zlib.crc32(name.encode("utf-8")) & 0xFFFFFFFF
+    return compute_plugin_crc32(str(name))
 
 
 def get_relative_entry_path(url_or_path: str) -> str:
@@ -655,12 +661,15 @@ class PluginLoader:
         """
         logger.info("Starting authoritative services registry reconciliation...")
         import binascii
+        import json
         import shutil
         import sqlite3
 
         from database.config_database import get_config_database
 
         db = get_config_database()
+
+        from core.task_manager import db_write_lease
 
         plugins_dir = Path(config_manager.get_plugins_dir())
         core_services = {"system"}
@@ -672,140 +681,227 @@ class PluginLoader:
 
         active_db_paths = set()
 
-        conn = db._open_connection()
-        try:
-            conn.row_factory = sqlite3.Row
-            c = conn.cursor()
+        # 1. Discover physical plugins on disk and map canonical CRC32 keys
+        canonical_plugins: dict[int, tuple[dict, Path]] = {}
+        path_to_canonical_crc: dict[str, int] = {}
+        alias_to_canonical_crc: dict[str, int] = {}
 
-            # Fetch all records
-            c.execute("""
-                SELECT id, name, plugin_id, service_type, absolute_install_path, is_active, version, 
-                       beta_opt_in, verified_source, privileged_mode, permissions 
-                FROM services
-            """)
-            existing_rows = c.fetchall()
+        if plugins_dir.exists():
+            for author_item in list(plugins_dir.iterdir()):
+                if not author_item.is_dir() or author_item.name.startswith("_") or author_item.name.lower() == "system":
+                    continue
+                for plugin_item in list(author_item.iterdir()):
+                    if not plugin_item.is_dir():
+                        continue
+                    m_file = plugin_item / "manifest.json"
+                    if m_file.exists():
+                        try:
+                            m_data = json.loads(m_file.read_text(encoding="utf-8"))
+                            m_id = str(m_data.get("id") or f"{author_item.name}.{plugin_item.name}").strip()
+                            c_crc = compute_plugin_crc32(m_id)
+                            res_path = str(plugin_item.resolve())
+                            canonical_plugins[c_crc] = (m_data, plugin_item)
+                            path_to_canonical_crc[res_path] = c_crc
+                            alias_to_canonical_crc[m_id.lower()] = c_crc
+                            if m_data.get("name"):
+                                alias_to_canonical_crc[m_data["name"].strip().lower()] = c_crc
+                            if m_data.get("display_name"):
+                                alias_to_canonical_crc[m_data["display_name"].strip().lower()] = c_crc
+                            alias_to_canonical_crc[f"{author_item.name}.{plugin_item.name}".lower()] = c_crc
+                            alias_to_canonical_crc[plugin_item.name.lower()] = c_crc
+                        except Exception as e:
+                            logger.error(f"Error reading manifest for {plugin_item}: {e}")
 
-            seen_plugin_ids = set()
-            seen_names = set()
+        with db_write_lease(task_name="reconcile_services"):
+            conn = db._open_connection()
+            try:
+                conn.row_factory = sqlite3.Row
+                c = conn.cursor()
 
-            for row in existing_rows:
-                db_id = row["id"]
-                name = row["name"]
-                p_id = row["plugin_id"]
-                install_path = row["absolute_install_path"]
+                # Fetch all records
+                c.execute("""
+                    SELECT id, name, plugin_id, service_type, absolute_install_path, is_active, version, 
+                           beta_opt_in, verified_source, privileged_mode, permissions 
+                    FROM services
+                """)
+                existing_rows = c.fetchall()
 
-                is_duplicate = False
-                if p_id in seen_plugin_ids or (name.lower() in seen_names and name.lower() == "system"):
-                    is_duplicate = True
+                seen_canonical_ids = set()
+                seen_names = set()
 
-                if p_id is not None:
-                    seen_plugin_ids.add(p_id)
-                seen_names.add(name.lower())
+                for row in existing_rows:
+                    db_id = row["id"]
+                    name = row["name"]
+                    p_id = row["plugin_id"]
+                    install_path = row["absolute_install_path"]
 
-                # Core Service handling
-                if name.lower() in core_services:
-                    if is_duplicate:
-                        c.execute("DELETE FROM services WHERE id=?", (db_id,))
+                    # Core Service handling
+                    if name.lower() in core_services:
+                        if "system" in seen_names:
+                            c.execute("DELETE FROM services WHERE id=?", (db_id,))
+                            continue
+                        seen_names.add("system")
+                        target_plugin_id = compute_plugin_crc32(name)
+                        c.execute(
+                            """
+                            UPDATE services 
+                            SET plugin_id=?, absolute_install_path=?, version=?, service_type=?, is_active=?, 
+                                description=?, beta_opt_in=?, verified_source=?, privileged_mode=?, permissions=?, 
+                                updated_at=strftime('%s','now')
+                            WHERE id=?
+                        """,
+                            (
+                                target_plugin_id,
+                                core_path,
+                                "2.5.2",
+                                "system",
+                                1,
+                                f"{name.capitalize()} service",
+                                0,
+                                1,
+                                1,
+                                "[]",
+                                db_id,
+                            ),
+                        )
                         continue
 
-                    target_plugin_id = binascii.crc32(name.lower().encode("utf-8")) & 0xFFFFFFFF
-                    c.execute(
-                        """
-                        UPDATE services 
-                        SET plugin_id=?, absolute_install_path=?, version=?, service_type=?, is_active=?, 
-                            description=?, beta_opt_in=?, verified_source=?, privileged_mode=?, permissions=?, 
-                            updated_at=strftime('%s','now')
-                        WHERE id=?
-                    """,
-                        (
-                            target_plugin_id,
-                            core_path,
-                            "2.5.2",
-                            "system",
-                            1,
-                            f"{name.capitalize()} service",
-                            0,
-                            1,
-                            1,
-                            "[]",
-                            db_id,
-                        ),
-                    )
-                    continue
+                    # Check if install_path or name resolves to a known canonical plugin on disk
+                    matched_canonical_crc = None
+                    if p_id is not None and p_id in canonical_plugins:
+                        matched_canonical_crc = p_id
+                    elif install_path:
+                        try:
+                            resolved_install_str = str(Path(install_path).resolve())
+                            matched_canonical_crc = path_to_canonical_crc.get(resolved_install_str)
+                        except Exception:
+                            pass
+                    if not matched_canonical_crc and name:
+                        matched_canonical_crc = alias_to_canonical_crc.get(name.strip().lower())
 
-                is_invalid = False
-                reason = ""
+                    if matched_canonical_crc is not None:
+                        # This record matches a physical canonical plugin
+                        if p_id == matched_canonical_crc:
+                            # It is the canonical row
+                            if matched_canonical_crc in seen_canonical_ids:
+                                logger.warning(
+                                    f"Authoritative Pruning: Deleting duplicate canonical service {name} (ID: {db_id})"
+                                )
+                                c.execute("DELETE FROM services WHERE id=?", (db_id,))
+                                c.execute("DELETE FROM service_config WHERE service_id=?", (db_id,))
+                                if p_id is not None:
+                                    c.execute("DELETE FROM ui_components WHERE plugin_id=?", (p_id,))
+                                continue
 
-                if is_duplicate:
-                    is_invalid = True
-                    reason = "Duplicate record"
-                elif not install_path:
-                    is_invalid = True
-                    reason = "Empty absolute_install_path in database"
-                else:
-                    resolved_install = Path(install_path)
-                    if not resolved_install.exists():
-                        is_invalid = True
-                        reason = f"Install path '{install_path}' does not exist on disk"
-                    elif not has_valid_entry_point(resolved_install):
-                        is_invalid = True
-                        reason = f"Install path '{install_path}' does not contain entry points"
-                    else:
-                        active_db_paths.add(str(resolved_install.resolve()))
+                            seen_canonical_ids.add(matched_canonical_crc)
+                            m_data, plugin_item = canonical_plugins[matched_canonical_crc]
+                            active_db_paths.add(str(plugin_item.resolve()))
 
-                if is_invalid:
-                    logger.warning(
-                        f"🚨 Authoritative Pruning: Deleting invalid database record: {name} (ID: {db_id}, Reason: {reason})"
-                    )
-                    c.execute("DELETE FROM services WHERE id=?", (db_id,))
-                    c.execute("DELETE FROM service_config WHERE service_id=?", (db_id,))
-                    if p_id is not None:
-                        c.execute("DELETE FROM ui_components WHERE plugin_id=?", (p_id,))
-                    continue
-                else:
-                    disabled_plugins = config_manager.get_disabled_plugins() or []
-                    disabled_ids = set()
-                    for d in disabled_plugins:
-                        d_str = str(d).strip()
-                        if not d_str:
-                            continue
-                        if d_str.isdigit():
-                            disabled_ids.add(int(d_str))
+                            # Check disabled config
+                            disabled_plugins = config_manager.get_disabled_plugins() or []
+                            disabled_ids = set()
+                            for d in disabled_plugins:
+                                d_str = str(d).strip()
+                                if not d_str:
+                                    continue
+                                if d_str.isdigit():
+                                    disabled_ids.add(int(d_str))
+                                else:
+                                    clean_d = d_str.lower().replace("echosync.", "").replace("echosync/", "").strip()
+                                    disabled_ids.add(compute_plugin_crc32(d_str))
+                                    disabled_ids.add(compute_plugin_crc32(clean_d))
+                                    disabled_ids.add(compute_plugin_crc32(f"echosync.{clean_d}"))
+
+                            is_disabled = matched_canonical_crc in disabled_ids
+                            target_active = 0 if is_disabled else 1
+                            c.execute(
+                                "UPDATE services SET is_active = ?, absolute_install_path = ? WHERE id = ?",
+                                (target_active, str(plugin_item.resolve()), db_id),
+                            )
                         else:
-                            clean_d = d_str.lower().replace("echosync.", "").replace("echosync/", "").strip()
-                            disabled_ids.add(generate_plugin_id(d_str.lower()))
-                            disabled_ids.add(generate_plugin_id(clean_d))
-                            disabled_ids.add(generate_plugin_id(f"echosync.{clean_d}"))
+                            # Obsolete duplicate row with outdated or non-canonical CRC32
+                            logger.warning(
+                                f"Authoritative Pruning: Deleting obsolete non-canonical duplicate service {name} (ID: {db_id}, plugin_id: {p_id}, canonical: {matched_canonical_crc})"
+                            )
+                            c.execute("DELETE FROM services WHERE id=?", (db_id,))
+                            c.execute("DELETE FROM service_config WHERE service_id=?", (db_id,))
+                            if p_id is not None:
+                                c.execute("DELETE FROM ui_components WHERE plugin_id=?", (p_id,))
+                            continue
+                    else:
+                        # Row does not match any physical plugin in canonical_plugins
+                        is_valid_sideload = False
+                        if install_path:
+                            resolved_install = Path(install_path)
+                            if resolved_install.exists() and has_valid_entry_point(resolved_install):
+                                is_valid_sideload = True
+                                active_db_paths.add(str(resolved_install.resolve()))
 
-                    is_disabled = p_id is not None and int(p_id) in disabled_ids
-                    target_active = 0 if is_disabled else 1
-                    c.execute(
-                        "UPDATE services SET is_active = ? WHERE id = ?",
-                        (target_active, db_id),
-                    )
+                        if is_valid_sideload:
+                            logger.info(f"Classifying unlisted local service {name} (ID: {db_id}) as sideload.")
+                            c.execute(
+                                "UPDATE services SET service_type = 'sideload', beta_opt_in = 0 WHERE id = ?", (db_id,)
+                            )
+                        else:
+                            logger.warning(
+                                f"Authoritative Pruning: Deleting invalid/orphaned database record: {name} (ID: {db_id})"
+                            )
+                            c.execute("DELETE FROM services WHERE id=?", (db_id,))
+                            c.execute("DELETE FROM service_config WHERE service_id=?", (db_id,))
+                            if p_id is not None:
+                                c.execute("DELETE FROM ui_components WHERE plugin_id=?", (p_id,))
+                            continue
 
-            # Ensure all core services are present
-            for name in core_services:
-                target_plugin_id = binascii.crc32(name.lower().encode("utf-8")) & 0xFFFFFFFF
-                c.execute("SELECT id FROM services WHERE plugin_id=?", (target_plugin_id,))
-                if not c.fetchone():
-                    logger.info(f"Bootstrapping missing core service: {name}")
-                    c.execute(
-                        """
-                        INSERT INTO services(name, plugin_id, service_type, description, absolute_install_path, version, is_active, 
-                                             beta_opt_in, verified_source, privileged_mode, permissions, created_at, updated_at)
-                        VALUES(?, ?, 'system', ?, ?, '2.5.2', 1, 0, 1, 1, '[]', strftime('%s','now'), strftime('%s','now'))
-                    """,
-                        (
-                            name,
-                            target_plugin_id,
-                            f"{name.capitalize()} service",
-                            core_path,
-                        ),
-                    )
-            conn.commit()
-        finally:
-            conn.close()
+                # Bootstrap any missing canonical physical plugins
+                for c_crc, (m_data, plugin_item) in canonical_plugins.items():
+                    if c_crc not in seen_canonical_ids:
+                        logger.info(
+                            f"Registering missing canonical plugin {m_data.get('id', plugin_item.name)} (CRC32: {c_crc})"
+                        )
+                        c.execute(
+                            """
+                            INSERT INTO services(name, plugin_id, service_type, description, absolute_install_path, version, is_active, 
+                                                 beta_opt_in, verified_source, privileged_mode, permissions, created_at, updated_at)
+                            VALUES(?, ?, ?, ?, ?, ?, 1, 0, ?, ?, ?, strftime('%s','now'), strftime('%s','now'))
+                        """,
+                            (
+                                m_data.get("name", plugin_item.name),
+                                c_crc,
+                                m_data.get("type") or m_data.get("category", "provider"),
+                                m_data.get("description", ""),
+                                str(plugin_item.resolve()),
+                                m_data.get("version", "1.0.0"),
+                                1
+                                if m_data.get("verified_source") == "official" or m_data.get("author") == "EchoSync"
+                                else 0,
+                                1 if m_data.get("privileged") or m_data.get("privileged_mode") else 0,
+                                json.dumps(m_data.get("permissions", {})),
+                            ),
+                        )
+                        active_db_paths.add(str(plugin_item.resolve()))
+
+                # Ensure all core services are present
+                for name in core_services:
+                    target_plugin_id = compute_plugin_crc32(name)
+                    c.execute("SELECT id FROM services WHERE plugin_id=?", (target_plugin_id,))
+                    if not c.fetchone():
+                        logger.info(f"Bootstrapping missing core service: {name}")
+                        c.execute(
+                            """
+                            INSERT INTO services(name, plugin_id, service_type, description, absolute_install_path, version, is_active, 
+                                                 beta_opt_in, verified_source, privileged_mode, permissions, created_at, updated_at)
+                            VALUES(?, ?, 'system', ?, ?, '2.5.2', 1, 0, 1, 1, '[]', strftime('%s','now'), strftime('%s','now'))
+                        """,
+                            (
+                                name,
+                                target_plugin_id,
+                                f"{name.capitalize()} service",
+                                core_path,
+                            ),
+                        )
+                conn.commit()
+            finally:
+                conn.close()
 
         # Startup Garbage Collection Sweep
         if os.getenv("DEV_MODE", "").lower() == "true":
@@ -827,8 +923,6 @@ class PluginLoader:
                         manifest_file = plugin_item / "manifest.json"
                         if manifest_file.exists():
                             try:
-                                import json
-
                                 manifest_data = json.loads(manifest_file.read_text(encoding="utf-8"))
                                 if manifest_data.get("dev_mode") is True:
                                     logger.info(

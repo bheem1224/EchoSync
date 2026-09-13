@@ -196,12 +196,17 @@ class JobQueue:
                 wal_file = cand
                 break
 
-        if not wal_file or not wal_file.exists():
+        if not wal_file:
             return True
 
-        if wal_file.stat().st_size > threshold:
+        try:
+            wal_size = wal_file.stat().st_size
+        except (OSError, FileNotFoundError):
+            return True
+
+        if wal_size > threshold:
             logger.warning(
-                f"SQLite WAL size ({wal_file.stat().st_size / (1024 * 1024):.1f} MB) exceeds 32 MB threshold. "
+                f"SQLite WAL size ({wal_size / (1024 * 1024):.1f} MB) exceeds 32 MB threshold. "
                 "Triggering proactive PRAGMA wal_checkpoint(PASSIVE)..."
             )
             # Execute checkpoint with 5.0s bounded wait
@@ -216,9 +221,14 @@ class JobQueue:
                 logger.debug(f"WAL checkpoint attempt error: {exc}")
 
             # Re-check size
-            if wal_file.exists() and wal_file.stat().st_size > threshold:
+            try:
+                still_exceeds = wal_file.stat().st_size > threshold
+            except (OSError, FileNotFoundError):
+                still_exceeds = False
+
+            if still_exceeds:
                 logger.warning(
-                    f"SQLite WAL size still exceeds 32 MB after checkpoint ({wal_file.stat().st_size / (1024 * 1024):.1f} MB). Backpressure active."
+                    f"SQLite WAL size still exceeds 32 MB after checkpoint ({wal_size / (1024 * 1024):.1f} MB). Backpressure active."
                 )
                 return False
 
@@ -895,5 +905,9 @@ def unregister_job(name: str) -> bool:
 @contextmanager
 def db_write_lease(task_name: str = "", timeout: float = 30.0):
     """Top-level helper function for scoped re-entrant database write lease."""
-    with job_queue.db_write_lease(task_name=task_name, timeout=timeout):
+    lease_cm = getattr(job_queue, "db_write_lease", None)
+    if callable(lease_cm):
+        with lease_cm(task_name=task_name, timeout=timeout):
+            yield
+    else:
         yield

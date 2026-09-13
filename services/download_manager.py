@@ -723,10 +723,6 @@ class DownloadManager:
 
         async with self._processing_queue_lock:
             self._deduplicate_queue()
-            providers = self._get_active_download_providers()
-            if not providers:
-                logger.debug("Skipping queue processing: No active download providers.")
-                return
 
             # Fetch queued items from DB
             queued_ids = []
@@ -772,6 +768,16 @@ class DownloadManager:
                     queued_ids.append(item.id)
 
             if not queued_ids:
+                return
+
+            providers = self._get_active_download_providers()
+            if not providers:
+                logger.debug("Skipping queue processing: No active download providers.")
+                with self.work_db.session_scope() as session:
+                    for qid in queued_ids:
+                        it = session.get(DownloadQueue, qid)
+                        if it and it.status == "searching":
+                            it.status = "queued"
                 return
 
             # Determine concurrency dynamically from active provider capabilities

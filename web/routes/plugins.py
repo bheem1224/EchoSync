@@ -226,6 +226,8 @@ def get_plugin_store():
 class PluginActionRequest(BaseModel):
     plugin: dict[str, Any]
     channel: str | None = None
+    force_consent: bool | None = None
+    consent_granted: bool | None = None
 
 
 @router.post("/install", dependencies=[Depends(require_auth)])
@@ -236,7 +238,14 @@ def install_plugin(request: Request, data: PluginActionRequest):
     channel = data.channel or plugin_info.get("channel", "stable")
     if channel == "release":
         channel = "stable"
-    force_consent = request.query_params.get("force_consent") == "true"
+    force_consent = (
+        request.query_params.get("force_consent") == "true"
+        or request.query_params.get("consent_granted") == "true"
+        or bool(data.force_consent)
+        or bool(data.consent_granted)
+        or bool(plugin_info.get("force_consent"))
+        or bool(plugin_info.get("consent_granted"))
+    )
 
     if not plugin_info:
         raise HTTPException(status_code=400, detail="Plugin info required")
@@ -252,11 +261,12 @@ def install_plugin(request: Request, data: PluginActionRequest):
         return JSONResponse(
             status_code=403,
             content={
-                "status": "error",
+                "status": "consent_required",
                 "code": "PRIVILEGE_ESCALATION_REQUIRED",
                 "requires_consent": True,
-                "plugin_id": str(e.plugin_id or plugin_info.get("id") or plugin_info.get("plugin_id") or ""),
+                "scopes": e.escalations,
                 "escalations": e.escalations,
+                "plugin_id": str(e.plugin_id or plugin_info.get("id") or plugin_info.get("plugin_id") or ""),
                 "message": "This installation requires elevated permissions.",
             },
         )
@@ -272,7 +282,14 @@ def update_plugin(request: Request, data: PluginActionRequest):
     from core.nexus_framework.plugin_store import PrivilegeEscalationError
 
     plugin_info = data.plugin
-    force_consent = request.query_params.get("force_consent") == "true"
+    force_consent = (
+        request.query_params.get("force_consent") == "true"
+        or request.query_params.get("consent_granted") == "true"
+        or bool(data.force_consent)
+        or bool(data.consent_granted)
+        or bool(plugin_info.get("force_consent"))
+        or bool(plugin_info.get("consent_granted"))
+    )
 
     if not plugin_info:
         raise HTTPException(status_code=400, detail="Plugin info required")
@@ -318,11 +335,12 @@ def update_plugin(request: Request, data: PluginActionRequest):
         return JSONResponse(
             status_code=403,
             content={
-                "status": "error",
+                "status": "consent_required",
                 "code": "PRIVILEGE_ESCALATION_REQUIRED",
                 "requires_consent": True,
-                "plugin_id": str(e.plugin_id or db_plugin_id or ""),
+                "scopes": e.escalations,
                 "escalations": e.escalations,
+                "plugin_id": str(e.plugin_id or db_plugin_id or ""),
                 "message": "This update requires elevated permissions.",
             },
         )
@@ -549,6 +567,59 @@ def uninstall_plugin_route(data: UninstallPluginRequest):
         raise
     except Exception as e:
         logger.error(f"Uninstall error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to uninstall plugin")
+
+
+@router.delete(
+    "/{plugin_id}",
+    response_model=GenericSuccessResponse,
+    dependencies=[Depends(require_auth)],
+)
+def delete_plugin_route(plugin_id: str):
+    """
+    Clean uninstallation endpoint:
+    Deletes the plugin, unlinking entries from services, service_config, and ui_components
+    and removing physical files on disk under db_write_lease().
+    """
+    from core.plugins.sdk import compute_plugin_crc32
+    from database.config_database import get_config_database
+
+    db = get_config_database()
+    target_plugin_id = None
+
+    if plugin_id.isdigit():
+        numeric_id = int(plugin_id)
+        with config_db_connection() as conn:
+            c = conn.cursor()
+            c.execute("SELECT id, plugin_id FROM services WHERE plugin_id=? OR id=?", (numeric_id, numeric_id))
+            row = c.fetchone()
+            if row:
+                target_plugin_id = row["plugin_id"] or numeric_id
+            else:
+                target_plugin_id = numeric_id
+    else:
+        service_id = db.get_service_id(plugin_id)
+        if service_id:
+            with config_db_connection() as conn:
+                c = conn.cursor()
+                c.execute("SELECT plugin_id FROM services WHERE id=?", (service_id,))
+                row = c.fetchone()
+                if row and row["plugin_id"] is not None:
+                    target_plugin_id = int(row["plugin_id"])
+                else:
+                    target_plugin_id = service_id
+        else:
+            target_plugin_id = compute_plugin_crc32(plugin_id)
+
+    try:
+        success = plugin_store.uninstall_plugin(target_plugin_id)
+        if success:
+            return GenericSuccessResponse(success=True)
+        raise HTTPException(status_code=500, detail=f"Failed to uninstall plugin {plugin_id}")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Uninstall error for {plugin_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to uninstall plugin")
 
 

@@ -48,6 +48,7 @@ from web.routes.playlists import router as playlists_bp
 from web.routes.plugins import legacy_router as legacy_plugins_bp
 from web.routes.plugins import router as core_plugins_bp
 from web.routes.search import router as search_bp
+from web.routes.stream import router as stream_bp
 from web.routes.suggestions import router as suggestions_bp
 from web.routes.sync import router as sync_bp
 from web.routes.system import router as system_bp
@@ -259,6 +260,7 @@ def create_app(testing: bool = False) -> FastAPI:
     app.include_router(library_tracks_bp)
     app.include_router(library_bp)
     app.include_router(media_bp)
+    app.include_router(stream_bp)
     app.include_router(search_bp)
     app.include_router(jobs_bp)
     app.include_router(metadata_bp)

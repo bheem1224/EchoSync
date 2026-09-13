@@ -46,11 +46,7 @@ def test_provider_settings_route_uses_service_config(client, monkeypatch):
     monkeypatch.setattr(
         PluginRegistry,
         "get_plugin_class",
-        lambda name: (
-            FakeSpotifyPluginClass
-            if name in ("spotify", spotify_id, str(spotify_id))
-            else None
-        ),
+        lambda name: FakeSpotifyPluginClass if name in ("spotify", spotify_id, str(spotify_id)) else None,
     )
 
     class FakeConfigDB:
@@ -66,9 +62,7 @@ def test_provider_settings_route_uses_service_config(client, monkeypatch):
                 return None
             return None
 
-    with patch(
-        "database.config_database.get_config_database", return_value=FakeConfigDB()
-    ):
+    with patch("database.config_database.get_config_database", return_value=FakeConfigDB()):
         resp = client.get(f"/api/plugins/{spotify_id}/settings")
         assert resp.status_code == 200
         data = resp.json()
@@ -76,9 +70,7 @@ def test_provider_settings_route_uses_service_config(client, monkeypatch):
         assert settings.get("client_id") == "db1"
         assert settings.get("client_secret") == "db2"
         assert "https://" in settings.get("redirect_uri")
-        assert ":5001/api/oauth/callback/plugins/spotify" in settings.get(
-            "redirect_uri"
-        )
+        assert ":5001/api/oauth/callback/plugins/spotify" in settings.get("redirect_uri")
 
 
 def test_provider_credentials_route_uses_plugins_callback_path(client, monkeypatch):
@@ -92,11 +84,7 @@ def test_provider_credentials_route_uses_plugins_callback_path(client, monkeypat
     monkeypatch.setattr(
         PluginRegistry,
         "get_plugin_class",
-        lambda name: (
-            FakeSpotifyPluginClass
-            if name in ("spotify", spotify_id, str(spotify_id))
-            else None
-        ),
+        lambda name: FakeSpotifyPluginClass if name in ("spotify", spotify_id, str(spotify_id)) else None,
     )
 
     class FakeConfigDB:
@@ -110,23 +98,17 @@ def test_provider_credentials_route_uses_plugins_callback_path(client, monkeypat
                 return "db2"
             return None
 
-    with patch(
-        "database.config_database.get_config_database", return_value=FakeConfigDB()
-    ):
+    with patch("database.config_database.get_config_database", return_value=FakeConfigDB()):
         resp = client.get(f"/api/plugins/{spotify_id}/credentials")
         assert resp.status_code == 200
         data = resp.json()
         credentials = data.get("credentials", {})
         assert credentials.get("client_id") == "db1"
         assert credentials.get("client_secret") == "db2"
-        assert ":5001/api/oauth/callback/plugins/spotify" in credentials.get(
-            "redirect_uri"
-        )
+        assert ":5001/api/oauth/callback/plugins/spotify" in credentials.get("redirect_uri")
 
 
-def test_provider_settings_route_normalizes_plugin_ids_for_service_storage(
-    client, monkeypatch
-):
+def test_provider_settings_route_normalizes_plugin_ids_for_service_storage(client, monkeypatch):
     class FakeSpotifyPluginClass:
         name = "EchoSync.spotify"
 
@@ -135,11 +117,7 @@ def test_provider_settings_route_normalizes_plugin_ids_for_service_storage(
     monkeypatch.setattr(
         PluginRegistry,
         "get_plugin_class",
-        lambda name: (
-            FakeSpotifyPluginClass
-            if name in ("spotify", spotify_id, str(spotify_id))
-            else None
-        ),
+        lambda name: FakeSpotifyPluginClass if name in ("spotify", spotify_id, str(spotify_id)) else None,
     )
 
     class FakeConfigDB:
@@ -203,15 +181,9 @@ def test_providers_playlist_route_includes_account_id(client, monkeypatch):
         {"id": 1, "display_name": "First"},
         {"id": 2, "display_name": "Second"},
     ]
-    monkeypatch.setattr(
-        "services.storage_service.get_storage_service", lambda: fake_storage
-    )
-    monkeypatch.setattr(
-        "core.file_handling.storage.get_storage_service", lambda: fake_storage
-    )
-    monkeypatch.setattr(
-        "database.config_database.get_config_database", lambda: FakeConfigDB()
-    )
+    monkeypatch.setattr("services.storage_service.get_storage_service", lambda: fake_storage)
+    monkeypatch.setattr("core.file_handling.storage.get_storage_service", lambda: fake_storage)
+    monkeypatch.setattr("database.config_database.get_config_database", lambda: FakeConfigDB())
 
     # fake SpotifyClient to return one playlist per account with distinctive id
     class FakeSpotifyClient:
@@ -234,9 +206,7 @@ def test_providers_playlist_route_includes_account_id(client, monkeypatch):
                 }
             ]
 
-    monkeypatch.setattr(
-        "plugins.EchoSync.spotify.client.SpotifyClient", FakeSpotifyClient
-    )
+    monkeypatch.setattr("plugins.EchoSync.spotify.client.SpotifyClient", FakeSpotifyClient)
     from core.nexus_framework.plugin_loader import PluginRegistry
 
     monkeypatch.setattr(
@@ -254,15 +224,11 @@ def test_providers_playlist_route_includes_account_id(client, monkeypatch):
         PluginRegistry,
         "create_instance",
         lambda name, *args, **kwargs: (
-            FakeSpotifyClient(account_id=kwargs.get("account_id"))
-            if name in ("spotify", spotify_id)
-            else None
+            FakeSpotifyClient(account_id=kwargs.get("account_id")) if name in ("spotify", spotify_id) else None
         ),
     )
     monkeypatch.setattr(PluginRegistry, "is_plugin_disabled", lambda name: False)
-    monkeypatch.setattr(
-        PluginRegistry, "is_provider_disabled", lambda name: False, raising=False
-    )
+    monkeypatch.setattr(PluginRegistry, "is_provider_disabled", lambda name: False, raising=False)
 
     resp = client.get(f"/api/plugins/{spotify_id}/playlists")
     assert resp.status_code == 200
@@ -284,9 +250,8 @@ def test_analyze_playlists_honors_account_id(client, monkeypatch):
     """analyze_playlists should instantiate provider per-account when account_id supplied."""
     fake_storage = MagicMock()
     fake_storage.list_accounts.return_value = [{"id": 1}, {"id": 2}]
-    monkeypatch.setattr(
-        "core.file_handling.storage.get_storage_service", lambda: fake_storage
-    )
+    monkeypatch.setattr("core.file_handling.storage.get_storage_service", lambda: fake_storage)
+    monkeypatch.setattr("services.storage_service.get_storage_service", lambda: fake_storage)
 
     called = []
 
@@ -303,9 +268,7 @@ def test_analyze_playlists_honors_account_id(client, monkeypatch):
         capabilities = ProviderCapabilities(
             name="spotify",
             supports_playlists=PlaylistSupport.READ_WRITE,
-            search=SearchCapabilities(
-                tracks=True, artists=True, albums=True, playlists=True
-            ),
+            search=SearchCapabilities(tracks=True, artists=True, albums=True, playlists=True),
             metadata=MetadataRichness.HIGH,
             supports_user_auth=True,
         )
@@ -333,14 +296,10 @@ def test_analyze_playlists_honors_account_id(client, monkeypatch):
 
             return [Track(f"t_{playlist_id}", "A", "B", 1234)]
 
-    monkeypatch.setattr(
-        "plugins.EchoSync.spotify.client.SpotifyClient", FakeSpotifyClient
-    )
+    monkeypatch.setattr("plugins.EchoSync.spotify.client.SpotifyClient", FakeSpotifyClient)
     from core.nexus_framework.plugin_loader import PluginRegistry
 
-    monkeypatch.setattr(
-        PluginRegistry, "get_plugin_class", lambda name: FakeSpotifyClient
-    )
+    monkeypatch.setattr(PluginRegistry, "get_plugin_class", lambda name: FakeSpotifyClient)
     monkeypatch.setattr(
         "core.nexus_framework.plugin_loader.get_plugin_capabilities",
         lambda name: FakeSpotifyClient.capabilities,
@@ -375,9 +334,7 @@ def test_download_missing_hydrates_from_full_source_track_payload(client, monkey
         def process_downloads_now(self):
             process_calls.append(True)
 
-    monkeypatch.setattr(
-        "services.download_manager.get_download_manager", lambda: FakeDownloadManager()
-    )
+    monkeypatch.setattr("services.download_manager.get_download_manager", lambda: FakeDownloadManager())
 
     source_track = EchosyncTrack(
         raw_title="My Song",
@@ -409,9 +366,7 @@ def test_download_missing_hydrates_from_full_source_track_payload(client, monkey
     assert process_calls == [True]
 
 
-def test_download_missing_preserves_duration_and_isrc_from_fallback_fields(
-    client, monkeypatch
-):
+def test_download_missing_preserves_duration_and_isrc_from_fallback_fields(client, monkeypatch):
     queued = []
     process_calls = []
 
@@ -423,9 +378,7 @@ def test_download_missing_preserves_duration_and_isrc_from_fallback_fields(
         def process_downloads_now(self):
             process_calls.append(True)
 
-    monkeypatch.setattr(
-        "services.download_manager.get_download_manager", lambda: FakeDownloadManager()
-    )
+    monkeypatch.setattr("services.download_manager.get_download_manager", lambda: FakeDownloadManager())
 
     resp = client.post(
         "/api/v1/core/playlists/download-missing",

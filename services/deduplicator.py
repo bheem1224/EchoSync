@@ -30,10 +30,16 @@ logger = get_logger("services.deduplicator")
 
 
 class DeduplicationService:
-    def __init__(self):
-        self.db = get_database()
+    def __init__(self, db: Any | None = None):
+        self._custom_db = db
         self._subscribed = False
         self._subscribe_events()
+
+    @property
+    def db(self):
+        if self._custom_db is not None:
+            return self._custom_db
+        return get_database()
 
     def _subscribe_events(self) -> None:
         if self._subscribed:
@@ -41,9 +47,7 @@ class DeduplicationService:
         try:
             event_bus.subscribe("TRACK_IMPORTED", self._on_track_imported)
             self._subscribed = True
-            logger.info(
-                "DeduplicationService successfully subscribed to TRACK_IMPORTED"
-            )
+            logger.info("DeduplicationService successfully subscribed to TRACK_IMPORTED")
         except Exception as e:
             logger.warning(f"Failed to subscribe deduplication events: {e}")
 
@@ -58,23 +62,17 @@ class DeduplicationService:
             if not file_path:
                 return
 
-            logger.info(
-                f"Reactive Ingestion Gate: Evaluating imported file {file_path}"
-            )
+            logger.info(f"Reactive Ingestion Gate: Evaluating imported file {file_path}")
             self.evaluate_incoming_file(file_path)
         except Exception as e:
-            logger.error(
-                f"Error in deduplication reactive ingestion gate: {e}", exc_info=True
-            )
+            logger.error(f"Error in deduplication reactive ingestion gate: {e}", exc_info=True)
 
     def evaluate_incoming_file(self, file_path: str) -> dict[str, Any] | None:
         """Extract fingerprint for an incoming file, persist AudioFingerprint, and check for duplicates."""
         canon_path = str(Path(file_path).resolve())
         fp, duration = FingerprintGenerator.generate_with_duration(canon_path)
         if not fp:
-            logger.debug(
-                f"Could not generate fingerprint for incoming file {canon_path}"
-            )
+            logger.debug(f"Could not generate fingerprint for incoming file {canon_path}")
             return None
 
         with self.db.session_scope() as session:
@@ -89,11 +87,7 @@ class DeduplicationService:
                 return None
 
             # 1. Upsert AudioFingerprint record
-            existing_fp = (
-                session.query(AudioFingerprint)
-                .filter(AudioFingerprint.media_id == media.media_id)
-                .first()
-            )
+            existing_fp = session.query(AudioFingerprint).filter(AudioFingerprint.media_id == media.media_id).first()
             if not existing_fp:
                 new_fp = AudioFingerprint(
                     media_id=media.media_id,
@@ -112,26 +106,16 @@ class DeduplicationService:
             # 3. Check for Cross-Track Acoustic Duplicates with matching Chromaprint
             matching_fps = (
                 session.query(AudioFingerprint)
-                .options(
-                    joinedload(AudioFingerprint.media).joinedload(LocalMedia.track)
-                )
+                .options(joinedload(AudioFingerprint.media).joinedload(LocalMedia.track))
                 .filter(AudioFingerprint.chromaprint == fp)
                 .all()
             )
 
-            distinct_track_ids = {
-                mfp.media.track_id
-                for mfp in matching_fps
-                if mfp.media and mfp.media.track_id
-            }
+            distinct_track_ids = {mfp.media.track_id for mfp in matching_fps if mfp.media and mfp.media.track_id}
 
             if len(distinct_track_ids) > 1:
-                logger.info(
-                    f"Cross-Track Acoustic Duplicates detected across {len(distinct_track_ids)} tracks"
-                )
-                return self.resolve_acoustic_duplicate_group(
-                    list(distinct_track_ids), fp
-                )
+                logger.info(f"Cross-Track Acoustic Duplicates detected across {len(distinct_track_ids)} tracks")
+                return self.resolve_acoustic_duplicate_group(list(distinct_track_ids), fp)
 
         return None
 
@@ -206,9 +190,7 @@ class DeduplicationService:
             )
             return payload
 
-    def resolve_acoustic_duplicate_group(
-        self, track_ids: list[int], chromaprint: str
-    ) -> dict[str, Any] | None:
+    def resolve_acoustic_duplicate_group(self, track_ids: list[int], chromaprint: str) -> dict[str, Any] | None:
         """Evaluate cross-track acoustic duplicates and stage inferior tracks for deletion."""
         with self.db.session_scope() as session:
             tracks = (
@@ -255,7 +237,9 @@ class DeduplicationService:
             requires_manual_review = min_confidence < 95.0
             score_formatted = f"{min_confidence:.1f}"
             details_str = ", ".join(reasoning_parts)
-            reason_str = f"Acoustic duplicate for '{winner.title}'. Confidence: {score_formatted}%. Details: {details_str}"
+            reason_str = (
+                f"Acoustic duplicate for '{winner.title}'. Confidence: {score_formatted}%. Details: {details_str}"
+            )
 
             tracks_payload = [
                 {
@@ -265,15 +249,9 @@ class DeduplicationService:
                     "album": t.album.title if t.album else "Unknown Album",
                     "duration": t.duration,
                     "path": t.file_path,
-                    "media_id": t.get_best_media().media_id
-                    if t.get_best_media()
-                    else None,
-                    "bitrate": t.get_best_media().bitrate
-                    if t.get_best_media()
-                    else None,
-                    "format": t.get_best_media().file_format
-                    if t.get_best_media()
-                    else None,
+                    "media_id": t.get_best_media().media_id if t.get_best_media() else None,
+                    "bitrate": t.get_best_media().bitrate if t.get_best_media() else None,
+                    "format": t.get_best_media().file_format if t.get_best_media() else None,
                     "is_kept": (t.id == winner.id),
                 }
                 for t in tracks
@@ -317,9 +295,7 @@ class DeduplicationService:
             hygiene = LibraryHygieneService(self.db)
             hygiene.backfill_missing_fingerprints()
         except Exception as e:
-            logger.warning(
-                f"Failed to backfill missing fingerprints during deduplication scan: {e}"
-            )
+            logger.warning(f"Failed to backfill missing fingerprints during deduplication scan: {e}")
 
         results = {
             "relational_duplicates": [],
@@ -329,11 +305,7 @@ class DeduplicationService:
         with self.db.session_scope() as session:
             # 1. 1:N Relational Scan: Tracks with count(local_media) > 1
             relational_tracks = (
-                session.query(Track.id)
-                .join(LocalMedia)
-                .group_by(Track.id)
-                .having(func.count(LocalMedia.id) > 1)
-                .all()
+                session.query(Track.id).join(LocalMedia).group_by(Track.id).having(func.count(LocalMedia.id) > 1).all()
             )
             for (t_id,) in relational_tracks:
                 action = self.resolve_relational_duplicates(t_id)
@@ -355,9 +327,7 @@ class DeduplicationService:
                     .filter(AudioFingerprint.chromaprint == fp_hash)
                     .all()
                 )
-                t_ids = list(
-                    {fp.media.track_id for fp in fps if fp.media and fp.media.track_id}
-                )
+                t_ids = list({fp.media.track_id for fp in fps if fp.media and fp.media.track_id})
                 if len(t_ids) > 1:
                     action = self.resolve_acoustic_duplicate_group(t_ids, fp_hash)
                     if action:
@@ -365,9 +335,7 @@ class DeduplicationService:
 
         return results
 
-    def _rank_media_candidates(
-        self, candidates: list[LocalMedia]
-    ) -> tuple[LocalMedia, list[LocalMedia]]:
+    def _rank_media_candidates(self, candidates: list[LocalMedia]) -> tuple[LocalMedia, list[LocalMedia]]:
         """Rank LocalMedia candidates based on lossless codecs, bitrate, sample rate, and bit depth."""
 
         def media_score(m: LocalMedia) -> tuple[int, int, int, int]:
@@ -381,9 +349,7 @@ class DeduplicationService:
         sorted_candidates = sorted(candidates, key=media_score, reverse=True)
         return sorted_candidates[0], sorted_candidates[1:]
 
-    def _rank_track_candidates(
-        self, candidates: list[Track]
-    ) -> tuple[Track, list[Track]]:
+    def _rank_track_candidates(self, candidates: list[Track]) -> tuple[Track, list[Track]]:
         """Rank Track candidates based on highest quality media attached."""
 
         def track_score(t: Track) -> tuple[int, int, int, int]:
@@ -404,8 +370,10 @@ class DeduplicationService:
 _deduplicator_instance: DeduplicationService | None = None
 
 
-def get_deduplicator() -> DeduplicationService:
+def get_deduplicator(db: Any | None = None) -> DeduplicationService:
     global _deduplicator_instance
+    if db is not None:
+        return DeduplicationService(db=db)
     if _deduplicator_instance is None:
         _deduplicator_instance = DeduplicationService()
     return _deduplicator_instance

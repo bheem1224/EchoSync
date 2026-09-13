@@ -9,6 +9,7 @@ from core.event_bus import event_bus
 from database.music_database import (
     Artist,
     AudioFingerprint,
+    Base,
     LocalMedia,
     Track,
     get_database,
@@ -81,21 +82,13 @@ def test_audio_fingerprint_schema_duplicate_chromaprint():
 
         # Insert same chromaprint on both distinct media rows
         shared_chromaprint = f"AQAAAAshared_hash_{suffix}"
-        afp1 = AudioFingerprint(
-            media_id=media1.media_id, chromaprint=shared_chromaprint
-        )
-        afp2 = AudioFingerprint(
-            media_id=media2.media_id, chromaprint=shared_chromaprint
-        )
+        afp1 = AudioFingerprint(media_id=media1.media_id, chromaprint=shared_chromaprint)
+        afp2 = AudioFingerprint(media_id=media2.media_id, chromaprint=shared_chromaprint)
         session.add_all([afp1, afp2])
         session.commit()
 
         # Verify both exist
-        fps = (
-            session.query(AudioFingerprint)
-            .filter(AudioFingerprint.chromaprint == shared_chromaprint)
-            .all()
-        )
+        fps = session.query(AudioFingerprint).filter(AudioFingerprint.chromaprint == shared_chromaprint).all()
         assert len(fps) == 2
 
 
@@ -114,9 +107,7 @@ def test_relational_1_to_n_duplicate_detection_and_staging():
         session.add(artist)
         session.flush()
 
-        track = Track(
-            title="1:N Resolution Song", artist_id=artist.id, sync_id=unique_sync_id
-        )
+        track = Track(title="1:N Resolution Song", artist_id=artist.id, sync_id=unique_sync_id)
         session.add(track)
         session.flush()
 
@@ -159,9 +150,7 @@ def test_relational_1_to_n_duplicate_detection_and_staging():
     # Ensure staged into SuggestionStagingQueue
     with working_db.session_scope() as w_session:
         staged = (
-            w_session.query(SuggestionStagingQueue)
-            .filter(SuggestionStagingQueue.sync_id == unique_sync_id)
-            .first()
+            w_session.query(SuggestionStagingQueue).filter(SuggestionStagingQueue.sync_id == unique_sync_id).first()
         )
         assert staged is not None
         assert staged.intent_type == "HYGIENE_DUPLICATION"
@@ -174,7 +163,8 @@ def test_reactive_ingestion_interception():
     import uuid
 
     music_db = get_database()
-    dedup = DeduplicationService()
+    Base.metadata.create_all(music_db.engine)
+    dedup = DeduplicationService(db=music_db)
 
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
         wav_path = str(Path(f.name).resolve())
@@ -191,9 +181,7 @@ def test_reactive_ingestion_interception():
             session.add(artist)
             session.flush()
 
-            track = Track(
-                title="Ingestion Track", artist_id=artist.id, sync_id=ingest_sync
-            )
+            track = Track(title="Ingestion Track", artist_id=artist.id, sync_id=ingest_sync)
             session.add(track)
             session.flush()
 
@@ -223,14 +211,11 @@ def test_reactive_ingestion_interception():
 
         # Verify AudioFingerprint was generated & stored
         with music_db.session_scope() as session:
-            fp_record = (
-                session.query(AudioFingerprint)
-                .filter(AudioFingerprint.media_id == media_id_val)
-                .first()
-            )
+            fp_record = session.query(AudioFingerprint).filter(AudioFingerprint.media_id == media_id_val).first()
             assert fp_record is not None
             assert len(fp_record.chromaprint) > 0
 
     finally:
+        event_bus.unsubscribe("TRACK_IMPORTED", dedup._on_track_imported)
         if os.path.exists(wav_path):
             os.remove(wav_path)

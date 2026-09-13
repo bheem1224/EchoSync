@@ -166,7 +166,7 @@ class DuplicateHygieneService:
             from services.deduplicator import get_deduplicator
             from sqlalchemy.orm import joinedload, selectinload
 
-            dedup = get_deduplicator()
+            dedup = get_deduplicator(self.db)
 
             with self.db.session_scope() as session:
                 # ── Phase 1: 1:N Relational Duplicates ──────────────────────────

@@ -1340,12 +1340,23 @@ class MusicDatabase:
 
             return hierarchy
 
-    def get_track_path(self, track_id: int) -> str | None:
-        """Fetch the local file path for a track ID."""
+    def get_track_path(self, track_id: int | str) -> str | None:
+        """Fetch the local file path for a track ID (integer, numeric string, sync_id, or media_id)."""
         with self.session_scope() as session:
-            track = session.query(Track).filter(Track.id == track_id).first()
-            if track:
+            if isinstance(track_id, int) or (isinstance(track_id, str) and track_id.isdigit()):
+                tid = int(track_id)
+                track = session.query(Track).filter(Track.id == tid).first()
+                if track and track.file_path:
+                    return track.file_path
+
+            track = session.query(Track).filter(Track.sync_id == str(track_id)).first()
+            if track and track.file_path:
                 return track.file_path
+
+            lm = session.query(LocalMedia).filter(LocalMedia.media_id == str(track_id)).first()
+            if lm and lm.file_path:
+                return lm.file_path
+
             return None
 
     def clear_server_data(self, plugin_source: str):
@@ -1404,11 +1415,25 @@ def close_database() -> None:
         _db_instance = None
 
 
+def _ensure_artist_alias_schema(engine) -> None:
+    """Ensure the artist_aliases table contains the alias_type column."""
+    with engine.connect() as conn:
+        tables = [
+            row[0] for row in conn.exec_driver_sql("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+        ]
+        if "artist_aliases" in tables:
+            cols = [row[1] for row in conn.exec_driver_sql("PRAGMA table_info(artist_aliases);").fetchall()]
+            if "alias_type" not in cols:
+                conn.exec_driver_sql("ALTER TABLE artist_aliases ADD COLUMN alias_type VARCHAR;")
+                conn.commit()
+
+
 def init_music_db(engine=None) -> None:
     """Initialize or migrate the music database schema."""
     if engine is None:
         db = get_database()
         engine = db.engine
+    Base.metadata.create_all(engine)
     _ensure_artist_alias_schema(engine)
 
 

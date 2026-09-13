@@ -451,3 +451,153 @@ def test_update_force_consent_completes_hot_swap(temp_plugins_env):
         assert row["version"] == "2.0.0"
         stored_perms = json.loads(row["permissions"])
         assert stored_perms["database"]["mutate_aliases"] is True
+
+
+def test_update_auto_admits_base_read_scope_without_consent(temp_plugins_env):
+    """
+    Verifies that safe base read scopes (database.read_library) are auto-admitted
+    during updates and do not raise PrivilegeEscalationError even when force_consent=False.
+    """
+    plugins_dir = temp_plugins_env["plugins_dir"]
+    config_db = temp_plugins_env["config_db"]
+    monkeypatch = temp_plugins_env["monkeypatch"]
+
+    author = "EchoSync"
+    name = "LocalMetadata"
+    plugin_path = plugins_dir / author / name
+    plugin_path.mkdir(parents=True, exist_ok=True)
+
+    old_manifest = {
+        "id": f"{author}.{name}",
+        "name": name,
+        "author": author,
+        "version": "1.0.0",
+        "permissions": {"database": {}},
+    }
+    (plugin_path / "manifest.json").write_text(json.dumps(old_manifest), encoding="utf-8")
+    (plugin_path / "__init__.py").write_text("# Version 1.0.0\n", encoding="utf-8")
+
+    from core.plugins.sdk import compute_plugin_crc32
+
+    plugin_id_int = compute_plugin_crc32(f"{author}.{name}")
+
+    config_db.register_service(
+        name=name,
+        service_type="metadata",
+        description="Local Metadata",
+        absolute_install_path=str(plugin_path.resolve()),
+        plugin_id=plugin_id_int,
+        version="1.0.0",
+        permissions=json.dumps({}),
+        privileged_mode=0,
+    )
+
+    new_manifest = {
+        "id": f"{author}.{name}",
+        "name": name,
+        "author": author,
+        "version": "1.1.0",
+        "permissions": {
+            "database": {
+                "read_library": True,
+            }
+        },
+    }
+    zip_bytes = _create_mock_zip(new_manifest, {"__init__.py": "# Version 1.1.0\n"})
+
+    class MockResponse:
+        status_code = 200
+        content = zip_bytes
+        headers = {}
+
+    from core.request_manager import RequestManager
+
+    monkeypatch.setattr(RequestManager, "get", lambda *args, **kwargs: MockResponse())
+
+    from core.nexus_framework.plugin_loader import PluginLoader
+
+    monkeypatch.setattr(PluginLoader, "reload_plugin", lambda self, p_id: None)
+
+    store = PluginStore()
+    plugin_info = {
+        "id": f"{author}.{name}",
+        "download_url": "https://raw.githubusercontent.com/bheem1224/EchoSync/main/plugins/release.zip",
+        "version": "1.1.0",
+    }
+
+    # Should succeed without PrivilegeEscalationError even though force_consent=False
+    success = store.download_plugin(
+        plugin_info,
+        channel="stable",
+        force_consent=False,
+        is_update=True,
+        target_plugin_id=plugin_id_int,
+    )
+    assert success is True
+
+    # Confirm database permissions now have database.read_library
+    with config_db._get_connection() as conn:
+        c = conn.cursor()
+        c.execute("SELECT version, permissions FROM services WHERE plugin_id=?", (plugin_id_int,))
+        row = c.fetchone()
+        assert row["version"] == "1.1.0"
+        stored_perms = json.loads(row["permissions"])
+        assert stored_perms.get("database", {}).get("read_library") is True
+
+
+def test_services_deduplication_retains_canonical_manifest_crc32(temp_plugins_env):
+    """
+    Verifies that reconcile_services deduplicates multiple rows for the same plugin,
+    retaining the canonical row matching compute_plugin_crc32(manifest["id"].lower())
+    and removing obsolete duplicate entries (e.g. 1133147422 vs 1504368092).
+    """
+    plugins_dir = temp_plugins_env["plugins_dir"]
+    config_db = temp_plugins_env["config_db"]
+
+    author = "EchoSync"
+    name = "local_server"
+    plugin_dir = plugins_dir / author / name
+    plugin_dir.mkdir(parents=True, exist_ok=True)
+
+    manifest = {
+        "id": "EchoSync.local_server",
+        "name": "local_server",
+        "author": author,
+        "version": "2.4.2",
+        "display_name": "Local Server",
+    }
+    (plugin_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    (plugin_dir / "__init__.py").write_text("# Local server\n", encoding="utf-8")
+
+    from core.plugins.sdk import compute_plugin_crc32
+
+    canonical_crc = compute_plugin_crc32("echosync.local_server")  # 1504368092
+    obsolete_crc = 1133147422  # Old non-canonical CRC32
+
+    # Insert obsolete row
+    config_db.register_service(
+        name="Local Server",
+        service_type="media_server",
+        description="Old duplicate",
+        absolute_install_path=str(plugin_dir.resolve()),
+        plugin_id=obsolete_crc,
+        version="2.4.1",
+    )
+
+    # Run reconcile_services
+    from core.nexus_framework.plugin_loader import PluginLoader
+
+    loader = PluginLoader(plugins_dir.parent)
+    loader.reconcile_services()
+
+    # Verify obsolete entry is purged and canonical entry exists and is active
+    with config_db._get_connection() as conn:
+        c = conn.cursor()
+        c.execute("SELECT id, plugin_id, is_active FROM services WHERE plugin_id=?", (obsolete_crc,))
+        assert c.fetchone() is None
+
+        c.execute("SELECT id, plugin_id, is_active FROM services WHERE plugin_id=?", (canonical_crc,))
+        row = c.fetchone()
+        assert row is not None
+        assert row["plugin_id"] == canonical_crc
+        assert row["is_active"] == 1

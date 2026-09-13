@@ -19,57 +19,76 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
+    conn = op.get_bind()
+    from sqlalchemy.engine import reflection
+
+    inspector = reflection.Inspector.from_engine(conn)
+
     # 1. Alter playback_history table
-    # Drop old index and constraint
-    with op.batch_alter_table("playback_history", schema=None) as batch_op:
-        batch_op.drop_index("ix_playback_history_provider_item_id")
-        batch_op.drop_constraint("uq_playback_history", type_="unique")
+    if inspector.has_table("playback_history"):
+        cols = [c["name"] for c in inspector.get_columns("playback_history")]
+        if "provider_item_id" in cols:
+            # Drop old index and constraint
+            with op.batch_alter_table("playback_history", schema=None) as batch_op:
+                try:
+                    batch_op.drop_index("ix_playback_history_provider_item_id")
+                except Exception:
+                    pass
+                try:
+                    batch_op.drop_constraint("uq_playback_history", type_="unique")
+                except Exception:
+                    pass
 
-    # Rename column
-    with op.batch_alter_table("playback_history", schema=None) as batch_op:
-        batch_op.alter_column(
-            "provider_item_id",
-            new_column_name="plugin_item_id",
-            existing_type=sa.String(),
-            nullable=False,
-        )
+            # Rename column
+            with op.batch_alter_table("playback_history", schema=None) as batch_op:
+                batch_op.alter_column(
+                    "provider_item_id",
+                    new_column_name="plugin_item_id",
+                    existing_type=sa.String(),
+                    nullable=False,
+                )
 
-    # Create new index and constraint
-    with op.batch_alter_table("playback_history", schema=None) as batch_op:
-        batch_op.create_index(
-            batch_op.f("ix_playback_history_plugin_item_id"),
-            ["plugin_item_id"],
-            unique=False,
-        )
-        batch_op.create_unique_constraint(
-            "uq_playback_history", ["user_id", "plugin_item_id", "listened_at"]
-        )
+            # Create new index and constraint
+            with op.batch_alter_table("playback_history", schema=None) as batch_op:
+                batch_op.create_index(
+                    batch_op.f("ix_playback_history_plugin_item_id"),
+                    ["plugin_item_id"],
+                    unique=False,
+                )
+                batch_op.create_unique_constraint("uq_playback_history", ["user_id", "plugin_item_id", "listened_at"])
 
     # 2. Alter media_server_playlist_items table
-    # Drop old index and constraint
-    with op.batch_alter_table("media_server_playlist_items", schema=None) as batch_op:
-        batch_op.drop_index("ix_media_server_playlist_items_provider_item_id")
-        batch_op.drop_constraint("uq_playlist_item", type_="unique")
+    if inspector.has_table("media_server_playlist_items"):
+        cols = [c["name"] for c in inspector.get_columns("media_server_playlist_items")]
+        if "provider_item_id" in cols:
+            # Drop old index and constraint
+            with op.batch_alter_table("media_server_playlist_items", schema=None) as batch_op:
+                try:
+                    batch_op.drop_index("ix_media_server_playlist_items_provider_item_id")
+                except Exception:
+                    pass
+                try:
+                    batch_op.drop_constraint("uq_playlist_item", type_="unique")
+                except Exception:
+                    pass
 
-    # Rename column
-    with op.batch_alter_table("media_server_playlist_items", schema=None) as batch_op:
-        batch_op.alter_column(
-            "provider_item_id",
-            new_column_name="plugin_item_id",
-            existing_type=sa.String(),
-            nullable=False,
-        )
+            # Rename column
+            with op.batch_alter_table("media_server_playlist_items", schema=None) as batch_op:
+                batch_op.alter_column(
+                    "provider_item_id",
+                    new_column_name="plugin_item_id",
+                    existing_type=sa.String(),
+                    nullable=False,
+                )
 
-    # Create new index and constraint
-    with op.batch_alter_table("media_server_playlist_items", schema=None) as batch_op:
-        batch_op.create_index(
-            batch_op.f("ix_media_server_playlist_items_plugin_item_id"),
-            ["plugin_item_id"],
-            unique=False,
-        )
-        batch_op.create_unique_constraint(
-            "uq_playlist_item", ["playlist_id", "plugin_item_id"]
-        )
+            # Create new index and constraint
+            with op.batch_alter_table("media_server_playlist_items", schema=None) as batch_op:
+                batch_op.create_index(
+                    batch_op.f("ix_media_server_playlist_items_plugin_item_id"),
+                    ["plugin_item_id"],
+                    unique=False,
+                )
+                batch_op.create_unique_constraint("uq_playlist_item", ["playlist_id", "plugin_item_id"])
 
 
 def downgrade() -> None:
@@ -95,9 +114,7 @@ def downgrade() -> None:
             ["provider_item_id"],
             unique=False,
         )
-        batch_op.create_unique_constraint(
-            "uq_playlist_item", ["playlist_id", "provider_item_id"]
-        )
+        batch_op.create_unique_constraint("uq_playlist_item", ["playlist_id", "provider_item_id"])
 
     # 2. Reverse playback_history table
     # Drop new index and constraint
@@ -116,9 +133,5 @@ def downgrade() -> None:
 
     # Recreate old index and constraint
     with op.batch_alter_table("playback_history", schema=None) as batch_op:
-        batch_op.create_index(
-            "ix_playback_history_provider_item_id", ["provider_item_id"], unique=False
-        )
-        batch_op.create_unique_constraint(
-            "uq_playback_history", ["user_id", "provider_item_id", "listened_at"]
-        )
+        batch_op.create_index("ix_playback_history_provider_item_id", ["provider_item_id"], unique=False)
+        batch_op.create_unique_constraint("uq_playback_history", ["user_id", "provider_item_id", "listened_at"])

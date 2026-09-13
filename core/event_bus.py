@@ -194,6 +194,9 @@ class EventBus:
         # Push to background dispatcher queue to avoid blocking publisher thread
         import copy
 
+        if not self._running or not self._dispatcher or not self._dispatcher.is_alive():
+            self.start()
+
         self._queue.put((event_name, copy.deepcopy(payload), serialized, specific, universal))
 
     def publish(self, *args, **kwargs):

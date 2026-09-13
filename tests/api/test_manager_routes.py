@@ -53,7 +53,7 @@ def test_get_suggestion_queue_serialization(client):
                 "score": 0.98,
                 "originator": "Consensus Engine",
                 "action_needed": "DELETE_LOW_QUALITY",
-                "track_id": 42,
+                "track_id": 999999,
             },
             status="pending",
         )
@@ -89,7 +89,7 @@ def test_get_suggestion_queue_serialization(client):
         assert s1["album"] == "A Night at the Opera"
         assert s1["score"] == 0.98
         assert s1["status"] == "pending"
-        assert s1["track_id"] == 42
+        assert s1["track_id"] == 999999
         assert s1["type"] == "HYGIENE_DUPLICATION"
         assert s1["account_id"] == account_id
 
@@ -168,9 +168,7 @@ def test_get_suggestion_queue_hydrates_duplicate_payload(client: TestClient):
         assert data.get("success") is True
 
         suggestions = data.get("suggestions", [])
-        dup_sugg = next(
-            (s for s in suggestions if s["sync_id"] == "sync-dup-test-1"), None
-        )
+        dup_sugg = next((s for s in suggestions if s["sync_id"] == "sync-dup-test-1"), None)
         assert dup_sugg is not None
 
         # Verify title formatted to "{Artist} - {Title} (Duplicate)"
@@ -196,9 +194,7 @@ def test_get_suggestion_queue_hydrates_duplicate_payload(client: TestClient):
         assert loser["file_path"] == "/music/Eagles/Hotel California.mp3"
 
         # Test swap endpoint
-        swap_resp = client.post(
-            "/api/v1/system/manager/suggestions/sync-dup-test-1/swap"
-        )
+        swap_resp = client.post("/api/v1/system/manager/suggestions/sync-dup-test-1/swap")
         assert swap_resp.status_code == 200
         swap_data = swap_resp.json()
         assert swap_data.get("success") is True
@@ -207,7 +203,6 @@ def test_get_suggestion_queue_hydrates_duplicate_payload(client: TestClient):
 
     finally:
         with work_db.session_scope() as session:
-            session.query(SuggestionStagingQueue).filter(
-                SuggestionStagingQueue.sync_id == "sync-dup-test-1"
-            ).delete(synchronize_session=False)
-
+            session.query(SuggestionStagingQueue).filter(SuggestionStagingQueue.sync_id == "sync-dup-test-1").delete(
+                synchronize_session=False
+            )

@@ -117,14 +117,29 @@ def register_database_update_job(interval_seconds: int = 21600, enabled: bool = 
             total_successful_operations = 0
 
             # Step 1: Run Local Server first if available
-            from core.nexus_framework.plugin_loader import generate_plugin_id
+            from core.plugins.sdk import compute_plugin_crc32
 
-            local_server_id = generate_plugin_id("echosync.local server")
+            canonical_local_id = compute_plugin_crc32("echosync.local_server")
+            local_server_candidates = [
+                canonical_local_id,
+            ]
+            local_server_id = None
+            for cand_id in local_server_candidates:
+                if PluginRegistry.get_plugin_class(cand_id) and not PluginRegistry.is_plugin_disabled(cand_id):
+                    local_server_id = cand_id
+                    break
+
+            if local_server_id is None:
+                for p_id in PluginRegistry.get_plugins_by_type("mediaserver", exclude_disabled=True):
+                    p_cls = PluginRegistry.get_plugin_class(p_id)
+                    p_name = getattr(p_cls, "name", "").lower() if p_cls else ""
+                    if "local" in p_name:
+                        local_server_id = p_id
+                        break
+
             local_success = False
 
-            if PluginRegistry.get_plugin_class(local_server_id) and not PluginRegistry.is_plugin_disabled(
-                local_server_id
-            ):
+            if local_server_id is not None:
                 try:
                     local_provider = PluginRegistry.create_instance(local_server_id)
                     if local_provider:

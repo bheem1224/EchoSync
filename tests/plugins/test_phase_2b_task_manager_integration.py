@@ -69,15 +69,16 @@ def test_tiered_logger_rejects_out_of_range_plugin_id():
 
 
 def test_slskd_eventbus_callbacks_spawn_supervised_threads():
-    """Verify that SLSKD EventBus callbacks spawn supervised threads with OwnerType.PLUGIN."""
     from plugins.EchoSync.slskd.plugin import PLUGIN_CRC32
+    from core.event_bus import event_bus
+
+    # Ensure event bus dispatcher is actively running before patching supervisor
+    event_bus.start()
 
     # Simulate dispatching from a thread with no running event loop
     spawn_mock = MagicMock(return_value=(MagicMock(), "mock_reg_id"))
     with patch.object(supervisor, "spawn_supervised_thread", spawn_mock):
         with patch("asyncio.get_running_loop", side_effect=RuntimeError("no running event loop")):
-            from core.event_bus import event_bus
-
             # Publish event that triggers slskd subscriber
             event_bus.publish({"event": "SERVICE_DEGRADED", "service": "slskd"})
 

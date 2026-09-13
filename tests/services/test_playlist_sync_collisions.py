@@ -793,16 +793,16 @@ def test_unidentifiable_file_ejection_and_cascade_purge(tmp_path, monkeypatch):
     service = LibrarySyncService(database_path=str(db_file))
     service.sync_library(scan_mode="force_rescan")
 
-    # File should no longer be in library directory
-    assert not bad_file.exists()
-    # File should have moved to quarantine subdirectory
+    # File must be retained in library directory (non-destructive invariant)
+    assert bad_file.exists()
+    # File should NOT have moved to quarantine subdirectory
     ejected_file = dl_dir / "quarantine" / "corrupted_untagged.wav"
-    assert ejected_file.exists()
+    assert not ejected_file.exists()
 
-    # DB state should be cleanly cascade-purged
+    # DB state should be preserved without destructive purge
     with db.session_factory() as session:
-        assert session.query(LocalMedia).count() == 0
-        assert session.query(Track).count() == 0
+        assert session.query(LocalMedia).count() == 1
+        assert session.query(Track).count() == 1
 
 
 def test_tightened_ejection_preserves_valid_tagged_and_inferred_tracks(tmp_path, monkeypatch):

@@ -24,7 +24,9 @@ class PrivilegeEscalationError(Exception):
         super().__init__("Privilege escalation detected")
 
 
-def compute_permission_delta(current_manifest: dict, new_manifest: dict) -> list[dict]:
+def compute_permission_delta(
+    current_manifest: dict, new_manifest: dict, filter_safe_scopes: bool = False
+) -> list[dict]:
     """
     Computes newly requested permissions between current_manifest and new_manifest.
     Returns a list of escalation dictionaries:
@@ -114,6 +116,9 @@ def compute_permission_delta(current_manifest: dict, new_manifest: dict) -> list
                 "description": f"Requests file system access to paths: {', '.join(added_fs)}",
             }
         )
+
+    if filter_safe_scopes:
+        escalations = [e for e in escalations if e.get("scope") not in ("database.read_library", "read_library")]
 
     return escalations
 
@@ -883,7 +888,7 @@ class PluginStore:
                             finally:
                                 conn.close()
 
-                        escalations = compute_permission_delta(old_manifest, new_manifest)
+                        escalations = compute_permission_delta(old_manifest, new_manifest, filter_safe_scopes=True)
 
                         if escalations:
                             logger.warning(
@@ -1155,25 +1160,28 @@ class PluginStore:
                             synth_perms["wasm_fs_access"] = new_manifest["wasm_fs_access"]
                         manifest_permissions = json.dumps(synth_perms)
 
+                    canonical_manifest_id = new_manifest.get("id") or strict_namespace
+                    clean_id_str = str(canonical_manifest_id).strip().lower()
                     computed_plugin_id = (
                         target_plugin_id
                         if target_plugin_id
-                        else binascii.crc32(strict_namespace.lower().encode("utf-8")) & 0xFFFFFFFF
+                        else binascii.crc32(clean_id_str.encode("utf-8")) & 0xFFFFFFFF
                     )
                     int_plugin_id = computed_plugin_id
 
-                    db.register_service(
-                        name=manifest_name,
-                        service_type=manifest_type,
-                        description=manifest_desc,
-                        absolute_install_path=str(target_dir.resolve()),
-                        plugin_id=computed_plugin_id,
-                        version=manifest_version,
-                        beta_opt_in=1 if channel == "beta" else 0,
-                        verified_source=manifest_verified,
-                        privileged_mode=manifest_privileged,
-                        permissions=manifest_permissions,
-                    )
+                    with db_write_lease(task_name="update_plugin_service"):
+                        db.register_service(
+                            name=manifest_name,
+                            service_type=manifest_type,
+                            description=manifest_desc,
+                            absolute_install_path=str(target_dir.resolve()),
+                            plugin_id=computed_plugin_id,
+                            version=manifest_version,
+                            beta_opt_in=1 if channel == "beta" else 0,
+                            verified_source=manifest_verified,
+                            privileged_mode=manifest_privileged,
+                            permissions=manifest_permissions,
+                        )
 
                     logger.info(
                         f"Synchronized database state for plugin {strict_namespace} (CRC32: {computed_plugin_id})"
@@ -1588,27 +1596,28 @@ class PluginStore:
                 logger.debug(f"Raw exception data: {e}", exc_info=True)
 
             # 4. Delete config keys, UI components, and remove from services table
-            conn = db._open_connection()
-            try:
-                c = conn.cursor()
-                c.execute(
-                    "CREATE TABLE IF NOT EXISTS config_kvs (plugin_id INTEGER, key TEXT, value TEXT, is_sensitive INTEGER, created_at INTEGER, updated_at INTEGER, PRIMARY KEY(plugin_id, key))"
-                )
-                c.execute("DELETE FROM config_kvs WHERE plugin_id=?", (db_plugin_id,))
-                c.execute("DELETE FROM config_kvs WHERE plugin_id=?", (service_id,))
+            with db_write_lease(task_name="plugin_store_uninstall"):
+                conn = db._open_connection()
+                try:
+                    c = conn.cursor()
+                    c.execute(
+                        "CREATE TABLE IF NOT EXISTS config_kvs (plugin_id INTEGER, key TEXT, value TEXT, is_sensitive INTEGER, created_at INTEGER, updated_at INTEGER, PRIMARY KEY(plugin_id, key))"
+                    )
+                    c.execute("DELETE FROM config_kvs WHERE plugin_id=?", (db_plugin_id,))
+                    c.execute("DELETE FROM config_kvs WHERE plugin_id=?", (service_id,))
 
-                # Delete config keys from service_config table
-                c.execute("DELETE FROM service_config WHERE service_id=?", (service_id,))
+                    # Delete config keys from service_config table
+                    c.execute("DELETE FROM service_config WHERE service_id=?", (service_id,))
 
-                # Sprint 6: Explicit UI Registry teardown (do NOT rely on FK CASCADE)
-                c.execute("DELETE FROM ui_components WHERE plugin_id=?", (db_plugin_id,))
-                c.execute("DELETE FROM ui_components WHERE plugin_id=?", (service_id,))
-                logger.info(f"[UIRegistry] Purged UI components for plugin {db_plugin_id}")
+                    # Sprint 6: Explicit UI Registry teardown (do NOT rely on FK CASCADE)
+                    c.execute("DELETE FROM ui_components WHERE plugin_id=?", (db_plugin_id,))
+                    c.execute("DELETE FROM ui_components WHERE plugin_id=?", (service_id,))
+                    logger.info(f"[UIRegistry] Purged UI components for plugin {db_plugin_id}")
 
-                c.execute("DELETE FROM services WHERE id=?", (service_id,))
-                conn.commit()
-            finally:
-                conn.close()
+                    c.execute("DELETE FROM services WHERE id=?", (service_id,))
+                    conn.commit()
+                finally:
+                    conn.close()
 
             # 4b. Delete working state KVS entries to prevent orphaned data
             try:

@@ -83,7 +83,7 @@ class TokenBucketRateLimiter:
             if wait_time > 0:
                 step = 0.1
                 elapsed_wait = 0.0
-                while elapsed_wait < wait_time:
+                while elapsed_wait + 1e-7 < wait_time:
                     if supervisor.is_current_task_cancelled():
                         return
                     sleep_dur = min(step, wait_time - elapsed_wait)

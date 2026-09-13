@@ -121,5 +121,5 @@ class TestRateLimiting:
             # Should sleep for roughly 1.0s
             # Logic: delta = 0, min_interval = 1.0. sleep(1.0 - 0)
             mock_sleep.assert_called()
-            args, _ = mock_sleep.call_args
-            assert 0.99 < args[0] <= 1.0
+            total_slept = sum(call.args[0] for call in mock_sleep.call_args_list)
+            assert 0.99 < total_slept <= 1.01

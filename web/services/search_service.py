@@ -377,6 +377,14 @@ class SearchAdapter:
                     chunk = q.get(timeout=0.2)
                 except queue.Empty:
                     if not t.is_alive():
+                        while not q.empty():
+                            try:
+                                chunk = q.get_nowait()
+                                if chunk is None:
+                                    break
+                                yield chunk
+                            except queue.Empty:
+                                break
                         break
                     continue
                 if chunk is None:

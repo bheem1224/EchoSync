@@ -19,6 +19,7 @@ def test_music_migrations_single_head():
     assert music_ini.exists(), "database/migrations/music/alembic.ini must exist"
 
     cfg = Config(str(music_ini))
+    cfg.set_main_option("script_location", str(music_ini.parent))
     script = ScriptDirectory.from_config(cfg)
     heads = script.get_heads()
 
@@ -32,6 +33,7 @@ def test_music_migrations_strict_linearity():
     music_ini = repo_root / "database" / "migrations" / "music" / "alembic.ini"
 
     cfg = Config(str(music_ini))
+    cfg.set_main_option("script_location", str(music_ini.parent))
     script = ScriptDirectory.from_config(cfg)
 
     head_rev = script.get_revision("d4a8e2b9c1f0")

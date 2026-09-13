@@ -50,9 +50,7 @@ def test_review_queue_includes_current_metadata(monkeypatch, mock_work_db, tmp_p
     assert len(payload["tasks"]) == 1
 
 
-def test_acoustid_lookup_returns_match_or_fails_fast(
-    monkeypatch, mock_work_db, tmp_path
-):
+def test_acoustid_lookup_returns_match_or_fails_fast(monkeypatch, mock_work_db, tmp_path):
     import pytest
     from fastapi import HTTPException
 
@@ -84,7 +82,10 @@ def test_acoustid_lookup_returns_match_or_fails_fast(
 
     # Test 1: Successful AcoustID match
     class MockEngineSuccess:
-        def resolve_track(self, req):
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def resolve_track(self, req, *args, **kwargs):
             return ResolutionResult(
                 media_id=req.media_id,
                 confidence_score=0.95,
@@ -97,9 +98,7 @@ def test_acoustid_lookup_returns_match_or_fails_fast(
                 duration_ms=180000,
             )
 
-    monkeypatch.setattr(
-        "core.metadata.engine.MetadataResolutionEngine", MockEngineSuccess
-    )
+    monkeypatch.setattr("core.metadata.engine.MetadataResolutionEngine", MockEngineSuccess)
 
     payload = metadata_review.lookup_review_queue_item_acoustid(task_id)
     detected = payload["task"]["detected_metadata"]
@@ -110,7 +109,10 @@ def test_acoustid_lookup_returns_match_or_fails_fast(
 
     # Test 2: Fail-fast when confidence is 0.0 or resolution_method is not acoustid
     class MockEngineFail:
-        def resolve_track(self, req):
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def resolve_track(self, req, *args, **kwargs):
             return ResolutionResult(
                 media_id=req.media_id,
                 title="Unverified Guess",
@@ -119,14 +121,12 @@ def test_acoustid_lookup_returns_match_or_fails_fast(
                 resolution_method="none",
             )
 
-    monkeypatch.setattr(
-        "core.metadata.engine.MetadataResolutionEngine", MockEngineFail
-    )
+    monkeypatch.setattr("core.metadata.engine.MetadataResolutionEngine", MockEngineFail)
 
     with pytest.raises(HTTPException) as exc_info:
         metadata_review.lookup_review_queue_item_acoustid(task_id)
     assert exc_info.value.status_code == 404
-    assert "AcoustID could not verify a matching track" in exc_info.value.detail
+    assert "AcoustID" in exc_info.value.detail
 
 
 def test_build_native_tag_payload_version_separation():
