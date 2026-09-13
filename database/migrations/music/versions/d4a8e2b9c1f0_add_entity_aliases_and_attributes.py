@@ -1,7 +1,7 @@
 """add_entity_aliases_and_attributes
 
 Revision ID: d4a8e2b9c1f0
-Revises: e2f3a4b5c6d7
+Revises: a1b2c3d4e5f6
 Create Date: 2026-09-12 20:00:00.000000
 
 """
@@ -13,7 +13,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "d4a8e2b9c1f0"
-down_revision: str | None = "e2f3a4b5c6d7"
+down_revision: str | None = "a1b2c3d4e5f6"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
