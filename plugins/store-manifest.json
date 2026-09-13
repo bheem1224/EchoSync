@@ -247,10 +247,21 @@
       "version": "2.4.2",
       "author": "EchoSync",
       "type": "language_pack",
+      "permissions": {
+        "database": {
+          "read_library": true,
+          "mutate_aliases": true,
+          "mutate_attributes": true
+        },
+        "network_domains": [
+          "vgmdb.info",
+          "musicbrainz.org"
+        ]
+      },
       "requirements": [],
       "hooks": [],
       "min_echosync_version": "2.4.0",
-      "beta_version": "2.4.3-beta.28",
+      "beta_version": "2.4.3-beta.29",
       "display_name": "CJK Language Pack",
       "plugin_id": "cjk_language_pack",
       "source_url": "https://github.com/bheem1224/EchoSync/tree/main/plugins/EchoSync/cjk_language_pack",
