@@ -44,12 +44,16 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, cast
 
+from core.plugins.sdk import compute_plugin_crc32
+from core.task_manager.task_queue import db_write_lease
 from core.tiered_logger import get_logger
 
 if TYPE_CHECKING:
     from core.plugins.hook_manager import HookManager
 
-logger = get_logger("cjk_language_pack")
+PLUGIN_NAMESPACE = "EchoSync.cjk_language_pack"
+PLUGIN_CRC32 = compute_plugin_crc32(PLUGIN_NAMESPACE)
+logger = get_logger("cjk_language_pack", plugin_id=PLUGIN_CRC32)
 
 
 # ---------------------------------------------------------------------------
@@ -392,7 +396,7 @@ class CJKLanguagePackPlugin(PluginBase):
         music_db = get_database()
         processed = 0
 
-        with music_db.get_session() as session:
+        with db_write_lease(task_name=f"plugin_{PLUGIN_CRC32}"), music_db.get_session() as session:
             tracks = (
                 session.query(Track)
                 .filter(

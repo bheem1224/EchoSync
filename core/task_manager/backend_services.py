@@ -17,8 +17,6 @@ from collections.abc import Iterable
 from typing import Any
 
 from core.tiered_logger import get_logger, setup_logging
-from services.download_manager import get_download_manager
-from services.library_watcher import get_library_watcher
 
 logger = get_logger("backend")
 
@@ -100,14 +98,15 @@ async def start_services() -> None:
     downloads_cfg = storage.get_service_config("system", "downloads") or {}
     auto_start_downloads = downloads_cfg.get("auto_start", False)
 
+    from services.download_manager import get_download_manager
+    from services.library_watcher import get_library_watcher
+
     download_manager = get_download_manager()
     if auto_start_downloads:
         await download_manager.start_background_task()
         logger.info("Download Manager auto-start enabled")
     else:
-        logger.info(
-            "Download Manager auto-start is disabled (downloads will not run on startup)"
-        )
+        logger.info("Download Manager auto-start is disabled (downloads will not run on startup)")
 
     # Start real-time library file watcher
     library_watcher = get_library_watcher()

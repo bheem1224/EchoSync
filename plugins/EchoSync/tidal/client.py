@@ -1,7 +1,6 @@
 import base64
 import hashlib
 import secrets
-import threading
 import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -14,9 +13,14 @@ from core.nexus_framework.plugin_SDK import (
     SearchCapabilities,
     SyncServiceProvider,
 )
+from core.plugins.sdk import compute_plugin_crc32
+from core.task_manager.models import OwnerType, ProcessCategory
+from core.task_manager.supervisor import supervisor
 from core.tiered_logger import get_logger
 
-logger = get_logger("tidal_client")
+PLUGIN_NAMESPACE = "EchoSync.tidal"
+PLUGIN_CRC32 = compute_plugin_crc32(PLUGIN_NAMESPACE)
+logger = get_logger("tidal_client", plugin_id=PLUGIN_CRC32)
 
 
 class Track:
@@ -42,9 +46,7 @@ class TidalClient(SyncServiceProvider):
     capabilities = ProviderCapabilities(
         name="EchoSync.tidal",
         supports_playlists=PlaylistSupport.READ,
-        search=SearchCapabilities(
-            tracks=True, artists=True, albums=True, playlists=True
-        ),
+        search=SearchCapabilities(tracks=True, artists=True, albums=True, playlists=True),
         metadata=MetadataRichness.HIGH,
         supports_cover_art=True,
         supports_lyrics=False,
@@ -59,11 +61,7 @@ class TidalClient(SyncServiceProvider):
         # Generate a high-entropy code verifier (43-128 chars)
         verifier = secrets.token_urlsafe(64)[:128]
         # Create the code challenge (SHA256, then base64-url-encoded, no padding)
-        challenge = (
-            base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest())
-            .decode()
-            .rstrip("=")
-        )
+        challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).decode().rstrip("=")
         self.code_verifier = verifier
         self.code_challenge = challenge
         return verifier, challenge
@@ -103,9 +101,7 @@ class TidalClient(SyncServiceProvider):
     def _refresh_access_token(self):
         """Refresh the Tidal access token using the refresh token."""
         if not self.refresh_token or not self.client_id:
-            logger.error(
-                "Cannot refresh Tidal token: missing refresh_token or client_id"
-            )
+            logger.error("Cannot refresh Tidal token: missing refresh_token or client_id")
             return False
         data = {
             "grant_type": "refresh_token",
@@ -128,9 +124,7 @@ class TidalClient(SyncServiceProvider):
                         sdk.accounts.save_token(
                             account_id=int(self.account_id),
                             access_token=self.access_token,
-                            refresh_token=self.refresh_token
-                            if self.refresh_token
-                            else None,
+                            refresh_token=self.refresh_token if self.refresh_token else None,
                             expires_at=int(self.token_expires_at),
                         )
                         sdk.accounts.mark_account_authenticated(int(self.account_id))
@@ -139,9 +133,7 @@ class TidalClient(SyncServiceProvider):
                 logger.info("Tidal access token refreshed successfully")
                 return True
             else:
-                logger.error(
-                    f"Failed to refresh Tidal token: {response.status_code} - {response.text}"
-                )
+                logger.error(f"Failed to refresh Tidal token: {response.status_code} - {response.text}")
                 return False
         except Exception as e:
             logger.error(f"Exception during Tidal token refresh: {e}")
@@ -216,12 +208,8 @@ class TidalClient(SyncServiceProvider):
 
     def get_user_playlists(self, user_id: str | None = None) -> list[dict[str, Any]]:
         """Fetch user playlists with detailed metadata."""
-        print(
-            f"🔵 [TIDAL] get_user_playlists called! user_id={user_id}, has_token={bool(self.access_token)}"
-        )
-        logger.info(
-            f"[TIDAL] get_user_playlists called with user_id={user_id}, access_token={bool(self.access_token)}"
-        )
+        print(f"🔵 [TIDAL] get_user_playlists called! user_id={user_id}, has_token={bool(self.access_token)}")
+        logger.info(f"[TIDAL] get_user_playlists called with user_id={user_id}, access_token={bool(self.access_token)}")
 
         if not self.access_token:
             print("❌ [TIDAL] No access token available!")
@@ -239,22 +227,14 @@ class TidalClient(SyncServiceProvider):
                 print(f"🔵 [TIDAL] Fetching user info from {user_url}")
                 logger.info(f"[TIDAL] Fetching user info from {user_url}")
                 user_response = self.http.get(user_url, headers=headers)
-                print(
-                    f"🔵 [TIDAL] User info response status: {user_response.status_code}"
-                )
+                print(f"🔵 [TIDAL] User info response status: {user_response.status_code}")
                 user_response.raise_for_status()
                 user_data = user_response.json().get("data", {})
                 print(f"🔵 [TIDAL] User data: {user_data}")
                 user_id = user_data.get("id")
-                self.country_code = user_data.get("attributes", {}).get(
-                    "countryCode", "US"
-                )
-                print(
-                    f"✅ [TIDAL] Resolved user_id={user_id}, country_code={self.country_code}"
-                )
-                logger.info(
-                    f"[TIDAL] Resolved user_id={user_id}, country_code={self.country_code}"
-                )
+                self.country_code = user_data.get("attributes", {}).get("countryCode", "US")
+                print(f"✅ [TIDAL] Resolved user_id={user_id}, country_code={self.country_code}")
+                logger.info(f"[TIDAL] Resolved user_id={user_id}, country_code={self.country_code}")
             except Exception as e:
                 print(f"❌ [TIDAL] Failed to fetch user info: {e}")
                 logger.error(f"[TIDAL] Failed to fetch user info: {e}", exc_info=True)
@@ -286,9 +266,7 @@ class TidalClient(SyncServiceProvider):
             # Debug: print structure
             print(f"🔵 [TIDAL] Response keys: {data.keys()}")
             print(f"🔵 [TIDAL] data type: {type(data.get('data'))}")
-            print(
-                f"🔵 [TIDAL] data.relationships keys: {data.get('data', {}).get('relationships', {}).keys()}"
-            )
+            print(f"🔵 [TIDAL] data.relationships keys: {data.get('data', {}).get('relationships', {}).keys()}")
 
             included = data.get("included", [])
             print(f"🔵 [TIDAL] Number of included items: {len(included)}")
@@ -298,18 +276,12 @@ class TidalClient(SyncServiceProvider):
             playlists_rel = relationships.get("playlists", {})
             rel_playlists = playlists_rel.get("data", [])
 
-            print(
-                f"🔵 [TIDAL] Number of playlists in relationships.playlists.data: {len(rel_playlists)}"
-            )
+            print(f"🔵 [TIDAL] Number of playlists in relationships.playlists.data: {len(rel_playlists)}")
 
             logger.info(f"[TIDAL] API Response status: {response.status_code}")
 
             # Build lookup for included playlists
-            playlist_map = {
-                item.get("id"): item
-                for item in included
-                if item.get("type") == "playlists"
-            }
+            playlist_map = {item.get("id"): item for item in included if item.get("type") == "playlists"}
             print(f"🔵 [TIDAL] Built playlist_map with {len(playlist_map)} items")
 
             # Iterate relationships.playlists.data for stable ordering
@@ -329,12 +301,8 @@ class TidalClient(SyncServiceProvider):
                     "track_count": attributes.get("numberOfItems"),
                 }
                 playlists.append(playlist_dict)
-                print(
-                    f"✅ [TIDAL] Added playlist {playlist_dict['name']} (tracks={playlist_dict['track_count']})"
-                )
-                logger.info(
-                    f"[TIDAL] Added playlist: {playlist_dict['name']} (id={playlist_id})"
-                )
+                print(f"✅ [TIDAL] Added playlist {playlist_dict['name']} (tracks={playlist_dict['track_count']})")
+                logger.info(f"[TIDAL] Added playlist: {playlist_dict['name']} (id={playlist_id})")
             print(f"✅ [TIDAL] Total playlists parsed: {len(playlists)}")
             logger.info(f"[TIDAL] Total playlists parsed: {len(playlists)}")
         except Exception as e:
@@ -352,29 +320,21 @@ class TidalClient(SyncServiceProvider):
         # Stub implementation
         return False
 
-    def add_tracks_to_playlist(
-        self, playlist_id: str, provider_track_ids: list[str]
-    ) -> bool:
+    def add_tracks_to_playlist(self, playlist_id: str, provider_track_ids: list[str]) -> bool:
         """
         Tidal is currently read-only for playlists.
         This method is not yet implemented for write operations.
         """
-        logger.warning(
-            "add_tracks_to_playlist is not yet implemented for Tidal provider (read-only)"
-        )
+        logger.warning("add_tracks_to_playlist is not yet implemented for Tidal provider (read-only)")
         # Stub implementation
         return False
 
-    def remove_tracks_from_playlist(
-        self, playlist_id: str, provider_track_ids: list[str]
-    ) -> bool:
+    def remove_tracks_from_playlist(self, playlist_id: str, provider_track_ids: list[str]) -> bool:
         """
         Tidal is currently read-only for playlists.
         This method is not supported for write operations.
         """
-        raise NotImplementedError(
-            "Tidal provider does not support write-mode playlist manipulation"
-        )
+        raise NotImplementedError("Tidal provider does not support write-mode playlist manipulation")
 
     def get_track(self, track_id: str) -> dict:
         # Stub implementation
@@ -401,9 +361,7 @@ class TidalClient(SyncServiceProvider):
             # Log a warning if they are missing
             if not self.client_id or not self.client_secret:
                 return False
-            logger.info(
-                f"Loaded Tidal config from database with client ID: {self.client_id[:8]}..."
-            )
+            logger.info(f"Loaded Tidal config from database with client ID: {self.client_id[:8]}...")
             return True
         except Exception as e:
             logger.error(f"Failed to load Tidal configuration: {e}")
@@ -427,9 +385,7 @@ class TidalClient(SyncServiceProvider):
     def _start_callback_server(self):
         """Start HTTP server to receive OAuth callback"""
         # Skip starting server in Docker/production mode - web server handles callbacks
-        if self.sdk.config.get("FLASK_ENV") == "production" or self.sdk.config.get(
-            "IS_DOCKER"
-        ):
+        if self.sdk.config.get("FLASK_ENV") == "production" or self.sdk.config.get("IS_DOCKER"):
             logger.info(
                 "Docker/WebUI mode detected - skipping TidalClient callback server (web server handles callbacks)"
             )
@@ -449,23 +405,17 @@ class TidalClient(SyncServiceProvider):
 
                 if "code" in query_params:
                     tidal_client_ref.auth_code = query_params["code"][0]
-                    logger.info(
-                        f"Received Tidal authorization code: {tidal_client_ref.auth_code[:10]}..."
-                    )
+                    logger.info(f"Received Tidal authorization code: {tidal_client_ref.auth_code[:10]}...")
 
                     # Send success response
                     self.send_response(200)
                     self.send_header("Content-type", "text/html")
                     self.end_headers()
-                    self.wfile.write(
-                        b"<h1>Success!</h1><p>You can close this window and return to Echosync.</p>"
-                    )
+                    self.wfile.write(b"<h1>Success!</h1><p>You can close this window and return to Echosync.</p>")
                 elif "error" in query_params:
                     # Handle OAuth errors
                     error = query_params.get("error", ["unknown"])[0]
-                    error_description = query_params.get(
-                        "error_description", ["No description"]
-                    )[0]
+                    error_description = query_params.get("error_description", ["No description"])[0]
                     logger.error(f"Tidal OAuth error: {error} - {error_description}")
 
                     self.send_response(400)
@@ -479,9 +429,7 @@ class TidalClient(SyncServiceProvider):
                     self.send_response(400)
                     self.send_header("Content-type", "text/html")
                     self.end_headers()
-                    self.wfile.write(
-                        b"<h1>Error</h1><p>Authorization failed - no code received.</p>"
-                    )
+                    self.wfile.write(b"<h1>Error</h1><p>Authorization failed - no code received.</p>")
 
             def log_message(self, format, *args):
                 pass  # Suppress server logs
@@ -489,13 +437,20 @@ class TidalClient(SyncServiceProvider):
         try:
             port = 8889
             self.auth_server = HTTPServer(("localhost", port), CallbackHandler)
-            server_thread = threading.Thread(
-                target=self.auth_server.serve_forever,
-                daemon=True,
-                name="TidalOAuthSidecar",
+            logger.warning(
+                "DEPRECATION WARNING: Tidal OAuth sidecar HTTP server on port 8889 is deprecated; "
+                "migrate to EchoSync's centralized HTTPS sidecar via SDK."
             )
-            server_thread.start()
-            logger.info(f"Started Tidal callback server on port {port}")
+            server_thread, reg_id = supervisor.spawn_supervised_thread(
+                target=self.auth_server.serve_forever,
+                name="TidalOAuthSidecar",
+                owner_id=str(PLUGIN_CRC32),
+                owner_type=OwnerType.PLUGIN,
+                category=ProcessCategory.WORKER_THREAD,
+                bound_to_general_pool=False,
+            )
+            self._auth_server_reg_id = reg_id
+            logger.info(f"Started Tidal callback server on port {port} (registration: {reg_id})")
         except Exception as e:
             logger.error(f"Failed to start Tidal callback server: {e}")
 
@@ -529,9 +484,7 @@ class TidalClient(SyncServiceProvider):
                 logger.info("Successfully exchanged Tidal code for tokens")
                 return True
             else:
-                logger.error(
-                    f"Failed to exchange Tidal code: {response.status_code} - {response.text}"
-                )
+                logger.error(f"Failed to exchange Tidal code: {response.status_code} - {response.text}")
                 return False
 
         except Exception as e:
@@ -554,6 +507,10 @@ class TidalClient(SyncServiceProvider):
                 logger.warning(f"Error shutting down Tidal OAuth sidecar: {e}")
             finally:
                 self.auth_server = None
+                reg_id = getattr(self, "_auth_server_reg_id", None)
+                if reg_id:
+                    supervisor.unregister_process(reg_id)
+                    self._auth_server_reg_id = None
 
     def fetch_token_from_code(self, auth_code: str) -> bool:
         """Exchange authorization code for access tokens (for web server callback)"""
@@ -563,9 +520,7 @@ class TidalClient(SyncServiceProvider):
                 return False
 
             logger.info(f"Starting token exchange with code: {auth_code[:20]}...")
-            logger.info(
-                f"PKCE verifier present: verifier_len={len(self.code_verifier)}"
-            )
+            logger.info(f"PKCE verifier present: verifier_len={len(self.code_verifier)}")
             logger.info(f"Redirect URI: {self.redirect_uri}")
 
             self.auth_code = auth_code
@@ -627,9 +582,7 @@ class TidalClient(SyncServiceProvider):
 
                     if response.status_code == 200:
                         data = response.json()
-                        logger.info(
-                            f"User data keys: {list(data.keys()) if isinstance(data, dict) else 'Not a dict'}"
-                        )
+                        logger.info(f"User data keys: {list(data.keys()) if isinstance(data, dict) else 'Not a dict'}")
 
                         # --- START OF CORRECTION ---
                         # Correctly parse the nested JSON structure from your example
@@ -639,12 +592,7 @@ class TidalClient(SyncServiceProvider):
 
                         # Fallback to the original checks for other API responses
                         if not user_id:
-                            user_id = (
-                                data.get("id")
-                                or data.get("userId")
-                                or data.get("uid")
-                                or data.get("user_id")
-                            )
+                            user_id = data.get("id") or data.get("userId") or data.get("uid") or data.get("user_id")
                         # --- END OF CORRECTION ---
 
                         if user_id:
@@ -653,9 +601,7 @@ class TidalClient(SyncServiceProvider):
                         else:
                             logger.warning(f"No user ID found in response: {data}")
                     else:
-                        logger.warning(
-                            f"Failed to get user ID: {response.status_code} - {response.text[:200]}"
-                        )
+                        logger.warning(f"Failed to get user ID: {response.status_code} - {response.text[:200]}")
 
                 except Exception as e:
                     logger.warning(f"Error getting user ID from {version}: {e}")
@@ -716,22 +662,14 @@ class TidalClient(SyncServiceProvider):
         tracks_data = tracks_resp.json()
         # Parse tracks from included
         included = tracks_data.get("included", [])
-        id_to_artist = {
-            a["id"]: a["attributes"]["name"] for a in included if a["type"] == "artists"
-        }
-        id_to_album = {
-            a["id"]: a["attributes"]["title"] for a in included if a["type"] == "albums"
-        }
+        id_to_artist = {a["id"]: a["attributes"]["name"] for a in included if a["type"] == "artists"}
+        id_to_album = {a["id"]: a["attributes"]["title"] for a in included if a["type"] == "albums"}
         track_objs = []
         for item in tracks_data.get("data", []):
             if item["type"] == "playlistItems":
                 track_id = item["relationships"]["track"]["data"]["id"]
                 track_info = next(
-                    (
-                        t
-                        for t in included
-                        if t["type"] == "tracks" and t["id"] == track_id
-                    ),
+                    (t for t in included if t["type"] == "tracks" and t["id"] == track_id),
                     None,
                 )
                 if track_info:
@@ -740,9 +678,7 @@ class TidalClient(SyncServiceProvider):
                         for a in track_info["relationships"]["artists"]["data"]
                         if a["id"] in id_to_artist
                     ]
-                    album = id_to_album.get(
-                        track_info["relationships"]["album"]["data"]["id"], None
-                    )
+                    album = id_to_album.get(track_info["relationships"]["album"]["data"]["id"], None)
                     track_objs.append(
                         Track(
                             id=track_id,
@@ -752,9 +688,7 @@ class TidalClient(SyncServiceProvider):
                             duration=track_info["attributes"].get("duration"),
                         )
                     )
-        return Playlist(
-            meta.get("id"), meta.get("attributes", {}).get("name"), track_objs
-        )
+        return Playlist(meta.get("id"), meta.get("attributes", {}).get("name"), track_objs)
 
     def get_playlist_by_id(self, playlist_id: str) -> dict:
         """Fetch a specific playlist by ID from Tidal API."""
@@ -770,9 +704,7 @@ class TidalClient(SyncServiceProvider):
             if response.status_code == 200:
                 return response.json()
             else:
-                logger.error(
-                    f"Failed to fetch Tidal playlist {playlist_id}: {response.status_code} - {response.text}"
-                )
+                logger.error(f"Failed to fetch Tidal playlist {playlist_id}: {response.status_code} - {response.text}")
                 return {}
         except Exception as e:
             logger.error(f"Exception while fetching Tidal playlist {playlist_id}: {e}")
@@ -781,9 +713,7 @@ class TidalClient(SyncServiceProvider):
     def get_saved_tracks(self) -> list:
         """Fetch user's saved tracks from Tidal API."""
         if not self.access_token:
-            logger.error(
-                "TidalClient: Missing access token. Cannot fetch saved tracks."
-            )
+            logger.error("TidalClient: Missing access token. Cannot fetch saved tracks.")
             return []
 
         url = f"{self.base_url}/users/me/tracks"
@@ -794,9 +724,7 @@ class TidalClient(SyncServiceProvider):
             if response.status_code == 200:
                 return response.json().get("items", [])
             else:
-                logger.error(
-                    f"Failed to fetch Tidal saved tracks: {response.status_code} - {response.text}"
-                )
+                logger.error(f"Failed to fetch Tidal saved tracks: {response.status_code} - {response.text}")
                 return []
         except Exception as e:
             logger.error(f"Exception while fetching Tidal saved tracks: {e}")

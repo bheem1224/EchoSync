@@ -1,6 +1,16 @@
+import inspect
+import queue
 import threading
 import time
 from typing import Any
+
+from core.task_manager.models import OwnerType, ProcessCategory
+from core.task_manager.supervisor import supervisor
+from core.tiered_logger import get_logger
+
+logger = get_logger("core.event_bus")
+
+_SHUTDOWN_SENTINEL = object()
 
 
 class EventBus:
@@ -14,55 +24,96 @@ class EventBus:
         self._lock = threading.Lock()
         self._events: dict[str, list[dict[str, Any]]] = {}
         self._subscribers: dict[str, list] = {}
-        import queue
-
         self._queue = queue.Queue()
-        self._dispatcher = threading.Thread(target=self._dispatcher_loop, daemon=True)
-        self._dispatcher.start()
+        self._dispatcher: threading.Thread | None = None
+        self._reg_id: str | None = None
+        self._running = False
+        self.start()
+
+    def start(self) -> None:
+        """Start the background event dispatcher thread if not already running."""
+        with self._lock:
+            if self._running and self._dispatcher and self._dispatcher.is_alive():
+                return
+            self._running = True
+            self._dispatcher, self._reg_id = supervisor.spawn_supervised_thread(
+                target=self._dispatcher_loop,
+                name="EventBusDispatcher",
+                owner_id="core.event_bus",
+                owner_type=OwnerType.CORE,
+                category=ProcessCategory.CORE_SYSTEM,
+                bound_to_general_pool=False,
+            )
+
+    def stop(self, timeout: float = 5.0) -> None:
+        """Gracefully stop the event dispatcher thread, draining all queued events."""
+        with self._lock:
+            if not self._running:
+                return
+            self._running = False
+
+        # Signal shutdown sentinel
+        self._queue.put(_SHUTDOWN_SENTINEL)
+
+        if self._dispatcher and self._dispatcher.is_alive():
+            self._dispatcher.join(timeout=timeout)
+            if self._dispatcher.is_alive():
+                logger.warning(f"EventBus dispatcher thread did not terminate within {timeout}s")
+            self._dispatcher = None
+        if self._reg_id:
+            supervisor.unregister_process(self._reg_id)
+            self._reg_id = None
 
     def _dispatcher_loop(self):
-        import inspect
-        import logging
-
         while True:
             try:
-                event_name, payload, serialized, specific, universal = self._queue.get()
+                item = self._queue.get()
+                if item is _SHUTDOWN_SENTINEL:
+                    self._queue.task_done()
+                    # Drain any remaining events before exiting
+                    while not self._queue.empty():
+                        try:
+                            remaining = self._queue.get_nowait()
+                            if remaining is not _SHUTDOWN_SENTINEL:
+                                self._dispatch_event(*remaining)
+                            self._queue.task_done()
+                        except queue.Empty:
+                            break
+                    break
 
-                for handler in specific:
-                    try:
-                        sig = inspect.signature(handler)
-                        if "_serialized" in sig.parameters or any(
-                            p.kind == inspect.Parameter.VAR_KEYWORD
-                            for p in sig.parameters.values()
-                        ):
-                            handler(payload, _serialized=serialized)
-                        else:
-                            handler(payload)
-                    except Exception as e:
-                        logging.getLogger("event_bus").error(
-                            f"Error in event handler for {event_name}: {e}",
-                            exc_info=True,
-                        )
-
-                for handler in universal:
-                    try:
-                        sig = inspect.signature(handler)
-                        if "_serialized" in sig.parameters or any(
-                            p.kind == inspect.Parameter.VAR_KEYWORD
-                            for p in sig.parameters.values()
-                        ):
-                            handler(payload, _serialized=serialized)
-                        else:
-                            handler(payload)
-                    except Exception as e:
-                        logging.getLogger("event_bus").error(
-                            f"Error in universal event handler: {e}", exc_info=True
-                        )
-
+                event_name, payload, serialized, specific, universal = item
+                self._dispatch_event(event_name, payload, serialized, specific, universal)
+                self._queue.task_done()
             except Exception as e:
-                logging.getLogger("event_bus").error(
-                    f"Fatal error in event dispatcher loop: {e}", exc_info=True
+                logger.error(f"Fatal error in event dispatcher loop: {e}", exc_info=True)
+
+    def _dispatch_event(self, event_name, payload, serialized, specific, universal):
+        for handler in specific:
+            try:
+                sig = inspect.signature(handler)
+                if "_serialized" in sig.parameters or any(
+                    p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+                ):
+                    handler(payload, _serialized=serialized)
+                else:
+                    handler(payload)
+            except Exception as e:
+                logger.error(
+                    f"Error in event handler for {event_name}: {e}",
+                    exc_info=True,
                 )
+
+        for handler in universal:
+            try:
+                sig = inspect.signature(handler)
+                if "_serialized" in sig.parameters or any(
+                    p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+                ):
+                    handler(payload, _serialized=serialized)
+                else:
+                    handler(payload)
+            except Exception as e:
+                logger.error(f"Error in universal event handler: {e}", exc_info=True)
 
     def subscribe(self, event_name_or_handler, handler=None):
         if handler is None:
@@ -143,9 +194,7 @@ class EventBus:
         # Push to background dispatcher queue to avoid blocking publisher thread
         import copy
 
-        self._queue.put(
-            (event_name, copy.deepcopy(payload), serialized, specific, universal)
-        )
+        self._queue.put((event_name, copy.deepcopy(payload), serialized, specific, universal))
 
     def publish(self, *args, **kwargs):
         # Handle Phase-2 target API: publish(payload_dict)
@@ -166,9 +215,7 @@ class EventBus:
             data = args[2] if len(args) > 2 else kwargs.get("data", {})
 
             # Send to lightweight subscribers too just in case
-            self.publish_lightweight(
-                {"event": event_type, "channel": channel, "data": data}
-            )
+            self.publish_lightweight({"event": event_type, "channel": channel, "data": data})
 
             # Legacy logic
             payload = data or {}
@@ -186,13 +233,9 @@ class EventBus:
 
         # Fallback if someone uses kwargs?
         if "channel" in kwargs and "event_type" in kwargs:
-            return self.publish(
-                kwargs["channel"], kwargs["event_type"], kwargs.get("data", {})
-            )
+            return self.publish(kwargs["channel"], kwargs["event_type"], kwargs.get("data", {}))
 
-    def get_events(
-        self, channel: str, since_id: int | None = None
-    ) -> list[dict[str, Any]]:
+    def get_events(self, channel: str, since_id: int | None = None) -> list[dict[str, Any]]:
         """Return events for a channel optionally after a given event id."""
         with self._lock:
             bucket = self._events.get(channel, [])

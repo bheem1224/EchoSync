@@ -78,9 +78,7 @@ _REVIEW_QUEUE_BACKOFF: timedelta = timedelta(hours=48)
 _TEMP_EXTENSIONS: tuple[str, ...] = (".tmp", ".part", ".crdownload")
 
 
-def _is_path_component_ignored(
-    file_path: str | Path, ignored_directories: set[str] | None = None
-) -> bool:
+def _is_path_component_ignored(file_path: str | Path, ignored_directories: set[str] | None = None) -> bool:
     """Check if a file or directory path contains an ignored path component."""
     if ignored_directories is None:
         ignored_directories = {"poor_metadata", "incomplete", "quarantine"}
@@ -90,9 +88,7 @@ def _is_path_component_ignored(
         if bool(parts_lower.intersection(ignored_directories)):
             return True
         name_lower = p.name.lower()
-        if name_lower.endswith(_TEMP_EXTENSIONS) or any(
-            part.lower().endswith(_TEMP_EXTENSIONS) for part in p.parts
-        ):
+        if name_lower.endswith(_TEMP_EXTENSIONS) or any(part.lower().endswith(_TEMP_EXTENSIONS) for part in p.parts):
             return True
     except Exception:
         pass
@@ -124,12 +120,11 @@ class AutoImportService:
         if library_root is not None:
             self.library_root = Path(library_root)
         else:
-            _lib = config_manager.get("storage.library_dir") or config_manager.get(
-                "library_dir"
-            )
+            _lib = config_manager.get("storage.library_dir") or config_manager.get("library_dir")
             self.library_root = Path(_lib) if _lib else None
         self.enhancer = RetroactiveEnhancer()
         from core.metadata.engine import MetadataResolutionEngine
+
         self.engine = MetadataResolutionEngine()
         self._scan_lock = threading.Lock()
         self._processing_lock = threading.Lock()
@@ -151,16 +146,8 @@ class AutoImportService:
                 return
 
             target_isrc = (track_data.get("isrc") or "").strip().upper()
-            target_artist = (
-                (track_data.get("artist_name") or track_data.get("artist") or "")
-                .strip()
-                .lower()
-            )
-            target_title = (
-                (track_data.get("title") or track_data.get("raw_title") or "")
-                .strip()
-                .lower()
-            )
+            target_artist = (track_data.get("artist_name") or track_data.get("artist") or "").strip().lower()
+            target_title = (track_data.get("title") or track_data.get("raw_title") or "").strip().lower()
             target_dur = track_data.get("duration_ms") or track_data.get("duration")
 
             if not target_isrc and (not target_artist or not target_title):
@@ -169,55 +156,29 @@ class AutoImportService:
             work_db = get_working_database()
             evicted_count = 0
             with work_db.session_scope() as session:
-                pending_tasks = (
-                    session.query(ReviewTask)
-                    .filter(ReviewTask.status == "pending")
-                    .all()
-                )
+                pending_tasks = session.query(ReviewTask).filter(ReviewTask.status == "pending").all()
                 for task in pending_tasks:
                     cand_meta = task.detected_metadata or {}
                     cand_data = task.track_data or {}
-                    cand_isrc = (
-                        (cand_meta.get("isrc") or cand_data.get("isrc") or "")
-                        .strip()
-                        .upper()
-                    )
+                    cand_isrc = (cand_meta.get("isrc") or cand_data.get("isrc") or "").strip().upper()
 
                     is_match = False
                     if target_isrc and cand_isrc and target_isrc == cand_isrc:
                         is_match = True
                     else:
                         cand_artist = (
-                            (
-                                cand_meta.get("artist")
-                                or cand_data.get("artist")
-                                or cand_data.get("artist_name")
-                                or ""
-                            )
+                            (cand_meta.get("artist") or cand_data.get("artist") or cand_data.get("artist_name") or "")
                             .strip()
                             .lower()
                         )
                         cand_title = (
-                            (
-                                cand_meta.get("title")
-                                or cand_data.get("title")
-                                or cand_data.get("raw_title")
-                                or ""
-                            )
+                            (cand_meta.get("title") or cand_data.get("title") or cand_data.get("raw_title") or "")
                             .strip()
                             .lower()
                         )
 
-                        if (
-                            target_artist
-                            and target_title
-                            and cand_artist
-                            and cand_title
-                        ):
-                            if (
-                                target_artist == cand_artist
-                                and target_title == cand_title
-                            ):
+                        if target_artist and target_title and cand_artist and cand_title:
+                            if target_artist == cand_artist and target_title == cand_title:
                                 cand_dur = (
                                     cand_data.get("duration_ms")
                                     or cand_data.get("duration")
@@ -247,10 +208,7 @@ class AutoImportService:
                         if task.file_path:
                             try:
                                 file_p = Path(task.file_path)
-                                if (
-                                    "poor_metadata" in {p.lower() for p in file_p.parts}
-                                    and file_p.exists()
-                                ):
+                                if "poor_metadata" in {p.lower() for p in file_p.parts} and file_p.exists():
                                     file_p.unlink(missing_ok=True)
                                     logger.info(
                                         "Deleted quarantined orphan file: %s",
@@ -269,9 +227,7 @@ class AutoImportService:
                     evicted_count,
                 )
         except Exception as e:
-            logger.error(
-                "Error handling TRACK_IMPORTED in auto_importer: %s", e, exc_info=True
-            )
+            logger.error("Error handling TRACK_IMPORTED in auto_importer: %s", e, exc_info=True)
 
     @classmethod
     def get_instance(cls):
@@ -283,14 +239,19 @@ class AutoImportService:
 
     @classmethod
     def enqueue_scan(cls, force_scan: bool = True) -> None:
-        """Trigger an asynchronous auto-import scan in a background thread."""
-        t = threading.Thread(
-            target=cls.get_instance().scan_and_process,
-            kwargs={"force_scan": force_scan},
-            daemon=True,
-            name="auto_importer_ejected_scan",
-        )
-        t.start()
+        """Trigger an asynchronous auto-import scan managed by JobQueue."""
+        from core.enums import TaskCategory
+        from core.task_manager.task_queue import job_queue
+
+        instance = cls.get_instance()
+        if "auto_import_scan" not in job_queue._jobs:
+            job_queue.register_job(
+                name="auto_import_scan",
+                func=instance.scan_and_process,
+                category=TaskCategory.GENERAL,
+                params={"force_scan": force_scan},
+            )
+        job_queue.trigger_job_by_name("auto_import_scan", params={"force_scan": force_scan})
 
     # ── Watchdog lifecycle ────────────────────────────────────────────────────
 
@@ -301,22 +262,16 @@ class AutoImportService:
         is not started — the scheduled ``scan_and_process`` job acts as the
         fallback in that case.
         """
-        _dl = config_manager.get("storage.download_dir") or config_manager.get(
-            "download_dir"
-        )
+        _dl = config_manager.get("storage.download_dir") or config_manager.get("download_dir")
         download_dir = Path(_dl) if _dl else None
         if not download_dir:
-            logger.info(
-                "Auto-importer watchdog: download directory not configured — "
-                "relying on scheduled scan only."
-            )
+            logger.info("Auto-importer watchdog: download directory not configured — relying on scheduled scan only.")
             return
 
         download_path = Path(download_dir)
         if not download_path.exists():
             logger.info(
-                "Auto-importer watchdog: download directory does not exist yet (%s) — "
-                "relying on scheduled scan only.",
+                "Auto-importer watchdog: download directory does not exist yet (%s) — relying on scheduled scan only.",
                 download_path,
             )
             return
@@ -378,9 +333,7 @@ class AutoImportService:
             with work_db.session_scope() as session:
                 aged_tasks = (
                     session.query(ReviewTask)
-                    .filter(
-                        ReviewTask.status == "pending", ReviewTask.updated_at < cutoff
-                    )
+                    .filter(ReviewTask.status == "pending", ReviewTask.updated_at < cutoff)
                     .all()
                 )
                 for t in aged_tasks:
@@ -393,9 +346,7 @@ class AutoImportService:
             logger.debug("No aged review tasks pending re-evaluation (>7 days).")
             return
 
-        logger.info(
-            f"Found {len(tasks_to_retry)} aged review task(s) for re-evaluation (>7 days old)."
-        )
+        logger.info(f"Found {len(tasks_to_retry)} aged review task(s) for re-evaluation (>7 days old).")
 
         meta_config = config_manager.get("metadata_enhancement") or {}
         auto_import = meta_config.get("auto_import", False)
@@ -410,11 +361,7 @@ class AutoImportService:
                 logger.info(f"Aged review task file no longer on disk: {file_path_str}")
                 try:
                     with work_db.session_scope() as session:
-                        task = (
-                            session.query(ReviewTask)
-                            .filter(ReviewTask.id == task_id)
-                            .first()
-                        )
+                        task = session.query(ReviewTask).filter(ReviewTask.id == task_id).first()
                         if task:
                             task.last_checked_at = utc_now()
                             task.updated_at = utc_now()
@@ -427,19 +374,11 @@ class AutoImportService:
 
                 req = ResolutionRequest(media_id=f"review_{task_id}", file_path=p)
                 res = self.engine.resolve_track(req)
-                metadata = (
-                    res.to_dict()
-                    if (res.success and res.musicbrainz_track_id)
-                    else None
-                )
+                metadata = res.to_dict() if (res.success and res.musicbrainz_track_id) else None
                 confidence = res.confidence_score
                 now = utc_now()
                 with work_db.session_scope() as session:
-                    task = (
-                        session.query(ReviewTask)
-                        .filter(ReviewTask.id == task_id)
-                        .first()
-                    )
+                    task = session.query(ReviewTask).filter(ReviewTask.id == task_id).first()
                     if task:
                         task.last_checked_at = now
                         task.updated_at = now
@@ -449,34 +388,22 @@ class AutoImportService:
 
                 if metadata and confidence >= confidence_threshold:
                     if auto_import:
-                        logger.info(
-                            f"Aged task match found and auto_import is True; importing: {p}"
-                        )
+                        logger.info(f"Aged task match found and auto_import is True; importing: {p}")
                         self.finalize_import(p, metadata)
                     else:
-                        logger.info(
-                            f"Aged task match found but auto_import is False for {p}"
-                        )
+                        logger.info(f"Aged task match found but auto_import is False for {p}")
             except Exception as err:
-                logger.warning(
-                    f"Failed to re-evaluate aged review task #{task_id} ({file_path_str}): {err}"
-                )
+                logger.warning(f"Failed to re-evaluate aged review task #{task_id} ({file_path_str}): {err}")
                 try:
                     with work_db.session_scope() as session:
-                        task = (
-                            session.query(ReviewTask)
-                            .filter(ReviewTask.id == task_id)
-                            .first()
-                        )
+                        task = session.query(ReviewTask).filter(ReviewTask.id == task_id).first()
                         if task:
                             task.last_checked_at = utc_now()
                             task.updated_at = utc_now()
                 except Exception:
                     pass
 
-    def scan_and_process(
-        self, force_scan: bool = False, params: dict[str, Any] | None = None, **kwargs
-    ):
+    def scan_and_process(self, force_scan: bool = False, params: dict[str, Any] | None = None, **kwargs):
         """Scan download directory for audio files and process them."""
         import time
 
@@ -486,15 +413,11 @@ class AutoImportService:
         if force_scan:
             params["force_scan"] = True
         if not self._scan_lock.acquire(blocking=False):
-            logger.info(
-                "Auto-import scan skipped: Another scan/process is already running."
-            )
+            logger.info("Auto-import scan skipped: Another scan/process is already running.")
             return
 
         try:
-            with acquire_library_lock(
-                task_name="auto_import_scan", blocking=False
-            ) as acquired:
+            with acquire_library_lock(task_name="auto_import_scan", blocking=False) as acquired:
                 if not acquired:
                     logger.info(
                         "Auto-import scan skipped: Library sync or another library operation is currently running."
@@ -503,29 +426,21 @@ class AutoImportService:
 
                 meta_config = config_manager.get("metadata_enhancement") or {}
                 if not meta_config.get("enabled", True):
-                    logger.info(
-                        "Auto-import scan skipped: Feature disabled in settings."
-                    )
+                    logger.info("Auto-import scan skipped: Feature disabled in settings.")
                     return
 
-                _dl = config_manager.get("storage.download_dir") or config_manager.get(
-                    "download_dir"
-                )
+                _dl = config_manager.get("storage.download_dir") or config_manager.get("download_dir")
                 download_dir = Path(_dl) if _dl else None
                 logger.debug(f"Download directory from config: {download_dir}")
                 logger.debug(f"Download directory type: {type(download_dir)}")
-                logger.debug(
-                    f"Download directory exists: {download_dir.exists() if download_dir else 'None'}"
-                )
+                logger.debug(f"Download directory exists: {download_dir.exists() if download_dir else 'None'}")
 
                 if not download_dir:
                     logger.error("Download directory is None!")
                     return
 
                 if not download_dir.exists():
-                    logger.warning(
-                        f"Auto-import scan skipped: Download directory does not exist ({download_dir})"
-                    )
+                    logger.warning(f"Auto-import scan skipped: Download directory does not exist ({download_dir})")
                     logger.debug(f"Attempted to access: {download_dir.resolve()}")
                     return
 
@@ -548,11 +463,7 @@ class AutoImportService:
 
                 for root, dirs, files in os.walk(download_dir):
                     # Filter out poor_metadata, incomplete, quarantine, and temporary directories
-                    dirs[:] = [
-                        d
-                        for d in dirs
-                        if not _is_path_component_ignored(Path(root) / d)
-                    ]
+                    dirs[:] = [d for d in dirs if not _is_path_component_ignored(Path(root) / d)]
                     logger.debug(f"Scanning directory: {root}")
                     logger.debug(f"Found {len(files)} files in {root}")
                     for file in files:
@@ -569,33 +480,23 @@ class AutoImportService:
                                 f_size = os.path.getsize(path)
                                 f_mtime = os.path.getmtime(path)
                                 if f_size <= 65536:
-                                    logger.debug(
-                                        f"I/O safety guard: skipping file <= 64KB ({f_size} bytes): {path}"
-                                    )
+                                    logger.debug(f"I/O safety guard: skipping file <= 64KB ({f_size} bytes): {path}")
                                     continue
                                 if time.time() - f_mtime <= 15:
-                                    logger.debug(
-                                        f"I/O safety guard: skipping file within 15s cool-off: {path}"
-                                    )
+                                    logger.debug(f"I/O safety guard: skipping file within 15s cool-off: {path}")
                                     continue
                             except Exception as e:
-                                logger.debug(
-                                    f"I/O safety guard check failed for {path}: {e}"
-                                )
+                                logger.debug(f"I/O safety guard check failed for {path}: {e}")
                                 continue
 
                             # Check if file is ignored via DB check (avoids loading all ignored files into memory)
                             if self._is_path_ignored(str(path), params=params):
-                                logger.debug(
-                                    f"File is ignored in review queue, skipping: {path}"
-                                )
+                                logger.debug(f"File is ignored in review queue, skipping: {path}")
                                 continue
 
                             with self._processing_lock:
                                 if str(path) in self._processing_files:
-                                    logger.debug(
-                                        f"File already being processed, skipping: {path}"
-                                    )
+                                    logger.debug(f"File already being processed, skipping: {path}")
                                     continue
                             logger.debug(f"File not in ignored queue, adding: {path}")
                             files_to_process.append(path)
@@ -609,9 +510,7 @@ class AutoImportService:
                         stats["pending_review"] += batch_stats.get("pending_review", 0)
                         stats["failed"] += batch_stats.get("failed", 0)
                 else:
-                    logger.info(
-                        f"Auto-import scan completed: No new files found in {download_dir}"
-                    )
+                    logger.info(f"Auto-import scan completed: No new files found in {download_dir}")
 
                 logger.info(
                     f"[system] - Auto-import complete. Found: {stats['found']} | Imported: {stats['imported']} | Pending Review: {stats['pending_review']} | Failed: {stats['failed']}"
@@ -619,9 +518,7 @@ class AutoImportService:
         finally:
             self._scan_lock.release()
 
-    def _is_path_ignored(
-        self, file_path: str, params: dict[str, Any] | None = None
-    ) -> bool:
+    def _is_path_ignored(self, file_path: str, params: dict[str, Any] | None = None) -> bool:
         """Check if a file should be skipped by the scanner.
 
         Returns True for:
@@ -633,11 +530,7 @@ class AutoImportService:
         work_db = get_working_database()
         try:
             with work_db.session_scope() as session:
-                task = (
-                    session.query(ReviewTask)
-                    .filter(ReviewTask.file_path == file_path)
-                    .first()
-                )
+                task = session.query(ReviewTask).filter(ReviewTask.file_path == file_path).first()
                 if task is None:
                     return False
 
@@ -646,18 +539,14 @@ class AutoImportService:
 
                 if task.status == "pending":
                     if params and params.get("force_scan"):
-                        logger.info(
-                            "[system] - Force scan enabled: Bypassing cooldown queue."
-                        )
+                        logger.info("[system] - Force scan enabled: Bypassing cooldown queue.")
                     else:
                         # Use updated_at if available (column added in migration
                         # a1b2c3d4e5f6), otherwise fall back to created_at so the
                         # guard works even on databases that haven't been migrated
                         # yet (e.g. in CI / test environments running without a
                         # live Alembic upgrade).
-                        last_attempt = (
-                            getattr(task, "updated_at", None) or task.created_at
-                        )
+                        last_attempt = getattr(task, "updated_at", None) or task.created_at
                         if last_attempt is not None:
                             from time_utils import utc_now
 
@@ -693,13 +582,9 @@ class AutoImportService:
 
         from core.system_lock import acquire_library_lock
 
-        with acquire_library_lock(
-            task_name="auto_import_batch", blocking=True, timeout=60.0
-        ) as acquired:
+        with acquire_library_lock(task_name="auto_import_batch", blocking=True, timeout=60.0) as acquired:
             if not acquired:
-                logger.warning(
-                    "Auto-import process_batch timed out waiting for library lock."
-                )
+                logger.warning("Auto-import process_batch timed out waiting for library lock.")
                 return {"imported": 0, "pending_review": 0, "failed": len(files)}
 
             meta_config = config_manager.get("metadata_enhancement") or {}
@@ -724,9 +609,7 @@ class AutoImportService:
 
                 with self._processing_lock:
                     if file_key in self._processing_files:
-                        logger.debug(
-                            "File already being processed, skipping: %s", file_path
-                        )
+                        logger.debug("File already being processed, skipping: %s", file_path)
                         continue
                     self._processing_files.add(file_key)
 
@@ -758,9 +641,7 @@ class AutoImportService:
                             self._processing_files.discard(file_key)
                         continue
                 except Exception as stat_err:
-                    logger.warning(
-                        "I/O safety guard: error checking %s: %s", file_path, stat_err
-                    )
+                    logger.warning("I/O safety guard: error checking %s: %s", file_path, stat_err)
                     with self._processing_lock:
                         self._processing_files.discard(file_key)
                     continue
@@ -791,11 +672,7 @@ class AutoImportService:
                                 file_path=file_path,
                             )
                             res = self.engine.resolve_track(req)
-                            metadata = (
-                                res.to_dict()
-                                if (res.success and res.musicbrainz_track_id)
-                                else None
-                            )
+                            metadata = res.to_dict() if (res.success and res.musicbrainz_track_id) else None
                             confidence = res.confidence_score
 
                             # Finally Decide
@@ -804,9 +681,7 @@ class AutoImportService:
                                     self.finalize_import(file_path, metadata)
                                     batch_stats["imported"] += 1
                                 else:
-                                    logger.info(
-                                        f"Match found but auto_import is False for {file_path}"
-                                    )
+                                    logger.info(f"Match found but auto_import is False for {file_path}")
                                     self.enhancer.create_or_update_review_task(
                                         str(file_path),
                                         "Match found but auto_import is False",
@@ -836,9 +711,7 @@ class AutoImportService:
                                 )
                                 batch_stats["pending_review"] += 1
                             except Exception as e2:
-                                logger.error(
-                                    f"Failed to create review task for {file_path}: {e2}"
-                                )
+                                logger.error(f"Failed to create review task for {file_path}: {e2}")
                                 batch_stats["failed"] += 1
                         finally:
                             self._recently_completed[file_key] = time.time()
@@ -863,17 +736,13 @@ class AutoImportService:
         """
         # SAFETY CHECK: Ensure we have valid metadata before moving
         if not metadata or not isinstance(metadata, dict):
-            raise ValueError(
-                f"Cannot finalize import: invalid metadata for {file_path.name}"
-            )
+            raise ValueError(f"Cannot finalize import: invalid metadata for {file_path.name}")
 
         # Ensure critical fields exist
         required_fields = ["title", "artist"]
         missing = [field for field in required_fields if not metadata.get(field)]
         if missing:
-            raise ValueError(
-                f"Cannot finalize import: missing required metadata fields {missing} for {file_path.name}"
-            )
+            raise ValueError(f"Cannot finalize import: missing required metadata fields {missing} for {file_path.name}")
 
         # 1. Tag and verify
         self.enhancer.tag_file_verified(file_path, metadata)
@@ -882,9 +751,7 @@ class AutoImportService:
         self._move_file(file_path, metadata)
 
         # 3. Update Review Task status if it exists
-        self.enhancer.create_or_update_review_task(
-            file_path, metadata, 1.0, status="approved"
-        )
+        self.enhancer.create_or_update_review_task(file_path, metadata, 1.0, status="approved")
 
     def _move_file(self, file_path: Path, metadata: dict[str, Any]):
         """
@@ -897,11 +764,7 @@ class AutoImportService:
             )
 
             pref_lib_root, pattern = get_library_preferences()
-            base_library_path = (
-                str(self.library_root)
-                if getattr(self, "library_root", None)
-                else pref_lib_root
-            )
+            base_library_path = str(self.library_root) if getattr(self, "library_root", None) else pref_lib_root
             ext = file_path.suffix.lower().lstrip(".")
 
             dest_path = build_destination_path(
@@ -937,9 +800,7 @@ class AutoImportService:
             logger.info(f"Moved {file_path.name} → {moved_to}")
 
             # Prune empty source parent directories halting at download_dir
-            _dl = config_manager.get("storage.download_dir") or config_manager.get(
-                "download_dir"
-            )
+            _dl = config_manager.get("storage.download_dir") or config_manager.get("download_dir")
             stop_roots = {Path(_dl).resolve()} if _dl else set()
             prune_empty_parent_directories(file_path, stop_at_roots=stop_roots)
 
@@ -958,9 +819,7 @@ class AutoImportService:
         try:
             from core.utils.file_utils import prune_empty_parent_directories
 
-            _dl = config_manager.get("storage.download_dir") or config_manager.get(
-                "download_dir"
-            )
+            _dl = config_manager.get("storage.download_dir") or config_manager.get("download_dir")
             stop_roots = {Path(_dl).resolve()} if _dl else set()
             prune_empty_parent_directories(directory, stop_at_roots=stop_roots)
         except Exception:
@@ -973,9 +832,7 @@ def get_auto_importer():
 
 def register_auto_import_service():
     service = AutoImportService.get_instance()
-    logger.info(
-        "Auto Import Service initialized, watchdog started, and jobs registered"
-    )
+    logger.info("Auto Import Service initialized, watchdog started, and jobs registered")
 
 
 # ── Watchdog event handler ─────────────────────────────────────────────────────
@@ -1062,9 +919,7 @@ class _DownloadDirEventHandler(FileSystemEventHandler):
             )
             return
 
-        logger.info(
-            "Auto-importer watchdog: debounce elapsed — processing '%s'", p.name
-        )
+        logger.info("Auto-importer watchdog: debounce elapsed — processing '%s'", p.name)
         try:
             self._service.process_batch([p])
         except Exception as exc:

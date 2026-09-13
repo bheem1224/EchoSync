@@ -59,14 +59,17 @@ class TokenBucketRateLimiter:
             return False
 
     def wait(self, tokens: int = 1):
-        """Block until tokens are available."""
+        """Block until tokens are available, respecting cooperative task cancellation."""
+        from core.task_manager.supervisor import supervisor
+
         while True:
+            if supervisor.is_current_task_cancelled():
+                return
+
             with self._lock:
                 now = time.time()
                 elapsed = now - self.last_refill
-                self.tokens = min(
-                    self.capacity, self.tokens + elapsed * self.refill_rate
-                )
+                self.tokens = min(self.capacity, self.tokens + elapsed * self.refill_rate)
                 self.last_refill = now
 
                 if self.tokens >= tokens:
@@ -78,7 +81,14 @@ class TokenBucketRateLimiter:
                 wait_time = deficit / self.refill_rate
 
             if wait_time > 0:
-                time.sleep(wait_time)
+                step = 0.1
+                elapsed_wait = 0.0
+                while elapsed_wait < wait_time:
+                    if supervisor.is_current_task_cancelled():
+                        return
+                    sleep_dur = min(step, wait_time - elapsed_wait)
+                    time.sleep(sleep_dur)
+                    elapsed_wait += sleep_dur
 
 
 class GlobalRateLimiter:
@@ -114,9 +124,7 @@ class GlobalRateLimiter:
         with self._domains_lock:
             if domain not in self.domains:
                 # Capacity is set to 1.0 (burst size), refill_rate is rps
-                self.domains[domain] = TokenBucketRateLimiter(
-                    capacity=1.0, refill_rate=rps
-                )
+                self.domains[domain] = TokenBucketRateLimiter(capacity=1.0, refill_rate=rps)
             bucket = self.domains[domain]
 
         bucket.wait(1)

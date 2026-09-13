@@ -12,6 +12,7 @@ from packaging import version
 from core.path_security import PathTraversalError, resolve_safe_path, validate_zip_entry
 from core.request_manager import RequestManager
 from core.settings import config_manager
+from core.task_manager import db_write_lease
 
 logger = logging.getLogger(__name__)
 
@@ -1003,7 +1004,8 @@ class PluginStore:
                                     ]
                             finally:
                                 config_session.flush()
-                                config_session.commit()
+                                with db_write_lease(task_name="plugin_store_snapshot_config"):
+                                    config_session.commit()
                                 config_session.close()
                                 config_engine.dispose()
 
@@ -1016,7 +1018,8 @@ class PluginStore:
                                 ).fetchall()
                                 state_snapshot["kvs"] = [dict(row._mapping) for row in kvs_rows]
                                 session.flush()
-                                session.commit()
+                                with db_write_lease(task_name="plugin_store_snapshot_working"):
+                                    session.commit()
                             except Exception:
                                 session.rollback()
                                 raise
@@ -1284,7 +1287,8 @@ class PluginStore:
                                             config_session.add(tok)
 
                                         config_session.flush()
-                                        config_session.commit()
+                                        with db_write_lease(task_name="plugin_store_rollback_config"):
+                                            config_session.commit()
                                     except Exception as db_rollback_err:
                                         config_session.rollback()
                                         raise db_rollback_err
@@ -1310,7 +1314,8 @@ class PluginStore:
                                             },
                                         )
                                     session.flush()
-                                    session.commit()
+                                    with db_write_lease(task_name="plugin_store_rollback_working"):
+                                        session.commit()
                                 except Exception:
                                     session.rollback()
                                     raise
@@ -1631,7 +1636,8 @@ class PluginStore:
                         {"pid": str(service_id)},
                     )
                     session.flush()
-                    session.commit()
+                    with db_write_lease(task_name="plugin_store_uninstall"):
+                        session.commit()
                 except Exception:
                     session.rollback()
                     raise

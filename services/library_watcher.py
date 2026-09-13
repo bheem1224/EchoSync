@@ -58,6 +58,7 @@ from watchdog.observers import Observer  # type: ignore[import-untyped]
 from core.db.echo_sync_track import EchosyncMedia, EchosyncTrack
 from core.event_bus import event_bus
 from core.settings import config_manager
+from core.task_manager.task_queue import db_write_lease
 from core.tiered_logger import get_logger
 from database.music_database import get_database
 
@@ -118,9 +119,7 @@ def suppress_path(path: str) -> Generator[None, None, None]:
 _TEMP_EXTENSIONS: tuple[str, ...] = (".tmp", ".part", ".crdownload")
 
 
-def _is_path_ignored(
-    file_path: str, ignored_directories: set[str] | None = None
-) -> bool:
+def _is_path_ignored(file_path: str, ignored_directories: set[str] | None = None) -> bool:
     """Check if a file path belongs to an ignored directory or temp pattern."""
     if ignored_directories is None:
         ignored_directories = {"poor_metadata", "incomplete"}
@@ -130,9 +129,7 @@ def _is_path_ignored(
         if bool(parts_lower.intersection(ignored_directories)):
             return True
         name_lower = p.name.lower()
-        if name_lower.endswith(_TEMP_EXTENSIONS) or any(
-            part.lower().endswith(_TEMP_EXTENSIONS) for part in p.parts
-        ):
+        if name_lower.endswith(_TEMP_EXTENSIONS) or any(part.lower().endswith(_TEMP_EXTENSIONS) for part in p.parts):
             return True
     except Exception:
         pass
@@ -242,9 +239,7 @@ def _process_new_file(path: Path) -> None:
         try:
             tags = echosync_core.extract_metadata(str(path))
         except Exception as tag_err:
-            logger.warning(
-                "Watcher: tag extraction failed for %s: %s", path.name, tag_err
-            )
+            logger.warning("Watcher: tag extraction failed for %s: %s", path.name, tag_err)
 
         title: str = tags.get("title") or path.stem
         artist_name: str = tags.get("artist") or "Unknown Artist"
@@ -291,10 +286,9 @@ def _process_new_file(path: Path) -> None:
             with db.session_factory() as session:
                 repo = TrackRepository(session)
                 repo.bulk_upsert_tracks([track_obj])
-                session.commit()
-            logger.info(
-                "Watcher: DB upsert complete for '%s' by '%s'", title, artist_name
-            )
+                with db_write_lease(task_name="library_watcher"):
+                    session.commit()
+            logger.info("Watcher: DB upsert complete for '%s' by '%s'", title, artist_name)
         except Exception as db_err:
             logger.error("Watcher: DB upsert failed for %s: %s", path.name, db_err)
 
@@ -358,18 +352,12 @@ class LibraryWatcherService:
         to boot cleanly even before a user has pointed it at a library.
         """
         if self._started:
-            logger.warning(
-                "LibraryWatcherService.start() called more than once — ignoring"
-            )
+            logger.warning("LibraryWatcherService.start() called more than once — ignoring")
             return
 
-        library_dir = config_manager.get("storage.library_dir") or config_manager.get(
-            "library_dir"
-        )
+        library_dir = config_manager.get("storage.library_dir") or config_manager.get("library_dir")
         if not library_dir:
-            logger.warning(
-                "LibraryWatcherService: library directory is not configured — watcher disabled"
-            )
+            logger.warning("LibraryWatcherService: library directory is not configured — watcher disabled")
             return
 
         library_path = Path(library_dir)
@@ -437,9 +425,7 @@ class LibraryWatcherService:
             try:
                 self._observer.join(timeout=5)
             except Exception as exc:
-                logger.warning(
-                    "LibraryWatcherService: error joining observer thread: %s", exc
-                )
+                logger.warning("LibraryWatcherService: error joining observer thread: %s", exc)
 
         self._started = False
         logger.info("LibraryWatcherService stopped")

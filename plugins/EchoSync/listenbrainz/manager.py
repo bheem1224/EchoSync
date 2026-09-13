@@ -8,12 +8,14 @@ from typing import Any
 
 from core.job_queue import register_job
 from core.nexus_framework.plugin_SDK import PluginBase
-
-# (removed get_music_database import)
+from core.plugins.sdk import compute_plugin_crc32
 from core.request_manager import RateLimitConfig, RequestManager, RetryConfig
+from core.task_manager.task_queue import db_write_lease
 from core.tiered_logger import get_logger
 
-logger = get_logger("listenbrainz_metadata_provider")
+PLUGIN_NAMESPACE = "EchoSync.listenbrainz"
+PLUGIN_CRC32 = compute_plugin_crc32(PLUGIN_NAMESPACE)
+logger = get_logger("listenbrainz_metadata_provider", plugin_id=PLUGIN_CRC32)
 
 
 class ListenBrainzMetadataProvider(PluginBase):
@@ -75,9 +77,7 @@ class ListenBrainzMetadataProvider(PluginBase):
         """Authenticate with ListenBrainz"""
         return self.client.is_authenticated()
 
-    def search(
-        self, query: str, type: str = "track", limit: int = 10
-    ) -> list[dict[str, Any]]:
+    def search(self, query: str, type: str = "track", limit: int = 10) -> list[dict[str, Any]]:
         """ListenBrainz doesn't support search"""
         return []
 
@@ -97,9 +97,7 @@ class ListenBrainzMetadataProvider(PluginBase):
         """Get user's ListenBrainz playlists"""
         try:
             playlists = self.client.get_user_playlists()
-            return [
-                {"id": p.get("identifier"), "title": p.get("title")} for p in playlists
-            ]
+            return [{"id": p.get("identifier"), "title": p.get("title")} for p in playlists]
         except Exception as e:
             logger.error(f"Error fetching user playlists: {e}")
             return []
@@ -152,9 +150,7 @@ class ListenBrainzMetadataProvider(PluginBase):
             for playlist_type, fetch_func in playlist_types:
                 try:
                     playlists = fetch_func()
-                    logger.info(
-                        f"📋 Fetched {len(playlists)} {playlist_type} playlists"
-                    )
+                    logger.info(f"📋 Fetched {len(playlists)} {playlist_type} playlists")
 
                     for playlist in playlists:
                         result = self._sync_playlist(db, playlist, playlist_type)
@@ -218,9 +214,7 @@ class ListenBrainzMetadataProvider(PluginBase):
                 logger.info(f"🔄 '{title}' updated ({db_track_count} → {track_count})")
 
                 # Delete old tracks
-                cursor.execute(
-                    "DELETE FROM listenbrainz_tracks WHERE playlist_id = ?", (db_id,)
-                )
+                cursor.execute("DELETE FROM listenbrainz_tracks WHERE playlist_id = ?", (db_id,))
 
                 # Update playlist
                 cursor.execute(
@@ -262,7 +256,9 @@ class ListenBrainzMetadataProvider(PluginBase):
             if tracks and playlist_id:
                 self._insert_tracks(db, playlist_id, tracks)
 
-            db.conn.commit()
+            if db and hasattr(db, "conn") and db.conn:
+                with db_write_lease(task_name=f"plugin_{PLUGIN_CRC32}"):
+                    db.conn.commit()
             return result
 
         except Exception as e:
@@ -314,11 +310,11 @@ class ListenBrainzMetadataProvider(PluginBase):
                 ),
             )
 
-            track_data_list.append(
-                {"id": cursor.lastrowid, "release_mbid": release_mbid, "position": idx}
-            )
+            track_data_list.append({"id": cursor.lastrowid, "release_mbid": release_mbid, "position": idx})
 
-        db.conn.commit()
+        if db and hasattr(db, "conn") and db.conn:
+            with db_write_lease(task_name=f"plugin_{PLUGIN_CRC32}"):
+                db.conn.commit()
 
     def _fetch_cover_art_parallel(self, db, track_data_list: list[dict]):
         # Cover art fetching from coverartarchive.org has been removed.
@@ -354,14 +350,14 @@ class ListenBrainzMetadataProvider(PluginBase):
                         f"DELETE FROM listenbrainz_playlists WHERE id IN ({placeholders})",
                         tuple(old_ids),
                     )
-                    logger.info(
-                        f"🗑️ Removed {len(old_ids)} old {playlist_type} playlists"
-                    )
+                    logger.info(f"🗑️ Removed {len(old_ids)} old {playlist_type} playlists")
 
             except Exception as e:
                 logger.error(f"Error cleaning {playlist_type}: {e}")
 
-        db.conn.commit()
+        if db and hasattr(db, "conn") and db.conn:
+            with db_write_lease(task_name=f"plugin_{PLUGIN_CRC32}"):
+                db.conn.commit()
 
     # ========================================================================
     # Cache Query Methods

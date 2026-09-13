@@ -39,9 +39,7 @@ def trigger_library_scan(request: Request):
         active_server = active_servers[0] if active_servers else None
 
         if not active_server:
-            raise HTTPException(
-                status_code=400, detail={"error": "No active media server configured"}
-            )
+            raise HTTPException(status_code=400, detail={"error": "No active media server configured"})
 
         try:
             provider = PluginRegistry.create_instance(active_server)
@@ -56,18 +54,14 @@ def trigger_library_scan(request: Request):
         if not hasattr(provider, "trigger_library_scan"):
             raise HTTPException(
                 status_code=400,
-                detail={
-                    "error": f"Media server '{active_server}' does not support library scans"
-                },
+                detail={"error": f"Media server '{active_server}' does not support library scans"},
             )
 
         # Trigger scan
         success = provider.trigger_library_scan(path=path)
 
         if success:
-            logger.info(
-                f"Library scan initiated on {active_server} {f'(path: {path})' if path else ''}"
-            )
+            logger.info(f"Library scan initiated on {active_server} {f'(path: {path})' if path else ''}")
             return {
                 "success": True,
                 "server": active_server,
@@ -106,9 +100,7 @@ def get_library_scan_status(request: Request):
         active_server = active_servers[0] if active_servers else None
 
         if not active_server:
-            raise HTTPException(
-                status_code=400, detail={"error": "No active media server configured"}
-            )
+            raise HTTPException(status_code=400, detail={"error": "No active media server configured"})
 
         try:
             provider = PluginRegistry.create_instance(active_server)
@@ -123,9 +115,7 @@ def get_library_scan_status(request: Request):
         if not hasattr(provider, "get_scan_status"):
             raise HTTPException(
                 status_code=400,
-                detail={
-                    "error": f"Media server '{active_server}' does not support scan status"
-                },
+                detail={"error": f"Media server '{active_server}' does not support scan status"},
             )
 
         # Get status
@@ -174,9 +164,7 @@ def update_database(request: Request):
             )
 
         if not active_server:
-            raise HTTPException(
-                status_code=400, detail={"error": "No active media server configured"}
-            )
+            raise HTTPException(status_code=400, detail={"error": "No active media server configured"})
 
         # Check if update is already running
         with _db_update_lock:
@@ -222,9 +210,7 @@ def update_database(request: Request):
             )
             raise HTTPException(
                 status_code=500,
-                detail={
-                    "error": f"Media server '{active_server}' not available: {e!s}"
-                },
+                detail={"error": f"Media server '{active_server}' not available: {e!s}"},
             )
 
         if not provider:
@@ -236,10 +222,7 @@ def update_database(request: Request):
         # Ensure connection
         try:
             if not provider.ensure_connection():
-                msg = (
-                    f"Could not connect to {active_server}. "
-                    "Check your credentials in the provider settings."
-                )
+                msg = f"Could not connect to {active_server}. Check your credentials in the provider settings."
                 logger.error(
                     "update-database: ensure_connection() returned False for %s — "
                     "likely expired or missing credentials.",
@@ -268,22 +251,35 @@ def update_database(request: Request):
                 detail={"error": "Database update module not available"},
             )
 
-        # Create and start worker
+        # Create and start worker via JobQueue
         try:
             with _db_update_lock:
-                import threading
+                from core.task_manager.task_queue import job_queue
 
                 scan_mode_val = (
-                    "full_rebuild"
-                    if mode == "full"
-                    else ("force_rescan" if mode == "force" else "incremental")
+                    "full_rebuild" if mode == "full" else ("force_rescan" if mode == "force" else "incremental")
                 )
-                _db_update_worker = threading.Thread(
-                    target=LibrarySyncService().sync_library,
-                    kwargs={"scan_mode": scan_mode_val},
+
+                if "database_update" not in job_queue._jobs:
+                    from core.task_manager.system_jobs import register_database_update_job
+
+                    register_database_update_job()
+
+                job_queue.trigger_job_by_name(
+                    "database_update",
+                    params={"scan_mode": scan_mode_val, "full_refresh": (mode == "full")},
                 )
-                # Start worker thread
-                _db_update_worker.start()
+
+                class _JobStatusProxy:
+                    _job_name = "database_update"
+                    processed_artists = 0
+                    processed_albums = 0
+                    processed_tracks = 0
+                    successful_operations = 0
+                    failed_operations = 0
+                    warnings = []
+
+                _db_update_worker = _JobStatusProxy()
 
             return {
                 "success": True,
@@ -335,24 +331,20 @@ def get_database_update_status(request: Request):
     stats = {"artists": 0, "albums": 0, "tracks": 0, "successful": 0, "failed": 0}
 
     with _db_update_lock:
+        try:
+            from core.task_manager.task_queue import job_queue
+
+            is_running = job_queue._is_running.get("database_update", False)
+        except Exception:
+            is_running = False
+
         if _db_update_worker is not None:
-            # Check if job is still in progress via job_queue
-            _job_name = getattr(_db_update_worker, "_job_name", None)
-            if _job_name:
-                try:
-                    from core.job_queue import job_queue
-
-                    is_running = job_queue._is_running.get(_job_name, False)
-                except Exception:
-                    # Fallback to thread check if job_queue fails
-                    is_running = False
-
             stats = {
-                "artists": _db_update_worker.processed_artists,
-                "albums": _db_update_worker.processed_albums,
-                "tracks": _db_update_worker.processed_tracks,
-                "successful": _db_update_worker.successful_operations,
-                "failed": _db_update_worker.failed_operations,
+                "artists": getattr(_db_update_worker, "processed_artists", 0),
+                "albums": getattr(_db_update_worker, "processed_albums", 0),
+                "tracks": getattr(_db_update_worker, "processed_tracks", 0),
+                "successful": getattr(_db_update_worker, "successful_operations", 0),
+                "failed": getattr(_db_update_worker, "failed_operations", 0),
                 "warnings": getattr(_db_update_worker, "warnings", []),
             }
 
@@ -378,9 +370,7 @@ def backfill_identifiers():
         active_server = active_servers[0] if active_servers else None
 
         if not active_server:
-            raise HTTPException(
-                status_code=400, detail={"error": "No active media server configured"}
-            )
+            raise HTTPException(status_code=400, detail={"error": "No active media server configured"})
 
         from database import LibraryManager
         from database.music_database import get_database
@@ -408,9 +398,7 @@ def cancel_database_update():
     try:
         with _db_update_lock:
             if _db_update_worker is None:
-                raise HTTPException(
-                    status_code=400, detail={"error": "No database update in progress"}
-                )
+                raise HTTPException(status_code=400, detail={"error": "No database update in progress"})
 
             # Check if running
             is_running = False
@@ -424,9 +412,7 @@ def cancel_database_update():
                     pass
 
             if not is_running:
-                raise HTTPException(
-                    status_code=400, detail={"error": "No database update in progress"}
-                )
+                raise HTTPException(status_code=400, detail={"error": "No database update in progress"})
 
             # Stop the worker and kill job
             _db_update_worker.stop()
@@ -472,9 +458,7 @@ def stream_track(track_id: int):
     try:
         file_path = media_manager.get_track_stream(track_id)
         if not file_path:
-            raise HTTPException(
-                status_code=404, detail={"error": "Track not found or file missing"}
-            )
+            raise HTTPException(status_code=404, detail={"error": "Track not found or file missing"})
 
         return FileResponse(file_path)
     except HTTPException:
@@ -492,9 +476,7 @@ def delete_track_endpoint(track_id):
         if success:
             return {"success": True, "message": f"Track {track_id} deleted"}
         else:
-            raise HTTPException(
-                status_code=500, detail={"error": "Failed to delete track"}
-            )
+            raise HTTPException(status_code=500, detail={"error": "Failed to delete track"})
     except Exception as e:
         logger.error(f"Error deleting track {track_id}: {e}")
         raise HTTPException(status_code=500, detail={"error": str(e)})

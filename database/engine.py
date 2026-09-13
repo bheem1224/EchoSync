@@ -24,12 +24,21 @@ class _DBWriter:
         self.db_path = db_path
         self._tasks: queue.Queue[tuple] = queue.Queue(maxsize=1000)
         self._stop = threading.Event()
+        self._reg_id: str | None = None
         self._thread = self._make_thread()
-        self._thread.start()
 
     def _make_thread(self) -> threading.Thread:
-        t = threading.Thread(
-            target=self._run, daemon=True, name=f"DBWriter:{self.db_path}"
+        from core.task_manager.models import OwnerType, ProcessCategory
+        from core.task_manager.supervisor import supervisor
+
+        t, self._reg_id = supervisor.spawn_supervised_thread(
+            target=self._run,
+            name=f"DBWriter:{self.db_path}",
+            owner_id="database.engine",
+            owner_type=OwnerType.CORE,
+            category=ProcessCategory.CORE_SYSTEM,
+            bound_to_general_pool=False,
+            cancellation_event=self._stop,
         )
         return t
 
@@ -65,10 +74,9 @@ class _DBWriter:
                 except Exception as exc:
                     retries += 1
                     wait = min(2**retries, 30)
-                    _engine_logger.warning(
-                        f"[DBWriter] Cannot open {self.db_path}, retrying in {wait}s: {exc}"
-                    )
-                    time.sleep(wait)
+                    _engine_logger.warning(f"[DBWriter] Cannot open {self.db_path}, retrying in {wait}s: {exc}")
+                    if self._stop.wait(wait):
+                        return
 
         _connect()
 
@@ -91,9 +99,7 @@ class _DBWriter:
                     pass
 
                 if _is_fatal_connection_error(e):
-                    _engine_logger.error(
-                        f"[DBWriter] Fatal connection error on {self.db_path}, reconnecting: {e}"
-                    )
+                    _engine_logger.error(f"[DBWriter] Fatal connection error on {self.db_path}, reconnecting: {e}")
                     # Fail this task to its caller, then reconnect for the next one
                     if result_q:
                         result_q.put((False, e))
@@ -107,11 +113,8 @@ class _DBWriter:
     def _ensure_alive(self):
         """Restart the writer thread if it has died unexpectedly."""
         if not self._thread.is_alive():
-            _engine_logger.warning(
-                f"[DBWriter] Writer thread for {self.db_path} died — restarting."
-            )
+            _engine_logger.warning(f"[DBWriter] Writer thread for {self.db_path} died — restarting.")
             self._thread = self._make_thread()
-            self._thread.start()
 
     def enqueue(
         self,
@@ -146,6 +149,14 @@ class _DBWriter:
         self._tasks.join()  # drain all pending writes before stopping
         self._stop.set()
         self._thread.join(timeout=5.0)
+        if self._reg_id:
+            try:
+                from core.task_manager.supervisor import supervisor
+
+                supervisor.unregister_process(self._reg_id)
+            except Exception:
+                pass
+            self._reg_id = None
 
 
 _writers: dict[str, _DBWriter] = {}
@@ -175,9 +186,7 @@ def execute_write(
     return writer.enqueue(fn, wait=wait, timeout=timeout)
 
 
-def execute_write_sql(
-    db_path: str, sql: str, params: tuple = (), return_lastrowid: bool = False
-):
+def execute_write_sql(db_path: str, sql: str, params: tuple = (), return_lastrowid: bool = False):
     def _task(cursor):
         cursor.execute(sql, params)
         if return_lastrowid:

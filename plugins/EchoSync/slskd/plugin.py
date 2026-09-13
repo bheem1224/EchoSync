@@ -12,17 +12,20 @@ Handles:
 from __future__ import annotations
 
 import asyncio
-import threading
 from pathlib import Path
 from typing import Any
 
 from core.event_bus import event_bus
-from core.plugins.sdk import hookimpl, register_webhook_handler, sdk
+from core.plugins.sdk import compute_plugin_crc32, hookimpl, register_webhook_handler, sdk
+from core.task_manager.models import OwnerType
+from core.task_manager.supervisor import supervisor
+from core.task_manager.task_queue import db_write_lease
 from core.tiered_logger import get_logger
 
-logger = get_logger("slskd_plugin")
-
 PLUGIN_NAMESPACE = "EchoSync.slskd"
+PLUGIN_CRC32 = compute_plugin_crc32(PLUGIN_NAMESPACE)
+logger = get_logger("slskd_plugin", plugin_id=PLUGIN_CRC32)
+
 _RECONNECT_LOCK = asyncio.Lock()
 _RECONNECT_ATTEMPTS = 0
 
@@ -174,9 +177,7 @@ async def on_webhook_received(slug: str, payload: dict[str, Any]) -> None:
         task_id = _resolve_task_id_from_payload(payload)
         file_path = _find_completed_file_path(payload)
 
-        logger.info(
-            "DownloadFileComplete matched: task_id=%s, file_path=%s", task_id, file_path
-        )
+        logger.info("DownloadFileComplete matched: task_id=%s, file_path=%s", task_id, file_path)
 
         # Transition DownloadQueue state to VERIFYING
         if task_id:
@@ -187,24 +188,21 @@ async def on_webhook_received(slug: str, payload: dict[str, Any]) -> None:
                 import datetime
 
                 work_db = get_working_database()
-                with work_db.session_scope() as session:
-                    task = session.get(DownloadQueue, task_id)
-                    if task:
-                        task.status = DownloadStatus.VERIFYING.value
-                        if file_path and task.echo_sync_track is not None:
-                            track_dict = dict(task.echo_sync_track)
-                            track_dict["downloaded_file_path"] = file_path
-                            task.echo_sync_track = track_dict
-                        task.updated_at = datetime.datetime.now(datetime.timezone.utc)
-                        session.commit()
-                        session.refresh(task)
-                        logger.info(
-                            "DownloadQueue %s transitioned to VERIFYING", task_id
-                        )
+                with db_write_lease(task_name=f"plugin_{PLUGIN_CRC32}"):
+                    with work_db.session_scope() as session:
+                        task = session.get(DownloadQueue, task_id)
+                        if task:
+                            task.status = DownloadStatus.VERIFYING.value
+                            if file_path and task.echo_sync_track is not None:
+                                track_dict = dict(task.echo_sync_track)
+                                track_dict["downloaded_file_path"] = file_path
+                                task.echo_sync_track = track_dict
+                            task.updated_at = datetime.datetime.now(datetime.timezone.utc)
+                            session.commit()
+                            session.refresh(task)
+                            logger.info("DownloadQueue %s transitioned to VERIFYING", task_id)
             except Exception as e:
-                logger.error(
-                    "Failed to transition DownloadQueue %s to VERIFYING: %s", task_id, e
-                )
+                logger.error("Failed to transition DownloadQueue %s to VERIFYING: %s", task_id, e)
 
         # Emit DOWNLOAD_FILE_READY on EventBus
         event_bus.publish(
@@ -226,12 +224,8 @@ async def on_webhook_received(slug: str, payload: dict[str, Any]) -> None:
         "cancelled",
     ]:
         task_id = _resolve_task_id_from_payload(payload)
-        error_msg = (
-            payload.get("error") or payload.get("message") or "REMOTE_TRANSFER_FAILED"
-        )
-        logger.warning(
-            "DownloadFileFailed matched: task_id=%s, error=%s", task_id, error_msg
-        )
+        error_msg = payload.get("error") or payload.get("message") or "REMOTE_TRANSFER_FAILED"
+        logger.warning("DownloadFileFailed matched: task_id=%s, error=%s", task_id, error_msg)
 
         if task_id:
             try:
@@ -240,9 +234,7 @@ async def on_webhook_received(slug: str, payload: dict[str, Any]) -> None:
                 dm = get_download_manager()
                 dm.handle_verification_failure(task_id, reason=str(error_msg))
             except Exception as e:
-                logger.error(
-                    "Failed to handle verification failure for %s: %s", task_id, e
-                )
+                logger.error("Failed to handle verification failure for %s: %s", task_id, e)
 
     elif event_str.lower() in [
         "soulseekclientconnected",
@@ -297,9 +289,7 @@ async def _on_download_completed_or_failed(event_data: dict[str, Any]) -> None:
                         username = parts[0]
                         transfer_id = parts[1]
         except Exception as e:
-            logger.debug(
-                "Could not lookup transfer identity for task %s: %s", task_id, e
-            )
+            logger.debug("Could not lookup transfer identity for task %s: %s", task_id, e)
 
     if username:
         logger.info(
@@ -364,39 +354,46 @@ def initialize_plugin() -> None:
                 loop = asyncio.get_running_loop()
                 loop.create_task(_on_download_completed_or_failed(data))
             except RuntimeError:
-                threading.Thread(
+                supervisor.spawn_supervised_thread(
                     target=lambda: asyncio.run(_on_download_completed_or_failed(data)),
-                    daemon=True,
-                ).start()
+                    name="slskd_download_completed",
+                    owner_id=str(PLUGIN_CRC32),
+                    owner_type=OwnerType.PLUGIN,
+                    bound_to_general_pool=True,
+                )
 
         def _handle_failed(data: dict):
             try:
                 loop = asyncio.get_running_loop()
                 loop.create_task(_on_download_completed_or_failed(data))
             except RuntimeError:
-                threading.Thread(
+                supervisor.spawn_supervised_thread(
                     target=lambda: asyncio.run(_on_download_completed_or_failed(data)),
-                    daemon=True,
-                ).start()
+                    name="slskd_download_failed",
+                    owner_id=str(PLUGIN_CRC32),
+                    owner_type=OwnerType.PLUGIN,
+                    bound_to_general_pool=True,
+                )
 
         def _handle_degraded(data: dict):
             try:
                 loop = asyncio.get_running_loop()
                 loop.create_task(_on_service_degraded(data))
             except RuntimeError:
-                threading.Thread(
+                supervisor.spawn_supervised_thread(
                     target=lambda: asyncio.run(_on_service_degraded(data)),
-                    daemon=True,
-                ).start()
+                    name="slskd_service_degraded",
+                    owner_id=str(PLUGIN_CRC32),
+                    owner_type=OwnerType.PLUGIN,
+                    bound_to_general_pool=True,
+                )
 
         event_bus.subscribe("DOWNLOAD_COMPLETED", _handle_completed)
         event_bus.subscribe("DOWNLOAD_FAILED", _handle_failed)
         event_bus.subscribe("SERVICE_DEGRADED", _handle_degraded)
         logger.info("EchoSync.slskd event listeners initialized successfully.")
     except Exception as e:
-        logger.error(
-            "Failed to initialize EchoSync.slskd plugin module: %s", e, exc_info=True
-        )
+        logger.error("Failed to initialize EchoSync.slskd plugin module: %s", e, exc_info=True)
 
 
 # Initialize on import

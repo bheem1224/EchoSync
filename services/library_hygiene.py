@@ -5,6 +5,7 @@ from sqlalchemy import func
 
 from core.db.echo_sync_track import EchosyncTrack
 from core.settings import config_manager
+from core.task_manager import db_write_lease
 from core.tiered_logger import get_logger
 from database.music_database import (
     Artist,
@@ -90,12 +91,8 @@ class DuplicateHygieneService:
             processed = 0
             for i in range(0, total, batch_size):
                 batch_ids = unfingerprinted_ids[i : i + batch_size]
-                with self.db.session_scope() as session:
-                    media_batch = (
-                        session.query(LocalMedia)
-                        .filter(LocalMedia.id.in_(batch_ids))
-                        .all()
-                    )
+                with db_write_lease(task_name="backfill_fingerprints"), self.db.session_scope() as session:
+                    media_batch = session.query(LocalMedia).filter(LocalMedia.id.in_(batch_ids)).all()
                     for media in media_batch:
                         fpath = media.file_path
                         if not fpath:
@@ -135,9 +132,7 @@ class DuplicateHygieneService:
                         "current": processed,
                         "total": total,
                         "status": status_msg,
-                        "percentage": round((processed / total) * 100, 1)
-                        if total > 0
-                        else 0,
+                        "percentage": round((processed / total) * 100, 1) if total > 0 else 0,
                     },
                 )
 
@@ -151,9 +146,7 @@ class DuplicateHygieneService:
 
         return generated_count
 
-    def find_duplicates(
-        self, backfill: bool = False, progress_callback: Any | None = None
-    ) -> dict[str, list[dict]]:
+    def find_duplicates(self, backfill: bool = False, progress_callback: Any | None = None) -> dict[str, list[dict]]:
         """
         Identify duplicate tracks across three tiers:
         1. Relational 1:N Duplicates (Single Track with multiple LocalMedia files).
@@ -201,14 +194,9 @@ class DuplicateHygieneService:
                         if track:
                             rel_scenario["type"] = "Duplicate Resolution"
                             rel_scenario["title"] = track.title
-                            rel_scenario["artist"] = (
-                                track.artist.name if track.artist else "Unknown Artist"
-                            )
+                            rel_scenario["artist"] = track.artist.name if track.artist else "Unknown Artist"
                             rel_scenario["sync_id"] = track.sync_id
-                            if (
-                                "tracks" not in rel_scenario
-                                or not rel_scenario["tracks"]
-                            ):
+                            if "tracks" not in rel_scenario or not rel_scenario["tracks"]:
                                 rel_scenario["tracks"] = [self._serialize_track(track)]
                             results["auto_resolve"].append(rel_scenario)
                             seen_track_ids.add(t_id)
@@ -228,13 +216,7 @@ class DuplicateHygieneService:
                         .filter(AudioFingerprint.chromaprint == fp_hash)
                         .all()
                     )
-                    t_ids = list(
-                        {
-                            fp.media.track_id
-                            for fp in fps
-                            if fp.media and fp.media.track_id
-                        }
-                    )
+                    t_ids = list({fp.media.track_id for fp in fps if fp.media and fp.media.track_id})
                     if len(t_ids) < 2:
                         continue
 
@@ -285,9 +267,7 @@ class DuplicateHygieneService:
                         .filter(Track.isrc == isrc_val)
                         .all()
                     )
-                    unseen_tracks = [
-                        t for t in isrc_tracks if t.id not in seen_track_ids
-                    ]
+                    unseen_tracks = [t for t in isrc_tracks if t.id not in seen_track_ids]
                     if len(unseen_tracks) >= 2:
                         scenario = self._analyze_metadata_group(
                             unseen_tracks, reason_prefix=f"Matching ISRC ({isrc_val})"
@@ -322,9 +302,7 @@ class DuplicateHygieneService:
                         )
                         .all()
                     )
-                    unseen_tracks = [
-                        t for t in cand_tracks if t.id not in seen_track_ids
-                    ]
+                    unseen_tracks = [t for t in cand_tracks if t.id not in seen_track_ids]
                     if len(unseen_tracks) < 2:
                         continue
 
@@ -343,10 +321,7 @@ class DuplicateHygieneService:
                             if scenario:
                                 for t in fam_tracks:
                                     seen_track_ids.add(t.id)
-                                if (
-                                    scenario["confidence_score"] >= 90.0
-                                    and not scenario["requires_manual_review"]
-                                ):
+                                if scenario["confidence_score"] >= 90.0 and not scenario["requires_manual_review"]:
                                     results["auto_resolve"].append(scenario)
                                 else:
                                     results["manual_review"].append(scenario)
@@ -390,39 +365,24 @@ class DuplicateHygieneService:
 
             try:
                 with self.db.session_scope() as sess:
-                    profile = (
-                        sess.query(QualityProfile).filter_by(id=profile_id).first()
-                    )
+                    profile = sess.query(QualityProfile).filter_by(id=profile_id).first()
                     if profile:
                         for step in profile.steps:
                             rules = step.rules or {}
                             if isinstance(rules, dict):
                                 for fmt_rules in rules.values():
-                                    if (
-                                        isinstance(fmt_rules, dict)
-                                        and "max_bitrate" in fmt_rules
-                                    ):
-                                        max_bitrate = min(
-                                            max_bitrate, fmt_rules["max_bitrate"]
-                                        )
+                                    if isinstance(fmt_rules, dict) and "max_bitrate" in fmt_rules:
+                                        max_bitrate = min(max_bitrate, fmt_rules["max_bitrate"])
             except Exception as e:
                 logger.warning(f"Could not load quality profile {profile_id}: {e}")
 
         def sort_key(t):
             media_list = list(t.media_files) if t.media_files else []
             br = max([m.bitrate for m in media_list if m.bitrate] or [0])
-            sample_rate = max(
-                [m.sample_rate for m in media_list if m.sample_rate] or [0]
-            )
-            file_size = max(
-                [m.file_size_bytes for m in media_list if m.file_size_bytes] or [0]
-            )
+            sample_rate = max([m.sample_rate for m in media_list if m.sample_rate] or [0])
+            file_size = max([m.file_size_bytes for m in media_list if m.file_size_bytes] or [0])
             _LOSSLESS = {"flac", "alac", "wav", "dsd", "dsf", "dff", "ape"}
-            is_lossless = (
-                1
-                if any((m.file_format or "").lower() in _LOSSLESS for m in media_list)
-                else 0
-            )
+            is_lossless = 1 if any((m.file_format or "").lower() in _LOSSLESS for m in media_list) else 0
             effective_br = br if br <= max_bitrate else -br
             return (is_lossless, effective_br, sample_rate, file_size)
 
@@ -454,9 +414,7 @@ class DuplicateHygieneService:
             )
             match_res = engine.calculate_match(source_et, candidate_et)
             min_confidence = min(min_confidence, match_res.confidence_score)
-            reasoning_parts.append(
-                f"T{loser.id} score: {match_res.confidence_score:.1f}%"
-            )
+            reasoning_parts.append(f"T{loser.id} score: {match_res.confidence_score:.1f}%")
 
         final_score = min_confidence
 
@@ -466,11 +424,7 @@ class DuplicateHygieneService:
             try:
                 mb_plugin = PluginRegistry.create_instance("musicbrainz")
                 if mb_plugin:
-                    mbids = [
-                        getattr(t, "musicbrainz_id", None)
-                        for t in tracks
-                        if getattr(t, "musicbrainz_id", None)
-                    ]
+                    mbids = [getattr(t, "musicbrainz_id", None) for t in tracks if getattr(t, "musicbrainz_id", None)]
                     if mbids:
                         mb_data = mb_plugin.get_metadata_batch(mbids)
                         if mb_data:
@@ -478,9 +432,7 @@ class DuplicateHygieneService:
 
                             best_alignment = 0
                             for t in tracks:
-                                mb_record = mb_data.get(
-                                    getattr(t, "musicbrainz_id", "")
-                                )
+                                mb_record = mb_data.get(getattr(t, "musicbrainz_id", ""))
                                 if mb_record:
                                     mb_title = mb_record.get("title") or ""
                                     mb_album = mb_record.get("album") or ""
@@ -488,17 +440,13 @@ class DuplicateHygieneService:
                                     loc_album = t.album.title if t.album else ""
                                     score = (
                                         fuzz.ratio(mb_title.lower(), loc_title.lower())
-                                        + fuzz.ratio(
-                                            mb_album.lower(), loc_album.lower()
-                                        )
+                                        + fuzz.ratio(mb_album.lower(), loc_album.lower())
                                     ) / 2
                                     best_alignment = max(best_alignment, score)
 
                             if best_alignment > 85.0:
                                 final_score += 5.0
-                                reasoning_parts.append(
-                                    "MusicBrainz sanity check added +5.0 confidence."
-                                )
+                                reasoning_parts.append("MusicBrainz sanity check added +5.0 confidence.")
             except Exception:
                 pass
 
@@ -520,9 +468,7 @@ class DuplicateHygieneService:
             "tracks": [self._serialize_track(t) for t in tracks],
         }
 
-    def _analyze_metadata_group(
-        self, tracks: list[Track], reason_prefix: str
-    ) -> dict | None:
+    def _analyze_metadata_group(self, tracks: list[Track], reason_prefix: str) -> dict | None:
         """Analyze a group of duplicate tracks identified via matching metadata or ISRC."""
         from core.matching_engine.matching_engine import WeightedMatchingEngine
         from core.matching_engine.scoring_profile import PROFILE_DUPLICATE_DETECTION
@@ -534,18 +480,10 @@ class DuplicateHygieneService:
         def sort_key(t):
             media_list = list(t.media_files) if t.media_files else []
             br = max([m.bitrate for m in media_list if m.bitrate] or [0])
-            sample_rate = max(
-                [m.sample_rate for m in media_list if m.sample_rate] or [0]
-            )
-            file_size = max(
-                [m.file_size_bytes for m in media_list if m.file_size_bytes] or [0]
-            )
+            sample_rate = max([m.sample_rate for m in media_list if m.sample_rate] or [0])
+            file_size = max([m.file_size_bytes for m in media_list if m.file_size_bytes] or [0])
             _LOSSLESS = {"flac", "alac", "wav", "dsd", "dsf", "dff", "ape"}
-            is_lossless = (
-                1
-                if any((m.file_format or "").lower() in _LOSSLESS for m in media_list)
-                else 0
-            )
+            is_lossless = 1 if any((m.file_format or "").lower() in _LOSSLESS for m in media_list) else 0
             return (is_lossless, br, sample_rate, file_size)
 
         sorted_tracks = sorted(tracks, key=sort_key, reverse=True)
@@ -563,10 +501,7 @@ class DuplicateHygieneService:
         )
 
         winner_fps = {
-            fp.chromaprint
-            for m in (winner.media_files or [])
-            for fp in (m.audio_fingerprints or [])
-            if fp.chromaprint
+            fp.chromaprint for m in (winner.media_files or []) for fp in (m.audio_fingerprints or []) if fp.chromaprint
         }
 
         min_confidence = 100.0
@@ -607,16 +542,12 @@ class DuplicateHygieneService:
             if w_fam != l_fam:
                 has_edition_conflict = True
                 score = min(score, 55.0)
-                reasoning_parts.append(
-                    f"T{loser.id} arrangement '{l_fam}' differs from T{winner.id} '{w_fam}'"
-                )
+                reasoning_parts.append(f"T{loser.id} arrangement '{l_fam}' differs from T{winner.id} '{w_fam}'")
 
             min_confidence = min(min_confidence, score)
             reasoning_parts.append(f"T{loser.id} score: {score:.1f}%")
 
-        requires_manual_review = (
-            min_confidence < 90.0 or has_acoustic_conflict or has_edition_conflict
-        )
+        requires_manual_review = min_confidence < 90.0 or has_acoustic_conflict or has_edition_conflict
 
         return {
             "type": "Duplicate Resolution",
@@ -667,9 +598,7 @@ class DuplicateHygieneService:
         duplicates = self.find_duplicates()
         auto_resolve_groups = duplicates["auto_resolve"]
 
-        logger.info(
-            f"Starting Prune Job. Found {len(auto_resolve_groups)} groups to auto-resolve."
-        )
+        logger.info(f"Starting Prune Job. Found {len(auto_resolve_groups)} groups to auto-resolve.")
 
         count = 0
         details = []
@@ -701,11 +630,7 @@ class DuplicateHygieneService:
             dedup = get_deduplicator()
             with self.db.session_scope() as session:
                 # 1. Check if the track itself has 1:N relational duplicates
-                media_count = (
-                    session.query(LocalMedia)
-                    .filter(LocalMedia.track_id == track_id)
-                    .count()
-                )
+                media_count = session.query(LocalMedia).filter(LocalMedia.track_id == track_id).count()
                 if media_count > 1:
                     return dedup.resolve_relational_duplicates(track_id)
 
@@ -728,17 +653,9 @@ class DuplicateHygieneService:
                         .filter(AudioFingerprint.chromaprint == fp.chromaprint)
                         .all()
                     )
-                    peer_track_ids = list(
-                        {
-                            f.media.track_id
-                            for f in matching_fps
-                            if f.media and f.media.track_id
-                        }
-                    )
+                    peer_track_ids = list({f.media.track_id for f in matching_fps if f.media and f.media.track_id})
                     if len(peer_track_ids) > 1:
-                        return dedup.resolve_acoustic_duplicate_group(
-                            peer_track_ids, fp.chromaprint
-                        )
+                        return dedup.resolve_acoustic_duplicate_group(peer_track_ids, fp.chromaprint)
 
                 return None
         except Exception as e:
@@ -768,9 +685,7 @@ class DuplicateHygieneService:
 
         if upgrade_quality_profile_id is None:
             manager_config = config_manager.get("manager", {}) or {}
-            upgrade_quality_profile_id = manager_config.get(
-                "upgrade_quality_profile_id"
-            )
+            upgrade_quality_profile_id = manager_config.get("upgrade_quality_profile_id")
 
         echo_track = EchosyncTrack(
             raw_title=track.title,
@@ -787,9 +702,7 @@ class DuplicateHygieneService:
         )
 
         dm = get_download_manager()
-        return dm.queue_download(
-            echo_track, quality_profile_id=upgrade_quality_profile_id
-        )
+        return dm.queue_download(echo_track, quality_profile_id=upgrade_quality_profile_id)
 
     def is_track_trending(
         self,
@@ -834,9 +747,7 @@ class DuplicateHygieneService:
 
         logger.info(f"Starting stale track scan (inactive_days={inactive_days})")
 
-        stale_provider_ids = PlaybackAnalytics.get_stale_provider_ids(
-            inactive_days=inactive_days
-        )
+        stale_provider_ids = PlaybackAnalytics.get_stale_provider_ids(inactive_days=inactive_days)
         if not stale_provider_ids:
             return {"status": "no_stale_tracks", "count": 0}
 
@@ -862,25 +773,16 @@ class DuplicateHygieneService:
                     sync_id = track.sync_id
 
                     states = (
-                        work_session.query(UserTrackState)
-                        .filter(UserTrackState.sync_id == sync_id)
-                        .yield_per(1000)
+                        work_session.query(UserTrackState).filter(UserTrackState.sync_id == sync_id).yield_per(1000)
                     )
 
                     for state in states:
                         # Only mark stale if it's not already staged for deletion/upgrade or exempt
-                        if (
-                            not state.lifecycle_action
-                            and not state.admin_exempt_deletion
-                        ):
+                        if not state.lifecycle_action and not state.admin_exempt_deletion:
                             state.lifecycle_action = "STALE"
                             state.lifecycle_queued_at = now
                             updated_count += 1
-                            logger.info(
-                                f"Marked track '{track.title}' (sync_id: {sync_id}) as STALE."
-                            )
+                            logger.info(f"Marked track '{track.title}' (sync_id: {sync_id}) as STALE.")
 
-        logger.info(
-            f"Stale track scan completed. Marked {updated_count} states as STALE."
-        )
+        logger.info(f"Stale track scan completed. Marked {updated_count} states as STALE.")
         return {"status": "success", "count": updated_count}

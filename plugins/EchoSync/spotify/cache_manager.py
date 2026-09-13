@@ -5,9 +5,13 @@ from sqlalchemy import JSON, Column, DateTime, MetaData, String, Table
 
 from core.event_bus import event_bus
 from core.matching_engine.text_utils import generate_deterministic_id
+from core.plugins.sdk import compute_plugin_crc32
+from core.task_manager.task_queue import db_write_lease
 from core.tiered_logger import get_logger
 
-logger = get_logger("spotify_cache_manager")
+PLUGIN_NAMESPACE = "EchoSync.spotify"
+PLUGIN_CRC32 = compute_plugin_crc32(PLUGIN_NAMESPACE)
+logger = get_logger("spotify_cache_manager", plugin_id=PLUGIN_CRC32)
 
 
 class SpotifyCacheManager:
@@ -18,9 +22,7 @@ class SpotifyCacheManager:
         if self.sdk:
             self.engine = self.sdk.get_database_connection(write_access=True)
         else:
-            raise ValueError(
-                "SpotifyCacheManager requires SDK instance to acquire isolated DB engine"
-            )
+            raise ValueError("SpotifyCacheManager requires SDK instance to acquire isolated DB engine")
 
         self.metadata = MetaData()
         self._ensure_tables()
@@ -73,11 +75,7 @@ class SpotifyCacheManager:
                     sync_ids = []
                     if sync_ids_json:
                         try:
-                            sync_ids = (
-                                json.loads(sync_ids_json)
-                                if isinstance(sync_ids_json, str)
-                                else sync_ids_json
-                            )
+                            sync_ids = json.loads(sync_ids_json) if isinstance(sync_ids_json, str) else sync_ids_json
                         except json.JSONDecodeError:
                             pass
 
@@ -133,13 +131,9 @@ class SpotifyCacheManager:
             from sqlalchemy.orm import sessionmaker
 
             Session = sessionmaker(bind=self.engine)
-            with Session() as session:
+            with db_write_lease(task_name=f"plugin_{PLUGIN_CRC32}"), Session() as session:
                 # Basic upsert logic (check then update/insert)
-                existing = (
-                    session.query(self.table)
-                    .filter(self.table.c.playlist_id == playlist_id)
-                    .first()
-                )
+                existing = session.query(self.table).filter(self.table.c.playlist_id == playlist_id).first()
                 if existing:
                     stmt = (
                         self.table.update()
@@ -164,9 +158,7 @@ class SpotifyCacheManager:
                     )
                     session.execute(stmt)
                 session.commit()
-            logger.info(
-                f"Cached Spotify playlist {playlist_id} ({name}) with {len(sync_ids)} tracks."
-            )
+            logger.info(f"Cached Spotify playlist {playlist_id} ({name}) with {len(sync_ids)} tracks.")
         except Exception as e:
             logger.error(f"Error saving playlist to cache: {e}")
 
@@ -190,11 +182,7 @@ class SpotifyCacheManager:
 
             Session = sessionmaker(bind=self.engine)
             with Session() as session:
-                row = (
-                    session.query(self.table.c.snapshot_id)
-                    .filter(self.table.c.playlist_id == playlist_id)
-                    .first()
-                )
+                row = session.query(self.table.c.snapshot_id).filter(self.table.c.playlist_id == playlist_id).first()
                 return row[0] if row else None
         except Exception as e:
             logger.error(f"Error reading snapshot_id for {playlist_id}: {e}")
@@ -236,18 +224,12 @@ class SpotifyCacheManager:
 
             Session = sessionmaker(bind=self.engine)
             with Session() as session:
-                row = (
-                    session.query(self.table.c.raw_data)
-                    .filter(self.table.c.playlist_id == playlist_id)
-                    .first()
-                )
+                row = session.query(self.table.c.raw_data).filter(self.table.c.playlist_id == playlist_id).first()
             if not row or not row[0]:
                 return None
             raw = row[0] if isinstance(row[0], dict) else json.loads(row[0])
             tracks_page = raw.get("tracks", {})
-            items = (
-                tracks_page.get("items", []) if isinstance(tracks_page, dict) else []
-            )
+            items = tracks_page.get("items", []) if isinstance(tracks_page, dict) else []
             if not items:
                 return None
             # Import lazily to avoid circular deps at module load time
@@ -264,8 +246,7 @@ class SpotifyCacheManager:
                 t = EchosyncTrack(
                     raw_title=track_obj.get("name", ""),
                     artist_name=artist_name,
-                    album_title=(album.get("name") if isinstance(album, dict) else "")
-                    or "",
+                    album_title=(album.get("name") if isinstance(album, dict) else "") or "",
                     duration=track_obj.get("duration_ms"),
                     isrc=(track_obj.get("external_ids") or {}).get("isrc"),
                 )

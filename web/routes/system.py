@@ -53,27 +53,32 @@ def health_check():
 def request_restart():
     """Forcefully but cleanly exit the application to trigger a Docker/System restart."""
     import os
-    import threading
 
-    from core.task_manager.task_queue import JobQueue
+    from core.enums import TaskCategory, TaskPriority
+    from core.task_manager.task_queue import JobQueue, job_queue
     from core.state import system_state
 
     logger.info("Application restart requested via API")
 
-    # 1. Tell the job queue to freeze
+    # 1. Tell the job queue to freeze non-critical jobs
     system_state.restart_pending = True
     JobQueue.RESTART_PENDING = True
 
     # 2. Define a hard-kill function
     def hard_kill():
-        time.sleep(
-            2
-        )  # Give the API exactly 2 seconds to return the 200 OK to the frontend
+        time.sleep(2)  # Give the API exactly 2 seconds to return the 200 OK to the frontend
         logger.warning("Executing hard restart via os._exit(1)...")
         os._exit(1)  # Instantly kills the container. Docker will reboot it.
 
-    # 3. Spin it off in a background thread so the HTTP response can complete
-    threading.Thread(target=hard_kill, daemon=True).start()
+    # 3. Dispatch via JobQueue Critical Pool
+    job_queue.register_job(
+        name="system_restart",
+        func=hard_kill,
+        category=TaskCategory.CRITICAL,
+        priority=TaskPriority.CRITICAL,
+        enabled=True,
+    )
+    job_queue.trigger_job_by_name("system_restart")
 
     return {"success": True, "message": "Restarting EchoSync..."}
 
@@ -447,11 +452,7 @@ def get_all_system_accounts(config_db: ConfigDatabase = Depends(get_config_db)):
             linked_ids = []
             for m in mappings:
                 # Find the 'other' ID in the mapping pair
-                other_id = (
-                    m["mapped_account_id"]
-                    if m["source_account_id"] == user["id"]
-                    else m["source_account_id"]
-                )
+                other_id = m["mapped_account_id"] if m["source_account_id"] == user["id"] else m["source_account_id"]
                 linked_ids.append(other_id)
             user["linked_account_ids"] = linked_ids
 
@@ -462,9 +463,7 @@ def get_all_system_accounts(config_db: ConfigDatabase = Depends(get_config_db)):
 
 
 @router.post("/accounts/map", dependencies=[Depends(require_auth)])
-async def map_system_accounts(
-    request: Request, config_db: ConfigDatabase = Depends(get_config_db)
-):
+async def map_system_accounts(request: Request, config_db: ConfigDatabase = Depends(get_config_db)):
     """Save the mapping between a media server user and music service accounts.
 
     Accepts:
@@ -559,9 +558,7 @@ async def update_settings(request: Request):
                         detail="Security violation: Custom UI path must be inside config/custom_ui",
                     )
                 if not os.path.isdir(target_cand):
-                    raise HTTPException(
-                        status_code=400, detail="Custom UI directory does not exist"
-                    )
+                    raise HTTPException(status_code=400, detail="Custom UI directory does not exist")
                 payload["custom_ui_path"] = target_cand
             except HTTPException:
                 raise
@@ -578,17 +575,13 @@ async def update_settings(request: Request):
         try:
             from core.event_bus import event_bus
 
-            event_bus.publish(
-                "system", "CONFIG_UPDATED", {"updated_keys": list(payload.keys())}
-            )
+            event_bus.publish("system", "CONFIG_UPDATED", {"updated_keys": list(payload.keys())})
         except Exception as eb_err:
             logger.debug(f"Could not publish CONFIG_UPDATED event: {eb_err}")
 
         resp = {"success": True}
         if restart_warning:
-            resp["warning"] = (
-                "Application restart is required to apply the Custom UI Path."
-            )
+            resp["warning"] = "Application restart is required to apply the Custom UI Path."
 
         return resp
     except Exception as e:
@@ -668,9 +661,7 @@ async def save_quality_profiles(request: Request):
 
         for p in profiles:
             if not isinstance(p, dict) or "id" not in p or "name" not in p:
-                return {
-                    "error": "Invalid profiles format; each profile must include id and name"
-                }
+                return {"error": "Invalid profiles format; each profile must include id and name"}
 
         ok = config_manager.set_quality_profiles(profiles)
         if not ok:
@@ -679,9 +670,7 @@ async def save_quality_profiles(request: Request):
         try:
             from core.event_bus import event_bus
 
-            event_bus.publish(
-                "system", "CONFIG_UPDATED", {"updated_keys": ["quality_profiles"]}
-            )
+            event_bus.publish("system", "CONFIG_UPDATED", {"updated_keys": ["quality_profiles"]})
         except Exception as eb_err:
             logger.debug(f"Could not publish CONFIG_UPDATED event: {eb_err}")
 
@@ -707,18 +696,12 @@ async def save_single_quality_profile(request: Request):
         if profile is None:
             return {"error": "Missing profile object"}
 
-        if (
-            not isinstance(profile, dict)
-            or "id" not in profile
-            or "name" not in profile
-        ):
+        if not isinstance(profile, dict) or "id" not in profile or "name" not in profile:
             return {"error": "Invalid profile format; id and name required"}
 
         # Debug log incoming profile payload to help track missing arrays
         try:
-            logger.debug(
-                f"Incoming single profile payload: {json.dumps(profile, default=str)[:2000]}"
-            )
+            logger.debug(f"Incoming single profile payload: {json.dumps(profile, default=str)[:2000]}")
         except Exception:
             logger.debug("Incoming single profile payload (non-serializable)")
 
@@ -746,9 +729,7 @@ async def save_single_quality_profile(request: Request):
         try:
             from core.event_bus import event_bus
 
-            event_bus.publish(
-                "system", "CONFIG_UPDATED", {"updated_keys": ["quality_profiles"]}
-            )
+            event_bus.publish("system", "CONFIG_UPDATED", {"updated_keys": ["quality_profiles"]})
         except Exception as eb_err:
             logger.debug(f"Could not publish CONFIG_UPDATED event: {eb_err}")
 
@@ -816,12 +797,7 @@ def browse_filesystem(request: Request):
                         break
                 except Exception:
                     continue
-            if (
-                not matched_root
-                and os.path.isabs(req_path)
-                and os.path.exists(req_path)
-                and os.path.isdir(req_path)
-            ):
+            if not matched_root and os.path.isabs(req_path) and os.path.exists(req_path) and os.path.isdir(req_path):
                 # Allow browsing absolute host paths (useful when running on host)
                 matched_root = ("host", req_path)
 
@@ -839,9 +815,7 @@ def browse_filesystem(request: Request):
                 {
                     "name": name,
                     "path": os.path.abspath(full),
-                    "relpath": os.path.relpath(full, matched_root[1])
-                    if matched_root and matched_root[1]
-                    else name,
+                    "relpath": os.path.relpath(full, matched_root[1]) if matched_root and matched_root[1] else name,
                     "is_dir": os.path.isdir(full),
                 }
             )
@@ -922,9 +896,7 @@ async def trigger_metadata_enhancement(request: Request):
         limit_val = body.get("limit")
         limit = int(limit_val) if limit_val is not None else None
         check_all = bool(body.get("check_all_files", False))
-        get_metadata_enhancer().enhance_library_metadata(
-            batch_size=size, check_all_files=check_all, limit=limit
-        )
+        get_metadata_enhancer().enhance_library_metadata(batch_size=size, check_all_files=check_all, limit=limit)
         return {"status": "ok", "batch_size": size, "limit": limit}
     except Exception as exc:
         logger.error("Manual enhance trigger failed: %s", exc, exc_info=True)
@@ -953,9 +925,7 @@ def reset_library():
     try:
         from database.music_database import get_database
 
-        logger.info(
-            "Library reset requested - dropping and recreating music_library.db"
-        )
+        logger.info("Library reset requested - dropping and recreating music_library.db")
         music_db = get_database()
         music_db.drop_all()
         music_db.create_all()
@@ -972,7 +942,6 @@ def reset_library():
 def reset_factory():
     """Deletes working.db, music_library.db, and config.db, triggering OOBE on next boot."""
     try:
-        import threading
         import time
 
         from core.task_manager.task_queue import JobQueue
@@ -1018,14 +987,22 @@ def reset_factory():
                     except Exception as e:
                         logger.error(f"Failed to delete {db_path}: {e}")
 
-            logger.warning(
-                "Factory reset complete. Executing hard restart to trigger OOBE."
-            )
+            logger.warning("Factory reset complete. Executing hard restart to trigger OOBE.")
             os._exit(1)
+
+        from core.enums import TaskCategory, TaskPriority
+        from core.task_manager.task_queue import JobQueue, job_queue
 
         system_state.restart_pending = True
         JobQueue.RESTART_PENDING = True
-        threading.Thread(target=execute_factory_reset, daemon=True).start()
+        job_queue.register_job(
+            name="system_factory_reset",
+            func=execute_factory_reset,
+            category=TaskCategory.CRITICAL,
+            priority=TaskPriority.CRITICAL,
+            enabled=True,
+        )
+        job_queue.trigger_job_by_name("system_factory_reset")
 
         return {
             "success": True,

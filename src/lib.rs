@@ -444,7 +444,9 @@ pub fn generate_audio_signature(
 ) -> PyResult<String> {
     let result = py.allow_threads(|| {
         let pcm_hash = audio::signature::hash_pcm_stream(&file_path)?;
-        Ok(audio::signature::derive_signature(&pcm_hash, &title, &artist))
+        Ok(audio::signature::derive_signature(
+            &pcm_hash, &title, &artist,
+        ))
     });
     result.map_err(|err: String| pyo3::exceptions::PyValueError::new_err(err))
 }
@@ -464,10 +466,44 @@ pub fn verify_audio_signature(
     result.map_err(|err: String| pyo3::exceptions::PyValueError::new_err(err))
 }
 
+/// Initialize the global Rayon thread pool with progressive container-aware scaling.
+/// Returns the effective number of native worker threads configured.
+#[pyfunction]
+#[pyo3(signature = (override_threads=None))]
+pub fn init_native_thread_pool(override_threads: Option<usize>) -> PyResult<usize> {
+    let effective_threads = if let Some(n) = override_threads {
+        n.clamp(1, 8)
+    } else {
+        let detected_cores = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1);
+
+        match detected_cores {
+            1..=4 => 1,
+            5..=8 => (detected_cores / 2).max(1),
+            _ => 8, // Clamped hard ceiling for high-core hosts (Xeon/Epyc)
+        }
+    };
+
+    // Idempotent initialization: do not fail if already initialized
+    match rayon::ThreadPoolBuilder::new()
+        .num_threads(effective_threads)
+        .thread_name(|idx| format!("echosync-native-{idx}"))
+        .build_global()
+    {
+        Ok(()) => Ok(effective_threads),
+        Err(_err) => {
+            // Pool was already initialized; return active thread count safely
+            Ok(rayon::current_num_threads())
+        }
+    }
+}
+
 /// PyO3 Module Registration for echosync_core
 #[pymodule]
 fn echosync_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<CancellationToken>()?;
+    m.add_function(wrap_pyfunction!(init_native_thread_pool, m)?)?;
     m.add_function(wrap_pyfunction!(scan_directory, m)?)?;
     m.add_function(wrap_pyfunction!(test_batch_process, m)?)?;
     m.add_function(wrap_pyfunction!(batch_process_directory, m)?)?;

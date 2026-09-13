@@ -947,7 +947,10 @@ class MusicDatabase:
         session = self.SessionLocal()
         try:
             yield session
-            session.commit()
+            from core.task_manager import db_write_lease
+
+            with db_write_lease(task_name="music_database_session"):
+                session.commit()
         except Exception:
             session.rollback()
             raise

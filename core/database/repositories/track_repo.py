@@ -15,6 +15,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session, joinedload
 
 from core.database.utils import calculate_safe_batch_size
+from core.task_manager.task_queue import db_write_lease
 
 # Canonical model: EchosyncTrack + EchosyncMedia from core.db
 from core.db.echo_sync_track import EchosyncMedia, EchosyncTrack
@@ -164,7 +165,8 @@ class TrackRepository:
                         if not has_tracks and not has_junctions:
                             session.query(Artist).filter_by(id=a_id).delete()
 
-        session.commit()
+        with db_write_lease(task_name="purge_ejected_media_cascade"):
+            session.commit()
 
     def purge_media_cascade(self, file_path: str) -> None:
         """Instance helper for purge_ejected_media_cascade."""
@@ -1096,7 +1098,8 @@ class TrackRepository:
                 updated_count += 1
 
         if updated_count > 0:
-            session.commit()
+            with db_write_lease(task_name="update_external_identifiers"):
+                session.commit()
 
         return updated_count
 
@@ -1302,7 +1305,8 @@ class TrackRepository:
 
         if upserted_count > 0:
             if commit:
-                session.commit()
+                with db_write_lease(task_name="upsert_entity_aliases"):
+                    session.commit()
             else:
                 session.flush()
 
@@ -1354,7 +1358,8 @@ class TrackRepository:
             session.add(attr)
 
         if commit:
-            session.commit()
+            with db_write_lease(task_name="set_entity_attributes"):
+                session.commit()
         else:
             session.flush()
         return True
@@ -1424,7 +1429,8 @@ class TrackRepository:
 
         deleted = session.query(model).filter_by(**filter_kwargs).delete()
         if commit:
-            session.commit()
+            with db_write_lease(task_name="delete_entity_attribute"):
+                session.commit()
         else:
             session.flush()
         return deleted > 0

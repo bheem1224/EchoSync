@@ -25,8 +25,9 @@ from typing import Any
 from core.database.models.working import DownloadIntent, DownloadStatus
 from core.database.repositories.download_repo import DownloadRepository
 from core.db.echo_sync_track import EchosyncTrack
-from core.enums import Capability
+from core.enums import Capability, TaskCategory, TaskPriority
 from core.hook_manager import hook_manager
+from core.task_manager.task_queue import db_write_lease, job_queue
 from core.matching_engine.matching_engine import WeightedMatchingEngine
 from core.matching_engine.scoring_profile import PROFILE_DOWNLOAD_SEARCH
 from core.matching_engine.text_utils import (
@@ -98,9 +99,7 @@ def _provider_supports_capability(provider: Any, capability: Capability | None) 
             return capability in enum_list
     if isinstance(caps, list):
         return capability in caps
-    if hasattr(provider, "supports_capability") and callable(
-        provider.supports_capability
-    ):
+    if hasattr(provider, "supports_capability") and callable(provider.supports_capability):
         res = provider.supports_capability(capability)
         if isinstance(res, bool):
             return res
@@ -108,18 +107,14 @@ def _provider_supports_capability(provider: Any, capability: Capability | None) 
         sup = getattr(provider, "supports_pre_filtering", None)
         if sup is not None and isinstance(sup, bool):
             return sup
-        caps_sup = getattr(
-            getattr(provider, "capabilities", None), "supports_pre_filtering", None
-        )
+        caps_sup = getattr(getattr(provider, "capabilities", None), "supports_pre_filtering", None)
         if caps_sup is not None and isinstance(caps_sup, bool):
             return caps_sup
     if capability == Capability.FETCH_BY_ISRC:
         sup = getattr(provider, "supports_isrc", None)
         if sup is not None and isinstance(sup, bool):
             return sup
-        caps_sup = getattr(
-            getattr(provider, "capabilities", None), "supports_isrc_lookup", None
-        )
+        caps_sup = getattr(getattr(provider, "capabilities", None), "supports_isrc_lookup", None)
         if caps_sup is not None and isinstance(caps_sup, bool):
             return caps_sup
     return False
@@ -177,16 +172,18 @@ class DownloadManager:
                 return
 
             track = EchosyncTrack.from_dict(track_data)
-            logger.info(
-                f"TRACK_IMPORTED: {track.artist_name} - {track.title}. Checking queue for duplicates."
-            )
+            logger.info(f"TRACK_IMPORTED: {track.artist_name} - {track.title}. Checking queue for duplicates.")
 
             target_sig = self._normalize_track_signature(track.to_dict())
             if not any(target_sig):
                 logger.warning("Cannot build signature for imported track")
                 return
 
-            active_states = {DownloadStatus.QUEUED.value, DownloadStatus.SEARCHING.value, DownloadStatus.DOWNLOADING.value}
+            active_states = {
+                DownloadStatus.QUEUED.value,
+                DownloadStatus.SEARCHING.value,
+                DownloadStatus.DOWNLOADING.value,
+            }
             cancelled_count = 0
 
             with self.work_db.session_scope() as session:
@@ -205,9 +202,7 @@ class DownloadManager:
                         break
 
                     for item in items:
-                        item_sig = self._normalize_track_signature(
-                            item.echo_sync_track or {}
-                        )
+                        item_sig = self._normalize_track_signature(item.echo_sync_track or {})
                         # Match on ISRC if present
                         target_isrc = track.isrc
                         item_isrc = (item.echo_sync_track or {}).get("isrc")
@@ -215,32 +210,16 @@ class DownloadManager:
                         is_match = False
                         if target_isrc and item_isrc and target_isrc == item_isrc:
                             is_match = True
-                        elif (
-                            target_sig[0]
-                            and item_sig[0]
-                            and target_sig[1]
-                            and item_sig[1]
-                        ):
-                            if (
-                                target_sig[0] == item_sig[0]
-                                and target_sig[1] == item_sig[1]
-                            ):
-                                if (
-                                    target_sig[3] is not None
-                                    and item_sig[3] is not None
-                                ):
-                                    if (
-                                        abs(int(target_sig[3]) - int(item_sig[3]))
-                                        <= 2000
-                                    ):
+                        elif target_sig[0] and item_sig[0] and target_sig[1] and item_sig[1]:
+                            if target_sig[0] == item_sig[0] and target_sig[1] == item_sig[1]:
+                                if target_sig[3] is not None and item_sig[3] is not None:
+                                    if abs(int(target_sig[3]) - int(item_sig[3])) <= 2000:
                                         is_match = True
                                 else:
                                     is_match = True
 
                         if is_match:
-                            logger.info(
-                                f"Purging download {item.id} matching imported track '{track.title}'"
-                            )
+                            logger.info(f"Purging download {item.id} matching imported track '{track.title}'")
 
                             if item.status == DownloadStatus.DOWNLOADING.value and item.provider_id:
                                 providers = self._get_active_download_providers()
@@ -250,24 +229,16 @@ class DownloadManager:
                                             p.cancel_download(item.provider_id)
                                         elif hasattr(p, "_async_cancel_download"):
                                             loop = asyncio.get_running_loop()
-                                            loop.create_task(
-                                                p._async_cancel_download(
-                                                    item.provider_id
-                                                )
-                                            )
+                                            loop.create_task(p._async_cancel_download(item.provider_id))
                                     except Exception as ce:
-                                        logger.debug(
-                                            f"Failed to cancel remote transfer {item.provider_id}: {ce}"
-                                        )
+                                        logger.debug(f"Failed to cancel remote transfer {item.provider_id}: {ce}")
 
                             session.delete(item)
                             cancelled_count += 1
                     offset += batch_size
 
             if cancelled_count > 0:
-                logger.info(
-                    f"Cancelled {cancelled_count} queued downloads for newly imported track."
-                )
+                logger.info(f"Cancelled {cancelled_count} queued downloads for newly imported track.")
 
         except Exception as e:
             logger.error(f"Error handling TRACK_IMPORTED: {e}", exc_info=True)
@@ -318,16 +289,10 @@ class DownloadManager:
             artist_name=getattr(target_track, "artist_name", "") or "",
             title=getattr(target_track, "title", "") or "",
         )
-        queries = (
-            query_or_queries
-            if isinstance(query_or_queries, list)
-            else [query_or_queries]
-        )
+        queries = query_or_queries if isinstance(query_or_queries, list) else [query_or_queries]
 
         # dict.fromkeys: order-preserving deduplication — respects the CJK priority matrix
-        ordered_queries = list(
-            dict.fromkeys(q for q in queries if isinstance(q, str) and q.strip())
-        )
+        ordered_queries = list(dict.fromkeys(q for q in queries if isinstance(q, str) and q.strip()))
 
         accumulated: list[EchosyncTrack] = []
         for q in ordered_queries:
@@ -345,15 +310,12 @@ class DownloadManager:
             # Evaluation-driven short-circuit: score this batch immediately.
             # If a qualifying candidate is found, skip all remaining variants.
             if target_track is not None:
-                hit = self._evaluate_search_batch(
-                    batch, target_track, quality_profile, perfect_match_threshold
-                )
+                hit = self._evaluate_search_batch(batch, target_track, quality_profile, perfect_match_threshold)
                 if hit is not None:
                     remaining = len(ordered_queries) - ordered_queries.index(q) - 1
                     if remaining > 0:
                         logger.info(
-                            "\u26a1 Sniper hit on variant %r (score\u2265%d) "
-                            "\u2014 skipping %d remaining variant(s).",
+                            "\u26a1 Sniper hit on variant %r (score\u2265%d) \u2014 skipping %d remaining variant(s).",
                             q,
                             perfect_match_threshold,
                             remaining,
@@ -393,37 +355,22 @@ class DownloadManager:
                 self._track_parser = TrackParser()
             parsed = self._track_parser.parse_filename(file_path)
             if parsed:
-                parsed_artist = getattr(parsed, "artist_name", None) or getattr(
-                    parsed, "artist", None
-                )
-                parsed_title = getattr(parsed, "title", None) or getattr(
-                    parsed, "raw_title", None
-                )
-                parsed_album = getattr(parsed, "album_title", None) or getattr(
-                    parsed, "album", None
-                )
+                parsed_artist = getattr(parsed, "artist_name", None) or getattr(parsed, "artist", None)
+                parsed_title = getattr(parsed, "title", None) or getattr(parsed, "raw_title", None)
+                parsed_album = getattr(parsed, "album_title", None) or getattr(parsed, "album", None)
 
-                if parsed_artist and (
-                    not candidate.artist_name
-                    or candidate.artist_name == "Unknown Artist"
-                ):
+                if parsed_artist and (not candidate.artist_name or candidate.artist_name == "Unknown Artist"):
                     candidate.artist_name = parsed_artist
                 if parsed_title:
                     candidate.title = parsed_title
                     candidate.raw_title = parsed_title
                 if parsed_album and not getattr(candidate, "album_title", None):
                     candidate.album_title = parsed_album
-                if getattr(parsed, "release_year", None) and not getattr(
-                    candidate, "release_year", None
-                ):
+                if getattr(parsed, "release_year", None) and not getattr(candidate, "release_year", None):
                     candidate.release_year = parsed.release_year
-                if getattr(parsed, "track_number", None) and not getattr(
-                    candidate, "track_number", None
-                ):
+                if getattr(parsed, "track_number", None) and not getattr(candidate, "track_number", None):
                     candidate.track_number = parsed.track_number
-                if getattr(parsed, "disc_number", None) and not getattr(
-                    candidate, "disc_number", None
-                ):
+                if getattr(parsed, "disc_number", None) and not getattr(candidate, "disc_number", None):
                     candidate.disc_number = parsed.disc_number
 
         # Version and edition extraction from title / raw_title / file_path
@@ -464,18 +411,12 @@ class DownloadManager:
         matcher = self._get_matching_engine(quality_profile)
         for _priority_num, priority_formats in priority_tiers:
             try:
-                tier_candidates = self._filter_by_formats(
-                    enriched_batch, priority_formats, quality_profile
-                )
+                tier_candidates = self._filter_by_formats(enriched_batch, priority_formats, quality_profile)
             except TypeError:
-                tier_candidates = self._filter_by_formats(
-                    enriched_batch, priority_formats
-                )
+                tier_candidates = self._filter_by_formats(enriched_batch, priority_formats)
             if not tier_candidates:
                 continue
-            candidate = matcher.select_best_download_candidate(
-                target_track, tier_candidates
-            )
+            candidate = matcher.select_best_download_candidate(target_track, tier_candidates)
             if candidate:
                 match_result = matcher.calculate_match(target_track, candidate)
                 if match_result.confidence_score >= threshold:
@@ -590,22 +531,16 @@ class DownloadManager:
             for provider_id in sorted_names:
                 try:
                     if provider_id not in self._active_providers:
-                        self._active_providers[provider_id] = (
-                            PluginRegistry.create_instance(provider_id)
-                        )
+                        self._active_providers[provider_id] = PluginRegistry.create_instance(provider_id)
                     instances.append(self._active_providers[provider_id])
                 except Exception as e:
-                    logger.warning(
-                        f"Failed to instantiate provider '{provider_id}': {e}"
-                    )
+                    logger.warning(f"Failed to instantiate provider '{provider_id}': {e}")
 
             if not instances:
                 logger.error("No download providers could be instantiated")
                 return []
 
-            logger.info(
-                f"Instantiated {len(instances)} download providers in priority order"
-            )
+            logger.info(f"Instantiated {len(instances)} download providers in priority order")
             return instances
 
         except Exception as e:
@@ -627,18 +562,10 @@ class DownloadManager:
         intent_val = intent.value if isinstance(intent, DownloadIntent) else str(intent)
 
         # Check if track already exists in library (use album + duration when available)
-        album_name = getattr(track, "album_title", None) or getattr(
-            track, "album", None
-        )
-        duration_ms = getattr(track, "duration", None) or getattr(
-            track, "duration_ms", None
-        )
-        if self._track_exists_in_library(
-            track.artist_name, track.title, album=album_name, duration=duration_ms
-        ):
-            logger.info(
-                f"Skipping download: Track '{track.title}' by '{track.artist_name}' already exists in library"
-            )
+        album_name = getattr(track, "album_title", None) or getattr(track, "album", None)
+        duration_ms = getattr(track, "duration", None) or getattr(track, "duration_ms", None)
+        if self._track_exists_in_library(track.artist_name, track.title, album=album_name, duration=duration_ms):
+            logger.info(f"Skipping download: Track '{track.title}' by '{track.artist_name}' already exists in library")
             return 0  # 0 indicates no download created
 
         with self.work_db.session_scope() as session:
@@ -672,11 +599,7 @@ class DownloadManager:
                     return existing_id
                 else:
                     # Existing item was in failed/error state — reset and reuse instead of inserting a duplicate row
-                    existing_item = (
-                        session.query(DownloadQueue)
-                        .filter(DownloadQueue.id == existing_id)
-                        .first()
-                    )
+                    existing_item = session.query(DownloadQueue).filter(DownloadQueue.id == existing_id).first()
                     if existing_item:
                         existing_item.status = DownloadStatus.QUEUED.value
                         existing_item.intent = intent_val
@@ -688,10 +611,9 @@ class DownloadManager:
                         existing_item.retry_count = 0
                         existing_item.error_reason = None
                         existing_item.updated_at = utc_now()
-                        session.commit()
-                        logger.info(
-                            f"Re-queueing existing failed download record ID {existing_id} for '{track.title}'"
-                        )
+                        with db_write_lease(task_name="queue_download_requeue"):
+                            session.commit()
+                        logger.info(f"Re-queueing existing failed download record ID {existing_id} for '{track.title}'")
                         return existing_id
 
             download = DownloadQueue(
@@ -755,11 +677,7 @@ class DownloadManager:
         with self.work_db.session_scope() as session:
             stuck_items = (
                 session.query(DownloadQueue)
-                .filter(
-                    DownloadQueue.status.in_(
-                        [DownloadStatus.SEARCHING.value, DownloadStatus.DOWNLOADING.value]
-                    )
-                )
+                .filter(DownloadQueue.status.in_([DownloadStatus.SEARCHING.value, DownloadStatus.DOWNLOADING.value]))
                 .all()
             )
             if stuck_items:
@@ -796,16 +714,11 @@ class DownloadManager:
 
     async def _process_queued_items(self):
         """Pick up queued items and attempt to find/start them using waterfall provider strategy"""
-        if (
-            not hasattr(self, "_processing_queue_lock")
-            or self._processing_queue_lock is None
-        ):
+        if not hasattr(self, "_processing_queue_lock") or self._processing_queue_lock is None:
             self._processing_queue_lock = asyncio.Lock()
 
         if self._processing_queue_lock.locked():
-            logger.debug(
-                "Queue processing already in progress; skipping duplicate run."
-            )
+            logger.debug("Queue processing already in progress; skipping duplicate run.")
             return
 
         async with self._processing_queue_lock:
@@ -835,24 +748,16 @@ class DownloadManager:
 
                 for item in items:
                     track_dict = item.echo_sync_track or {}
-                    artist = normalize_artist(
-                        track_dict.get("artist_name") or track_dict.get("artist") or ""
-                    )
-                    title = normalize_title(
-                        track_dict.get("title") or track_dict.get("raw_title") or ""
-                    )
+                    artist = normalize_artist(track_dict.get("artist_name") or track_dict.get("artist") or "")
+                    title = normalize_title(track_dict.get("title") or track_dict.get("raw_title") or "")
                     album = track_dict.get("album_title") or track_dict.get("album")
-                    duration = track_dict.get("duration") or track_dict.get(
-                        "duration_ms"
-                    )
+                    duration = track_dict.get("duration") or track_dict.get("duration_ms")
 
                     # JIT check: if track already in library, mark completed and bypass search
                     if (
                         artist
                         and title
-                        and self._track_exists_in_library(
-                            artist, title, album=album, duration=duration
-                        )
+                        and self._track_exists_in_library(artist, title, album=album, duration=duration)
                     ):
                         logger.info(
                             f"JIT Check: Track '{artist} - {title}' already exists in library. Transitioning status to 'completed'."
@@ -873,9 +778,7 @@ class DownloadManager:
             if providers:
                 provider = providers[0]
                 concurrency = (
-                    getattr(provider.capabilities, "max_concurrency", 3)
-                    if hasattr(provider, "capabilities")
-                    else 3
+                    getattr(provider.capabilities, "max_concurrency", 3) if hasattr(provider, "capabilities") else 3
                 )
             else:
                 concurrency = 3
@@ -883,14 +786,10 @@ class DownloadManager:
 
             async def _throttled_download(download_id):
                 async with semaphore:
-                    return await self._execute_waterfall_search_and_download(
-                        download_id, providers
-                    )
+                    return await self._execute_waterfall_search_and_download(download_id, providers)
 
             # Dispatch tasks via asyncio.gather with concurrency throttling
-            tasks = [
-                asyncio.create_task(_throttled_download(did)) for did in queued_ids
-            ]
+            tasks = [asyncio.create_task(_throttled_download(did)) for did in queued_ids]
 
             # Wait for all searches to complete
             if tasks:
@@ -900,13 +799,9 @@ class DownloadManager:
                 results = await asyncio.gather(*tasks, return_exceptions=True)
                 failed = sum(1 for r in results if isinstance(r, Exception))
                 if failed > 0:
-                    logger.warning(
-                        f"Completed {len(tasks)} searches with {failed} errors"
-                    )
+                    logger.warning(f"Completed {len(tasks)} searches with {failed} errors")
 
-    async def _execute_waterfall_search_and_download(
-        self, download_id: int, providers: list[PluginBase]
-    ):
+    async def _execute_waterfall_search_and_download(self, download_id: int, providers: list[PluginBase]):
         """
         Perform Waterfall Search -> Match -> DownloadQueue for a single item.
 
@@ -929,14 +824,8 @@ class DownloadManager:
                 return
             # Reconstruct from stored JSON to preserve all metadata
             target_track = EchosyncTrack.from_dict(download.echo_sync_track)
-            raw_track_dict = (
-                download.echo_sync_track
-                if isinstance(download.echo_sync_track, dict)
-                else {}
-            )
-            blacklisted_candidates = set(
-                raw_track_dict.get("blacklisted_candidates") or []
-            )
+            raw_track_dict = download.echo_sync_track if isinstance(download.echo_sync_track, dict) else {}
+            blacklisted_candidates = set(raw_track_dict.get("blacklisted_candidates") or [])
             for b in getattr(download, "blacklisted_candidates", None) or []:
                 if isinstance(b, dict) and b.get("candidate_id"):
                     blacklisted_candidates.add(b["candidate_id"])
@@ -957,9 +846,7 @@ class DownloadManager:
         # library between enqueue-time and the moment this job fires (e.g. auto-import,
         # manual import, or a previous download cycle completing). Catching it here avoids
         # a redundant provider search and a duplicate file on disk.
-        album_name = getattr(target_track, "album_title", None) or getattr(
-            target_track, "album", None
-        )
+        album_name = getattr(target_track, "album_title", None) or getattr(target_track, "album", None)
         duration_ms = getattr(target_track, "duration", None)
         if self._track_exists_in_library(
             target_track.artist_name,
@@ -977,15 +864,11 @@ class DownloadManager:
         target_duration_ms = target_track.duration if target_track.duration else None
 
         try:
-            logger.info(
-                f"Starting waterfall search for: {target_track.artist_name} - {target_track.title}"
-            )
+            logger.info(f"Starting waterfall search for: {target_track.artist_name} - {target_track.title}")
 
             # 1. Get quality profile from config to determine allowed formats
             requested_profile_id = (
-                (download.echo_sync_track.get("identifiers") or {}).get(
-                    "quality_profile_id"
-                )
+                (download.echo_sync_track.get("identifiers") or {}).get("quality_profile_id")
                 if isinstance(download.echo_sync_track, dict)
                 else None
             )
@@ -997,9 +880,7 @@ class DownloadManager:
             if quality_profile and "advanced_filters" in quality_profile:
                 filters = quality_profile["advanced_filters"]
                 if "duration_tolerance_seconds" in filters:
-                    duration_tolerance_ms = int(
-                        filters["duration_tolerance_seconds"] * 1000
-                    )
+                    duration_tolerance_ms = int(filters["duration_tolerance_seconds"] * 1000)
 
             # Use basic filters for coarse rejection based on quality profile
             basic_filters = {
@@ -1012,9 +893,7 @@ class DownloadManager:
             logger.info(f"Quality profile allows: {allowed_formats}")
 
             # Generate explicit fallback strategies (artist+title, album+title, title+strict duration)
-            strategies = self._generate_search_strategies(
-                target_track, duration_tolerance_ms
-            )
+            strategies = self._generate_search_strategies(target_track, duration_tolerance_ms)
             logger.info(f"Generated {len(strategies)} search strategies")
 
             # ============================================================================
@@ -1025,9 +904,7 @@ class DownloadManager:
 
             # Iterate through providers in priority order
             for provider_idx, provider in enumerate(providers, 1):
-                logger.info(
-                    f"\n=== Provider {provider_idx}/{len(providers)}: {provider.name} ==="
-                )
+                logger.info(f"\n=== Provider {provider_idx}/{len(providers)}: {provider.name} ===")
                 provider_candidates = []
 
                 # Filter strategy ladder against this provider's capabilities
@@ -1045,9 +922,7 @@ class DownloadManager:
                     f"Provider {provider.name} supports {len(provider_strategies)}/{len(strategies)} strategies"
                 )
                 if not provider_strategies:
-                    logger.info(
-                        f"Provider {provider.name} supports none of the requested strategies, skipping..."
-                    )
+                    logger.info(f"Provider {provider.name} supports none of the requested strategies, skipping...")
                     continue
 
                 matcher = self._get_matching_engine(quality_profile)
@@ -1059,31 +934,19 @@ class DownloadManager:
                     try:
                         from core.task_manager.supervisor import supervisor as _sup
 
-                        is_cancelled = (
-                            _sup.is_process_cancelled(reg_id) if _sup else False
-                        )
+                        is_cancelled = _sup.is_process_cancelled(reg_id) if _sup else False
                     except Exception:
                         is_cancelled = False
-                    if (
-                        is_cancelled
-                        or getattr(self, "_stop_requested", False)
-                        or getattr(self, "_shutdown", False)
-                    ):
-                        logger.info(
-                            f"Download {download_id} aborted by cancellation request."
-                        )
+                    if is_cancelled or getattr(self, "_stop_requested", False) or getattr(self, "_shutdown", False):
+                        logger.info(f"Download {download_id} aborted by cancellation request.")
                         self._update_status(download_id, "failed")
                         return
 
                     query = getattr(strategy, "wire_query", None) or (
                         strategy["query"] if isinstance(strategy, dict) else ""
                     )
-                    strategy_tolerance = getattr(
-                        strategy, "duration_tolerance_ms", None
-                    ) or (
-                        strategy["duration_tolerance_ms"]
-                        if isinstance(strategy, dict)
-                        else duration_tolerance_ms
+                    strategy_tolerance = getattr(strategy, "duration_tolerance_ms", None) or (
+                        strategy["duration_tolerance_ms"] if isinstance(strategy, dict) else duration_tolerance_ms
                     )
                     strategy_name = getattr(strategy, "name", None) or (
                         strategy["name"] if isinstance(strategy, dict) else ""
@@ -1094,12 +957,8 @@ class DownloadManager:
                     strategy_excludes = getattr(strategy, "excludes", None) or (
                         strategy.get("excludes") if isinstance(strategy, dict) else None
                     )
-                    strategy_filter_expr = getattr(
-                        strategy, "filter_expression", None
-                    ) or (
-                        strategy.get("filter_expression")
-                        if isinstance(strategy, dict)
-                        else None
+                    strategy_filter_expr = getattr(strategy, "filter_expression", None) or (
+                        strategy.get("filter_expression") if isinstance(strategy, dict) else None
                     )
 
                     strategy_filters = dict(basic_filters)
@@ -1116,9 +975,7 @@ class DownloadManager:
                     search_results: list[EchosyncTrack] = []
                     sniper_hit = False
                     try:
-                        logger.debug(
-                            f"    Invoking search on {provider.name} with quality profile"
-                        )
+                        logger.debug(f"    Invoking search on {provider.name} with quality profile")
                         search_results, sniper_hit = await self._invoke_provider_search(
                             provider,
                             query,
@@ -1143,23 +1000,17 @@ class DownloadManager:
                         )
                         continue
 
-                    logger.info(
-                        f"    Strategy {strategy_idx} returned {len(search_results)} candidates"
-                    )
+                    logger.info(f"    Strategy {strategy_idx} returned {len(search_results)} candidates")
 
                     if sniper_hit and search_results:
                         first_cand = search_results[0]
-                        pid = first_cand.identifiers.get(
-                            "plugin_item_id"
-                        ) or first_cand.identifiers.get("provider_item_id")
+                        pid = first_cand.identifiers.get("plugin_item_id") or first_cand.identifiers.get(
+                            "provider_item_id"
+                        )
                         username = first_cand.identifiers.get("username")
                         comp_id = f"{username}|{pid}" if username and pid else None
-                        if (pid and pid in blacklisted_candidates) or (
-                            comp_id and comp_id in blacklisted_candidates
-                        ):
-                            logger.info(
-                                f"    Sniper hit candidate '{pid}' is blacklisted; ignoring sniper bypass."
-                            )
+                        if (pid and pid in blacklisted_candidates) or (comp_id and comp_id in blacklisted_candidates):
+                            logger.info(f"    Sniper hit candidate '{pid}' is blacklisted; ignoring sniper bypass.")
                             sniper_hit = False
                         else:
                             logger.info(
@@ -1172,32 +1023,22 @@ class DownloadManager:
                     if search_results:
                         valid_results = []
                         for c in search_results:
-                            pid = c.identifiers.get(
-                                "plugin_item_id"
-                            ) or c.identifiers.get("provider_item_id")
+                            pid = c.identifiers.get("plugin_item_id") or c.identifiers.get("provider_item_id")
                             username = c.identifiers.get("username")
                             comp_id = f"{username}|{pid}" if username and pid else None
                             if (pid and pid in blacklisted_candidates) or (
                                 comp_id and comp_id in blacklisted_candidates
                             ):
-                                logger.info(
-                                    f"    Skipping blacklisted candidate '{pid}' from user '{username}'"
-                                )
+                                logger.info(f"    Skipping blacklisted candidate '{pid}' from user '{username}'")
                                 continue
                             c.identifiers["discovery_strategy"] = (
                                 getattr(strategy, "strategy_type", None)
-                                or (
-                                    strategy.get("strategy_type")
-                                    if isinstance(strategy, dict)
-                                    else None
-                                )
+                                or (strategy.get("strategy_type") if isinstance(strategy, dict) else None)
                                 or strategy_name
                             )
                             c.identifiers["strategy_name"] = strategy_name
                             valid_results.append(c)
-                        enriched_results = [
-                            self._enrich_candidate_metadata(c) for c in valid_results
-                        ]
+                        enriched_results = [self._enrich_candidate_metadata(c) for c in valid_results]
                         provider_candidates.extend(enriched_results)
 
                         # Check early short-circuit conditions on candidate pool
@@ -1206,19 +1047,13 @@ class DownloadManager:
                         for cand in enriched_results:
                             # Verify candidate passes quality profile formats and constraints
                             try:
-                                viable_cand = self._filter_by_formats(
-                                    [cand], allowed_formats, quality_profile
-                                )
+                                viable_cand = self._filter_by_formats([cand], allowed_formats, quality_profile)
                             except TypeError:
-                                viable_cand = self._filter_by_formats(
-                                    [cand], allowed_formats
-                                )
+                                viable_cand = self._filter_by_formats([cand], allowed_formats)
                             if not viable_cand:
                                 continue
 
-                            match_res = matcher.calculate_match(
-                                target_track, cand, context="download"
-                            )
+                            match_res = matcher.calculate_match(target_track, cand, context="download")
                             raw_score = match_res.confidence_score
                             if raw_score >= perfect_match_threshold:
                                 has_snipe_match = True
@@ -1237,9 +1072,7 @@ class DownloadManager:
 
                 # ── Fast-path: sniper winner bypasses full dedup + scoring ────────────
                 if sniper_winner is not None:
-                    match_result = matcher.calculate_match(
-                        target_track, sniper_winner, context="download"
-                    )
+                    match_result = matcher.calculate_match(target_track, sniper_winner, context="download")
                     raw_score = match_result.confidence_score
                     strat = (
                         sniper_winner.identifiers.get("discovery_strategy")
@@ -1247,8 +1080,7 @@ class DownloadManager:
                         or "strict_metadata"
                     )
                     logger.info(
-                        f"  Sniper winner confirmed: raw_score={raw_score:.1f} "
-                        f"from {provider.name} (strategy={strat})"
+                        f"  Sniper winner confirmed: raw_score={raw_score:.1f} from {provider.name} (strategy={strat})"
                     )
                     if raw_score >= 70.0:
                         scored_candidates.append((sniper_winner, raw_score, provider))
@@ -1267,14 +1099,10 @@ class DownloadManager:
                 # ── Slow-path: deduplicate + full priority-tier scoring ────────────────
                 # Deduplicate candidates for this provider
                 provider_candidates = self._deduplicate_candidates(provider_candidates)
-                logger.info(
-                    f"  Total candidates from {provider.name}: {len(provider_candidates)}"
-                )
+                logger.info(f"  Total candidates from {provider.name}: {len(provider_candidates)}")
 
                 if not provider_candidates:
-                    logger.info(
-                        f"  No candidates found on {provider.name}, trying next provider..."
-                    )
+                    logger.info(f"  No candidates found on {provider.name}, trying next provider...")
                     continue
 
                 # Run matching engine on this provider's candidates across priority tiers
@@ -1296,21 +1124,15 @@ class DownloadManager:
                                 provider_candidates, priority_formats, quality_profile
                             )
                         except TypeError:
-                            tier_candidates = self._filter_by_formats(
-                                provider_candidates, priority_formats
-                            )
-                    logger.debug(
-                        f"    Priority {priority_num}: {len(tier_candidates)} candidates match formats"
-                    )
+                            tier_candidates = self._filter_by_formats(provider_candidates, priority_formats)
+                    logger.debug(f"    Priority {priority_num}: {len(tier_candidates)} candidates match formats")
 
                     if not tier_candidates:
                         continue
 
                     # Score candidates via WeightedMatchingEngine on pure raw match merit
                     for candidate in tier_candidates:
-                        match_result = matcher.calculate_match(
-                            target_track, candidate, context="download"
-                        )
+                        match_result = matcher.calculate_match(target_track, candidate, context="download")
                         raw_score = match_result.confidence_score
 
                         if raw_score >= 70.0:
@@ -1341,9 +1163,7 @@ class DownloadManager:
 
                 if scored_candidates:
                     best_provider_score = scored_candidates[0][1]
-                    logger.info(
-                        f"  Current best match: score={best_provider_score:.1f}"
-                    )
+                    logger.info(f"  Current best match: score={best_provider_score:.1f}")
 
                     # Check if this is a perfect match (>= 90)
                     if best_provider_score >= perfect_match_threshold:
@@ -1362,12 +1182,8 @@ class DownloadManager:
             # Deduplicate scored_candidates by (provider.name, filename) and retain Top-3
             unique_candidates: list[tuple[EchosyncTrack, float, PluginBase]] = []
             seen_cand_keys = set()
-            for cand, score, prov in sorted(
-                scored_candidates, key=lambda x: x[1], reverse=True
-            ):
-                fname = cand.identifiers.get(
-                    "provider_item_id"
-                ) or cand.identifiers.get("plugin_item_id")
+            for cand, score, prov in sorted(scored_candidates, key=lambda x: x[1], reverse=True):
+                fname = cand.identifiers.get("provider_item_id") or cand.identifiers.get("plugin_item_id")
                 ckey = (prov.name, fname)
                 if ckey not in seen_cand_keys:
                     seen_cand_keys.add(ckey)
@@ -1376,25 +1192,15 @@ class DownloadManager:
             unique_candidates = unique_candidates[:3]
 
             if not unique_candidates:
-                logger.warning(
-                    f"No suitable candidate matched across all {len(providers)} providers (min score: 70%)"
-                )
+                logger.warning(f"No suitable candidate matched across all {len(providers)} providers (min score: 70%)")
                 self._update_status(download_id, DownloadStatus.FAILED)
                 return
 
             candidate_descriptors = []
             for cand, score, prov in unique_candidates:
                 uname = cand.identifiers.get("username") or "unknown"
-                fname = (
-                    cand.identifiers.get("plugin_item_id")
-                    or cand.identifiers.get("provider_item_id")
-                    or ""
-                )
-                cid = (
-                    f"{uname}|{fname}"
-                    if uname and fname
-                    else (fname or cand.sync_id or "")
-                )
+                fname = cand.identifiers.get("plugin_item_id") or cand.identifiers.get("provider_item_id") or ""
+                cid = f"{uname}|{fname}" if uname and fname else (fname or cand.sync_id or "")
                 candidate_descriptors.append(
                     {
                         "id": cid,
@@ -1402,8 +1208,7 @@ class DownloadManager:
                         "filename": fname,
                         "size": cand.identifiers.get("size") or 0,
                         "score": float(score),
-                        "plugin_id": getattr(prov, "plugin_id", None)
-                        or getattr(prov, "name", None),
+                        "plugin_id": getattr(prov, "plugin_id", None) or getattr(prov, "name", None),
                         "provider_name": prov.name,
                     }
                 )
@@ -1418,30 +1223,22 @@ class DownloadManager:
                     item.candidate_stack = remaining_stack
                     item.plugin_id = str(active_candidate.get("plugin_id") or "")
                     if hasattr(session, "commit"):
-                        session.commit()
+                        with db_write_lease(task_name="update_candidate_stack"):
+                            session.commit()
 
             logger.info(
-                f"**PROCEEDING WITH DOWNLOAD EVALUATION** "
-                f"({len(unique_candidates)} qualifying Top candidate(s) >= 70%)"
+                f"**PROCEEDING WITH DOWNLOAD EVALUATION** ({len(unique_candidates)} qualifying Top candidate(s) >= 70%)"
             )
 
             download_started = False
-            for cand_idx, (candidate, score, download_provider) in enumerate(
-                unique_candidates
-            ):
+            for cand_idx, (candidate, score, download_provider) in enumerate(unique_candidates):
                 username = candidate.identifiers.get("username") or "unknown"
-                filename = candidate.identifiers.get(
-                    "provider_item_id"
-                ) or candidate.identifiers.get("plugin_item_id")
+                filename = candidate.identifiers.get("provider_item_id") or candidate.identifiers.get("plugin_item_id")
                 size = candidate.identifiers.get("size") or 0
                 compound_id = f"{username}|{filename}"
 
-                if (filename and filename in blacklisted_candidates) or (
-                    compound_id in blacklisted_candidates
-                ):
-                    logger.info(
-                        f"Skipping blacklisted candidate {cand_idx + 1} from user '{username}': {filename}"
-                    )
+                if (filename and filename in blacklisted_candidates) or (compound_id in blacklisted_candidates):
+                    logger.info(f"Skipping blacklisted candidate {cand_idx + 1} from user '{username}': {filename}")
                     continue
 
                 logger.info(
@@ -1477,9 +1274,7 @@ class DownloadManager:
                         continue
 
                     if hasattr(download_provider, "_async_download"):
-                        provider_id = await download_provider._async_download(
-                            username, filename, size
-                        )
+                        provider_id = await download_provider._async_download(username, filename, size)
                     else:
                         loop = asyncio.get_running_loop()
                         provider_id = await loop.run_in_executor(
@@ -1487,28 +1282,22 @@ class DownloadManager:
                         )
                 except Exception as e:
                     logger.warning(
-                        f"Failed to enqueue candidate from user '{username}': {e}. "
-                        f"Falling back to next best candidate."
+                        f"Failed to enqueue candidate from user '{username}': {e}. Falling back to next best candidate."
                     )
                     continue
 
                 if provider_id:
                     logger.info(f"DownloadQueue started: {provider_id}")
-                    self._update_status(
-                        download_id, DownloadStatus.DOWNLOADING, provider_id
-                    )
+                    self._update_status(download_id, DownloadStatus.DOWNLOADING, provider_id)
                     download_started = True
                     break
                 else:
                     logger.warning(
-                        f"Failed to enqueue candidate from user '{username}'. "
-                        f"Falling back to next best candidate."
+                        f"Failed to enqueue candidate from user '{username}'. Falling back to next best candidate."
                     )
 
             if not download_started:
-                logger.error(
-                    f"All candidate download attempts failed for download {download_id}"
-                )
+                logger.error(f"All candidate download attempts failed for download {download_id}")
                 self._update_status(download_id, DownloadStatus.FAILED)
 
         except Exception as e:
@@ -1527,11 +1316,7 @@ class DownloadManager:
         active_downloads = []
         with self.work_db.session_scope() as session:
             # Find items marked 'downloading'
-            items = (
-                session.query(DownloadQueue)
-                .filter(DownloadQueue.status == DownloadStatus.DOWNLOADING.value)
-                .all()
-            )
+            items = session.query(DownloadQueue).filter(DownloadQueue.status == DownloadStatus.DOWNLOADING.value).all()
             for item in items:
                 active_downloads.append((item.id, item.provider_id))
 
@@ -1552,30 +1337,24 @@ class DownloadManager:
                 found_provider = None
 
                 for provider in providers:
-                    if not hasattr(
-                        provider, "_async_get_download_status"
-                    ) and not hasattr(provider, "get_download_status"):
+                    if not hasattr(provider, "_async_get_download_status") and not hasattr(
+                        provider, "get_download_status"
+                    ):
                         continue
 
                     try:
                         if hasattr(provider, "_async_get_download_status"):
-                            status = await provider._async_get_download_status(
-                                provider_id
-                            )
+                            status = await provider._async_get_download_status(provider_id)
                         else:
                             loop = asyncio.get_running_loop()
-                            status = await loop.run_in_executor(
-                                None, provider.get_download_status, provider_id
-                            )
+                            status = await loop.run_in_executor(None, provider.get_download_status, provider_id)
 
                         if status:
                             found_provider = provider.name
                             logger.debug(f"  Found download {db_id} on {provider.name}")
                             break
                     except Exception as e:
-                        logger.debug(
-                            f"  {provider.name} doesn't have {provider_id}: {e}"
-                        )
+                        logger.debug(f"  {provider.name} doesn't have {provider_id}: {e}")
                         continue
 
                 if status and found_provider:
@@ -1633,21 +1412,13 @@ class DownloadManager:
                             try:
                                 await active_prov._async_cancel_download(provider_id)
                             except Exception as ce:
-                                logger.debug(
-                                    f"Failed to cancel remote transfer {provider_id}: {ce}"
-                                )
+                                logger.debug(f"Failed to cancel remote transfer {provider_id}: {ce}")
 
                         with self.work_db.session_scope() as session:
-                            item = (
-                                session.query(DownloadQueue)
-                                .filter(DownloadQueue.id == db_id)
-                                .first()
-                            )
+                            item = session.query(DownloadQueue).filter(DownloadQueue.id == db_id).first()
                             if item:
                                 track_dict = dict(item.echo_sync_track or {})
-                                blacklist = list(
-                                    track_dict.get("blacklisted_candidates") or []
-                                )
+                                blacklist = list(track_dict.get("blacklisted_candidates") or [])
                                 if provider_id and provider_id not in blacklist:
                                     blacklist.append(provider_id)
                                     if "|" in provider_id:
@@ -1659,17 +1430,12 @@ class DownloadManager:
                                 item.status = "searching"
                                 item.provider_id = None
                                 item.updated_at = utc_now()
-                                session.commit()
+                                with db_write_lease(task_name="active_download_failed_requeue"):
+                                    session.commit()
 
-                        asyncio.create_task(
-                            self._execute_waterfall_search_and_download(
-                                db_id, providers
-                            )
-                        )
+                        asyncio.create_task(self._execute_waterfall_search_and_download(db_id, providers))
                     else:
-                        self._update_status(
-                            db_id, new_status, provider_id, speed, progress
-                        )
+                        self._update_status(db_id, new_status, provider_id, speed, progress)
                         if new_status != DownloadStatus.DOWNLOADING.value:
                             logger.info(
                                 f"DownloadQueue {db_id} (Provider {found_provider}, ID {provider_id}) finished with status: {new_status}"
@@ -1687,16 +1453,10 @@ class DownloadManager:
                                 pass
 
                     with self.work_db.session_scope() as session:
-                        item = (
-                            session.query(DownloadQueue)
-                            .filter(DownloadQueue.id == db_id)
-                            .first()
-                        )
+                        item = session.query(DownloadQueue).filter(DownloadQueue.id == db_id).first()
                         if item:
                             track_dict = dict(item.echo_sync_track or {})
-                            blacklist = list(
-                                track_dict.get("blacklisted_candidates") or []
-                            )
+                            blacklist = list(track_dict.get("blacklisted_candidates") or [])
                             if provider_id and provider_id not in blacklist:
                                 blacklist.append(provider_id)
                                 if "|" in provider_id:
@@ -1708,11 +1468,10 @@ class DownloadManager:
                             item.status = "searching"
                             item.provider_id = None
                             item.updated_at = utc_now()
-                            session.commit()
+                            with db_write_lease(task_name="active_download_disappeared_requeue"):
+                                session.commit()
 
-                    asyncio.create_task(
-                        self._execute_waterfall_search_and_download(db_id, providers)
-                    )
+                    asyncio.create_task(self._execute_waterfall_search_and_download(db_id, providers))
 
             except Exception as e:
                 logger.error(f"Error checking status for {db_id}: {e}")
@@ -1737,14 +1496,10 @@ class DownloadManager:
         # qualifiers, then applying standard normalization.
         search_title = self._build_core_search_title(track.title)
         if search_title != track.title:
-            logger.info(
-                f"Normalized title for search: '{track.title}' -> '{search_title}'"
-            )
+            logger.info(f"Normalized title for search: '{track.title}' -> '{search_title}'")
 
         primary_artist, collaborators = split_artist_collaborators(track.artist_name)
-        wire_primary_artist = sanitize_query_for_wire(
-            primary_artist or track.artist_name or ""
-        )
+        wire_primary_artist = sanitize_query_for_wire(primary_artist or track.artist_name or "")
         wire_search_title = sanitize_query_for_wire(search_title)
         target_dur = track.duration if track.duration else None
 
@@ -1872,11 +1627,7 @@ class DownloadManager:
                 if not isinstance(strategy, dict)
                 else strategy.get("required_capability")
             )
-            strat_name = (
-                getattr(strategy, "name", None)
-                if not isinstance(strategy, dict)
-                else strategy.get("name")
-            )
+            strat_name = getattr(strategy, "name", None) if not isinstance(strategy, dict) else strategy.get("name")
             key = ((query_str or "").strip().lower(), req_cap, strat_name)
             if key and key not in seen_keys:
                 unique.append(strategy)
@@ -1903,9 +1654,7 @@ class DownloadManager:
 
         return normalize_title(core_title)
 
-    def _deduplicate_candidates(
-        self, candidates: list[EchosyncTrack]
-    ) -> list[EchosyncTrack]:
+    def _deduplicate_candidates(self, candidates: list[EchosyncTrack]) -> list[EchosyncTrack]:
         """Deduplicate candidates collected from multiple fallback strategies.
 
         Only removes true duplicates (same peer, same file path, and same core
@@ -1917,26 +1666,16 @@ class DownloadManager:
 
         for candidate in candidates:
             identifiers = getattr(candidate, "identifiers", None) or {}
-            username = (
-                identifiers.get("username") if isinstance(identifiers, dict) else None
-            )
-            plugin_item_id = (
-                identifiers.get("plugin_item_id")
-                if isinstance(identifiers, dict)
-                else None
-            )
+            username = identifiers.get("username") if isinstance(identifiers, dict) else None
+            plugin_item_id = identifiers.get("plugin_item_id") if isinstance(identifiers, dict) else None
 
             # Include quality-relevant fields from media[0] so we only collapse exact duplicate
             # observations of the same file result across fallback strategies.
             size = identifiers.get("size") if isinstance(identifiers, dict) else None
-            bitrate = (
-                identifiers.get("bitrate") if isinstance(identifiers, dict) else None
-            )
+            bitrate = identifiers.get("bitrate") if isinstance(identifiers, dict) else None
             duration = getattr(candidate, "duration", None)
 
-            first_media = (
-                candidate.media[0] if getattr(candidate, "media", None) else None
-            )
+            first_media = candidate.media[0] if getattr(candidate, "media", None) else None
             file_format = first_media.file_format if first_media else None
             sample_rate = first_media.sample_rate if first_media else None
             bit_depth = first_media.bit_depth if first_media else None
@@ -1965,9 +1704,7 @@ class DownloadManager:
 
         return unique
 
-    def _get_quality_profile(
-        self, profile_id: str | None = None
-    ) -> dict[str, Any] | None:
+    def _get_quality_profile(self, profile_id: str | None = None) -> dict[str, Any] | None:
         """Get the active quality profile from config."""
         try:
             profiles = config_manager.get_quality_profiles()
@@ -1979,9 +1716,7 @@ class DownloadManager:
                 for profile in profiles:
                     if str(profile.get("id")) == profile_id_str:
                         return profile
-                logger.warning(
-                    f"Requested quality profile '{profile_id}' not found; falling back to default"
-                )
+                logger.warning(f"Requested quality profile '{profile_id}' not found; falling back to default")
 
             # Use first profile by default when no specific profile is requested.
             return profiles[0]
@@ -1989,9 +1724,7 @@ class DownloadManager:
             logger.warning(f"Failed to load quality profile: {e}")
         return None
 
-    def _get_matching_engine(
-        self, quality_profile: dict[str, Any] | None = None
-    ) -> WeightedMatchingEngine:
+    def _get_matching_engine(self, quality_profile: dict[str, Any] | None = None) -> WeightedMatchingEngine:
         """
         Get or create the matching engine with settings from quality profile.
         If quality profile has custom settings, create a custom profile.
@@ -2010,9 +1743,7 @@ class DownloadManager:
         if "advanced_filters" in quality_profile:
             filters = quality_profile["advanced_filters"]
             if "enforce_duration_match" in filters:
-                custom_weights["enforce_duration_match"] = filters[
-                    "enforce_duration_match"
-                ]
+                custom_weights["enforce_duration_match"] = filters["enforce_duration_match"]
                 has_custom_settings = True
             if "duration_tolerance_seconds" in filters:
                 tolerance_s = filters["duration_tolerance_seconds"]
@@ -2021,9 +1752,7 @@ class DownloadManager:
 
         # Read prefer larger files if specified
         if "prefer_larger_files" in quality_profile:
-            custom_weights["tie_breaker"] = quality_profile.get(
-                "tie_breaker", "MAX_QUALITY"
-            )
+            custom_weights["tie_breaker"] = quality_profile.get("tie_breaker", "MAX_QUALITY")
             has_custom_settings = True
 
         if has_custom_settings:
@@ -2042,9 +1771,7 @@ class DownloadManager:
 
         return WeightedMatchingEngine(PROFILE_DOWNLOAD_SEARCH)
 
-    def _extract_allowed_formats(
-        self, quality_profile: dict[str, Any] | None
-    ) -> list[str]:
+    def _extract_allowed_formats(self, quality_profile: dict[str, Any] | None) -> list[str]:
         """Extract allowed file formats from quality profile."""
         if not quality_profile:
             # Default fallback if no profile configured
@@ -2081,9 +1808,7 @@ class DownloadManager:
 
         return min_bitrate if min_bitrate < 9999 else 128
 
-    def _get_priority_tiers(
-        self, quality_profile: dict[str, Any]
-    ) -> list[tuple[int, list[str]]]:
+    def _get_priority_tiers(self, quality_profile: dict[str, Any]) -> list[tuple[int, list[str]]]:
         """
         Extract priority tiers from quality profile.
         Returns list of (priority_number, [format_list]) sorted by priority.
@@ -2133,13 +1858,10 @@ class DownloadManager:
             matching_configs = [
                 fmt
                 for fmt in profile_formats
-                if fmt.get("priority") == priority
-                and fmt.get("type", "").lower() in formats
+                if fmt.get("priority") == priority and fmt.get("type", "").lower() in formats
             ]
         else:
-            matching_configs = [
-                fmt for fmt in profile_formats if fmt.get("type", "").lower() in formats
-            ]
+            matching_configs = [fmt for fmt in profile_formats if fmt.get("type", "").lower() in formats]
 
         filtered = []
         for track in candidates:
@@ -2191,11 +1913,7 @@ class DownloadManager:
                         sr_khz = f"{sr_val / 1000:.1f}".rstrip("0").rstrip(".")
                         sr_hz = str(int(sr_val))
                         allowed_sr = [str(s).strip().lower() for s in sample_rates]
-                        if (
-                            sr_khz not in allowed_sr
-                            and sr_hz not in allowed_sr
-                            and str(sr_val) not in allowed_sr
-                        ):
+                        if sr_khz not in allowed_sr and sr_hz not in allowed_sr and str(sr_val) not in allowed_sr:
                             continue
 
                 # For lossy formats (MP3, AAC, OGG, etc.), check bitrate
@@ -2205,29 +1923,17 @@ class DownloadManager:
 
                     # Extract bitrate from media or identifiers
                     bitrate_kbps = media.bitrate or 0
-                    if (
-                        not bitrate_kbps
-                        and track.identifiers
-                        and "bitrate" in track.identifiers
-                    ):
+                    if not bitrate_kbps and track.identifiers and "bitrate" in track.identifiers:
                         bitrate_kbps = track.identifiers.get("bitrate", 0) or 0
 
                     # Convert to kbps if in bps
                     if bitrate_kbps > 10000:
                         bitrate_kbps = bitrate_kbps // 1000
 
-                    if (
-                        min_bitrate_kbps > 0
-                        and bitrate_kbps > 0
-                        and bitrate_kbps < min_bitrate_kbps
-                    ):
+                    if min_bitrate_kbps > 0 and bitrate_kbps > 0 and bitrate_kbps < min_bitrate_kbps:
                         continue
 
-                    if (
-                        max_bitrate_kbps > 0
-                        and bitrate_kbps > 0
-                        and bitrate_kbps > max_bitrate_kbps
-                    ):
+                    if max_bitrate_kbps > 0 and bitrate_kbps > 0 and bitrate_kbps > max_bitrate_kbps:
                         continue
 
                 passed_tier = True
@@ -2240,9 +1946,7 @@ class DownloadManager:
         filtered.sort(
             key=lambda t: (
                 t.media[0].file_size_bytes
-                if (
-                    getattr(t, "media", None) and t.media and t.media[0].file_size_bytes
-                )
+                if (getattr(t, "media", None) and t.media and t.media[0].file_size_bytes)
                 else 0
             ),
             reverse=True,
@@ -2311,9 +2015,7 @@ class DownloadManager:
             plugin_id=plugin_id,
         )
 
-    def transition_to_verifying(
-        self, download_id: int, file_path: str | None = None
-    ) -> bool:
+    def transition_to_verifying(self, download_id: int, file_path: str | None = None) -> bool:
         """Transition item from DOWNLOADING to VERIFYING state, locking file from cleanup sweepers."""
         with self.work_db.session_scope() as session:
             item = session.get(DownloadQueue, download_id)
@@ -2325,15 +2027,12 @@ class DownloadManager:
                 track_dict["downloaded_file_path"] = file_path
                 item.echo_sync_track = track_dict
             item.updated_at = utc_now()
-            session.commit()
-            logger.info(
-                f"DownloadQueue {download_id} transitioned to VERIFYING (file: {file_path})"
-            )
+            with db_write_lease(task_name="transition_to_verifying"):
+                session.commit()
+            logger.info(f"DownloadQueue {download_id} transitioned to VERIFYING (file: {file_path})")
             return True
 
-    def handle_verification_success(
-        self, download_id: int, file_path: str | None = None
-    ) -> bool:
+    def handle_verification_success(self, download_id: int, file_path: str | None = None) -> bool:
         """Transition item from VERIFYING to COMPLETED and emit DOWNLOAD_COMPLETED."""
         with self.work_db.session_scope() as session:
             item = session.get(DownloadQueue, download_id)
@@ -2341,7 +2040,8 @@ class DownloadManager:
                 return False
             item.status = DownloadStatus.COMPLETED.value
             item.updated_at = utc_now()
-            session.commit()
+            with db_write_lease(task_name="handle_verification_success"):
+                session.commit()
 
         # Emit DOWNLOAD_COMPLETED event
         from core.event_bus import event_bus
@@ -2389,7 +2089,8 @@ class DownloadManager:
             if item:
                 rotated = item.rotate_candidate(reason)
                 item.updated_at = utc_now()
-                session.commit()
+                with db_write_lease(task_name="handle_verification_failure"):
+                    session.commit()
 
         if rotated:
             logger.info(
@@ -2402,14 +2103,10 @@ class DownloadManager:
                 pass
             return True
         else:
-            logger.warning(
-                f"DownloadQueue {download_id} exhausted candidates -> FAILED ({reason})"
-            )
+            logger.warning(f"DownloadQueue {download_id} exhausted candidates -> FAILED ({reason})")
             return False
 
-    def _quarantine_file(
-        self, file_path: str, reason: str = "MISMATCH_EDITION"
-    ) -> str | None:
+    def _quarantine_file(self, file_path: str, reason: str = "MISMATCH_EDITION") -> str | None:
         """Move rejected file to data/quarantine to isolate from ingestion sweepers."""
         import shutil
         from pathlib import Path
@@ -2428,9 +2125,7 @@ class DownloadManager:
             logger.error(f"Failed to quarantine file {file_path}: {e}")
             return None
 
-    async def _dispatch_candidate(
-        self, download_id: int, providers: list[Any] | None = None
-    ):
+    async def _dispatch_candidate(self, download_id: int, providers: list[Any] | None = None):
         """Immediately dispatch the current active candidate on a RETRYING download."""
         if not providers:
             providers = self._get_active_download_providers()
@@ -2481,24 +2176,13 @@ class DownloadManager:
                     return item.id, item.status
         return None
 
-    def _normalize_track_signature(
-        self, track_json: dict[str, Any]
-    ) -> tuple[str, str, str, int | None]:
+    def _normalize_track_signature(self, track_json: dict[str, Any]) -> tuple[str, str, str, int | None]:
         """Build a normalized signature for duplicate detection."""
-        artist = normalize_artist(
-            track_json.get("artist_name") or track_json.get("artist") or ""
-        )
-        title = normalize_title(
-            track_json.get("title") or track_json.get("raw_title") or ""
-        )
+        artist = normalize_artist(track_json.get("artist_name") or track_json.get("artist") or "")
+        title = normalize_title(track_json.get("title") or track_json.get("raw_title") or "")
 
         # Album may be present under several keys
-        album_raw = (
-            track_json.get("album_title")
-            or track_json.get("album")
-            or track_json.get("album_title_raw")
-            or ""
-        )
+        album_raw = track_json.get("album_title") or track_json.get("album") or track_json.get("album_title_raw") or ""
         try:
             from core.matching_engine.text_utils import normalize_album
 
@@ -2553,9 +2237,7 @@ class DownloadManager:
                 # If album provided, filter by album title as well
                 if album:
                     try:
-                        filters.append(
-                            Track.album.has(Album.title.ilike(album.strip()))
-                        )
+                        filters.append(Track.album.has(Album.title.ilike(album.strip())))
                     except Exception:
                         # Fallback: ignore album constraint if relationship lookup fails
                         pass
@@ -2570,9 +2252,7 @@ class DownloadManager:
                     except Exception:
                         pass
 
-                exists = session.query(
-                    session.query(Track).join(Artist).filter(*filters).exists()
-                ).scalar()
+                exists = session.query(session.query(Track).join(Artist).filter(*filters).exists()).scalar()
                 return bool(exists)
         except Exception as e:
             logger.error(f"Error checking library for {artist_name} - {title}: {e}")
@@ -2587,9 +2267,7 @@ class DownloadManager:
         """
         try:
             with self.work_db.session_scope() as session:
-                items = (
-                    session.query(DownloadQueue).order_by(DownloadQueue.id.desc()).all()
-                )
+                items = session.query(DownloadQueue).order_by(DownloadQueue.id.desc()).all()
                 seen_signatures = {}
                 to_delete = []
 
@@ -2611,12 +2289,10 @@ class DownloadManager:
                         seen_signatures[sig] = item.id
 
                 if to_delete:
-                    session.query(DownloadQueue).filter(
-                        DownloadQueue.id.in_(to_delete)
-                    ).delete(synchronize_session=False)
-                    logger.info(
-                        f"Queue deduplication removed {len(to_delete)} duplicate records from download queue."
+                    session.query(DownloadQueue).filter(DownloadQueue.id.in_(to_delete)).delete(
+                        synchronize_session=False
                     )
+                    logger.info(f"Queue deduplication removed {len(to_delete)} duplicate records from download queue.")
         except Exception as e:
             logger.warning(f"Error during queue deduplication: {e}")
 
@@ -2662,16 +2338,10 @@ class DownloadManager:
                             if not track_data:
                                 continue
 
-                            artist = track_data.get("artist_name") or track_data.get(
-                                "artist"
-                            )
+                            artist = track_data.get("artist_name") or track_data.get("artist")
                             title = track_data.get("title")
-                            album = track_data.get("album_title") or track_data.get(
-                                "album"
-                            )
-                            duration = track_data.get("duration") or track_data.get(
-                                "duration_ms"
-                            )
+                            album = track_data.get("album_title") or track_data.get("album")
+                            duration = track_data.get("duration") or track_data.get("duration_ms")
 
                             if not artist or not title:
                                 continue
@@ -2682,11 +2352,7 @@ class DownloadManager:
                             ]
                             if album:
                                 try:
-                                    filters.append(
-                                        Track.album.has(
-                                            Album.title.ilike(album.strip())
-                                        )
-                                    )
+                                    filters.append(Track.album.has(Album.title.ilike(album.strip())))
                                 except Exception:
                                     pass
                             if duration is not None:
@@ -2701,10 +2367,7 @@ class DownloadManager:
                             db = get_database()
                             with db.session_scope() as music_session:
                                 exists = music_session.query(
-                                    music_session.query(Track)
-                                    .join(Artist)
-                                    .filter(*filters)
-                                    .exists()
+                                    music_session.query(Track).join(Artist).filter(*filters).exists()
                                 ).scalar()
 
                             if exists:
@@ -2719,9 +2382,7 @@ class DownloadManager:
                     offset += batch_size
 
                 if removed_count > 0:
-                    logger.info(
-                        f"Startup purge removed {removed_count} redundant items from download queue"
-                    )
+                    logger.info(f"Startup purge removed {removed_count} redundant items from download queue")
 
         except Exception as e:
             logger.error(f"Error purging existing tracks from queue: {e}")
@@ -2733,12 +2394,7 @@ class DownloadManager:
         scheduled job triggers delegate to it to prevent concurrent queue consumption races.
         """
         # If the background processing loop is already running, delegate directly to the existing worker loop
-        if (
-            self._loop_task
-            and not self._loop_task.done()
-            and self._loop
-            and self._loop.is_running()
-        ):
+        if self._loop_task and not self._loop_task.done() and self._loop and self._loop.is_running():
             logger.info(
                 "DownloadManager: background processing loop is active; delegating queue consumption to existing worker loop."
             )
@@ -2766,18 +2422,14 @@ class DownloadManager:
                 return self._loop.create_task(_cycle())
             else:
                 asyncio.run_coroutine_threadsafe(_cycle(), self._loop)
-                logger.info(
-                    "DownloadQueue processing triggered on background event loop"
-                )
+                logger.info("DownloadQueue processing triggered on background event loop")
                 return
 
         # 2. Called from within an active running event loop (e.g. async FastAPI route):
         try:
             current_loop = asyncio.get_running_loop()
             if current_loop and current_loop.is_running():
-                logger.info(
-                    "DownloadQueue processing scheduled on current running event loop"
-                )
+                logger.info("DownloadQueue processing scheduled on current running event loop")
                 return current_loop.create_task(_cycle())
         except RuntimeError:
             pass
@@ -2789,42 +2441,44 @@ class DownloadManager:
             logger.error(f"DownloadQueue processing cycle failed: {e}", exc_info=True)
 
     def process_single_download(self, download_id: int):
-        """Run acquisition strictly for a single download ID without global queue sweeps."""
+        """Run acquisition strictly for a single download ID via JobQueue (TaskCategory.GENERAL).
 
-        async def _run_single():
-            providers = self._get_active_download_providers()
-            if not providers:
-                logger.warning(
-                    "No active download providers available for single-item retry."
-                )
-                return
-            await self._execute_waterfall_search_and_download(download_id, providers)
+        Deduplicated by download item ID to prevent redundant acquisition jobs.
+        """
+        job_name = f"download:{download_id}"
 
-        # 1. Background daemon loop active:
-        if self._loop and self._loop.is_running():
+        def _run_job(**kwargs):
+            async def _run_single():
+                providers = self._get_active_download_providers()
+                if not providers:
+                    logger.warning("No active download providers available for single-item retry.")
+                    return
+                await self._execute_waterfall_search_and_download(download_id, providers)
+
             try:
-                running_loop = asyncio.get_running_loop()
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    future = asyncio.run_coroutine_threadsafe(_run_single(), loop)
+                    return future.result()
+                else:
+                    return loop.run_until_complete(_run_single())
             except RuntimeError:
-                running_loop = None
+                return asyncio.run(_run_single())
 
-            if running_loop is self._loop:
-                return self._loop.create_task(_run_single())
-            else:
-                return asyncio.run_coroutine_threadsafe(_run_single(), self._loop)
-
-        # 2. Inside active FastAPI event loop:
-        try:
-            current_loop = asyncio.get_running_loop()
-            if current_loop and current_loop.is_running():
-                return current_loop.create_task(_run_single())
-        except RuntimeError:
-            pass
-
-        # 3. Synchronous context:
-        try:
-            asyncio.run(_run_single())
-        except Exception as e:
-            logger.error(f"Single download execution failed: {e}", exc_info=True)
+        job_queue.register_job(
+            name=job_name,
+            func=_run_job,
+            enabled=True,
+            category=TaskCategory.GENERAL,
+            priority=TaskPriority.HIGH,
+            tags=["echosync", "downloads", f"download:{download_id}"],
+            max_retries=1,
+        )
+        res = job_queue.trigger_job_by_name(job_name)
+        if not job_queue._running:
+            _run_job()
+            return True
+        return res
 
     def _requeue_retryable_failed_items(self, limit: int = 50) -> int:
         """Move retryable failed items back to queued so manual runs can re-attempt them.
@@ -2851,8 +2505,7 @@ class DownloadManager:
                 session.query(DownloadQueue)
                 .filter(
                     DownloadQueue.status.in_(retryable_statuses),
-                    (DownloadQueue.retry_count < 5)
-                    | (DownloadQueue.retry_count.is_(None)),
+                    (DownloadQueue.retry_count < 5) | (DownloadQueue.retry_count.is_(None)),
                 )
                 .order_by(DownloadQueue.created_at.desc())  # Newest first
                 .limit(limit)
@@ -2874,9 +2527,7 @@ class DownloadManager:
                 requeued += 1
 
         if requeued > 0:
-            logger.info(
-                f"Re-queued {requeued} failed items for retry (capped at retry_count < 5 with backoff)"
-            )
+            logger.info(f"Re-queued {requeued} failed items for retry (capped at retry_count < 5 with backoff)")
         return requeued
 
 
@@ -2894,7 +2545,7 @@ def register_download_manager_job(interval_seconds: int = 21600):
     Args:
         interval_seconds: Interval between automatic job runs (default 6 hours = 21600s)
     """
-    from core.job_queue import job_queue, unregister_job
+    from core.task_manager.task_queue import job_queue, unregister_job
 
     def process_downloads(force_run: bool = False, **kwargs):
         """Run one full download processing cycle driven by the job queue."""
@@ -2909,6 +2560,7 @@ def register_download_manager_job(interval_seconds: int = 21600):
         interval_seconds=interval_seconds,
         start_after=interval_seconds,
         enabled=True,
+        category=TaskCategory.GENERAL,
         tags=["echosync", "downloads"],
         max_retries=3,
     )
