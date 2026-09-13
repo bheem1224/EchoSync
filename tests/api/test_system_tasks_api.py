@@ -3,7 +3,7 @@ from unittest.mock import patch
 
 import pytest
 
-from api.schemas.system_tasks import (
+from web.routes.system_tasks import (
     ProcessListResponse,
     ProcessTerminateResponse,
     SystemHealthResponse,
@@ -88,9 +88,7 @@ def test_terminate_process_api_success_and_404(client):
 
 def test_get_unified_system_health_api(client):
     """Test GET /api/v1/system/tasks/health endpoint returns unified health response."""
-    plugin_state_manager.set_state(
-        "echosync.health_test", PluginLifecycleState.READY, "All good"
-    )
+    plugin_state_manager.set_state("echosync.health_test", PluginLifecycleState.READY, "All good")
 
     resp = client.get("/api/v1/system/tasks/health")
     assert resp.status_code == 200

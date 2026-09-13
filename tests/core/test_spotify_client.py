@@ -2,7 +2,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from plugins.EchoSync.Spotify.client import SpotifyClient
+from plugins.EchoSync.spotify.client import SpotifyClient
 
 
 @pytest.fixture
@@ -50,8 +50,7 @@ def test_existing_token_scope_does_not_invalidate(monkeypatch):
     """
     # prepare a token with read-only scopes (missing modify permissions)
     limited_scope = (
-        "user-library-read user-read-private playlist-read-private "
-        "playlist-read-collaborative user-read-email"
+        "user-library-read user-read-private playlist-read-private playlist-read-collaborative user-read-email"
     )
     limited_token = {
         "access_token": "x",
@@ -69,11 +68,11 @@ def test_existing_token_scope_does_not_invalidate(monkeypatch):
         pass
 
     monkeypatch.setattr(
-        "plugins.EchoSync.Spotify.client.ConfigCacheHandler.get_cached_token",
+        "plugins.EchoSync.spotify.client.ConfigCacheHandler.get_cached_token",
         fake_get_cached_token,
     )
     monkeypatch.setattr(
-        "plugins.EchoSync.Spotify.client.ConfigCacheHandler.save_token_to_cache",
+        "plugins.EchoSync.spotify.client.ConfigCacheHandler.save_token_to_cache",
         fake_save_token,
     )
 
@@ -101,9 +100,7 @@ def test_existing_token_scope_does_not_invalidate(monkeypatch):
             return limited_token
 
     # patch the reference used inside spotify.client module
-    monkeypatch.setattr(
-        "plugins.EchoSync.Spotify.client.SpotifyOAuth", FakeSpotifyOAuth
-    )
+    monkeypatch.setattr("plugins.EchoSync.spotify.client.SpotifyOAuth", FakeSpotifyOAuth)
 
     # patch account manager to provide dummy credentials
     with patch(
@@ -122,8 +119,7 @@ def test_cached_scope_used_even_if_oauth_invalidates(monkeypatch):
     falling back to the full default set.
     """
     limited_scope = (
-        "user-library-read user-read-private playlist-read-private "
-        "playlist-read-collaborative user-read-email"
+        "user-library-read user-read-private playlist-read-private playlist-read-collaborative user-read-email"
     )
     limited_token = {
         "access_token": "x",
@@ -141,11 +137,11 @@ def test_cached_scope_used_even_if_oauth_invalidates(monkeypatch):
         pass
 
     monkeypatch.setattr(
-        "plugins.EchoSync.Spotify.client.ConfigCacheHandler.get_cached_token",
+        "plugins.EchoSync.spotify.client.ConfigCacheHandler.get_cached_token",
         fake_get_cached_token2,
     )
     monkeypatch.setattr(
-        "plugins.EchoSync.Spotify.client.ConfigCacheHandler.save_token_to_cache",
+        "plugins.EchoSync.spotify.client.ConfigCacheHandler.save_token_to_cache",
         fake_save_token2,
     )
 
@@ -173,9 +169,7 @@ def test_cached_scope_used_even_if_oauth_invalidates(monkeypatch):
         def refresh_access_token(self, refresh_token):
             return None
 
-    monkeypatch.setattr(
-        "plugins.EchoSync.Spotify.client.SpotifyOAuth", FakeSpotifyOAuth2
-    )
+    monkeypatch.setattr("plugins.EchoSync.spotify.client.SpotifyOAuth", FakeSpotifyOAuth2)
 
     with patch(
         "core.account_manager.AccountManager.get_account",
@@ -219,13 +213,9 @@ def test_setup_client_prefers_account_creds(monkeypatch):
         def refresh_access_token(self, refresh_token):
             return None
 
-    monkeypatch.setattr(
-        "plugins.EchoSync.Spotify.client.SpotifyOAuth", FakeSpotifyOAuth3
-    )
+    monkeypatch.setattr("plugins.EchoSync.spotify.client.SpotifyOAuth", FakeSpotifyOAuth3)
     # no global credentials present
-    monkeypatch.setattr(
-        "core.account_manager.AccountManager.get_service_config", lambda svc, key: None
-    )
+    monkeypatch.setattr("core.account_manager.AccountManager.get_service_config", lambda svc, key: None)
     # return an account with its own creds
     monkeypatch.setattr(
         "core.account_manager.AccountManager.get_account",
@@ -277,9 +267,7 @@ def test_search_by_isrc_with_default_account(monkeypatch):
         assert track.release_year == 2011
         assert track.isrc == "FRUM71100370"
         assert track.identifiers.get("source") == "EchoSync.spotify"
-        mock_sp.search.assert_called_once_with(
-            q="isrc:FRUM71100370", type="track", limit=1
-        )
+        mock_sp.search.assert_called_once_with(q="isrc:FRUM71100370", type="track", limit=1)
 
 
 def test_client_credentials_fallback_when_no_user_accounts(monkeypatch):
@@ -297,12 +285,8 @@ def test_client_credentials_fallback_when_no_user_accounts(monkeypatch):
         if "spotify.client" in mod_name.lower():
             mod = sys.modules[mod_name]
             if hasattr(mod, "SpotifyClientCredentials"):
-                monkeypatch.setattr(
-                    mod, "SpotifyClientCredentials", FakeClientCredentials
-                )
-    monkeypatch.setattr(
-        "spotipy.oauth2.SpotifyClientCredentials", FakeClientCredentials
-    )
+                monkeypatch.setattr(mod, "SpotifyClientCredentials", FakeClientCredentials)
+    monkeypatch.setattr("spotipy.oauth2.SpotifyClientCredentials", FakeClientCredentials)
 
     mock_storage = MagicMock()
     mock_storage.list_accounts.return_value = []
@@ -317,9 +301,7 @@ def test_client_credentials_fallback_when_no_user_accounts(monkeypatch):
             return_value={"client_id": "app_id", "client_secret": "app_sec"},
         ),
         patch("core.account_manager.AccountManager.list_accounts", return_value=[]),
-        patch(
-            "core.file_handling.storage.get_storage_service", return_value=mock_storage
-        ),
+        patch("core.file_handling.storage.get_storage_service", return_value=mock_storage),
         patch(
             "core.account_manager.AccountManager.get_service_config",
             side_effect=lambda svc, key: {
@@ -399,10 +381,6 @@ def test_spotify_liked_songs_add_tracks(spotify_client):
     mock_sp = MagicMock()
     spotify_client.sp = mock_sp
 
-    res = spotify_client.add_tracks_to_playlist(
-        "liked-songs", ["spotify:track:abc123", "def456"]
-    )
+    res = spotify_client.add_tracks_to_playlist("liked-songs", ["spotify:track:abc123", "def456"])
     assert res is True
-    mock_sp.current_user_saved_tracks_add.assert_called_once_with(
-        tracks=["abc123", "def456"]
-    )
+    mock_sp.current_user_saved_tracks_add.assert_called_once_with(tracks=["abc123", "def456"])
