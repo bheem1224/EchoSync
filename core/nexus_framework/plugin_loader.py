@@ -29,8 +29,10 @@ from core.nexus_framework.plugin_SDK import (
 )
 from core.settings import config_manager
 from core.tiered_logger import get_logger
+from database.config_database import retry_sqlite_io
 
 logger = get_logger("plugin_loader")
+import sqlite3
 import zlib
 
 
@@ -1576,18 +1578,15 @@ class PluginLoader:
                     loaded_mods = set(m for m in sys.modules.keys() if m.startswith(module_path))
                     if "plugin_modules" in locals() or "plugin_modules" in globals():
                         loaded_mods.update(plugin_modules)
+                    from database import execute_write_sql
                     from database.config_database import get_config_database
 
                     db = get_config_database()
-                    conn = db._open_connection()
-                    try:
-                        conn.execute(
-                            "UPDATE services SET loaded_modules = ? WHERE plugin_id = ?",
-                            (json.dumps(list(loaded_mods)), plugin_id),
-                        )
-                        conn.commit()
-                    finally:
-                        conn.close()
+                    execute_write_sql(
+                        str(db.database_path),
+                        "UPDATE services SET loaded_modules = ? WHERE plugin_id = ?",
+                        (json.dumps(list(loaded_mods)), plugin_id),
+                    )
                 except Exception as db_err:
                     logger.debug(f"Failed to update loaded_modules for {plugin_id}: {db_err}")
 
@@ -1598,18 +1597,15 @@ class PluginLoader:
                 logger.error(f"Raw exception data: {e}", exc_info=True)
                 # Auto-disable on fatal load error
                 try:
+                    from database import execute_write_sql
                     from database.config_database import get_config_database
 
                     db = get_config_database()
-                    conn = db._open_connection()
-                    try:
-                        conn.execute(
-                            "UPDATE services SET is_active = 0 WHERE plugin_id = ?",
-                            (plugin_id,),
-                        )
-                        conn.commit()
-                    finally:
-                        conn.close()
+                    execute_write_sql(
+                        str(db.database_path),
+                        "UPDATE services SET is_active = 0 WHERE plugin_id = ?",
+                        (plugin_id,),
+                    )
                 except Exception:
                     pass
                 return False
@@ -1646,7 +1642,9 @@ def get_plugin(name: str) -> PluginBase | None:
         return None
 
 
+@retry_sqlite_io(max_retries=5, base_delay=0.05, max_delay=1.0)
 def get_all_plugins() -> list:
+    import json
     import logging
 
     from database.config_database import get_config_database
@@ -1654,15 +1652,24 @@ def get_all_plugins() -> list:
     plugins_map = {}
     db = get_config_database()
 
-    conn = db._open_connection()
-    try:
+    with db._get_connection() as conn:
         c = conn.cursor()
-        c.execute(
-            "SELECT name, plugin_id, absolute_install_path, description, version, is_active, capabilities FROM services"
-        )
-        rows = c.fetchall()
-
-        import json
+        try:
+            c.execute(
+                "SELECT name, plugin_id, absolute_install_path, description, version, is_active, capabilities FROM services"
+            )
+            rows = c.fetchall()
+        except sqlite3.OperationalError as oe:
+            err_msg = str(oe).lower()
+            if any(token in err_msg for token in ("disk i/o error", "locked", "busy")):
+                raise
+            logging.getLogger("plugin_loader").error("Database query failed: Unable to fetch plugin registry state.")
+            logging.getLogger("plugin_loader").debug(f"Raw exception data: {oe}", exc_info=True)
+            return []
+        except Exception as e:
+            logging.getLogger("plugin_loader").error("Database query failed: Unable to fetch plugin registry state.")
+            logging.getLogger("plugin_loader").debug(f"Raw exception data: {e}", exc_info=True)
+            return []
 
         for row in rows:
             name = row["name"]
@@ -1686,12 +1693,6 @@ def get_all_plugins() -> list:
                 "capabilities": caps,
             }
             plugins_map[name] = plugin_info
-    except Exception as e:
-        logging.getLogger("plugin_loader").error("Database query failed: Unable to fetch plugin registry state.")
-        logging.getLogger("plugin_loader").debug(f"Raw exception data: {e}", exc_info=True)
-        logging.getLogger("plugin_loader").debug(f"Raw exception data: {e}", exc_info=True)
-    finally:
-        conn.close()
 
     return list(plugins_map.values())
 
@@ -2141,6 +2142,7 @@ class ServiceRegistry:
             return cls._services.get(service_name, cls._defaults.get(service_name))
 
 
+@retry_sqlite_io(max_retries=5, base_delay=0.05, max_delay=1.0)
 def get_plugin_capabilities(plugin_id_or_name: str | int):
     """
     Return capabilities for a plugin by looking up its registered capabilities in the database.
@@ -2173,6 +2175,10 @@ def get_plugin_capabilities(plugin_id_or_name: str | int):
             row = c.fetchone()
             if row and row["capabilities"]:
                 caps_json = row["capabilities"]
+    except sqlite3.OperationalError as oe:
+        err_msg = str(oe).lower()
+        if any(token in err_msg for token in ("disk i/o error", "locked", "busy")):
+            raise
     except Exception:
         pass
 

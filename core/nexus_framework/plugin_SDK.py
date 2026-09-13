@@ -1,5 +1,9 @@
 import inspect
+import logging
+import random
 import re
+import sqlite3
+import time
 from abc import ABC
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -11,6 +15,8 @@ from core.enums import Capability
 from core.matching_engine import text_utils
 from core.request_manager import RequestManager
 from time_utils import utc_now
+
+logger = logging.getLogger("core.nexus_framework.plugin_SDK")
 
 
 @dataclass
@@ -40,16 +46,64 @@ class _ConfigFacade:
         from database.config_database import get_config_database
 
         db = get_config_database()
-        svc_id = db.get_or_create_service_id(self.plugin_id)
-        val = db.get_service_config(svc_id, key)
-        return val if val is not None else default
+        max_retries = 5
+        base_delay = 0.05
+        for attempt in range(max_retries):
+            try:
+                svc_id = db.get_or_create_service_id(self.plugin_id)
+                val = db.get_service_config(svc_id, key)
+                return val if val is not None else default
+            except Exception as e:
+                err_msg = str(e).lower()
+                is_transient = isinstance(e, sqlite3.OperationalError) or any(
+                    tok in err_msg for tok in ("disk i/o error", "locked", "busy")
+                )
+                if is_transient and attempt < max_retries - 1:
+                    delay = min(1.0, base_delay * (2**attempt)) + random.uniform(0, 0.05)
+                    logger.warning(
+                        f"[PluginConfigSDK] Transient database error accessing config key '{key}' "
+                        f"for plugin '{self.plugin_id}' (attempt {attempt + 1}/{max_retries}): {e}. Backing off for {delay:.3f}s..."
+                    )
+                    time.sleep(delay)
+                    continue
+                logger.warning(
+                    f"[PluginConfigSDK] Error reading config key '{key}' for plugin '{self.plugin_id}': {e}. "
+                    f"Falling back to default value."
+                )
+                return default
+        return default
 
     def set(self, key: str, value: str):
         from database.config_database import get_config_database
 
         db = get_config_database()
-        svc_id = db.get_or_create_service_id(self.plugin_id)
-        db.set_service_config(svc_id, key, value, is_sensitive=False)
+        max_retries = 5
+        base_delay = 0.05
+        for attempt in range(max_retries):
+            try:
+                svc_id = db.get_or_create_service_id(self.plugin_id)
+                db.set_service_config(svc_id, key, value, is_sensitive=False)
+                return
+            except Exception as e:
+                err_msg = str(e).lower()
+                is_transient = isinstance(e, sqlite3.OperationalError) or any(
+                    tok in err_msg for tok in ("disk i/o error", "locked", "busy")
+                )
+                if is_transient and attempt < max_retries - 1:
+                    delay = min(1.0, base_delay * (2**attempt)) + random.uniform(0, 0.05)
+                    logger.warning(
+                        f"[PluginConfigSDK] Transient database error setting config key '{key}' "
+                        f"for plugin '{self.plugin_id}' (attempt {attempt + 1}/{max_retries}): {e}. Backing off for {delay:.3f}s..."
+                    )
+                    time.sleep(delay)
+                    continue
+                logger.warning(
+                    f"[PluginConfigSDK] Failed to set config key '{key}' for plugin '{self.plugin_id}': {e}."
+                )
+                return
+
+
+PluginConfigSDK = _ConfigFacade
 
 
 class _SecretsFacade:
@@ -61,16 +115,59 @@ class _SecretsFacade:
         from database.config_database import get_config_database
 
         db = get_config_database()
-        svc_id = db.get_or_create_service_id(self.plugin_id)
-        val = db.get_service_config(svc_id, key)
-        return val if val is not None else default
+        max_retries = 5
+        base_delay = 0.05
+        for attempt in range(max_retries):
+            try:
+                svc_id = db.get_or_create_service_id(self.plugin_id)
+                val = db.get_service_config(svc_id, key)
+                return val if val is not None else default
+            except Exception as e:
+                err_msg = str(e).lower()
+                is_transient = isinstance(e, sqlite3.OperationalError) or any(
+                    tok in err_msg for tok in ("disk i/o error", "locked", "busy")
+                )
+                if is_transient and attempt < max_retries - 1:
+                    delay = min(1.0, base_delay * (2**attempt)) + random.uniform(0, 0.05)
+                    logger.warning(
+                        f"[SecretsFacade] Transient database error accessing secret key '{key}' "
+                        f"for plugin '{self.plugin_id}' (attempt {attempt + 1}/{max_retries}): {e}. Backing off for {delay:.3f}s..."
+                    )
+                    time.sleep(delay)
+                    continue
+                logger.warning(
+                    f"[SecretsFacade] Error reading secret key '{key}' for plugin '{self.plugin_id}': {e}. "
+                    f"Falling back to default value."
+                )
+                return default
+        return default
 
     def set(self, key: str, value: str):
         from database.config_database import get_config_database
 
         db = get_config_database()
-        svc_id = db.get_or_create_service_id(self.plugin_id)
-        db.set_service_config(svc_id, key, value, is_sensitive=True)
+        max_retries = 5
+        base_delay = 0.05
+        for attempt in range(max_retries):
+            try:
+                svc_id = db.get_or_create_service_id(self.plugin_id)
+                db.set_service_config(svc_id, key, value, is_sensitive=True)
+                return
+            except Exception as e:
+                err_msg = str(e).lower()
+                is_transient = isinstance(e, sqlite3.OperationalError) or any(
+                    tok in err_msg for tok in ("disk i/o error", "locked", "busy")
+                )
+                if is_transient and attempt < max_retries - 1:
+                    delay = min(1.0, base_delay * (2**attempt)) + random.uniform(0, 0.05)
+                    logger.warning(
+                        f"[SecretsFacade] Transient database error setting secret key '{key}' "
+                        f"for plugin '{self.plugin_id}' (attempt {attempt + 1}/{max_retries}): {e}. Backing off for {delay:.3f}s..."
+                    )
+                    time.sleep(delay)
+                    continue
+                logger.warning(f"[SecretsFacade] Failed to set secret key '{key}' for plugin '{self.plugin_id}': {e}.")
+                return
 
 
 class _JobsSDKFacade:

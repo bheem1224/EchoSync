@@ -12,6 +12,7 @@ def set_sqlite_pragmas(dbapi_connection, connection_record):
     Apply strict SQLite PRAGMA I/O tunings for low write amplification and high performance.
     """
     cursor = dbapi_connection.cursor()
+    cursor.execute("PRAGMA busy_timeout = 30000;")
     cursor.execute("PRAGMA journal_mode = WAL;")
     cursor.execute("PRAGMA synchronous = NORMAL;")
     cursor.execute("PRAGMA cache_size = -64000;")
