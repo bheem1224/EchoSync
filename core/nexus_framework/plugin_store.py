@@ -539,8 +539,14 @@ class PluginStore:
         """First-time installation of a plugin."""
         return self.download_plugin(plugin_info, channel, force_consent, is_update=False)
 
-    def update_plugin(self, plugin_id: int, force_consent: bool = False) -> bool:
-        """Downloads the update and hot swaps it."""
+    def update_plugin(
+        self,
+        plugin_id: int,
+        force_consent: bool = False,
+        channel: str | None = None,
+        target_version: str | None = None,
+    ) -> bool:
+        """Downloads the update and hot swaps it using Tri-State Channel Resolution."""
         from database.config_database import get_config_database
 
         db = get_config_database()
@@ -557,10 +563,29 @@ class PluginStore:
 
             plugin_name = row[0]
             local_beta = row[1]
+
+        # Tri-State Preference Hierarchy:
+        # 1. Explicit request parameter (target_version / channel)
+        # 2. Plugin Override (services.beta_opt_in: 1=Beta, 0=Stable)
+        # 3. Global System Setting (ui.beta_plugin_ui)
+        resolved_channel = None
+        if channel:
+            c_lower = str(channel).strip().lower()
+            if c_lower in ("beta", "prerelease"):
+                resolved_channel = "beta"
+            elif c_lower in ("stable", "release"):
+                resolved_channel = "stable"
+
+        if not resolved_channel and target_version:
+            tv_lower = str(target_version).strip().lower()
+            if "-beta" in tv_lower or "beta" in tv_lower:
+                resolved_channel = "beta"
+
+        if not resolved_channel:
             if local_beta is not None:
-                channel = "beta" if local_beta else "stable"
+                resolved_channel = "beta" if local_beta else "stable"
             else:
-                channel = "beta" if config_manager.get("ui.beta_plugin_ui", False) else "stable"
+                resolved_channel = "beta" if config_manager.get("ui.beta_plugin_ui", False) else "stable"
 
         store_plugins = self.get_all_store_plugins()
         plugin_info = next(
@@ -574,8 +599,8 @@ class PluginStore:
 
         return self.download_plugin(
             plugin_info,
-            channel,
-            force_consent,
+            channel=resolved_channel,
+            force_consent=force_consent,
             is_update=True,
             target_plugin_id=plugin_id,
         )
@@ -641,7 +666,7 @@ class PluginStore:
         # STEP 2: Update the Installer Logic (Manifest URL Priority)
         # Primary Route: Check if parsed plugin data contains the explicit URL for that channel
         if channel == "beta":
-            download_url = plugin_info.get("beta_url") or plugin_info.get("download_url")
+            download_url = plugin_info.get("beta_url")
         else:
             download_url = plugin_info.get("download_url")
 
@@ -734,27 +759,8 @@ class PluginStore:
                 return False
 
             if resp.status_code != 200:
-                if (
-                    channel == "beta"
-                    and plugin_info.get("download_url")
-                    and plugin_info.get("download_url") != download_url
-                ):
-                    stable_url = plugin_info.get("download_url")
-                    logger.warning(
-                        f"Beta artifact unavailable for {plugin_id} at {download_url}; falling back to stable artifact {stable_url}"
-                    )
-                    resp = req_mgr.get(stable_url, timeout=30, allow_redirects=False)
-
-                    if resp.status_code in (301, 302, 307):
-                        logger.error("Installation halted: Untrusted remote redirection detected (SSRF Prevention).")
-                        return False
-                    download_url = stable_url
-                    if resp.status_code != 200:
-                        logger.error(f"Fallback stable artifact download also failed with status {resp.status_code}")
-                        return False
-                else:
-                    logger.error(f"Artifact download failed with status {resp.status_code}")
-                    return False
+                logger.error(f"Artifact download failed from {download_url} with status {resp.status_code}")
+                return False
 
             if tmp_dir.exists():
                 shutil.rmtree(tmp_dir, ignore_errors=True)
@@ -1177,7 +1183,7 @@ class PluginStore:
                             absolute_install_path=str(target_dir.resolve()),
                             plugin_id=computed_plugin_id,
                             version=manifest_version,
-                            beta_opt_in=1 if channel == "beta" else 0,
+                            beta_opt_in=None if is_update else (1 if channel == "beta" else 0),
                             verified_source=manifest_verified,
                             privileged_mode=manifest_privileged,
                             permissions=manifest_permissions,

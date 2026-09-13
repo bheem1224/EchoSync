@@ -226,6 +226,8 @@ def get_plugin_store():
 class PluginActionRequest(BaseModel):
     plugin: dict[str, Any]
     channel: str | None = None
+    version: str | None = None
+    target_version: str | None = None
     force_consent: bool | None = None
     consent_granted: bool | None = None
 
@@ -325,7 +327,31 @@ def update_plugin(request: Request, data: PluginActionRequest):
                 detail=f"Plugin {plugin_name} not found in database registry.",
             )
 
-        success = plugin_store.update_plugin(db_plugin_id, force_consent=force_consent)
+        import inspect
+
+        channel = data.channel
+        if not channel and isinstance(plugin_info, dict):
+            channel = plugin_info.get("channel")
+
+        target_version = data.version or data.target_version
+        if not target_version and isinstance(plugin_info, dict):
+            target_version = plugin_info.get("version") or plugin_info.get("target_version")
+
+        update_kwargs = {"force_consent": force_consent}
+        if channel:
+            update_kwargs["channel"] = channel
+        if target_version:
+            update_kwargs["target_version"] = target_version
+
+        sig = inspect.signature(plugin_store.update_plugin)
+        params = sig.parameters
+        filtered_kwargs = {
+            k: v
+            for k, v in update_kwargs.items()
+            if k in params or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())
+        }
+
+        success = plugin_store.update_plugin(db_plugin_id, **filtered_kwargs)
         if success:
             return {"success": True}
         raise HTTPException(status_code=500, detail=f"Failed to update plugin {plugin_name}")

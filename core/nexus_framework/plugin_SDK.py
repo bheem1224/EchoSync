@@ -630,13 +630,24 @@ def check_plugin_permission(plugin_id: str, scope: str) -> bool:
 
     # 1. Check services table in config.db first
     try:
+        from core.plugins.sdk import compute_plugin_crc32
+
+        int_id = None
+        if isinstance(plugin_id, int) or (isinstance(plugin_id, str) and plugin_id.isdigit()):
+            int_id = int(plugin_id)
+        else:
+            int_id = compute_plugin_crc32(str(plugin_id))
+
+        clean_name = str(plugin_id).strip().lower()
+        short_name = clean_name.split(".")[-1]
+
         db = get_config_database()
         conn = db._open_connection()
         try:
             c = conn.cursor()
             c.execute(
-                "SELECT permissions, privileged_mode FROM services WHERE name=? OR plugin_id=?",
-                (plugin_id, plugin_id),
+                "SELECT permissions, privileged_mode FROM services WHERE plugin_id=? OR LOWER(name)=? OR LOWER(name)=?",
+                (int_id, clean_name, short_name),
             )
             row = c.fetchone()
             if row:
@@ -645,15 +656,22 @@ def check_plugin_permission(plugin_id: str, scope: str) -> bool:
                 if row[0]:
                     try:
                         perms = json.loads(row[0])
-                        if isinstance(perms, dict):
+                        if isinstance(perms, list):
+                            if "privileged_mode" in perms or scope in perms:
+                                return True
+                            if "." in scope:
+                                base_cat, sub_key = scope.split(".", 1)
+                                if sub_key in perms:
+                                    return True
+                        elif isinstance(perms, dict):
                             if perms.get("privileged_mode"):
                                 return True
-                            if scope.startswith("database."):
-                                db_key = scope.split(".", 1)[1]
-                                db_perms = perms.get("database", {})
-                                if isinstance(db_perms, dict) and db_perms.get(db_key):
+                            if "." in scope:
+                                base_cat, sub_key = scope.split(".", 1)
+                                cat_perms = perms.get(base_cat, {})
+                                if isinstance(cat_perms, dict) and cat_perms.get(sub_key):
                                     return True
-                                if perms.get(scope) or perms.get(db_key):
+                                if perms.get(scope) or perms.get(sub_key):
                                     return True
                             elif scope in perms and perms[scope]:
                                 return True
@@ -677,15 +695,22 @@ def check_plugin_permission(plugin_id: str, scope: str) -> bool:
             if manifest.get("privileged") is True or manifest.get("privileged_mode") is True:
                 return True
             perms = manifest.get("permissions", {})
-            if isinstance(perms, dict):
+            if isinstance(perms, list):
+                if "privileged_mode" in perms or scope in perms:
+                    return True
+                if "." in scope:
+                    base_cat, sub_key = scope.split(".", 1)
+                    if sub_key in perms:
+                        return True
+            elif isinstance(perms, dict):
                 if perms.get("privileged_mode") is True:
                     return True
-                if scope.startswith("database."):
-                    db_key = scope.split(".", 1)[1]
-                    db_perms = perms.get("database", {})
-                    if isinstance(db_perms, dict) and db_perms.get(db_key) is True:
+                if "." in scope:
+                    base_cat, sub_key = scope.split(".", 1)
+                    cat_perms = perms.get(base_cat, {})
+                    if isinstance(cat_perms, dict) and cat_perms.get(sub_key) is True:
                         return True
-                    if perms.get(scope) is True or perms.get(db_key) is True:
+                    if perms.get(scope) is True or perms.get(sub_key) is True:
                         return True
                 elif perms.get(scope):
                     return True

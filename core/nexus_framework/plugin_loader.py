@@ -814,10 +814,40 @@ class PluginLoader:
 
                             is_disabled = matched_canonical_crc in disabled_ids
                             target_active = 0 if is_disabled else 1
-                            c.execute(
-                                "UPDATE services SET is_active = ?, absolute_install_path = ? WHERE id = ?",
-                                (target_active, str(plugin_item.resolve()), db_id),
-                            )
+                            raw_perms = row["permissions"]
+                            parsed_perms = None
+                            if raw_perms:
+                                try:
+                                    parsed_perms = json.loads(raw_perms)
+                                except Exception:
+                                    parsed_perms = None
+
+                            needs_seed = False
+                            if not parsed_perms:
+                                needs_seed = True
+                            elif isinstance(parsed_perms, list):
+                                if "database.read_library" not in parsed_perms:
+                                    needs_seed = True
+                            elif isinstance(parsed_perms, dict):
+                                db_perms = parsed_perms.get("database", {})
+                                if not (
+                                    isinstance(db_perms, dict) and db_perms.get("read_library")
+                                ) and not parsed_perms.get("database.read_library"):
+                                    needs_seed = True
+
+                            if needs_seed:
+                                from core.nexus_framework.permissions import seed_base_permissions
+
+                                seeded_perms = seed_base_permissions(parsed_perms)
+                                c.execute(
+                                    "UPDATE services SET is_active = ?, absolute_install_path = ?, permissions = ? WHERE id = ?",
+                                    (target_active, str(plugin_item.resolve()), json.dumps(seeded_perms), db_id),
+                                )
+                            else:
+                                c.execute(
+                                    "UPDATE services SET is_active = ?, absolute_install_path = ? WHERE id = ?",
+                                    (target_active, str(plugin_item.resolve()), db_id),
+                                )
                         else:
                             # Obsolete duplicate row with outdated or non-canonical CRC32
                             logger.warning(
@@ -839,8 +869,19 @@ class PluginLoader:
 
                         if is_valid_sideload:
                             logger.info(f"Classifying unlisted local service {name} (ID: {db_id}) as sideload.")
+                            raw_perms = row["permissions"]
+                            parsed_perms = None
+                            if raw_perms:
+                                try:
+                                    parsed_perms = json.loads(raw_perms)
+                                except Exception:
+                                    parsed_perms = None
+                            from core.nexus_framework.permissions import seed_base_permissions
+
+                            seeded_perms = seed_base_permissions(parsed_perms)
                             c.execute(
-                                "UPDATE services SET service_type = 'sideload', beta_opt_in = 0 WHERE id = ?", (db_id,)
+                                "UPDATE services SET service_type = 'sideload', beta_opt_in = 0, permissions = ? WHERE id = ?",
+                                (json.dumps(seeded_perms), db_id),
                             )
                         else:
                             logger.warning(
@@ -858,6 +899,9 @@ class PluginLoader:
                         logger.info(
                             f"Registering missing canonical plugin {m_data.get('id', plugin_item.name)} (CRC32: {c_crc})"
                         )
+                        from core.nexus_framework.permissions import seed_base_permissions
+
+                        seeded_manifest_perms = seed_base_permissions(m_data.get("permissions", {}))
                         c.execute(
                             """
                             INSERT INTO services(name, plugin_id, service_type, description, absolute_install_path, version, is_active, 
@@ -875,7 +919,7 @@ class PluginLoader:
                                 if m_data.get("verified_source") == "official" or m_data.get("author") == "EchoSync"
                                 else 0,
                                 1 if m_data.get("privileged") or m_data.get("privileged_mode") else 0,
-                                json.dumps(m_data.get("permissions", {})),
+                                json.dumps(seeded_manifest_perms),
                             ),
                         )
                         active_db_paths.add(str(plugin_item.resolve()))

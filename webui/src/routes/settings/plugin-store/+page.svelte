@@ -120,9 +120,16 @@
       else if (isUpdate) endpoint = "/system/plugins/update";
 
       const url = forceConsent ? `${endpoint}?force_consent=true` : endpoint;
+      const targetChannel =
+        plugin.channel === "beta" ||
+        (plugin.version && plugin.version.includes("-beta"))
+          ? "beta"
+          : plugin.channel === "release" || plugin.channel === "stable"
+            ? "stable"
+            : plugin.channel || "stable";
       await apiClient.post(url, {
         plugin,
-        channel: plugin.channel || "release",
+        channel: targetChannel,
         version: plugin.version,
       });
       feedback.addToast(
