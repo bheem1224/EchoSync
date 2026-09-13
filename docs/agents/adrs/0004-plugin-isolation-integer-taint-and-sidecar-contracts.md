@@ -84,12 +84,12 @@ Plugins must never instantiate raw `threading.Thread`. All plugin threads must r
 - **Active / Ephemeral Workers:** Spawn with `bound_to_general_pool=True` to claim a general worker slot for the duration of the task.
 - **Idle Listeners / Sidecars:** Spawn with `bound_to_general_pool=False` so they remain supervised without depleting worker slots.
 
-### Invariant 4: Centralized OAuth Ingress & Port Binding Prohibition
-Plugins must not bind raw TCP ports on the host. Any temporary sidecar (such as Tidal OAuth) that must open a socket must:
-1. Register with `bound_to_general_pool=False`.
-2. Emit a deprecation warning:
-   `[DEPRECATION WARNING] Ad-hoc plugin OAuth HTTP server is deprecated. Migrate to EchoSync's centralized HTTPS sidecar.`
-3. Unregister and terminate cleanly upon authentication completion or application shutdown.
+### Invariant 4: Centralized Zero-Trust OAuth Token Broker & Port Binding Prohibition
+Plugins must not bind raw TCP ports on the host (port 8889 in Tidal has been eliminated).
+1. External authentication flows route through EchoSync's Centralized Token Broker on port 5001 (`core/oauth/sidecar.py`).
+2. **Zero-Trust Direct Caller Return:** The sidecar terminates TLS, manages high-entropy PKCE challenges (`S256`), executes upstream token exchanges, and directly returns credentials in-memory to the initiating plugin's private callback (`OAuthSession.on_token`). Tokens are strictly NEVER emitted over `EventBus`.
+3. **Supervisor Burst Dispatch:** In-memory callback execution is dispatched via `supervisor.spawn_supervised_thread(bound_to_general_pool=False, owner_type=OwnerType.PLUGIN, owner_id=str(plugin_id), category=ProcessCategory.CORE_SYSTEM)`.
+4. **Lease-Protected Encrypted Persistence:** Plugins persist received tokens into `config.db` using `sdk.accounts.save_token()` wrapped in `with job_queue.db_write_lease():` under AES-256-GCM encryption.
 
 ---
 
@@ -102,6 +102,12 @@ Plugins must not bind raw TCP ports on the host. Any temporary sidecar (such as 
   - `test_tiered_logger_rejects_out_of_range_plugin_id`: PASSED (`ValueError` raised)
 - **Supervision & Pool Isolation Tests:**
   - `test_slskd_eventbus_callbacks_spawn_supervised_threads`: PASSED (`bound_to_general_pool=True`)
-  - `test_tidal_oauth_sidecar_supervised_unbounded_and_warns`: PASSED (`bound_to_general_pool=False` + deprecation warning)
-- **Zero Critical Violations:** AST scanner reports **0 Critical Violations** across all plugins in `plugins/EchoSync/`.
+  - `test_tidal_oauth_sidecar_retired_and_warns`: PASSED (port 8889 retired, delegates to centralized HTTPS sidecar)
+- **Centralized OAuth Sidecar Capability Tests:** [`tests/core/test_oauth_sidecar_capability.py`](file:///c:/Users/bheem/VScode-Projects/EchoSync/tests/core/test_oauth_sidecar_capability.py) verifies:
+  - Strict unsigned 32-bit integer `plugin_id` enforcement in `OAuthSession` and `sidecar.py`.
+  - S256 PKCE challenge and high-entropy state generation.
+  - Upstream token exchange execution inside sidecar with direct caller in-memory return.
+  - Supervised callback dispatch with `bound_to_general_pool=False`.
+  - Zero-Trust EventBus Invariant: 0 tokens leaked to EventBus.
+- **Zero Critical Violations:** AST scanner reports **0 Critical Violations** and **0 Unleased Writes** across the entire repository.
 

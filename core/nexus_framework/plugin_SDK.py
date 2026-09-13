@@ -950,6 +950,59 @@ class _AttributeBroker:
                 )
 
 
+class _OAuthSDKFacade:
+    """Governed SDK facade for Centralized HTTPS OAuth Token Broker integration."""
+
+    def __init__(self, plugin_id_str: str):
+        self._plugin_id_str = plugin_id_str
+
+    @property
+    def _plugin_id_int(self) -> int:
+        return _resolve_plugin_id_int(self._plugin_id_str)
+
+    def get_redirect_uri(self, provider_or_slug: str | None = None) -> str:
+        """Derive the canonical centralized HTTPS redirect URI on port 5001."""
+        from core.network_utils import get_lan_ip
+
+        slug = provider_or_slug or self._plugin_id_str.split(".")[-1]
+        lan_ip = get_lan_ip()
+        return f"https://{lan_ip}:5001/api/oauth/callback/plugins/{slug}"
+
+    def create_session(
+        self,
+        provider: str,
+        auth_url: str,
+        token_url: str,
+        client_id: str,
+        client_secret: str | None = None,
+        scopes: str | list[str] | None = None,
+        use_pkce: bool = True,
+        account_id: int | None = None,
+        on_token: Any = None,
+        on_error: Any = None,
+        extra_auth_params: dict[str, Any] | None = None,
+        ttl_seconds: int = 600,
+    ):
+        """Register an OAuth flow with the centralized token broker on port 5001."""
+        from core.oauth.sidecar import register_oauth_session
+
+        return register_oauth_session(
+            plugin_id=self._plugin_id_int,
+            provider=provider,
+            auth_url=auth_url,
+            token_url=token_url,
+            client_id=client_id,
+            client_secret=client_secret,
+            scopes=scopes,
+            use_pkce=use_pkce,
+            account_id=account_id,
+            on_token=on_token,
+            on_error=on_error,
+            extra_auth_params=extra_auth_params,
+            ttl_seconds=ttl_seconds,
+        )
+
+
 class _SDK:
     def __init__(self):
         # We don't know the plugin_id here yet as it's a global singleton,
@@ -1005,6 +1058,10 @@ class _SDK:
         from core.plugins.sdk import _WebhooksSDKFacade
 
         return _WebhooksSDKFacade(self._get_plugin_id())
+
+    @property
+    def oauth(self):
+        return _OAuthSDKFacade(self._get_plugin_id())
 
     def _get_plugin_id(self):
         import inspect

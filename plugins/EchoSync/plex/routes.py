@@ -72,9 +72,7 @@ def get_settings():
         )
     except Exception as e:
         logger.error(f"Error getting Plex settings: {e}", exc_info=True)
-        return JSONResponse(
-            content={"error": "Failed to get Plex settings"}, status_code=500
-        )
+        return JSONResponse(content={"error": "Failed to get Plex settings"}, status_code=500)
 
 
 @router.post("/settings")
@@ -105,31 +103,28 @@ async def save_settings(request: Request):
             if accounts:
                 account_id = accounts[0].get("id")
             else:
-                account_id = sdk.accounts.ensure_account(
-                    account_name=f"plex_user_{int(time.time())}"
-                )
+                account_id = sdk.accounts.ensure_account(account_name=f"plex_user_{int(time.time())}")
 
-            sdk.accounts.save_token(
-                account_id=account_id,
-                access_token=token,
-                refresh_token=None,
-                expires_at=None,
-            )
+            from core.task_manager.task_queue import job_queue
+
+            with job_queue.db_write_lease(task_name=f"plex_settings_save_token_{account_id}"):
+                sdk.accounts.save_token(
+                    account_id=account_id,
+                    access_token=token,
+                    refresh_token=None,
+                    expires_at=None,
+                )
             logger.info(f"Plex token saved to SQLite account {account_id}")
 
             try:
                 PlexClient(account_id=account_id).import_managed_users()
             except Exception as e:
-                logger.warning(
-                    f"Failed to import Plex managed users after saving settings: {e}"
-                )
+                logger.warning(f"Failed to import Plex managed users after saving settings: {e}")
 
         return {"success": True}
     except Exception as e:
         logger.error(f"Error saving Plex settings: {e}", exc_info=True)
-        return JSONResponse(
-            content={"error": "Failed to save Plex settings"}, status_code=500
-        )
+        return JSONResponse(content={"error": "Failed to save Plex settings"}, status_code=500)
 
 
 @router.post("/activate")
@@ -138,14 +133,10 @@ def activate_server():
     try:
         sdk.config.set("active_media_server", "plex")
         logger.info("Plex set as active media server")
-        return JSONResponse(
-            content={"success": True, "message": "Plex is now the active media server"}
-        )
+        return JSONResponse(content={"success": True, "message": "Plex is now the active media server"})
     except Exception as e:
         logger.error(f"Error activating Plex: {e}", exc_info=True)
-        return JSONResponse(
-            content={"error": "Failed to activate Plex server"}, status_code=500
-        )
+        return JSONResponse(content={"error": "Failed to activate Plex server"}, status_code=500)
 
 
 @router.post("/test-connection")
@@ -154,9 +145,7 @@ async def test_connection(request: Request):
     try:
         payload = await request.json() or {}
 
-        base_url = str(
-            payload.get("base_url") or sdk.config.get("plex.base_url", "")
-        ).strip()
+        base_url = str(payload.get("base_url") or sdk.config.get("plex.base_url", "")).strip()
 
         # Using global SDK singleton
         from core.security import decrypt_string
@@ -171,14 +160,10 @@ async def test_connection(request: Request):
                 token = decrypt_string(token_data.get("access_token"))
 
         if not base_url:
-            return JSONResponse(
-                content={"error": "Server URL is required"}, status_code=400
-            )
+            return JSONResponse(content={"error": "Server URL is required"}, status_code=400)
         if not token:
             return JSONResponse(
-                content={
-                    "error": "Authentication token is required. Please log in first."
-                },
+                content={"error": "Authentication token is required. Please log in first."},
                 status_code=400,
             )
 
@@ -202,9 +187,7 @@ async def test_connection(request: Request):
             }
         )
     except ImportError:
-        return JSONResponse(
-            content={"error": "Plex library not available"}, status_code=500
-        )
+        return JSONResponse(content={"error": "Plex library not available"}, status_code=500)
     except Exception as e:
         logger.error(f"Plex connection test failed: {e}", exc_info=True)
         return JSONResponse(
@@ -240,11 +223,7 @@ async def start_oauth(request: Request):
 
         # We need a dummy forward URL to satisfy OAuth, even though Plex uses PINs
         origin = request.headers.get("Origin")
-        forward_url = (
-            f"{origin}/settings/music-services"
-            if origin
-            else "http://127.0.0.1:5173/settings/music-services"
-        )
+        forward_url = f"{origin}/settings/music-services" if origin else "http://127.0.0.1:5173/settings/music-services"
         oauth_url = pin_login.oauthUrl(forward_url)
 
         pin_id = str(pin_login._id)
@@ -305,14 +284,10 @@ async def start_oauth(request: Request):
         )
     except ImportError:
         logger.error("plexapi library not installed")
-        return JSONResponse(
-            content={"error": "Plex library not available"}, status_code=500
-        )
+        return JSONResponse(content={"error": "Plex library not available"}, status_code=500)
     except Exception as e:
         logger.error(f"Error starting Plex OAuth: {e}", exc_info=True)
-        return JSONResponse(
-            content={"error": "Failed to start Plex authentication"}, status_code=500
-        )
+        return JSONResponse(content={"error": "Failed to start Plex authentication"}, status_code=500)
 
 
 @router.get("/auth/poll/{session_id}")
@@ -345,9 +320,7 @@ def poll_oauth(session_id: str):
                 logger.debug(f"DB session lookup failed: {e}")
 
         if not pin_id:
-            return JSONResponse(
-                content={"error": "Session not found or expired"}, status_code=404
-            )
+            return JSONResponse(content={"error": "Session not found or expired"}, status_code=404)
 
         # We manually query the Plex PIN API to check if the user authorized it.
         import requests
@@ -361,9 +334,7 @@ def poll_oauth(session_id: str):
                 "X-Plex-Client-Identifier": client_id,
             }
             # Explicitly request the PIN status from Plex
-            resp = requests.get(
-                f"https://plex.tv/api/v2/pins/{pin_id}", headers=headers, timeout=5
-            )
+            resp = requests.get(f"https://plex.tv/api/v2/pins/{pin_id}", headers=headers, timeout=5)
             resp_data = resp.json()
             logger.debug(f"Plex PIN status response: {resp_data}")
 
@@ -395,56 +366,43 @@ def poll_oauth(session_id: str):
                 # Upsert existing account
                 account_id = accounts[0].get("id")
                 account_name = accounts[0].get("account_name", "Default Plex Server")
-                logger.info(
-                    f"Plex Singleton: Found existing account {account_id}, updating token."
-                )
+                logger.info(f"Plex Singleton: Found existing account {account_id}, updating token.")
             else:
                 # Fallback to fetching user details if we create a new one
-                account_name = (
-                    sdk.config.get("base_url")
-                    or sdk.config.get("server_url")
-                    or "Default Plex Server"
-                )
+                account_name = sdk.config.get("base_url") or sdk.config.get("server_url") or "Default Plex Server"
                 try:
                     from plexapi.myplex import MyPlexAccount
 
                     myplex_acc = MyPlexAccount(token=auth_token)
-                    account_name = (
-                        myplex_acc.username or myplex_acc.email or account_name
-                    )
+                    account_name = myplex_acc.username or myplex_acc.email or account_name
                 except Exception as e:
                     logger.warning(f"Failed to fetch Plex username: {e}")
 
                 # Ensure the new singleton account exists
                 account_id = sdk.accounts.ensure_account(account_name=account_name)
-                logger.info(
-                    f"Plex Singleton: Created new account {account_id} ({account_name})."
-                )
+                logger.info(f"Plex Singleton: Created new account {account_id} ({account_name}).")
 
             # Encrypt and save token to account_tokens
             try:
-                sdk.accounts.save_token(
-                    account_id=account_id,
-                    access_token=auth_token,
-                    refresh_token=None,
-                    expires_at=None,
-                )
-                sdk.accounts.mark_account_authenticated(account_id)
-                sdk.accounts.toggle_account_active(account_id, True)
-                logger.info(
-                    f"Plex OAuth completed and token securely saved for account: {account_name}"
-                )
+                from core.task_manager.task_queue import job_queue
+
+                with job_queue.db_write_lease(task_name=f"plex_oauth_save_token_{account_id}"):
+                    sdk.accounts.save_token(
+                        account_id=account_id,
+                        access_token=auth_token,
+                        refresh_token=None,
+                        expires_at=None,
+                    )
+                    sdk.accounts.mark_account_authenticated(account_id)
+                    sdk.accounts.toggle_account_active(account_id, True)
+                logger.info(f"Plex OAuth completed and token securely saved for account: {account_name}")
                 try:
                     PlexClient(account_id=account_id).import_managed_users()
                 except Exception as import_err:
-                    logger.warning(
-                        f"Failed to import Plex managed users after OAuth: {import_err}"
-                    )
+                    logger.warning(f"Failed to import Plex managed users after OAuth: {import_err}")
             except Exception as e:
                 logger.error(f"Failed to securely save Plex token: {e}")
-                return JSONResponse(
-                    content={"error": "Failed to securely save token"}, status_code=500
-                )
+                return JSONResponse(content={"error": "Failed to securely save token"}, status_code=500)
 
             with plex_oauth_lock:
                 plex_oauth_sessions.pop(session_id, None)
@@ -460,9 +418,7 @@ def poll_oauth(session_id: str):
 
     except Exception as e:
         logger.error(f"Error polling Plex OAuth: {e}", exc_info=True)
-        return JSONResponse(
-            content={"error": "Failed to poll Plex authentication"}, status_code=500
-        )
+        return JSONResponse(content={"error": "Failed to poll Plex authentication"}, status_code=500)
 
 
 @router.delete("/auth/cancel/{session_id}")
@@ -477,9 +433,7 @@ def cancel_oauth(session_id: str):
         return {"success": True}
     except Exception as e:
         logger.error(f"Error cancelling Plex OAuth: {e}", exc_info=True)
-        return JSONResponse(
-            content={"error": "Failed to cancel Plex authentication"}, status_code=500
-        )
+        return JSONResponse(content={"error": "Failed to cancel Plex authentication"}, status_code=500)
 
 
 from web.auth import require_auth
@@ -506,6 +460,4 @@ def sync_plex_users():
         )
     except Exception as e:
         logger.error(f"Error syncing Plex users: {e}", exc_info=True)
-        return JSONResponse(
-            content={"error": "Failed to sync Plex users"}, status_code=500
-        )
+        return JSONResponse(content={"error": "Failed to sync Plex users"}, status_code=500)

@@ -128,43 +128,18 @@ async def test_slskd_webhook_mutation_acquires_db_write_lease():
 # ==============================================================================
 
 
-def test_tidal_oauth_sidecar_supervised_unbounded_and_warns():
-    """Verify Tidal OAuth sidecar is supervised with bound_to_general_pool=False and warns."""
-    from plugins.EchoSync.tidal.client import TidalClient, PLUGIN_CRC32
+def test_tidal_oauth_sidecar_retired_and_warns():
+    """Verify Tidal bespoke OAuth sidecar is retired and delegates to centralized HTTPS sidecar."""
+    from plugins.EchoSync.tidal.client import TidalClient
 
     client = TidalClient()
-    spawn_mock = MagicMock(return_value=(MagicMock(), "tidal_reg_123"))
-
-    with patch.object(supervisor, "spawn_supervised_thread", spawn_mock):
-        with patch("plugins.EchoSync.tidal.client.HTTPServer") as mock_http:
-            mock_server = MagicMock()
-            mock_http.return_value = mock_server
-
-            with patch.object(client, "auth_code", "test_code"):
-                with patch("plugins.EchoSync.tidal.client.logger.warning") as mock_warn:
-                    client._start_callback_server()
-
-                    # Check deprecation warning
-                    assert mock_warn.called
-                    warn_text = mock_warn.call_args[0][0]
-                    assert "DEPRECATION WARNING" in warn_text
-                    assert "centralized HTTPS sidecar" in warn_text
-
-                    # Check supervisor spawn parameters
-                    assert spawn_mock.called
-                    call_kwargs = spawn_mock.call_args[1]
-                    assert call_kwargs["owner_id"] == str(PLUGIN_CRC32)
-                    assert call_kwargs["owner_type"] == OwnerType.PLUGIN
-                    assert call_kwargs["category"] == ProcessCategory.WORKER_THREAD
-                    assert call_kwargs["bound_to_general_pool"] is False
-                    assert client._auth_server_reg_id == "tidal_reg_123"
-
-                    # Check shutdown unregisters
-                    with patch.object(supervisor, "unregister_process") as unreg_mock:
-                        client.shutdown_auth_server()
-                        unreg_mock.assert_called_once_with("tidal_reg_123")
-                        assert client.auth_server is None
-                        assert client._auth_server_reg_id is None
+    with patch("plugins.EchoSync.tidal.client.logger.info") as mock_info:
+        client._start_callback_server()
+        assert mock_info.called
+        msg = mock_info.call_args[0][0]
+        assert "deprecated" in msg
+        assert "centralized HTTPS sidecar on port 5001" in msg
+        assert client.auth_server is None
 
 
 # ==============================================================================

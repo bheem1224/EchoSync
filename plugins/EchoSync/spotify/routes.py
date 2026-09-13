@@ -45,33 +45,21 @@ def get_settings():
 
             db = get_config_database()
             svc_id = (
-                db.get_service_id(2391116200)
-                or db.get_service_id("Spotify")
-                or db.get_service_id("EchoSync.Spotify")
+                db.get_service_id(2391116200) or db.get_service_id("Spotify") or db.get_service_id("EchoSync.Spotify")
             )
             if svc_id:
-                client_id = (
-                    client_id or db.get_service_config(svc_id, "client_id") or ""
-                )
-                client_secret = (
-                    client_secret
-                    or db.get_service_config(svc_id, "client_secret")
-                    or ""
-                )
+                client_id = client_id or db.get_service_config(svc_id, "client_id") or ""
+                client_secret = client_secret or db.get_service_config(svc_id, "client_secret") or ""
 
         # Legacy storage fallback
         if not client_id or not client_secret:
             from core.file_handling.storage import get_storage_service
 
             storage = get_storage_service()
-            client_id = (
-                client_id or storage.get_service_config("spotify", "client_id") or ""
-            )
+            client_id = client_id or storage.get_service_config("spotify", "client_id") or ""
             raw_sec = storage.get_service_config("spotify", "client_secret")
             if raw_sec:
-                client_secret = (
-                    decrypt_string(raw_sec) if raw_sec.startswith("enc:") else raw_sec
-                )
+                client_secret = decrypt_string(raw_sec) if raw_sec.startswith("enc:") else raw_sec
 
         return JSONResponse(
             content={
@@ -84,9 +72,7 @@ def get_settings():
         )
     except Exception as e:
         logger.error(f"Error getting Spotify settings: {e}", exc_info=True)
-        return JSONResponse(
-            content={"error": "Failed to get Spotify settings"}, status_code=500
-        )
+        return JSONResponse(content={"error": "Failed to get Spotify settings"}, status_code=500)
 
 
 @router.post("/settings")
@@ -110,24 +96,14 @@ async def save_settings(request: Request):
         from database.config_database import get_config_database
 
         db = get_config_database()
-        svc_id = (
-            db.get_service_id(2391116200)
-            or db.get_service_id("Spotify")
-            or db.get_service_id("EchoSync.Spotify")
-        )
+        svc_id = db.get_service_id(2391116200) or db.get_service_id("Spotify") or db.get_service_id("EchoSync.Spotify")
         if svc_id:
             if client_id:
-                db.set_service_config(
-                    svc_id, "client_id", client_id, is_sensitive=False
-                )
+                db.set_service_config(svc_id, "client_id", client_id, is_sensitive=False)
             if client_secret:
-                db.set_service_config(
-                    svc_id, "client_secret", client_secret, is_sensitive=True
-                )
+                db.set_service_config(svc_id, "client_secret", client_secret, is_sensitive=True)
             if redirect_uri:
-                db.set_service_config(
-                    svc_id, "redirect_uri", redirect_uri, is_sensitive=False
-                )
+                db.set_service_config(svc_id, "redirect_uri", redirect_uri, is_sensitive=False)
 
         # Also mirror into storage for legacy callers
         from core.file_handling.storage import get_storage_service
@@ -139,25 +115,17 @@ async def save_settings(request: Request):
             description="Spotify music streaming service",
         )
         if client_id:
-            storage.set_service_config(
-                "spotify", "client_id", client_id, is_sensitive=False
-            )
+            storage.set_service_config("spotify", "client_id", client_id, is_sensitive=False)
         if client_secret:
-            storage.set_service_config(
-                "spotify", "client_secret", client_secret, is_sensitive=True
-            )
+            storage.set_service_config("spotify", "client_secret", client_secret, is_sensitive=True)
         if redirect_uri:
-            storage.set_service_config(
-                "spotify", "redirect_uri", redirect_uri, is_sensitive=False
-            )
+            storage.set_service_config("spotify", "redirect_uri", redirect_uri, is_sensitive=False)
 
         logger.info("Saved Spotify global credentials successfully.")
         return JSONResponse(content={"success": True})
     except Exception as e:
         logger.error(f"Error saving Spotify settings: {e}", exc_info=True)
-        return JSONResponse(
-            content={"error": "Failed to save Spotify settings"}, status_code=500
-        )
+        return JSONResponse(content={"error": "Failed to save Spotify settings"}, status_code=500)
 
 
 # ── Accounts ──────────────────────────────────────────────────────────────────
@@ -173,12 +141,8 @@ def list_accounts():
             accounts.append(
                 {
                     "id": a.get("id"),
-                    "account_name": a.get("account_name")
-                    or a.get("display_name")
-                    or "Unnamed Account",
-                    "display_name": a.get("display_name")
-                    or a.get("account_name")
-                    or "Unnamed Account",
+                    "account_name": a.get("account_name") or a.get("display_name") or "Unnamed Account",
+                    "display_name": a.get("display_name") or a.get("account_name") or "Unnamed Account",
                     "user_id": a.get("user_id"),
                     "is_active": bool(a.get("is_active")),
                     "is_authenticated": bool(a.get("is_authenticated")),
@@ -188,9 +152,7 @@ def list_accounts():
         return JSONResponse(content={"accounts": accounts})
     except Exception as e:
         logger.error(f"Error listing Spotify accounts: {e}", exc_info=True)
-        return JSONResponse(
-            content={"error": "Failed to list Spotify accounts"}, status_code=500
-        )
+        return JSONResponse(content={"error": "Failed to list Spotify accounts"}, status_code=500)
 
 
 @router.post("/accounts")
@@ -198,21 +160,13 @@ async def create_account(request: Request):
     """Create a new Spotify account slot."""
     try:
         data = await request.json() or {}
-        account_name = (
-            data.get("account_name") or data.get("display_name") or ""
-        ).strip()
+        account_name = (data.get("account_name") or data.get("display_name") or "").strip()
         if not account_name:
-            return JSONResponse(
-                content={"error": "account_name is required"}, status_code=400
-            )
+            return JSONResponse(content={"error": "account_name is required"}, status_code=400)
 
-        account_id = sdk.accounts.ensure_account(
-            account_name=account_name, display_name=account_name
-        )
+        account_id = sdk.accounts.ensure_account(account_name=account_name, display_name=account_name)
         if not account_id:
-            return JSONResponse(
-                content={"error": "Failed to create account"}, status_code=500
-            )
+            return JSONResponse(content={"error": "Failed to create account"}, status_code=500)
 
         return JSONResponse(
             content={
@@ -228,9 +182,7 @@ async def create_account(request: Request):
         )
     except Exception as e:
         logger.error(f"Error creating Spotify account: {e}", exc_info=True)
-        return JSONResponse(
-            content={"error": "Failed to create Spotify account"}, status_code=500
-        )
+        return JSONResponse(content={"error": "Failed to create Spotify account"}, status_code=500)
 
 
 @router.put("/accounts/{account_id}/activate")
@@ -243,12 +195,8 @@ async def activate_account(account_id: int, request: Request):
         sdk.accounts.toggle_account_active(account_id, is_active)
         return JSONResponse(content={"success": True, "is_active": is_active})
     except Exception as e:
-        logger.error(
-            f"Error activating Spotify account {account_id}: {e}", exc_info=True
-        )
-        return JSONResponse(
-            content={"error": "Failed to activate Spotify account"}, status_code=500
-        )
+        logger.error(f"Error activating Spotify account {account_id}: {e}", exc_info=True)
+        return JSONResponse(content={"error": "Failed to activate Spotify account"}, status_code=500)
 
 
 @router.delete("/accounts/{account_id}")
@@ -259,9 +207,7 @@ def delete_account(account_id: int):
         return JSONResponse(content={"success": True})
     except Exception as e:
         logger.error(f"Error deleting Spotify account {account_id}: {e}", exc_info=True)
-        return JSONResponse(
-            content={"error": "Failed to delete Spotify account"}, status_code=500
-        )
+        return JSONResponse(content={"error": "Failed to delete Spotify account"}, status_code=500)
 
 
 # ── OAuth ─────────────────────────────────────────────────────────────────────
@@ -272,9 +218,7 @@ def begin_auth(account_id: int | None = None):
     """Start OAuth flow for Spotify. Returns an auth URL to redirect the user to."""
     try:
         if not account_id:
-            return JSONResponse(
-                content={"error": "account_id parameter is required"}, status_code=400
-            )
+            return JSONResponse(content={"error": "account_id parameter is required"}, status_code=400)
 
         client_id = sdk.config.get("client_id")
         client_secret = sdk.secrets.get("client_secret")
@@ -285,15 +229,11 @@ def begin_auth(account_id: int | None = None):
 
             db = get_config_database()
             svc_id = (
-                db.get_service_id(2391116200)
-                or db.get_service_id("Spotify")
-                or db.get_service_id("EchoSync.Spotify")
+                db.get_service_id(2391116200) or db.get_service_id("Spotify") or db.get_service_id("EchoSync.Spotify")
             )
             if svc_id:
                 client_id = client_id or db.get_service_config(svc_id, "client_id")
-                client_secret = client_secret or db.get_service_config(
-                    svc_id, "client_secret"
-                )
+                client_secret = client_secret or db.get_service_config(svc_id, "client_secret")
 
         if not client_id or not client_secret:
             from core.file_handling.storage import get_storage_service
@@ -302,9 +242,7 @@ def begin_auth(account_id: int | None = None):
             client_id = client_id or storage.get_service_config("spotify", "client_id")
             raw_sec = storage.get_service_config("spotify", "client_secret")
             if raw_sec:
-                client_secret = (
-                    decrypt_string(raw_sec) if raw_sec.startswith("enc:") else raw_sec
-                )
+                client_secret = decrypt_string(raw_sec) if raw_sec.startswith("enc:") else raw_sec
 
         if not client_id or not client_secret:
             return JSONResponse(
@@ -312,25 +250,49 @@ def begin_auth(account_id: int | None = None):
                 status_code=400,
             )
 
-        scope = "user-library-read user-read-private playlist-read-private playlist-read-collaborative user-read-email playlist-modify-public playlist-modify-private"
-        state = str(account_id)
+        def _on_spotify_tokens(tokens: dict):
+            from core.task_manager.task_queue import job_queue
 
-        from .client import CallbackBypassCacheHandler
+            access_token = tokens.get("access_token")
+            refresh_token = tokens.get("refresh_token")
+            expires_in = tokens.get("expires_in", 3600)
+            expires_at = int(time.time() + expires_in)
+            token_scope = (
+                tokens.get("scope")
+                or "user-library-read user-read-private playlist-read-private playlist-read-collaborative user-read-email"
+            )
 
-        sp_oauth = SpotifyOAuth(
+            if not access_token:
+                logger.error(f"No access token in Spotify token payload for account {account_id}")
+                return
+
+            with job_queue.db_write_lease(task_name=f"spotify_save_tokens_{account_id}"):
+                sdk.accounts.save_token(
+                    account_id=account_id,
+                    access_token=access_token,
+                    refresh_token=refresh_token,
+                    expires_at=expires_at,
+                    scope=token_scope,
+                )
+                sdk.accounts.mark_account_authenticated(account_id)
+                sdk.accounts.toggle_account_active(account_id, True)
+                logger.info(f"Spotify tokens persisted under db_write_lease for account {account_id}")
+
+        session_handle = sdk.oauth.create_session(
+            provider="spotify",
+            auth_url="https://accounts.spotify.com/authorize",
+            token_url="https://accounts.spotify.com/api/token",
             client_id=client_id,
             client_secret=client_secret,
-            redirect_uri=redirect_uri,
-            scope=scope,
-            state=state,
-            show_dialog=True,
-            cache_handler=CallbackBypassCacheHandler(),
+            scopes="user-library-read user-read-private playlist-read-private playlist-read-collaborative user-read-email playlist-modify-public playlist-modify-private",
+            use_pkce=False,
+            account_id=account_id,
+            on_token=_on_spotify_tokens,
+            extra_auth_params={"show_dialog": "true"},
         )
-        auth_url = sp_oauth.get_authorize_url()
-        logger.info(
-            f"Generated Spotify authorize URL for account {account_id} with redirect_uri {redirect_uri}"
-        )
-        return JSONResponse(content={"auth_url": auth_url}, status_code=200)
+
+        logger.info(f"Generated Spotify centralized auth session for account {account_id}")
+        return JSONResponse(content={"auth_url": session_handle.auth_url}, status_code=200)
     except Exception as e:
         logger.error(f"Error creating Spotify auth URL: {e}", exc_info=True)
         return JSONResponse(
@@ -350,9 +312,7 @@ def oauth_callback(
     from core.nexus_framework.plugin_loader import PluginRegistry
 
     if PluginRegistry.is_plugin_disabled("spotify"):
-        return JSONResponse(
-            content={"error": "Spotify provider is disabled"}, status_code=403
-        )
+        return JSONResponse(content={"error": "Spotify provider is disabled"}, status_code=403)
     try:
         if error:
             import html as html_escape
@@ -364,15 +324,11 @@ def oauth_callback(
 
         if not code:
             logger.error("OAuth callback missing code parameter")
-            return JSONResponse(
-                content={"error": "Missing authorization code"}, status_code=400
-            )
+            return JSONResponse(content={"error": "Missing authorization code"}, status_code=400)
 
         if not state:
             logger.error("OAuth callback missing state parameter (account id)")
-            return JSONResponse(
-                content={"error": "Missing state parameter (account ID)"}
-            ), 400
+            return JSONResponse(content={"error": "Missing state parameter (account ID)"}), 400
 
         try:
             account_id = int(state)
@@ -390,9 +346,7 @@ def oauth_callback(
             client_id = client_id or storage.get_service_config("spotify", "client_id")
             raw_sec = storage.get_service_config("spotify", "client_secret")
             if raw_sec:
-                client_secret = (
-                    decrypt_string(raw_sec) if raw_sec.startswith("enc:") else raw_sec
-                )
+                client_secret = decrypt_string(raw_sec) if raw_sec.startswith("enc:") else raw_sec
 
         if not client_id or not client_secret:
             return JSONResponse(
@@ -416,9 +370,7 @@ def oauth_callback(
             token_info = auth_manager.get_access_token(code)
 
         if not token_info:
-            return JSONResponse(
-                content={"error": "Failed to exchange code for token"}, status_code=400
-            )
+            return JSONResponse(content={"error": "Failed to exchange code for token"}, status_code=400)
 
         access_token = token_info.get("access_token")
         refresh_token = token_info.get("refresh_token")
@@ -429,19 +381,20 @@ def oauth_callback(
         )
 
         if not account_id:
-            account_id = sdk.accounts.ensure_account(
-                account_name=f"spotify_{int(time.time())}"
-            )
+            account_id = sdk.accounts.ensure_account(account_name=f"spotify_{int(time.time())}")
 
-        sdk.accounts.save_token(
-            account_id,
-            access_token=access_token,
-            refresh_token=refresh_token,
-            expires_at=expires_at,
-            scope=scope,
-        )
-        sdk.accounts.mark_account_authenticated(account_id)
-        sdk.accounts.toggle_account_active(account_id, True)
+        from core.task_manager.task_queue import job_queue
+
+        with job_queue.db_write_lease(task_name=f"spotify_cb_save_tokens_{account_id}"):
+            sdk.accounts.save_token(
+                account_id,
+                access_token=access_token,
+                refresh_token=refresh_token,
+                expires_at=expires_at,
+                scope=scope,
+            )
+            sdk.accounts.mark_account_authenticated(account_id)
+            sdk.accounts.toggle_account_active(account_id, True)
 
         html = """
         <html>

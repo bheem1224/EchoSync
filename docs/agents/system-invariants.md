@@ -61,7 +61,9 @@ Autonomous coding agents (e.g. Jules, AI assistants) contributing code to EchoSy
 - `core.tiered_logger.get_logger(..., plugin_id=...)` strictly enforces `isinstance(plugin_id, int)` and $0 \le \text{plugin\_id} \le \text{0xFFFFFFFF}$. Dotted string namespaces, floats, booleans, and out-of-range integers are rejected with `TypeError`/`ValueError` without fallback shims.
 - Taint tags MUST format uniformly in log streams as `[TAINT:<int_id>]`.
 
-### Rule 11: Invariant: Centralized OAuth Proxy & Plugin Port Isolation
-- Individual plugins MUST NOT bind raw host TCP ports (e.g. ad-hoc HTTP callback listeners on port 8080/8888) (ADR 0004).
-- External authentication redirects (OAuth) and webhooks MUST route through EchoSync's centralized HTTPS proxy/sidecar via the Plugin SDK.
-- Any legacy or temporary plugin listener must register via `supervisor.spawn_supervised_thread(bound_to_general_pool=False)` so it never consumes general worker pool slots, and MUST log a deprecation warning directing migration to the centralized sidecar.
+### Rule 11: Invariant: Centralized Zero-Trust OAuth Token Broker & Port Isolation
+- Individual plugins MUST NOT bind raw host TCP ports (e.g. ad-hoc HTTP callback listeners on port 8080/8888/8889) (ADR 0004).
+- External authentication redirects (OAuth) route through EchoSync's centralized HTTPS Token Broker on port 5001 (`core/oauth/sidecar.py`).
+- **Zero-Trust Direct Caller Return:** The sidecar terminates TLS, verifies high-entropy PKCE challenges (`S256`), executes upstream token exchange directly on port 5001, and resolves credentials directly to the calling plugin in-memory via private SDK callback hooks (`OAuthSession.on_token`). Tokens MUST NEVER be emitted over `EventBus` to prevent lateral credential sniffing.
+- **Supervised Dispatch:** Callback execution is dispatched via `supervisor.spawn_supervised_thread(bound_to_general_pool=False, owner_type=OwnerType.PLUGIN, owner_id=str(plugin_id), category=ProcessCategory.CORE_SYSTEM)`, ensuring credential resolution never blocks or consumes General Pool slots.
+- **Lease-Protected Encrypted Persistence:** Calling plugins persist received tokens immediately into `config.db` using `sdk.accounts.save_token()` wrapped within `with job_queue.db_write_lease():` using AES-256-GCM encryption.

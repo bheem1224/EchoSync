@@ -383,76 +383,11 @@ class TidalClient(SyncServiceProvider):
             return False
 
     def _start_callback_server(self):
-        """Start HTTP server to receive OAuth callback"""
-        # Skip starting server in Docker/production mode - web server handles callbacks
-        if self.sdk.config.get("FLASK_ENV") == "production" or self.sdk.config.get("IS_DOCKER"):
-            logger.info(
-                "Docker/WebUI mode detected - skipping TidalClient callback server (web server handles callbacks)"
-            )
-            return
-
-        # Store reference to self for the callback handler
-        tidal_client_ref = self
-
-        class CallbackHandler(BaseHTTPRequestHandler):
-            def do_GET(self):
-                parsed_url = urllib.parse.urlparse(self.path)
-                query_params = urllib.parse.parse_qs(parsed_url.query)
-
-                # Debug: Log the full callback URL and parameters
-                logger.info(f"Tidal callback received: {self.path}")
-                logger.info(f"Query parameters: {query_params}")
-
-                if "code" in query_params:
-                    tidal_client_ref.auth_code = query_params["code"][0]
-                    logger.info(f"Received Tidal authorization code: {tidal_client_ref.auth_code[:10]}...")
-
-                    # Send success response
-                    self.send_response(200)
-                    self.send_header("Content-type", "text/html")
-                    self.end_headers()
-                    self.wfile.write(b"<h1>Success!</h1><p>You can close this window and return to Echosync.</p>")
-                elif "error" in query_params:
-                    # Handle OAuth errors
-                    error = query_params.get("error", ["unknown"])[0]
-                    error_description = query_params.get("error_description", ["No description"])[0]
-                    logger.error(f"Tidal OAuth error: {error} - {error_description}")
-
-                    self.send_response(400)
-                    self.send_header("Content-type", "text/html")
-                    self.end_headers()
-                    self.wfile.write(
-                        f"<h1>OAuth Error</h1><p>Error: {error}</p><p>Description: {error_description}</p>".encode()
-                    )
-                else:
-                    logger.error("No authorization code or error in Tidal callback")
-                    self.send_response(400)
-                    self.send_header("Content-type", "text/html")
-                    self.end_headers()
-                    self.wfile.write(b"<h1>Error</h1><p>Authorization failed - no code received.</p>")
-
-            def log_message(self, format, *args):
-                pass  # Suppress server logs
-
-        try:
-            port = 8889
-            self.auth_server = HTTPServer(("localhost", port), CallbackHandler)
-            logger.warning(
-                "DEPRECATION WARNING: Tidal OAuth sidecar HTTP server on port 8889 is deprecated; "
-                "migrate to EchoSync's centralized HTTPS sidecar via SDK."
-            )
-            server_thread, reg_id = supervisor.spawn_supervised_thread(
-                target=self.auth_server.serve_forever,
-                name="TidalOAuthSidecar",
-                owner_id=str(PLUGIN_CRC32),
-                owner_type=OwnerType.PLUGIN,
-                category=ProcessCategory.WORKER_THREAD,
-                bound_to_general_pool=False,
-            )
-            self._auth_server_reg_id = reg_id
-            logger.info(f"Started Tidal callback server on port {port} (registration: {reg_id})")
-        except Exception as e:
-            logger.error(f"Failed to start Tidal callback server: {e}")
+        """Deprecated: Local callback server on port 8889 retired in favor of centralized HTTPS sidecar."""
+        logger.info(
+            "TidalClient._start_callback_server() is deprecated and disabled; "
+            "OAuth authentication is handled by the centralized HTTPS sidecar on port 5001."
+        )
 
     def _exchange_code_for_tokens(self):
         """Exchange authorization code for access tokens using PKCE"""
