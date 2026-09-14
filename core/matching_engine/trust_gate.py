@@ -60,6 +60,7 @@ def is_generic_title(title: str | Path | None) -> bool:
             "surround",
             "sound",
             "corrupted",
+            "isrc",
         }
     )
 
@@ -160,7 +161,7 @@ def verify_title_trust_gate(
 
     ratios = []
 
-    if baseline_title and str(baseline_title).strip():
+    if baseline_title and str(baseline_title).strip() and not is_generic_title(baseline_title):
         clean_baseline = str(baseline_title).lower().strip()
         norm_baseline = normalize_title(clean_baseline)
         ratios.append(difflib.SequenceMatcher(None, clean_candidate, clean_baseline).ratio())

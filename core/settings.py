@@ -73,25 +73,19 @@ def migrate_legacy_json_to_db(config_json_path: Path, db: Any) -> bool:
         if str(migrated_marker).lower() in ("true", "1", "yes"):
             return False
 
-        logger.info(
-            f"Starting legacy config migration from {config_json_path} to config.db..."
-        )
+        logger.info(f"Starting legacy config migration from {config_json_path} to config.db...")
 
         with open(config_json_path, "r", encoding="utf-8") as f:
             raw_json = json.load(f)
 
         if not isinstance(raw_json, dict):
-            logger.warning(
-                f"Invalid config.json format in {config_json_path}; skipping migration."
-            )
+            logger.warning(f"Invalid config.json format in {config_json_path}; skipping migration.")
             return False
 
         cold_config, hot_settings = sanitize_legacy_config_json(raw_json)
 
         # 2. Extract and upsert quality profiles
-        if "quality_profiles" in hot_settings and isinstance(
-            hot_settings["quality_profiles"], list
-        ):
+        if "quality_profiles" in hot_settings and isinstance(hot_settings["quality_profiles"], list):
             profiles = hot_settings.pop("quality_profiles")
             if profiles:
                 db.set_quality_profiles(profiles)
@@ -118,14 +112,10 @@ def migrate_legacy_json_to_db(config_json_path: Path, db: Any) -> bool:
             json.dump(cold_config, f, indent=2)
         tmp_path.replace(config_json_path)
 
-        logger.info(
-            "Successfully migrated runtime settings to config.db and pruned config.json."
-        )
+        logger.info("Successfully migrated runtime settings to config.db and pruned config.json.")
         return True
     except Exception as e:
-        logger.error(
-            f"Legacy config migration failed (transaction aborted): {e}", exc_info=True
-        )
+        logger.error(f"Legacy config migration failed (transaction aborted): {e}", exc_info=True)
         return False
 
 
@@ -182,10 +172,7 @@ class ConfigManager:
 
         db = get_config_database()
         try:
-            service_id = db.get_or_create_service_id(service_name)
-            if not service_id:
-                return {}
-            return db.get_all_service_config(service_id)
+            return db.get_service_credentials(service_name)
         except Exception as e:
             logger.error(f"get_service_credentials failed: {e}")
             return {}
@@ -235,12 +222,8 @@ class ConfigManager:
 
         # Paths for encrypted config database (in config_dir)
         # Encryption key is stored in .env file via MASTER_KEY variable only (no file backup)
-        self.config_path = (
-            self.config_dir / "config.json"
-        )  # For migration and non-secret JSON
-        self.database_path = (
-            self.config_dir / "config.db"
-        )  # Encrypted config database (secrets)
+        self.config_path = self.config_dir / "config.json"  # For migration and non-secret JSON
+        self.database_path = self.config_dir / "config.db"  # Encrypted config database (secrets)
 
         # Media library DB goes in data_dir (user-visible, non-secret)
         self.media_db_path = self.data_dir / "music_library.db"
@@ -341,9 +324,7 @@ class ConfigManager:
 
         # Set in current environment so initialization completes
         os.environ["MASTER_KEY"] = new_key
-        logger.warning(
-            "Encryption key auto-generated. Pass MASTER_KEY as env variable to persist across restarts."
-        )
+        logger.warning("Encryption key auto-generated. Pass MASTER_KEY as env variable to persist across restarts.")
 
         self.cipher = Fernet(new_key.encode())
 
@@ -361,15 +342,11 @@ class ConfigManager:
                     with open(env_path, "r") as f:
                         existing_content = f.read()
                 except PermissionError:
-                    logger.debug(
-                        "Cannot read .env file (permission denied). Attempting to write anyway..."
-                    )
+                    logger.debug("Cannot read .env file (permission denied). Attempting to write anyway...")
 
             # Remove old MASTER_KEY line if it exists
             lines = existing_content.split("\n") if existing_content else []
-            lines = [
-                line for line in lines if not line.strip().startswith("MASTER_KEY=")
-            ]
+            lines = [line for line in lines if not line.strip().startswith("MASTER_KEY=")]
 
             # Add new MASTER_KEY at the top
             lines.insert(0, f"MASTER_KEY={key}")
@@ -386,18 +363,14 @@ class ConfigManager:
                     if attempt < max_retries - 1:
                         import time
 
-                        logger.debug(
-                            f"Retrying .env write (attempt {attempt + 1}/{max_retries})..."
-                        )
+                        logger.debug(f"Retrying .env write (attempt {attempt + 1}/{max_retries})...")
                         time.sleep(1)
                     else:
                         raise
         except Exception as e:
             logger.warning(f"Could not persist encryption key to .env: {e}")
             logger.warning("The key will be lost on next startup unless manually set!")
-            logger.warning(
-                f"Manually add this line to your .env file: MASTER_KEY={key}"
-            )
+            logger.warning(f"Manually add this line to your .env file: MASTER_KEY={key}")
 
     def _path_matches_any(self, key_path: str, patterns: list) -> bool:
         """Return True if key_path matches any of the patterns (supports '*' wildcards)."""
@@ -455,9 +428,7 @@ class ConfigManager:
 
             if isinstance(value, dict):
                 # Recursively process nested dicts
-                output[key] = self._traverse_and_transform(
-                    value, transform, keys_to_transform, current_path
-                )
+                output[key] = self._traverse_and_transform(value, transform, keys_to_transform, current_path)
             elif self._path_matches_any(current_path, keys_to_transform):
                 # Transform this value because its path matches a secret key
                 output[key] = transform(value)
@@ -588,12 +559,8 @@ class ConfigManager:
                 new_config_dir = Path(storage_config["config_dir"])
                 # Only log the difference, don't change config_dir itself to avoid breaking encryption
                 if new_config_dir != self.config_dir:
-                    logger.debug(
-                        f"Config specifies different config_dir: {new_config_dir}"
-                    )
-                    logger.debug(
-                        "config_dir cannot be changed after initialization (encryption key location)"
-                    )
+                    logger.debug(f"Config specifies different config_dir: {new_config_dir}")
+                    logger.debug("config_dir cannot be changed after initialization (encryption key location)")
 
             # Apply logging path from config if specified
             logging_config = self.config_data.get("logging", {})
@@ -619,16 +586,10 @@ class ConfigManager:
             # This makes config.json the source of truth
             self.config_data["storage"]["data_dir"] = str(self.data_dir.resolve())
             self.config_data["storage"]["config_dir"] = str(self.config_dir.resolve())
-            self.config_data["storage"]["download_dir"] = str(
-                self.downloads_path.resolve()
-            )
-            self.config_data["storage"]["library_dir"] = str(
-                self.library_path.resolve()
-            )
+            self.config_data["storage"]["download_dir"] = str(self.downloads_path.resolve())
+            self.config_data["storage"]["library_dir"] = str(self.library_path.resolve())
             self.config_data["storage"]["log_dir"] = str(self.logs_path.resolve())
-            self.config_data["storage"]["plugins_dir"] = str(
-                self.plugins_path.resolve()
-            )
+            self.config_data["storage"]["plugins_dir"] = str(self.plugins_path.resolve())
 
         except Exception as e:
             print(f"[WARN] Could not apply storage paths from config: {e}")
@@ -664,17 +625,11 @@ class ConfigManager:
         except Exception as e:
             print(f"[WARN] Could not normalize database.max_workers: {e}")
 
-    def _deep_merge(
-        self, base: dict[str, Any], override: dict[str, Any]
-    ) -> dict[str, Any]:
+    def _deep_merge(self, base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
         """Recursively merge override dict into base dict."""
         result = copy.deepcopy(base)
         for key, value in override.items():
-            if (
-                isinstance(value, dict)
-                and key in result
-                and isinstance(result[key], dict)
-            ):
+            if isinstance(value, dict) and key in result and isinstance(result[key], dict):
                 result[key] = self._deep_merge(result[key], value)
             else:
                 result[key] = value
@@ -695,9 +650,7 @@ class ConfigManager:
             print(f"[ERROR] Failed to save non-secrets to JSON: {e}")
             return False
 
-    def _extract_non_secrets(
-        self, data: dict[str, Any], path: str = ""
-    ) -> dict[str, Any]:
+    def _extract_non_secrets(self, data: dict[str, Any], path: str = "") -> dict[str, Any]:
         """Extract only non-secret values from config data."""
         result = {}
         for key, value in data.items():
@@ -737,8 +690,7 @@ class ConfigManager:
             if (
                 hasattr(self, "_cached_db")
                 and self._cached_db is not None
-                and getattr(self._cached_db, "database_path", None)
-                == self.database_path
+                and getattr(self._cached_db, "database_path", None) == self.database_path
             ):
                 return self._cached_db
 
@@ -1016,16 +968,12 @@ class ConfigManager:
         pid_str = str(provider_id).strip()
         from core.nexus_framework.plugin_loader import generate_plugin_id
 
-        canon_id = (
-            int(pid_str) if pid_str.isdigit() else generate_plugin_id(pid_str.lower())
-        )
+        canon_id = int(pid_str) if pid_str.isdigit() else generate_plugin_id(pid_str.lower())
         canon_id_str = str(canon_id)
 
         target_ids = {canon_id}
         target_names = {pid_str.lower()}
-        clean_name = (
-            pid_str.lower().replace("echosync.", "").replace("echosync/", "").strip()
-        )
+        clean_name = pid_str.lower().replace("echosync.", "").replace("echosync/", "").strip()
         target_names.add(clean_name)
         target_names.add(f"echosync.{clean_name}")
         target_ids.add(generate_plugin_id(clean_name))
@@ -1050,9 +998,7 @@ class ConfigManager:
                 row = c.fetchone()
                 if row:
                     r_name = row["name"].lower()
-                    r_clean = (
-                        r_name.replace("echosync.", "").replace("echosync/", "").strip()
-                    )
+                    r_clean = r_name.replace("echosync.", "").replace("echosync/", "").strip()
                     target_names.update({r_name, r_clean, f"echosync.{r_clean}"})
                     if row["plugin_id"]:
                         target_ids.add(row["plugin_id"])
@@ -1065,32 +1011,19 @@ class ConfigManager:
         new_disabled = []
         for item in disabled:
             item_str = str(item).strip()
-            item_clean = (
-                item_str.lower()
-                .replace("echosync.", "")
-                .replace("echosync/", "")
-                .strip()
-            )
+            item_clean = item_str.lower().replace("echosync.", "").replace("echosync/", "").strip()
             item_ids = {
-                int(item_str)
-                if item_str.isdigit()
-                else generate_plugin_id(item_str.lower()),
+                int(item_str) if item_str.isdigit() else generate_plugin_id(item_str.lower()),
                 generate_plugin_id(item_clean),
                 generate_plugin_id(f"echosync.{item_clean}"),
             }
-            if (
-                item_str.lower() in target_names
-                or item_clean in target_names
-                or (item_ids & target_ids)
-            ):
+            if item_str.lower() in target_names or item_clean in target_names or (item_ids & target_ids):
                 continue
             new_disabled.append(item)
 
         new_disabled.append(canon_id_str)
         self.set("disabled_plugins", new_disabled)
-        logger.info(
-            f"Plugin {provider_id} (canonical ID: {canon_id_str}) has been disabled."
-        )
+        logger.info(f"Plugin {provider_id} (canonical ID: {canon_id_str}) has been disabled.")
         return True
 
     def enable_plugin(self, provider_id: str) -> bool:
@@ -1102,14 +1035,10 @@ class ConfigManager:
         pid_str = str(provider_id).strip()
         from core.nexus_framework.plugin_loader import generate_plugin_id
 
-        canon_id = (
-            int(pid_str) if pid_str.isdigit() else generate_plugin_id(pid_str.lower())
-        )
+        canon_id = int(pid_str) if pid_str.isdigit() else generate_plugin_id(pid_str.lower())
         target_ids = {canon_id}
         target_names = {pid_str.lower()}
-        clean_name = (
-            pid_str.lower().replace("echosync.", "").replace("echosync/", "").strip()
-        )
+        clean_name = pid_str.lower().replace("echosync.", "").replace("echosync/", "").strip()
         target_names.add(clean_name)
         target_names.add(f"echosync.{clean_name}")
         target_ids.add(generate_plugin_id(clean_name))
@@ -1134,9 +1063,7 @@ class ConfigManager:
                 row = c.fetchone()
                 if row:
                     r_name = row["name"].lower()
-                    r_clean = (
-                        r_name.replace("echosync.", "").replace("echosync/", "").strip()
-                    )
+                    r_clean = r_name.replace("echosync.", "").replace("echosync/", "").strip()
                     target_names.update({r_name, r_clean, f"echosync.{r_clean}"})
                     if row["plugin_id"]:
                         target_ids.add(row["plugin_id"])
@@ -1149,24 +1076,13 @@ class ConfigManager:
         removed = False
         for item in disabled:
             item_str = str(item).strip()
-            item_clean = (
-                item_str.lower()
-                .replace("echosync.", "")
-                .replace("echosync/", "")
-                .strip()
-            )
+            item_clean = item_str.lower().replace("echosync.", "").replace("echosync/", "").strip()
             item_ids = {
-                int(item_str)
-                if item_str.isdigit()
-                else generate_plugin_id(item_str.lower()),
+                int(item_str) if item_str.isdigit() else generate_plugin_id(item_str.lower()),
                 generate_plugin_id(item_clean),
                 generate_plugin_id(f"echosync.{item_clean}"),
             }
-            if (
-                item_str.lower() in target_names
-                or item_clean in target_names
-                or (item_ids & target_ids)
-            ):
+            if item_str.lower() in target_names or item_clean in target_names or (item_ids & target_ids):
                 removed = True
                 continue
             new_disabled.append(item)

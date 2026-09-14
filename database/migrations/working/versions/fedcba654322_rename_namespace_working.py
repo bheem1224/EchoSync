@@ -9,13 +9,19 @@ depends_on = None
 
 
 def upgrade() -> None:
-    with op.batch_alter_table("plugin_state_kvs", schema=None) as batch_op:
-        batch_op.alter_column(
-            "namespace",
-            new_column_name="plugin_id",
-            existing_type=sa.String(),
-            type_=sa.Integer(),
-        )
+    conn = op.get_bind()
+    from sqlalchemy.engine import reflection
+
+    inspector = reflection.Inspector.from_engine(conn)
+    columns = [c["name"] for c in inspector.get_columns("plugin_state_kvs")]
+    if "namespace" in columns:
+        with op.batch_alter_table("plugin_state_kvs", schema=None) as batch_op:
+            batch_op.alter_column(
+                "namespace",
+                new_column_name="plugin_id",
+                existing_type=sa.String(),
+                type_=sa.Integer(),
+            )
 
 
 def downgrade() -> None:

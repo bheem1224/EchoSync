@@ -48,9 +48,7 @@ class MediaManagerService:
 
         # The Strict Manual Review Guardrail
         if event_data.get("requires_manual_review"):
-            logger.info(
-                f"Event {event_type} explicitly flagged for manual review. Bypassing all automation."
-            )
+            logger.info(f"Event {event_type} explicitly flagged for manual review. Bypassing all automation.")
             self._stage_pending_action(event_type, event_data)
             return
 
@@ -62,9 +60,7 @@ class MediaManagerService:
                     f"Confidence {confidence_score:.1f}% below threshold {self.AUTO_DELETE_CONFIDENCE_THRESHOLD}%. Routing to manual review."
                 )
                 reason = event_data.get("reason", f"Lifecycle Action: {event_type}")
-                event_data["reason"] = (
-                    f"{reason} | Warning: Confidence too low for auto-resolve."
-                )
+                event_data["reason"] = f"{reason} | Warning: Confidence too low for auto-resolve."
                 self._stage_pending_action(event_type, event_data)
                 return
 
@@ -83,19 +79,13 @@ class MediaManagerService:
 
         if auto_allowed and (delete_ids or delete_media_ids):
             if delete_ids:
-                logger.info(
-                    f"Event {event_type} auto-approved. Deleting {len(delete_ids)} tracks."
-                )
+                logger.info(f"Event {event_type} auto-approved. Deleting {len(delete_ids)} tracks.")
                 self.execute_delete(delete_ids)
             if delete_media_ids:
-                logger.info(
-                    f"Event {event_type} auto-approved. Deleting {len(delete_media_ids)} media items."
-                )
+                logger.info(f"Event {event_type} auto-approved. Deleting {len(delete_media_ids)} media items.")
                 self.execute_delete_media(delete_media_ids)
         else:
-            logger.info(
-                f"Event {event_type} requires manual review. Staging to pending actions."
-            )
+            logger.info(f"Event {event_type} requires manual review. Staging to pending actions.")
             self._stage_pending_action(event_type, event_data)
 
     def _stage_pending_action(self, event_type: str, payload: dict[str, Any]):
@@ -160,9 +150,7 @@ class MediaManagerService:
             row = session.query(Track.id).filter(Track.sync_id == base_sync_id).first()
             return int(row[0]) if row else None
 
-    def handle_suggestion_playlist_remove_intent(
-        self, event_data: dict[str, Any]
-    ) -> None:
+    def handle_suggestion_playlist_remove_intent(self, event_data: dict[str, Any]) -> None:
         """Handle SUGGESTION_PLAYLIST_REMOVE_INTENT by invoking provider playlist removal."""
         try:
             sync_id = event_data.get("sync_id")
@@ -172,11 +160,9 @@ class MediaManagerService:
                 logger.warning("SUGGESTION_PLAYLIST_REMOVE_INTENT missing sync_id")
                 return
 
-            active_server = config_manager.get("active_media_server")
+            active_server = config_manager.get("active_media_server") or "plex"
             if not active_server:
-                logger.warning(
-                    "No active media server configured for suggestion playlist removal"
-                )
+                logger.warning("No active media server configured for suggestion playlist removal")
                 return
 
             track_id = self._resolve_track_id_from_sync_id(sync_id)
@@ -184,25 +170,17 @@ class MediaManagerService:
                 logger.warning(f"Unable to resolve track_id from sync_id: {sync_id}")
                 return
 
-            provider_track_id = self.db.get_external_identifier_map(
-                active_server, [track_id]
-            ).get(track_id)
+            provider_track_id = self.db.get_external_identifier_map(active_server, [track_id]).get(track_id)
             if not provider_track_id:
-                logger.warning(
-                    f"No external identifier for track {track_id} on provider {active_server}"
-                )
+                logger.warning(f"No external identifier for track {track_id} on provider {active_server}")
                 return
 
             provider = PluginRegistry.create_instance(active_server)
             if not hasattr(provider, "remove_tracks_from_playlist"):
-                logger.warning(
-                    f"Provider {active_server} does not support remove_tracks_from_playlist"
-                )
+                logger.warning(f"Provider {active_server} does not support remove_tracks_from_playlist")
                 return
 
-            success = provider.remove_tracks_from_playlist(
-                str(playlist_id), [str(provider_track_id)]
-            )
+            success = provider.remove_tracks_from_playlist(str(playlist_id), [str(provider_track_id)])
             if success:
                 logger.info(
                     f"Removed sync_id {sync_id} (provider id {provider_track_id}) from playlist '{playlist_id}' on {active_server}"
@@ -212,9 +190,7 @@ class MediaManagerService:
                     f"Provider {active_server} failed removing sync_id {sync_id} from playlist '{playlist_id}'"
                 )
         except Exception as e:
-            logger.error(
-                f"Error handling SUGGESTION_PLAYLIST_REMOVE_INTENT: {e}", exc_info=True
-            )
+            logger.error(f"Error handling SUGGESTION_PLAYLIST_REMOVE_INTENT: {e}", exc_info=True)
 
     def get_library_index(self) -> list[dict]:
         """Return the library hierarchy (Artist -> Album -> Tracks)."""
@@ -245,18 +221,14 @@ class MediaManagerService:
             active_servers = PluginRegistry.get_active_services_by_type("media_server")
 
             if not active_servers:
-                logger.warning(
-                    "No active media server configured to check path mappings"
-                )
+                logger.warning("No active media server configured to check path mappings")
                 return None
 
             for active_server in active_servers:
                 try:
                     server_type = active_server.split(".")[-1]
                     service_id = storage.get_or_create_service_id(server_type)
-                    mappings_str = storage.get_service_config(
-                        service_id, "path_mappings"
-                    )
+                    mappings_str = storage.get_service_config(service_id, "path_mappings")
 
                     mappings = []
                     if mappings_str:
@@ -275,13 +247,9 @@ class MediaManagerService:
                             )
                             return mapped_path
                         elif mapped_path != file_path:
-                            logger.warning(
-                                f"Mapped path does not exist: {mapped_path} (original: {file_path})"
-                            )
+                            logger.warning(f"Mapped path does not exist: {mapped_path} (original: {file_path})")
                 except Exception as e:
-                    logger.error(
-                        f"Error applying path mappings for server {active_server}: {e}"
-                    )
+                    logger.error(f"Error applying path mappings for server {active_server}: {e}")
                     continue
 
         except Exception as e:
@@ -301,9 +269,7 @@ class MediaManagerService:
         from core.nexus_framework.plugin_loader import PluginRegistry
 
         # Fetch library pool for safety check
-        _lib = config_manager.get("storage.library_dir") or config_manager.get(
-            "library_dir"
-        )
+        _lib = config_manager.get("storage.library_dir") or config_manager.get("library_dir")
         library_root = Path(_lib).resolve() if _lib else None
 
         active_servers = PluginRegistry.get_active_services_by_type("media_server")
@@ -315,16 +281,12 @@ class MediaManagerService:
                 for active_server in active_servers:
                     try:
                         server_type = active_server.split(".")[-1]
-                        plugin_item_id = self.db.get_external_identifier(
-                            server_type, track_id
-                        )
+                        plugin_item_id = self.db.get_external_identifier(server_type, track_id)
                         if plugin_item_id:
                             provider = PluginRegistry.create_instance(active_server)
                             if hasattr(provider, "delete_track"):
                                 provider.delete_track(plugin_item_id)
-                                logger.info(
-                                    f"Successfully deleted track {track_id} from {active_server}"
-                                )
+                                logger.info(f"Successfully deleted track {track_id} from {active_server}")
                     except Exception as e:
                         logger.error(f"Error remote delete on {active_server}: {e}")
 
@@ -344,9 +306,7 @@ class MediaManagerService:
                         ):
                             track_path = Path(media.file_path).resolve()
 
-                            if library_root and not str(track_path).startswith(
-                                str(library_root)
-                            ):
+                            if library_root and not str(track_path).startswith(str(library_root)):
                                 logger.critical(
                                     f"Aborting deletion! Path {track_path} is OUTSIDE the library pool {library_root}."
                                 )
@@ -361,31 +321,23 @@ class MediaManagerService:
                                 file_path=str(track_path),
                             )
                             if plugin_decision == "SKIP":
-                                logger.info(
-                                    f"Plugin quarantined/skipped deletion for file: {track_path}"
-                                )
+                                logger.info(f"Plugin quarantined/skipped deletion for file: {track_path}")
                                 all_success = False
                                 continue
 
                             try:
                                 from core.io_gatekeeper import Gatekeeper
 
-                                Gatekeeper.authorize_and_execute(
-                                    {"operation": "delete_file", "target": track_path}
-                                )
+                                Gatekeeper.authorize_and_execute({"operation": "delete_file", "target": track_path})
                                 logger.info(f"Deleted physical file: {track_path}")
                             except Exception as e:
-                                logger.error(
-                                    f"Failed to remove physical file {track_path}: {e}"
-                                )
+                                logger.error(f"Failed to remove physical file {track_path}: {e}")
 
                     # Database Deletion
                     session.delete(track)
                     logger.info(f"Deleted track {track_id} from local database")
             except Exception as e:
-                logger.error(
-                    f"Failed to delete local track {track_id}: {e}", exc_info=True
-                )
+                logger.error(f"Failed to delete local track {track_id}: {e}", exc_info=True)
                 all_success = False
 
         return all_success
@@ -399,20 +351,14 @@ class MediaManagerService:
 
         from database.music_database import LocalMedia
 
-        _lib = config_manager.get("storage.library_dir") or config_manager.get(
-            "library_dir"
-        )
+        _lib = config_manager.get("storage.library_dir") or config_manager.get("library_dir")
         library_root = Path(_lib).resolve() if _lib else None
         all_success = True
 
         for m_id in media_ids:
             try:
                 with self.db.session_scope() as session:
-                    media = (
-                        session.query(LocalMedia)
-                        .filter(LocalMedia.media_id == m_id)
-                        .first()
-                    )
+                    media = session.query(LocalMedia).filter(LocalMedia.media_id == m_id).first()
                     if not media:
                         continue
 
@@ -423,9 +369,7 @@ class MediaManagerService:
                         and os.path.exists(media.file_path)
                     ):
                         m_path = Path(media.file_path).resolve()
-                        if library_root and not str(m_path).startswith(
-                            str(library_root)
-                        ):
+                        if library_root and not str(m_path).startswith(str(library_root)):
                             logger.critical(
                                 f"Aborting deletion! Path {m_path} is OUTSIDE the library pool {library_root}."
                             )
@@ -438,36 +382,24 @@ class MediaManagerService:
                             "ON_CORRUPTION_DETECTED", None, file_path=str(m_path)
                         )
                         if plugin_decision == "SKIP":
-                            logger.info(
-                                f"Plugin quarantined/skipped deletion for file: {m_path}"
-                            )
+                            logger.info(f"Plugin quarantined/skipped deletion for file: {m_path}")
                             all_success = False
                             continue
 
                         from core.io_gatekeeper import Gatekeeper
 
-                        Gatekeeper.authorize_and_execute(
-                            {"operation": "delete_file", "target": m_path}
-                        )
+                        Gatekeeper.authorize_and_execute({"operation": "delete_file", "target": m_path})
                         logger.info(f"Deleted physical media file: {m_path}")
 
                     session.delete(media)
                     session.flush()
 
                     # If no media remains on the track, delete track as well
-                    if (
-                        track and len(track.media_files) <= 1
-                    ):  # session count before commit
-                        remaining = (
-                            session.query(LocalMedia)
-                            .filter(LocalMedia.track_id == track.id)
-                            .count()
-                        )
+                    if track and len(track.media_files) <= 1:  # session count before commit
+                        remaining = session.query(LocalMedia).filter(LocalMedia.track_id == track.id).count()
                         if remaining == 0:
                             session.delete(track)
-                            logger.info(
-                                f"Deleted track {track.id} because all media was deleted."
-                            )
+                            logger.info(f"Deleted track {track.id} because all media was deleted.")
 
             except Exception as e:
                 logger.error(f"Failed to delete media {m_id}: {e}", exc_info=True)

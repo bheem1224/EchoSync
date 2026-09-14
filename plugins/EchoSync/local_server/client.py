@@ -57,9 +57,13 @@ def inspect_audio_file(path: Path):
     return AudioResult(meta)
 
 
+from core.plugins.sdk import compute_plugin_crc32
+from core.task_manager.supervisor import supervisor
 from core.tiered_logger import get_logger
 
-logger = get_logger("local_server_provider")
+PLUGIN_NAMESPACE = "EchoSync.local_server"
+PLUGIN_CRC32 = compute_plugin_crc32(PLUGIN_NAMESPACE)
+logger = get_logger("local_server_provider", plugin_id=PLUGIN_CRC32)
 
 
 class LocalServerProvider(PluginBase):
@@ -86,9 +90,7 @@ class LocalServerProvider(PluginBase):
         if not library_dir_str:
             from core.settings import config_manager
 
-            library_dir_str = config_manager.get(
-                "storage.library_dir"
-            ) or config_manager.get("library_dir")
+            library_dir_str = config_manager.get("storage.library_dir") or config_manager.get("library_dir")
 
         if not library_dir_str:
             logger.warning("Library directory not configured globally or locally.")
@@ -129,17 +131,13 @@ class LocalServerProvider(PluginBase):
                     bit_depth=result.bit_depth,
                     file_format=result.file_format,
                     file_size_bytes=result.file_size_bytes,
-                    added_at=datetime.fromtimestamp(path.stat().st_ctime)
-                    if path.exists()
-                    else None,
+                    added_at=datetime.fromtimestamp(path.stat().st_ctime) if path.exists() else None,
                     file_path=str(path),
                     source=self.name,
                     # No provider_id to prevent writing an external identifier
                 )
             except Exception as e:
-                logger.warning(
-                    "Failed to process '%s', falling back to filename: %s", path.name, e
-                )
+                logger.warning("Failed to process '%s', falling back to filename: %s", path.name, e)
                 try:
                     file_stat = path.stat()
                     file_size_bytes = file_stat.st_size
@@ -177,10 +175,7 @@ class LocalServerProvider(PluginBase):
 
                         if entry.is_dir():
                             yield from _iter_audio_files(entry)
-                        elif (
-                            entry.is_file()
-                            and entry.suffix.lower() in SUPPORTED_AUDIO_EXTENSIONS
-                        ):
+                        elif entry.is_file() and entry.suffix.lower() in SUPPORTED_AUDIO_EXTENSIONS:
                             yield entry
                     except PermissionError:
                         logger.warning(f"Permission denied, skipping: {entry}")
@@ -193,23 +188,19 @@ class LocalServerProvider(PluginBase):
 
         # Collect all valid files first using the safe generator
         files = list(_iter_audio_files(library_dir))
-        logger.info(
-            f"Local crawler discovered {len(files)} audio files under {library_dir}"
-        )
+        logger.info(f"Local crawler discovered {len(files)} audio files under {library_dir}")
 
-        # Process concurrently
-        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
-            future_to_path = {
-                executor.submit(process_file, path): path for path in files
-            }
-            for future in concurrent.futures.as_completed(future_to_path):
-                path = future_to_path[future]
-                try:
-                    track = future.result()
-                    if track:
-                        yield track
-                except Exception as e:
-                    logger.warning(f"Failed to process {path}: {e}")
+        # Process sequentially to avoid unmanaged ThreadPoolExecutor saturation and GIL contention
+        for path in files:
+            if supervisor.is_current_task_cancelled():
+                logger.info("Local crawler cancelled during extraction.")
+                break
+            try:
+                track = process_file(path)
+                if track:
+                    yield track
+            except Exception as e:
+                logger.warning(f"Failed to process {path}: {e}")
 
     def get_stream_url(self, track_id_or_path: str) -> str:
         """

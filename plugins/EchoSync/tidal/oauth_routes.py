@@ -21,20 +21,18 @@ router = APIRouter()
 @router.get("/auth")
 def begin_auth(request: Request):
     """
-    Start OAuth flow for Tidal with PKCE.
+    Start OAuth flow for Tidal with PKCE using Centralized OAuth Token Broker.
     Query params: account_id (required)
 
     Tidal uses per-account credentials, so account_id is mandatory.
     Returns an auth URL with PKCE challenge.
     """
     try:
-        account_id = request.query_params.get("account_id")
-        if not account_id:
-            return JSONResponse(
-                content={"error": "account_id is required"}, status_code=400
-            )
+        account_id_raw = request.query_params.get("account_id")
+        if not account_id_raw:
+            return JSONResponse(content={"error": "account_id is required"}, status_code=400)
 
-        account_id = int(account_id)
+        account_id = int(account_id_raw)
 
         # Verify account exists
         accounts = sdk.accounts.get_all()
@@ -43,27 +41,11 @@ def begin_auth(request: Request):
             return JSONResponse(content={"error": "Account not found"}, status_code=404)
 
         # Load per-account credentials from storage
-        # Tidal requires per-account client_id and client_secret
         client_id = storage.get_account_config(account_id, "client_id")
         client_secret = storage.get_account_config(account_id, "client_secret")
 
-        # Debug logging
-        logger.info(
-            f"Tidal auth for account {account_id}: client_id={'present' if client_id else 'MISSING'}, client_secret={'present' if client_secret else 'MISSING'}"
-        )
-
-        # Global redirect URI (shared across all Tidal accounts)
-        from core.network_utils import get_lan_ip
-
-        redirect_uri = f"https://{get_lan_ip()}:5001/api/oauth/callback/plugins/tidal"
-
         if not client_id or not client_secret:
-            # Try to fetch account to see if it exists
-            accounts = sdk.accounts.get_all()
-            account_exists = any(a.get("id") == account_id for a in accounts)
-            logger.error(
-                f"Tidal account {account_id} exists: {account_exists}, but credentials missing"
-            )
+            logger.error(f"Tidal account {account_id} exists, but credentials missing")
             return JSONResponse(
                 content={
                     "error": "Account missing client_id or client_secret. Please edit the account to configure credentials."
@@ -71,58 +53,52 @@ def begin_auth(request: Request):
                 status_code=400,
             )
 
-        # Generate PKCE values
-        from .client import TidalClient
+        from core.security import decrypt_string, encrypt_string
 
-        temp_client = TidalClient(account_id=str(account_id))
-        verifier, challenge = temp_client.generate_pkce()
+        decrypted_secret = decrypt_string(client_secret)
 
-        # Create unique PKCE session and store in config.db
-        pkce_id = str(uuid.uuid4())
-        success = storage.store_pkce_session(
-            pkce_id=pkce_id,
-            service="tidal",
-            account_id=account_id,
-            code_verifier=verifier,
-            code_challenge=challenge,
-            redirect_uri=redirect_uri,
+        def _on_tidal_tokens(tokens: dict):
+            from core.task_manager.task_queue import job_queue
+
+            access_token = tokens.get("access_token")
+            refresh_token = tokens.get("refresh_token")
+            expires_in = tokens.get("expires_in", 3600)
+            expires_at = int(time.time() + expires_in - 60)
+            scope = tokens.get("scope") or "user.read playlists.read"
+
+            if not access_token:
+                logger.error(f"No access token in Tidal token payload for account {account_id}")
+                return
+
+            with job_queue.db_write_lease(task_name=f"tidal_save_tokens_{account_id}"):
+                sdk.accounts.save_token(
+                    account_id=account_id,
+                    access_token=encrypt_string(access_token),
+                    refresh_token=encrypt_string(refresh_token) if refresh_token else None,
+                    expires_at=expires_at,
+                    scope=scope,
+                )
+                sdk.accounts.mark_account_authenticated(account_id)
+                sdk.accounts.toggle_account_active(account_id, True)
+                logger.info(f"Tidal tokens persisted under db_write_lease for account {account_id}")
+
+        session_handle = sdk.oauth.create_session(
+            provider="tidal",
+            auth_url="https://login.tidal.com/authorize",
+            token_url="https://auth.tidal.com/v1/oauth2/token",
             client_id=client_id,
-            ttl_seconds=600,  # 10 minutes
+            client_secret=decrypted_secret,
+            scopes="user.read playlists.read",
+            use_pkce=True,
+            account_id=account_id,
+            on_token=_on_tidal_tokens,
         )
 
-        if not success:
-            return JSONResponse(
-                content={"error": "Failed to store PKCE session"}, status_code=500
-            )
-
-        # Cleanup expired PKCE sessions
-        storage.cleanup_expired_pkce_sessions()
-
-        # Build state containing only pkce_id
-        state_payload = {"pkce_id": pkce_id}
-        state_bytes = json.dumps(state_payload).encode("utf-8")
-        state = base64.urlsafe_b64encode(state_bytes).decode("utf-8").rstrip("=")
-
-        # Build authorization URL
-        params = {
-            "response_type": "code",
-            "client_id": client_id,
-            "redirect_uri": redirect_uri,
-            "scope": "user.read playlists.read",
-            "code_challenge": challenge,
-            "code_challenge_method": "S256",
-            "state": state,
-        }
-
-        auth_url = f"https://login.tidal.com/authorize?{urllib.parse.urlencode(params)}"
-
-        logger.info(f"Generated Tidal auth URL for account {account_id}")
-        return JSONResponse(content={"auth_url": auth_url}, status_code=200)
+        logger.info(f"Generated Tidal centralized auth session for account {account_id}")
+        return JSONResponse(content={"auth_url": session_handle.auth_url}, status_code=200)
 
     except ValueError:
-        return JSONResponse(
-            content={"error": "Invalid account_id format"}, status_code=400
-        )
+        return JSONResponse(content={"error": "Invalid account_id format"}, status_code=400)
     except Exception as e:
         logger.error(f"Error creating Tidal auth URL: {e}", exc_info=True)
         return JSONResponse(
@@ -163,9 +139,7 @@ def oauth_callback(request: Request):
         # Decode state to get PKCE session ID
         try:
             padded_state = state + "=" * (-len(state) % 4)
-            payload = json.loads(
-                base64.urlsafe_b64decode(padded_state.encode("utf-8")).decode("utf-8")
-            )
+            payload = json.loads(base64.urlsafe_b64decode(padded_state.encode("utf-8")).decode("utf-8"))
             pkce_id = payload.get("pkce_id")
 
             if not pkce_id:
@@ -173,9 +147,7 @@ def oauth_callback(request: Request):
 
         except Exception as e:
             logger.error(f"Failed to decode state: {e}")
-            return JSONResponse(
-                content={"error": "Invalid state parameter"}, status_code=400
-            )
+            return JSONResponse(content={"error": "Invalid state parameter"}, status_code=400)
 
         # Retrieve PKCE entry from config.db
 
@@ -183,9 +155,7 @@ def oauth_callback(request: Request):
 
         if not pkce_entry:
             logger.error(f"No PKCE entry found for id={pkce_id[:8]}...")
-            return JSONResponse(
-                content={"error": "PKCE session not found or expired"}, status_code=400
-            )
+            return JSONResponse(content={"error": "PKCE session not found or expired"}, status_code=400)
 
         account_id = pkce_entry.get("account_id")
         code_verifier = pkce_entry.get("code_verifier")
@@ -193,18 +163,14 @@ def oauth_callback(request: Request):
         client_id = pkce_entry.get("client_id")
 
         if not all([account_id, code_verifier, redirect_uri, client_id]):
-            return JSONResponse(
-                content={"error": "Incomplete PKCE session data"}, status_code=400
-            )
+            return JSONResponse(content={"error": "Incomplete PKCE session data"}, status_code=400)
 
         # Load client_secret from account config
         from core.security import decrypt_string
 
         client_secret = storage.get_account_config(account_id, "client_secret")
         if not client_secret:
-            return JSONResponse(
-                content={"error": "Account missing client_secret"}, status_code=400
-            )
+            return JSONResponse(content={"error": "Account missing client_secret"}, status_code=400)
         client_secret = decrypt_string(client_secret)
 
         # Exchange authorization code for tokens
@@ -221,17 +187,11 @@ def oauth_callback(request: Request):
         }
 
         logger.info(f"Exchanging code for tokens (account {account_id})")
-        response = http_client.post(
-            "https://auth.tidal.com/v1/oauth2/token", data=token_data
-        )
+        response = http_client.post("https://auth.tidal.com/v1/oauth2/token", data=token_data)
 
         if response.status_code != 200:
-            logger.error(
-                f"Token exchange failed: {response.status_code} - {response.text}"
-            )
-            return JSONResponse(
-                content={"error": "Failed to exchange code for token"}, status_code=400
-            )
+            logger.error(f"Token exchange failed: {response.status_code} - {response.text}")
+            return JSONResponse(content={"error": "Failed to exchange code for token"}, status_code=400)
 
         token_info = response.json()
         access_token = token_info.get("access_token")
@@ -241,21 +201,22 @@ def oauth_callback(request: Request):
         scope = token_info.get("scope") or "user.read playlists.read"
 
         if not access_token:
-            return JSONResponse(
-                content={"error": "No access token in response"}, status_code=400
-            )
+            return JSONResponse(content={"error": "No access token in response"}, status_code=400)
 
         from core.security import encrypt_string
 
         # Persist tokens to storage
         try:
-            sdk.accounts.save_token(
-                account_id,
-                encrypt_string(access_token),
-                encrypt_string(refresh_token) if refresh_token else None,
-                expires_at,
-            )
-            sdk.accounts.mark_account_authenticated(account_id)
+            from core.task_manager.task_queue import job_queue
+
+            with job_queue.db_write_lease(task_name=f"tidal_cb_save_tokens_{account_id}"):
+                sdk.accounts.save_token(
+                    account_id,
+                    encrypt_string(access_token),
+                    encrypt_string(refresh_token) if refresh_token else None,
+                    expires_at,
+                )
+                sdk.accounts.mark_account_authenticated(account_id)
             logger.info(f"Tokens saved for Tidal account {account_id}")
         except Exception as e:
             logger.error(f"Failed to persist tokens: {e}")

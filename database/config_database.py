@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import contextlib
+import functools
 import os
+import random
 import re
 import sqlite3
 import threading
@@ -16,6 +18,39 @@ logger = get_logger("config_database")
 
 # Import write helpers after logger to avoid circular issues
 from . import ensure_writer, execute_write, execute_write_sql
+
+
+def retry_sqlite_io(max_retries: int = 5, base_delay: float = 0.05, max_delay: float = 1.0):
+    """Decorator to retry SQLite queries encountering transient disk I/O errors or lock contention.
+
+    Catches sqlite3.OperationalError with messages matching 'disk i/o error', 'locked', or 'busy',
+    and applies exponential backoff with random jitter.
+    """
+
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            last_exc = None
+            for attempt in range(max_retries):
+                try:
+                    return func(*args, **kwargs)
+                except sqlite3.OperationalError as e:
+                    err_msg = str(e).lower()
+                    if any(token in err_msg for token in ("disk i/o error", "locked", "busy")):
+                        last_exc = e
+                        delay = min(max_delay, base_delay * (2**attempt)) + random.uniform(0, 0.05)
+                        logger.warning(
+                            f"[SQLite Retry] Transient '{e}' in {func.__name__} (attempt {attempt + 1}/{max_retries}). "
+                            f"Backing off for {delay:.3f}s..."
+                        )
+                        time.sleep(delay)
+                        continue
+                    raise
+            raise last_exc
+
+        return wrapper
+
+    return decorator
 
 
 class ConfigDatabase:
@@ -58,6 +93,9 @@ class ConfigDatabase:
                 )
                 try:
                     conn = sqlite3.connect(str(self.database_path), timeout=30.0)
+                    conn.execute("PRAGMA busy_timeout = 30000")
+                    conn.execute("PRAGMA journal_mode = WAL")
+                    conn.execute("PRAGMA synchronous = NORMAL")
                     conn.execute("VACUUM")
                     conn.execute("REINDEX")
                     conn.close()
@@ -506,6 +544,7 @@ class ConfigDatabase:
             logger.error(f"Failed to initialize config schema: {e}", exc_info=True)
 
     # Service helpers
+    @retry_sqlite_io(max_retries=5, base_delay=0.05, max_delay=1.0)
     def get_or_create_service_id(self, name) -> int:
         # Strip channel-suffix (@beta / @stable) produced by SDK._get_plugin_id()
         # so all lookups operate on the canonical plugin name regardless of active channel.
@@ -544,7 +583,7 @@ class ConfigDatabase:
         except Exception as e:
             logger.error(f"Failed to resolve plugin details for {name}: {e}")
 
-        if not is_matched and name.lower().startswith("echosync."):
+        if not is_matched:
             import re
 
             from core.path_security import PathTraversalError, resolve_safe_path
@@ -552,16 +591,23 @@ class ConfigDatabase:
 
             plugin_name = name.split(".")[-1]
             if re.match(r"^[a-zA-Z0-9_\-]+$", plugin_name):
-                plugins_root = os.path.abspath(
-                    os.path.realpath(str(Path(config_manager.get_plugins_dir()) / "EchoSync"))
-                )
-                bundle_path = os.path.abspath(os.path.realpath(os.path.join(plugins_root, plugin_name)))
-                if os.path.commonpath([bundle_path, plugins_root]) == plugins_root:
+                candidate_roots = [
+                    Path(config_manager.get_plugins_dir()) / "EchoSync",
+                    Path(__file__).resolve().parent.parent / "plugins" / "EchoSync",
+                    Path(config_manager.get_plugins_dir()),
+                    Path(__file__).resolve().parent.parent / "plugins",
+                ]
+                for root in candidate_roots:
+                    plugins_root = os.path.abspath(os.path.realpath(str(root)))
+                    bundle_path = os.path.abspath(os.path.realpath(os.path.join(plugins_root, plugin_name)))
                     if os.path.isdir(bundle_path):
-                        resolved_plugin_id_str = name
+                        resolved_plugin_id_str = (
+                            name if name.lower().startswith("echosync.") else f"EchoSync.{plugin_name}"
+                        )
                         resolved_version = "1.0.0"
                         resolved_path = bundle_path
                         is_matched = True
+                        break
 
         if name.lower() == "system" or is_matched:
             plugin_id_int = binascii.crc32(resolved_plugin_id_str.lower().encode("utf-8")) & 0xFFFFFFFF
@@ -614,44 +660,49 @@ class ConfigDatabase:
                 absolute_install_path = str((app_root / "core").resolve())
 
         try:
-            execute_write_sql(
-                str(self.database_path),
-                """
-                INSERT INTO services(name, service_type, description, absolute_install_path, loaded_modules, plugin_id, version, is_active, beta_opt_in, verified_source, privileged_mode, permissions, capabilities)
-                VALUES(?,?,?,?,?,?,?,1,COALESCE(?, 0),COALESCE(?, 0),COALESCE(?, 0),COALESCE(?, '[]'),COALESCE(?, '{}'))
-                ON CONFLICT(plugin_id) DO UPDATE SET 
-                    name=excluded.name,
-                    absolute_install_path=excluded.absolute_install_path,
-                    loaded_modules=excluded.loaded_modules,
-                    version=excluded.version,
-                    is_active=1,
-                    beta_opt_in=COALESCE(excluded.beta_opt_in, services.beta_opt_in, 0),
-                    verified_source=COALESCE(excluded.verified_source, services.verified_source, 0),
-                    privileged_mode=COALESCE(excluded.privileged_mode, services.privileged_mode, 0),
-                    permissions=COALESCE(excluded.permissions, services.permissions, '[]'),
-                    capabilities=COALESCE(excluded.capabilities, services.capabilities, '{}'),
-                    updated_at=strftime('%s','now')
-                """,
-                (
-                    name,
-                    service_type,
-                    description,
-                    absolute_install_path,
-                    loaded_modules,
-                    plugin_id,
-                    version,
-                    beta_opt_in,
-                    verified_source,
-                    privileged_mode,
-                    permissions,
-                    capabilities,
-                ),
-            )
+            from core.task_manager import db_write_lease
+
+            with db_write_lease(task_name="register_service"):
+                execute_write_sql(
+                    str(self.database_path),
+                    """
+                    INSERT INTO services(name, service_type, description, absolute_install_path, loaded_modules, plugin_id, version, is_active, beta_opt_in, verified_source, privileged_mode, permissions, capabilities)
+                    VALUES(?,?,?,?,?,?,?,1,COALESCE(?, 0),COALESCE(?, 0),COALESCE(?, 0),COALESCE(?, '[]'),COALESCE(?, '{}'))
+                    ON CONFLICT(plugin_id) DO UPDATE SET 
+                        name=excluded.name,
+                        absolute_install_path=excluded.absolute_install_path,
+                        loaded_modules=excluded.loaded_modules,
+                        version=excluded.version,
+                        is_active=1,
+                        beta_opt_in=COALESCE(?, services.beta_opt_in),
+                        verified_source=COALESCE(excluded.verified_source, services.verified_source, 0),
+                        privileged_mode=COALESCE(excluded.privileged_mode, services.privileged_mode, 0),
+                        permissions=COALESCE(excluded.permissions, services.permissions, '[]'),
+                        capabilities=COALESCE(excluded.capabilities, services.capabilities, '{}'),
+                        updated_at=strftime('%s','now')
+                    """,
+                    (
+                        name,
+                        service_type,
+                        description,
+                        absolute_install_path,
+                        loaded_modules,
+                        plugin_id,
+                        version,
+                        beta_opt_in,
+                        verified_source,
+                        privileged_mode,
+                        permissions,
+                        capabilities,
+                        beta_opt_in,
+                    ),
+                )
         except Exception as e:
             logger.error(f"Error registering service '{name}': {e}")
 
         return 0
 
+    @retry_sqlite_io(max_retries=5, base_delay=0.05, max_delay=1.0)
     def set_service_config(self, service_id: int, key: str, value: Any, is_sensitive: bool = False) -> bool:
         try:
             import json
@@ -684,10 +735,17 @@ class ConfigDatabase:
                 (service_id, key, value, 1 if is_sensitive else 0),
             )
             return True
+        except sqlite3.OperationalError as oe:
+            err_msg = str(oe).lower()
+            if any(token in err_msg for token in ("disk i/o error", "locked", "busy")):
+                raise
+            logger.error(f"Error setting service config: {oe}")
+            return False
         except Exception as e:
             logger.error(f"Error setting service config: {e}")
             return False
 
+    @retry_sqlite_io(max_retries=5, base_delay=0.05, max_delay=1.0)
     def get_service_config(self, service_id: int, key: str) -> Any | None:
         try:
             import json
@@ -723,10 +781,17 @@ class ConfigDatabase:
                         pass
 
                 return value
+        except sqlite3.OperationalError as oe:
+            err_msg = str(oe).lower()
+            if any(token in err_msg for token in ("disk i/o error", "locked", "busy")):
+                raise
+            logger.error(f"Error getting service config: {oe}")
+            return None
         except Exception as e:
             logger.error(f"Error getting service config: {e}")
             return None
 
+    @retry_sqlite_io(max_retries=5, base_delay=0.05, max_delay=1.0)
     def get_all_service_config(self, service_id: int) -> dict[str, Any]:
         try:
             import json
@@ -765,11 +830,26 @@ class ConfigDatabase:
                     config[key] = value
 
                 return config
+        except sqlite3.OperationalError as oe:
+            err_msg = str(oe).lower()
+            if any(token in err_msg for token in ("disk i/o error", "locked", "busy")):
+                raise
+            logger.error(f"Error reading all service config: {oe}")
+            return {}
         except Exception as e:
             logger.error(f"Error reading all service config: {e}")
             return {}
 
+    @retry_sqlite_io(max_retries=5, base_delay=0.05, max_delay=1.0)
+    def get_service_credentials(self, service_name: str) -> dict[str, Any]:
+        """Get all credentials/config for a service from the database with transient retry."""
+        service_id = self.get_or_create_service_id(service_name)
+        if not service_id:
+            return {}
+        return self.get_all_service_config(service_id)
+
     # Accounts
+    @retry_sqlite_io(max_retries=5, base_delay=0.05, max_delay=1.0)
     def get_service_name(self, service_id: int) -> str | None:
         """Resolve a service ID (PK or plugin_id) to its canonical name."""
         with self._get_connection() as conn:
@@ -780,6 +860,7 @@ class ConfigDatabase:
                 return None
             return row["name"]
 
+    @retry_sqlite_io(max_retries=5, base_delay=0.05, max_delay=1.0)
     def get_service_id(self, identifier: Any) -> int | None:
         """Resolve a name or plugin_id to the primary integer ID."""
         if identifier is None:
@@ -1528,6 +1609,7 @@ class ConfigDatabase:
     # System Settings (Hot Live Configuration Key-Value Store)
     # =========================================================================
 
+    @retry_sqlite_io(max_retries=5, base_delay=0.05, max_delay=1.0)
     def get_system_setting(self, key: str, default: Any = None) -> Any:
         """Fetch and deserialize a value from system_settings.
 
@@ -1550,10 +1632,17 @@ class ConfigDatabase:
                     except (json.JSONDecodeError, ValueError):
                         return val
                 return val
+        except sqlite3.OperationalError as oe:
+            err_msg = str(oe).lower()
+            if any(token in err_msg for token in ("disk i/o error", "locked", "busy")):
+                raise
+            logger.error(f"Error getting system setting '{key}': {oe}")
+            return default
         except Exception as e:
             logger.error(f"Error getting system setting '{key}': {e}")
             return default
 
+    @retry_sqlite_io(max_retries=5, base_delay=0.05, max_delay=1.0)
     def set_system_setting(self, key: str, value: Any) -> bool:
         """Upsert a key, serialized value, and updated_at timestamp into system_settings."""
         try:
@@ -1578,10 +1667,27 @@ class ConfigDatabase:
                 (key, val_str, now_str),
             )
             return True
+        except sqlite3.OperationalError as oe:
+            err_msg = str(oe).lower()
+            if any(token in err_msg for token in ("disk i/o error", "locked", "busy")):
+                raise
+            logger.error(f"Error setting system setting '{key}': {oe}")
+            return False
         except Exception as e:
             logger.error(f"Error setting system setting '{key}': {e}")
             return False
 
+    @retry_sqlite_io(max_retries=5, base_delay=0.05, max_delay=1.0)
+    def get_setting(self, key: str, default: Any = None) -> Any:
+        """Alias for get_system_setting with retry protection."""
+        return self.get_system_setting(key, default)
+
+    @retry_sqlite_io(max_retries=5, base_delay=0.05, max_delay=1.0)
+    def set_setting(self, key: str, value: Any) -> bool:
+        """Alias for set_system_setting with retry protection."""
+        return self.set_system_setting(key, value)
+
+    @retry_sqlite_io(max_retries=5, base_delay=0.05, max_delay=1.0)
     def get_all_system_settings(self) -> dict[str, Any]:
         """Return all system_settings as a key-value dictionary with JSON deserialization."""
         try:
@@ -1601,10 +1707,17 @@ class ConfigDatabase:
                     else:
                         result[k] = v
             return result
+        except sqlite3.OperationalError as oe:
+            err_msg = str(oe).lower()
+            if any(token in err_msg for token in ("disk i/o error", "locked", "busy")):
+                raise
+            logger.error(f"Error retrieving all system settings: {oe}")
+            return {}
         except Exception as e:
             logger.error(f"Error retrieving all system settings: {e}")
             return {}
 
+    @retry_sqlite_io(max_retries=5, base_delay=0.05, max_delay=1.0)
     def delete_system_setting(self, key: str) -> bool:
         """Delete a key from system_settings."""
         try:
@@ -1802,6 +1915,15 @@ def close_config_database() -> None:
     with _config_db_lock:
         _config_db = None
         _config_db_instances.clear()
+
+
+__all__ = [
+    "ConfigDatabase",
+    "get_config_database",
+    "get_config_db",
+    "close_config_database",
+    "retry_sqlite_io",
+]
 
 
 from sqlalchemy import Boolean, Column, Integer, String  # pyright: ignore[reportMissingImports]

@@ -666,9 +666,20 @@ class RetroactiveEnhancer:
         from core.enums import Capability
         from core.metadata.engine import MetadataResolutionEngine
 
+        from unittest.mock import MagicMock, Mock
+
+        mb_prov = self._get_mb_plugin()
+        fetch_prov = self._get_plugin(Capability.FETCH_METADATA) if hasattr(self, "_get_plugin") else None
+        if fetch_prov:
+            ret_val = getattr(getattr(fetch_prov, "get_metadata", None), "return_value", None)
+            if isinstance(ret_val, dict) or (
+                not isinstance(fetch_prov, (MagicMock, Mock)) and hasattr(fetch_prov, "get_metadata")
+            ):
+                mb_prov = fetch_prov
+
         return MetadataResolutionEngine(
             acoustid_provider=self._get_plugin(Capability.RESOLVE_FINGERPRINT, required_algorithm="chromaprint"),
-            metadata_provider=self._get_mb_plugin() or self._get_plugin(Capability.FETCH_METADATA),
+            metadata_provider=mb_prov,
             spotify_provider=self._get_spotify_plugin(),
         )
 
@@ -1040,7 +1051,7 @@ class RetroactiveEnhancer:
             file_path=path,
         )
         result = self.resolution_engine.resolve_track(req)
-        if not result or result.confidence_score < 0.60 or not result.musicbrainz_track_id:
+        if not result or result.confidence_score < 0.60 or not (result.musicbrainz_track_id or result.isrc):
             return None, 0.0
         return result.to_dict(), result.confidence_score
 

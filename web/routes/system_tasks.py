@@ -3,11 +3,41 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 
-from api.schemas.system_tasks import (
-    ProcessTerminateResponse,
-    SystemHealthResponse,
-    TaskQueueSummaryResponse,
-)
+from typing import Any
+
+from pydantic import BaseModel, Field
+
+from core.task_manager.models import ProcessOwner
+
+
+class TaskQueueSummaryResponse(BaseModel):
+    stats: dict[str, int] = Field(
+        default_factory=dict,
+        description="Summary statistics (total, running, pending, blocked)",
+    )
+    running_jobs: list[dict[str, Any]] = Field(default_factory=list)
+    pending_jobs: list[dict[str, Any]] = Field(default_factory=list)
+    blocked_jobs: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class ProcessListResponse(BaseModel):
+    total: int
+    processes: list[ProcessOwner]
+
+
+class ProcessTerminateResponse(BaseModel):
+    status: str
+    registration_id: str
+    message: str
+
+
+class SystemHealthResponse(BaseModel):
+    status: str
+    timestamp: str
+    health_checks: dict[str, Any] = Field(default_factory=dict)
+    plugin_states: dict[str, Any] = Field(default_factory=dict)
+
+
 from core.task_manager import (
     PluginLifecycleState,
     get_system_health,
@@ -38,12 +68,10 @@ def get_task_queue_status():
         )
     except Exception as e:
         logger.error(f"Error fetching task queue status: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=500, detail=f"Failed to retrieve task queue status: {e!s}"
-        )
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve task queue status: {e!s}")
 
 
-@router.get("/processes")
+@router.get("/processes", response_model=ProcessListResponse)
 def get_active_processes():
     """
     GET /api/v1/system/tasks/processes
@@ -55,9 +83,7 @@ def get_active_processes():
         return {"total": len(processes), "processes": processes}
     except Exception as e:
         logger.error(f"Error listing active processes: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=500, detail=f"Failed to retrieve active processes: {e!s}"
-        )
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve active processes: {e!s}")
 
 
 @router.get("/processes/stream")
@@ -108,9 +134,7 @@ async def stream_processes():
     )
 
 
-@router.post(
-    "/processes/{registration_id}/terminate", response_model=ProcessTerminateResponse
-)
+@router.post("/processes/{registration_id}/terminate", response_model=ProcessTerminateResponse)
 def terminate_process(registration_id: str):
     """
     POST /api/v1/system/tasks/processes/{registration_id}/terminate
@@ -122,9 +146,7 @@ def terminate_process(registration_id: str):
             owner = supervisor._processes.get(registration_id)
 
         if not owner:
-            raise HTTPException(
-                status_code=404, detail="Process registration not found"
-            )
+            raise HTTPException(status_code=404, detail="Process registration not found")
 
         # Unregister from supervisor
         supervisor.unregister_process(registration_id)
@@ -141,12 +163,8 @@ def terminate_process(registration_id: str):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(
-            f"Error terminating process '{registration_id}': {e}", exc_info=True
-        )
-        raise HTTPException(
-            status_code=500, detail=f"Failed to terminate process: {e!s}"
-        )
+        logger.error(f"Error terminating process '{registration_id}': {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to terminate process: {e!s}")
 
 
 @router.post("/processes/{registration_id}/kill")
@@ -190,13 +208,10 @@ def get_unified_system_health():
 
         # Calculate overall unified health status
         raw_status = health_data.get("status", "healthy").lower()
-        if raw_status == "error" or any(
-            s.get("state") == PluginLifecycleState.ERROR for s in plugin_states.values()
-        ):
+        if raw_status == "error" or any(s.get("state") == PluginLifecycleState.ERROR for s in plugin_states.values()):
             overall_status = "error"
         elif raw_status == "degraded" or any(
-            s.get("state") == PluginLifecycleState.DEGRADED
-            for s in plugin_states.values()
+            s.get("state") == PluginLifecycleState.DEGRADED for s in plugin_states.values()
         ):
             overall_status = "degraded"
         else:
@@ -210,6 +225,13 @@ def get_unified_system_health():
         )
     except Exception as e:
         logger.error(f"Error fetching unified system health: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=500, detail=f"Failed to retrieve system health: {e!s}"
-        )
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve system health: {e!s}")
+
+
+__all__ = [
+    "ProcessListResponse",
+    "ProcessTerminateResponse",
+    "SystemHealthResponse",
+    "TaskQueueSummaryResponse",
+    "router",
+]

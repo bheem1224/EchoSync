@@ -5,9 +5,20 @@
   "version": "2.4.2",
   "author": "EchoSync",
   "type": "language_pack",
+  "permissions": {
+    "database": {
+      "read_library": true,
+      "mutate_aliases": true,
+      "mutate_attributes": true
+    },
+    "network_domains": [
+      "vgmdb.info",
+      "musicbrainz.org"
+    ]
+  },
   "requirements": [],
   "hooks": [],
   "min_echosync_version": "2.4.0",
-  "beta_version": "2.4.3-beta.28",
+  "beta_version": "2.4.3-beta.30",
   "display_name": "CJK Language Pack"
 }

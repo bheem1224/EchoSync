@@ -12,7 +12,11 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from core.database.repositories.track_repo import TrackRepository
-from core.db.schemas import TrackResponseSchema, TrackSummarySchema
+from core.db.schemas import (
+    TrackResponseSchema,
+    TrackRichResponseSchema,
+    TrackSummarySchema,
+)
 from core.tiered_logger import get_logger
 from database.music_database import Track, get_database
 from web.schemas.track import TrackPatchRequest
@@ -20,6 +24,7 @@ from web.schemas.track import TrackPatchRequest
 logger = get_logger("tracks_route")
 router = APIRouter(prefix="/api/v1/core/tracks", tags=["Core: Tracks"])
 legacy_router = APIRouter(prefix="/api/tracks", tags=["Core: Tracks (Legacy)"])
+library_router = APIRouter(prefix="/api/v1/library/track", tags=["Library: Tracks"])
 
 # Physical-only fields that must never be PATCH'd through the track endpoint
 _PHYSICAL_FIELDS = frozenset(
@@ -51,9 +56,7 @@ class PaginatedResponse(BaseModel, Generic[T]):
 
 @router.get(
     "",
-    response_model=Union[
-        PaginatedResponse[TrackResponseSchema], PaginatedResponse[TrackSummarySchema]
-    ],
+    response_model=Union[PaginatedResponse[TrackResponseSchema], PaginatedResponse[TrackSummarySchema]],
     response_model_exclude_unset=True,
 )
 async def list_canonical_tracks(
@@ -91,9 +94,7 @@ async def list_canonical_tracks(
                 )
             else:
                 items = [TrackSummarySchema.model_validate(t) for t in tracks]
-                return PaginatedResponse[TrackSummarySchema](
-                    items=items, limit=limit, offset=offset, count=len(tracks)
-                )
+                return PaginatedResponse[TrackSummarySchema](items=items, limit=limit, offset=offset, count=len(tracks))
 
     except Exception as e:
         logger.error(f"Error listing canonical tracks: {e}", exc_info=True)
@@ -102,19 +103,89 @@ async def list_canonical_tracks(
 
 @router.get(
     "/{sync_id}",
-    response_model=Union[TrackResponseSchema, TrackSummarySchema],
+    response_model=Union[TrackRichResponseSchema, TrackResponseSchema, TrackSummarySchema],
     response_model_exclude_unset=True,
 )
-async def get_canonical_track(sync_id: str, detail: bool = Query(False)):
+@legacy_router.get(
+    "/{sync_id}",
+    response_model=Union[TrackRichResponseSchema, TrackResponseSchema, TrackSummarySchema],
+    response_model_exclude_unset=True,
+)
+@library_router.get(
+    "/{sync_id}",
+    response_model=Union[TrackRichResponseSchema, TrackResponseSchema, TrackSummarySchema],
+    response_model_exclude_unset=True,
+)
+async def get_canonical_track(
+    sync_id: str,
+    detail: bool = Query(False),
+    rich: bool = Query(False),
+):
     """
     Fetch a canonical track by sync_id.
 
     GET /api/v1/core/tracks/<sync_id>
     Returns logical metadata + media array if detail=true.
+    If rich=true, returns full track metadata including namespaced attributes and entity aliases.
     """
     try:
+        from sqlalchemy.orm import selectinload
+
         db = get_database()
         with db.get_session() as session:
+            clean_sync_id = sync_id.split("?")[0]
+            if rich:
+                track = (
+                    session.query(Track)
+                    .options(
+                        selectinload(Track.media_files),
+                        selectinload(Track.artist),
+                        selectinload(Track.album),
+                        selectinload(Track.aliases),
+                        selectinload(Track.attributes),
+                    )
+                    .filter_by(sync_id=clean_sync_id)
+                    .first()
+                )
+                if not track:
+                    raise HTTPException(status_code=404, detail="Track not found")
+
+                data = TrackResponseSchema.model_validate(track).model_dump()
+                data["aliases"] = [
+                    {
+                        "name": a.name,
+                        "locale": a.locale,
+                        "script": a.script,
+                        "alias_type": a.alias_type,
+                        "plugin_id": a.plugin_id,
+                    }
+                    for a in (track.aliases or [])
+                ]
+                if track.artist:
+                    data["artist_aliases"] = [
+                        {
+                            "name": a.name,
+                            "locale": a.locale,
+                            "script": a.script,
+                            "alias_type": a.alias_type,
+                            "plugin_id": a.plugin_id,
+                        }
+                        for a in (track.artist.aliases or [])
+                    ]
+                else:
+                    data["artist_aliases"] = []
+
+                # Attributes namespaced by plugin_id
+                attrs_by_plugin: dict[str, dict[str, Any]] = {}
+                for attr in track.attributes or []:
+                    p_key = str(attr.plugin_id)
+                    if p_key not in attrs_by_plugin:
+                        attrs_by_plugin[p_key] = {}
+                    attrs_by_plugin[p_key][attr.key] = attr.value
+                data["attributes"] = attrs_by_plugin
+
+                return TrackRichResponseSchema.model_validate(data)
+
             track = TrackRepository.get_track_by_sync_id(session, sync_id)
             if not track:
                 raise HTTPException(status_code=404, detail="Track not found")
@@ -175,6 +246,7 @@ async def patch_canonical_track(sync_id: str, payload: TrackPatchRequest):
                 art_name = payload_dict.get("artist") or payload_dict.get("artist_name")
                 if art_name:
                     from database.music_database import Artist
+
                     artist_obj = session.query(Artist).filter_by(name=art_name).first()
                     if not artist_obj:
                         artist_obj = Artist(name=art_name)
@@ -186,6 +258,7 @@ async def patch_canonical_track(sync_id: str, payload: TrackPatchRequest):
                 alb_title = payload_dict.get("album") or payload_dict.get("album_title")
                 if alb_title:
                     from database.music_database import Album
+
                     album_obj = session.query(Album).filter_by(title=alb_title).first()
                     if not album_obj:
                         album_obj = Album(title=alb_title, artist_id=track.artist_id)
@@ -235,9 +308,7 @@ async def delete_canonical_track(sync_id: str):
 
 @router.get(
     "/search",
-    response_model=Union[
-        PaginatedResponse[TrackResponseSchema], PaginatedResponse[TrackSummarySchema]
-    ],
+    response_model=Union[PaginatedResponse[TrackResponseSchema], PaginatedResponse[TrackSummarySchema]],
     response_model_exclude_unset=True,
 )
 async def search_canonical_tracks(
@@ -252,13 +323,9 @@ async def search_canonical_tracks(
         tracks = db.search_canonical_fuzzy(title=title, artist=artist, limit=limit)
 
         if detail:
-            return PaginatedResponse[TrackResponseSchema](
-                items=tracks, count=len(tracks)
-            )
+            return PaginatedResponse[TrackResponseSchema](items=tracks, count=len(tracks))
         else:
-            return PaginatedResponse[TrackSummarySchema](
-                items=tracks, count=len(tracks)
-            )
+            return PaginatedResponse[TrackSummarySchema](items=tracks, count=len(tracks))
 
     except Exception as e:
         logger.error(f"Error searching tracks: {e}", exc_info=True)

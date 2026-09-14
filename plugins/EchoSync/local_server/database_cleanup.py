@@ -6,6 +6,8 @@ from pathlib import Path
 from sqlalchemy import delete, update
 
 from core.job_queue import register_job
+from core.plugins.sdk import compute_plugin_crc32
+from core.task_manager.task_queue import db_write_lease
 from core.tiered_logger import get_logger
 from database.music_database import (
     Album,
@@ -17,7 +19,9 @@ from database.music_database import (
     get_database,
 )
 
-logger = get_logger("jobs.database_cleanup")
+PLUGIN_NAMESPACE = "EchoSync.local_server"
+PLUGIN_CRC32 = compute_plugin_crc32(PLUGIN_NAMESPACE)
+logger = get_logger("jobs.database_cleanup", plugin_id=PLUGIN_CRC32)
 
 # Import or redefine BaseJob depending on your core structure
 try:
@@ -57,7 +61,7 @@ class DatabaseCleanupJob(BaseJob):
         logger.info("Starting manual Database Cleanup Job...")
         db = get_database()
 
-        with db.session_scope() as session:
+        with db_write_lease(task_name=f"plugin_{PLUGIN_CRC32}"), db.session_scope() as session:
             # ==========================================
             # Phase 0: Physical Layer Sweep (LocalMedia)
             # ==========================================
@@ -82,16 +86,11 @@ class DatabaseCleanupJob(BaseJob):
             self.update_progress(10, 100, "Phase 0.5: Evicting rogue mount entries...")
 
             if not hasattr(Path, "PYTEST_CURRENT_TEST_ENV"):
-                sanctioned_prefixes = tuple(
-                    config_manager.get("SANCTIONED_PATH_PREFIXES", ["/data/library/"])
-                )
+                sanctioned_prefixes = tuple(config_manager.get("SANCTIONED_PATH_PREFIXES", ["/data/library/"]))
                 from sqlalchemy import or_
 
                 # Build an OR condition for all sanctioned prefixes
-                prefix_conditions = [
-                    LocalMedia.file_path.startswith(prefix)
-                    for prefix in sanctioned_prefixes
-                ]
+                prefix_conditions = [LocalMedia.file_path.startswith(prefix) for prefix in sanctioned_prefixes]
 
                 rogue_media = (
                     session.query(LocalMedia)
@@ -123,9 +122,7 @@ class DatabaseCleanupJob(BaseJob):
                 session.delete(track)
 
             session.commit()
-            logger.info(
-                f"[Phase 1] Purged {deleted_track_count} Tracks missing physical media."
-            )
+            logger.info(f"[Phase 1] Purged {deleted_track_count} Tracks missing physical media.")
 
             # ==========================================
             # Phase 2: Same-File Row Flattening (Optional cleanup)
@@ -135,9 +132,7 @@ class DatabaseCleanupJob(BaseJob):
             # Group LocalMedia by canonical path and delete redundancies to prevent multi-track collisions
             path_groups = defaultdict(list)
             all_media = (
-                session.query(LocalMedia)
-                .filter(LocalMedia.file_path.isnot(None), LocalMedia.file_path != "")
-                .all()
+                session.query(LocalMedia).filter(LocalMedia.file_path.isnot(None), LocalMedia.file_path != "").all()
             )
             for media in all_media:
                 canon = _canonicalize_path(media.file_path)
@@ -162,9 +157,7 @@ class DatabaseCleanupJob(BaseJob):
                             .values(media_id=keeper.media_id)
                         )
                         # Delete the duplicate media row
-                        session.execute(
-                            delete(LocalMedia).where(LocalMedia.id == duplicate.id)
-                        )
+                        session.execute(delete(LocalMedia).where(LocalMedia.id == duplicate.id))
                         flattened_duplicate_count += 1
 
             # Flush updates to DB and expire loaded collections to force reload
@@ -187,11 +180,7 @@ class DatabaseCleanupJob(BaseJob):
                 session.delete(album)
 
             # Delete artists without tracks AND without albums
-            empty_artists = (
-                session.query(Artist)
-                .filter(~Artist.tracks.any(), ~Artist.albums.any())
-                .all()
-            )
+            empty_artists = session.query(Artist).filter(~Artist.tracks.any(), ~Artist.albums.any()).all()
             empty_artist_count = len(empty_artists)
             for artist in empty_artists:
                 session.delete(artist)

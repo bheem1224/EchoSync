@@ -11,8 +11,7 @@ System jobs run automatically at configured intervals and handle core operations
 from collections import defaultdict
 from datetime import UTC
 
-from core.jobs.decouple_media_job import register_decouple_media_job
-from core.jobs.reorganize_library_job import register_reorganize_library_job
+from core.enums import TaskCategory
 from core.personalized_playlists import get_personalized_playlists_service
 from core.settings import config_manager
 from core.suggestion_engine.consensus import calculate_consensus
@@ -21,7 +20,6 @@ from core.task_manager.task_queue import job_queue
 from core.tiered_logger import get_logger
 from database.music_database import get_database
 from database.working_database import Account, UserRating, get_working_database
-from services.library_hygiene import DuplicateHygieneService
 
 logger = get_logger("system_jobs")
 
@@ -119,14 +117,29 @@ def register_database_update_job(interval_seconds: int = 21600, enabled: bool = 
             total_successful_operations = 0
 
             # Step 1: Run Local Server first if available
-            from core.nexus_framework.plugin_loader import generate_plugin_id
+            from core.plugins.sdk import compute_plugin_crc32
 
-            local_server_id = generate_plugin_id("echosync.local server")
+            canonical_local_id = compute_plugin_crc32("echosync.local_server")
+            local_server_candidates = [
+                canonical_local_id,
+            ]
+            local_server_id = None
+            for cand_id in local_server_candidates:
+                if PluginRegistry.get_plugin_class(cand_id) and not PluginRegistry.is_plugin_disabled(cand_id):
+                    local_server_id = cand_id
+                    break
+
+            if local_server_id is None:
+                for p_id in PluginRegistry.get_plugins_by_type("mediaserver", exclude_disabled=True):
+                    p_cls = PluginRegistry.get_plugin_class(p_id)
+                    p_name = getattr(p_cls, "name", "").lower() if p_cls else ""
+                    if "local" in p_name:
+                        local_server_id = p_id
+                        break
+
             local_success = False
 
-            if PluginRegistry.get_plugin_class(local_server_id) and not PluginRegistry.is_plugin_disabled(
-                local_server_id
-            ):
+            if local_server_id is not None:
                 try:
                     local_provider = PluginRegistry.create_instance(local_server_id)
                     if local_provider:
@@ -256,6 +269,7 @@ def register_database_update_job(interval_seconds: int = 21600, enabled: bool = 
         interval_seconds=interval_seconds,
         start_after=600,  # 10-minute startup delay so all plugins initialise before first sync
         enabled=enabled,
+        category=TaskCategory.DATABASE_WRITE_HEAVY,
         tags=["system", "database"],
         max_retries=2,
     )
@@ -643,6 +657,7 @@ def register_duplicate_scan_job(interval_seconds: int = 86400, enabled: bool = T
         try:
             logger.info("Starting duplicate scan job")
             from core.event_bus import event_bus
+            from services.library_hygiene import DuplicateHygieneService
 
             service = DuplicateHygieneService()
 
@@ -726,6 +741,7 @@ def register_duplicate_scan_job(interval_seconds: int = 86400, enabled: bool = T
         func=run_duplicate_scan,
         interval_seconds=interval_seconds,
         enabled=enabled,
+        category=TaskCategory.DATABASE_WRITE_HEAVY,
         tags=["system", "duplicates", "hygiene"],
         max_retries=1,
     )
@@ -753,6 +769,7 @@ def register_stale_track_scan_job(interval_seconds: int = 604800, enabled: bool 
         func=run_stale_track_scan,
         interval_seconds=interval_seconds,
         enabled=enabled,
+        category=TaskCategory.DATABASE_WRITE_HEAVY,
         tags=["system", "stale_tracks", "hygiene"],
         max_retries=1,
     )
@@ -862,6 +879,7 @@ def register_retroactive_metadata_enhancement_job(
     check_all_files: bool = False,
     limit: int | None = None,
     force_refresh: bool = False,
+    category: TaskCategory = TaskCategory.DATABASE_WRITE_HEAVY,
 ):
     """Register a daily job to fill in missing MusicBrainz IDs for library tracks."""
 
@@ -931,6 +949,7 @@ def register_retroactive_metadata_enhancement_job(
         func=run_metadata_enhancement,
         interval_seconds=interval_seconds,
         enabled=enabled,
+        category=category,
         tags=["system", "metadata", "library"],
         max_retries=1,
         params={"batch_size": batch_size, "check_all_files": check_all_files},
@@ -1148,9 +1167,13 @@ def register_all_system_jobs():
         register_plugin_update_check_job(interval_seconds=43200, enabled=True)
 
         # Ad-hoc / manual system job for physical library reorganization
+        from core.jobs.reorganize_library_job import register_reorganize_library_job
+
         register_reorganize_library_job(enabled=True)
 
         # Ad-hoc / manual maintenance job to decouple collapsed multi-edition media records
+        from core.jobs.decouple_media_job import register_decouple_media_job
+
         register_decouple_media_job(enabled=True)
 
         logger.info("All system jobs registered successfully")

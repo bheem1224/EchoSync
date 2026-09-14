@@ -1,10 +1,10 @@
 import logging
 import os
 import time
-from concurrent.futures import ThreadPoolExecutor
-
 import echosync_core
 from sqlalchemy import delete, select
+
+from core.task_manager.task_queue import db_write_lease
 
 from core.database.repositories.track_repo import TrackRepository
 from core.io_gatekeeper import Gatekeeper
@@ -41,24 +41,18 @@ class LibrarySyncService:
 
         with acquire_library_lock(task_name="library_sync", blocking=False) as acquired:
             if not acquired:
-                logger.info(
-                    "Library sync skipped: Auto-importer or another library operation is currently running."
-                )
+                logger.info("Library sync skipped: Auto-importer or another library operation is currently running.")
                 return
 
             # Step 1: Gatekeeper Boundary Check
-            library_dir = config_manager.get(
-                "storage.library_dir"
-            ) or config_manager.get("library_dir")
+            library_dir = config_manager.get("storage.library_dir") or config_manager.get("library_dir")
             if not library_dir:
                 logger.error("Library sync aborted: No library_dir configured.")
                 return
 
             is_safe = self.gatekeeper.validate_path(library_dir)
             if not is_safe:
-                logger.error(
-                    f"Library sync aborted: {library_dir} is out of Gatekeeper bounds."
-                )
+                logger.error(f"Library sync aborted: {library_dir} is out of Gatekeeper bounds.")
                 return
 
             # Full rebuild: truncate library tables prior to cold scan
@@ -70,7 +64,8 @@ class LibrarySyncService:
                     session.execute(delete(Track))
                     session.execute(delete(Album))
                     session.execute(delete(Artist))
-                    session.commit()
+                    with db_write_lease(task_name="library_sync"):
+                        session.commit()
                     logger.info("Tables cleared for full_rebuild.")
 
             # Step 2: Rapid Directory Walk & mtime Comparison
@@ -79,9 +74,7 @@ class LibrarySyncService:
 
             if scan_mode != "full_rebuild":
                 with self.db.session_factory() as session:
-                    rows = session.execute(
-                        select(LocalMedia.file_path, LocalMedia.mtime)
-                    ).all()
+                    rows = session.execute(select(LocalMedia.file_path, LocalMedia.mtime)).all()
                     for r in rows:
                         db_state[r.file_path] = r.mtime or 0.0
 
@@ -140,9 +133,7 @@ class LibrarySyncService:
                             dirty_or_new.append(file_path)
 
             walk_time = time.time() - start_walk
-            logger.info(
-                f"Walk completed in {walk_time:.2f}s. Found {len(dirty_or_new)} dirty/new files."
-            )
+            logger.info(f"Walk completed in {walk_time:.2f}s. Found {len(dirty_or_new)} dirty/new files.")
 
             if supervisor.is_current_task_cancelled():
                 logger.info("Library sync cancelled after directory walk.")
@@ -163,14 +154,13 @@ class LibrarySyncService:
                             logger.info("Library sync cancelled during orphan pruning.")
                             return
                         chunk = orphans[i : i + chunk_size]
-                        session.execute(
-                            delete(LocalMedia).where(LocalMedia.file_path.in_(chunk))
-                        )
+                        session.execute(delete(LocalMedia).where(LocalMedia.file_path.in_(chunk)))
 
                     # Prune empty tracks
                     subq = select(LocalMedia.track_id).distinct()
                     session.execute(delete(Track).where(Track.id.not_in(subq)))
-                    session.commit()
+                    with db_write_lease(task_name="library_sync"):
+                        session.commit()
                     logger.info("Orphans pruned successfully.")
 
             if not dirty_or_new:
@@ -187,16 +177,12 @@ class LibrarySyncService:
                 f"Extracting metadata and streaming upsert for {len(dirty_or_new)} files (chunk size {CHUNK_SIZE})..."
             )
 
-            _dl = config_manager.get("storage.download_dir") or config_manager.get(
-                "download_dir"
-            )
+            _dl = config_manager.get("storage.download_dir") or config_manager.get("download_dir")
             if not _dl:
                 if "/data/library" in library_dir or "\\data\\library" in library_dir:
                     _dl = "/data/downloads"
                 else:
-                    _dl = os.path.join(
-                        os.path.dirname(library_dir.rstrip("/\\")), "downloads"
-                    )
+                    _dl = os.path.join(os.path.dirname(library_dir.rstrip("/\\")), "downloads")
             download_dir = _dl
             os.makedirs(download_dir, exist_ok=True)
             quarantine_dir = os.path.join(download_dir, "quarantine")
@@ -226,12 +212,11 @@ class LibrarySyncService:
                 with self.db.session_factory() as session:
                     TrackRepository.resolve_artists_and_albums(session, tracks_chunk)
                     if supervisor.is_current_task_cancelled():
-                        logger.info(
-                            "Library sync cancelled before committing chunk upsert."
-                        )
+                        logger.info("Library sync cancelled before committing chunk upsert.")
                         return
                     affected = TrackRepository.bulk_upsert_tracks(session, tracks_chunk)
-                    session.commit()
+                    with db_write_lease(task_name="library_sync"):
+                        session.commit()
                     total_affected_rows += affected or 0
                 logger.info(f"Upserted chunk {idx} ({len(tracks_chunk)} tracks)...")
                 time.sleep(0.01)
@@ -271,86 +256,80 @@ class LibrarySyncService:
                     )
                 )
 
-            with ThreadPoolExecutor(
-                max_workers=min(2, os.cpu_count() or 1)
-            ) as executor:
-                for raw_dict, file_path in executor.map(parse_file, dirty_or_new):
-                    if supervisor.is_current_task_cancelled():
-                        logger.info(
-                            "Library sync cancelled during streaming extraction."
+            for file_path in dirty_or_new:
+                if supervisor.is_current_task_cancelled():
+                    logger.info("Library sync cancelled during streaming extraction.")
+                    return
+
+                raw_dict, _ = parse_file(file_path)
+
+                # 1. Inspect embedded tags
+                title = None
+                artist = None
+                if raw_dict and isinstance(raw_dict, dict):
+                    title = raw_dict.get("title") or raw_dict.get("raw_title")
+                    artist = raw_dict.get("artist_name") or raw_dict.get("artist")
+
+                has_embedded_title = not _is_generic_or_empty(title)
+                has_embedded_artist = not _is_generic_or_empty(artist)
+
+                # 2. Inspect filename fallback
+                fn_artist, fn_title = parse_fallback_filename(file_path)
+                has_inferred_title = not _is_generic_or_empty(fn_title)
+                has_inferred_artist = not _is_generic_or_empty(fn_artist)
+
+                # A file is ONLY unidentifiable if BOTH title and artist are missing from embedded tags
+                # AND filename parsing yields no identifiable track structure
+                is_unidentifiable = (not has_embedded_title and not has_embedded_artist) and (
+                    not has_inferred_title and not has_inferred_artist
+                )
+
+                if is_unidentifiable and os.path.exists(file_path):
+                    logger.warning(
+                        f"Unidentifiable media file detected in library: '{file_path}'. "
+                        "Retaining file in library and enrolling in ReviewTask(action='RESOLVE_LIBRARY_ORPHAN')."
+                    )
+                    try:
+                        from database.repositories.task_repository import TaskRepository
+
+                        TaskRepository.create_review_task(
+                            file_path=file_path,
+                            action="RESOLVE_LIBRARY_ORPHAN",
+                            track_data={
+                                "action": "RESOLVE_LIBRARY_ORPHAN",
+                                "raw_title": title or fn_title or os.path.splitext(os.path.basename(file_path))[0],
+                                "artist": artist or fn_artist or "Unknown Artist",
+                                "album": (raw_dict.get("album") if isinstance(raw_dict, dict) else None)
+                                or "Unknown Album",
+                            },
                         )
-                        return
+                        logger.info(f"Retained unidentifiable file in library and enrolled review task: '{file_path}'")
+                    except Exception:
+                        logger.exception(f"Failed to enroll review task for unidentifiable file {file_path}")
+                    continue
 
-                    # 1. Inspect embedded tags
-                    title = None
-                    artist = None
-                    if raw_dict and isinstance(raw_dict, dict):
-                        title = raw_dict.get("title") or raw_dict.get("raw_title")
-                        artist = raw_dict.get("artist_name") or raw_dict.get("artist")
+                if raw_dict is None or not isinstance(raw_dict, dict):
+                    raw_dict = {}
 
-                    has_embedded_title = not _is_generic_or_empty(title)
-                    has_embedded_artist = not _is_generic_or_empty(artist)
+                # Backfill missing title/artist from filename inference if needed
+                if not has_embedded_title and has_inferred_title:
+                    raw_dict["title"] = fn_title
+                    raw_dict["raw_title"] = fn_title
+                if not has_embedded_artist and has_inferred_artist:
+                    raw_dict["artist"] = fn_artist
+                    raw_dict["artist_name"] = fn_artist
+                if not raw_dict.get("file_path"):
+                    raw_dict["file_path"] = file_path
 
-                    # 2. Inspect filename fallback
-                    fn_artist, fn_title = parse_fallback_filename(file_path)
-                    has_inferred_title = not _is_generic_or_empty(fn_title)
-                    has_inferred_artist = not _is_generic_or_empty(fn_artist)
+                track = _parse_telemetry_dict(raw_dict)
+                if track:
+                    chunk.append(track)
+                    total_extracted_tracks += 1
 
-                    # A file is ONLY unidentifiable if BOTH title and artist are missing from embedded tags
-                    # AND filename parsing yields no identifiable track structure
-                    is_unidentifiable = (
-                        not has_embedded_title and not has_embedded_artist
-                    ) and (not has_inferred_title and not has_inferred_artist)
-
-                    if is_unidentifiable and os.path.exists(file_path):
-                        logger.warning(
-                            f"Unidentifiable media file detected in library: '{file_path}'. "
-                            "Retaining file in library and enrolling in ReviewTask(action='RESOLVE_LIBRARY_ORPHAN')."
-                        )
-                        try:
-                            from database.repositories.task_repository import TaskRepository
-
-                            TaskRepository.create_review_task(
-                                file_path=file_path,
-                                action="RESOLVE_LIBRARY_ORPHAN",
-                                track_data={
-                                    "action": "RESOLVE_LIBRARY_ORPHAN",
-                                    "raw_title": title or fn_title or os.path.splitext(os.path.basename(file_path))[0],
-                                    "artist": artist or fn_artist or "Unknown Artist",
-                                    "album": (raw_dict.get("album") if isinstance(raw_dict, dict) else None) or "Unknown Album",
-                                },
-                            )
-                            logger.info(
-                                f"Retained unidentifiable file in library and enrolled review task: '{file_path}'"
-                            )
-                        except Exception:
-                            logger.exception(
-                                f"Failed to enroll review task for unidentifiable file {file_path}"
-                            )
-                        continue
-
-                    if raw_dict is None or not isinstance(raw_dict, dict):
-                        raw_dict = {}
-
-                    # Backfill missing title/artist from filename inference if needed
-                    if not has_embedded_title and has_inferred_title:
-                        raw_dict["title"] = fn_title
-                        raw_dict["raw_title"] = fn_title
-                    if not has_embedded_artist and has_inferred_artist:
-                        raw_dict["artist"] = fn_artist
-                        raw_dict["artist_name"] = fn_artist
-                    if not raw_dict.get("file_path"):
-                        raw_dict["file_path"] = file_path
-
-                    track = _parse_telemetry_dict(raw_dict)
-                    if track:
-                        chunk.append(track)
-                        total_extracted_tracks += 1
-
-                    if len(chunk) >= CHUNK_SIZE:
-                        chunk_idx += 1
-                        upsert_chunk(chunk, chunk_idx)
-                        chunk.clear()
+                if len(chunk) >= CHUNK_SIZE:
+                    chunk_idx += 1
+                    upsert_chunk(chunk, chunk_idx)
+                    chunk.clear()
 
             # Upsert any remaining tracks in the final chunk
             if chunk:
@@ -377,13 +356,9 @@ class LibrarySyncService:
 
                 pruned_dirs = prune_empty_directories_tree(library_dir)
                 if pruned_dirs > 0:
-                    logger.info(
-                        f"Pruned {pruned_dirs} empty directory(ies) across library tree."
-                    )
+                    logger.info(f"Pruned {pruned_dirs} empty directory(ies) across library tree.")
             except Exception as prune_err:
-                logger.warning(
-                    f"Failed to prune empty library directories: {prune_err}"
-                )
+                logger.warning(f"Failed to prune empty library directories: {prune_err}")
 
             # Release system memory / trigger glibc malloc_trim
             try:

@@ -93,6 +93,8 @@ class ResolutionResult:
             "sync_id": self.sync_id,
             "media_id": self.media_id,
             "title": self.title,
+            "raw_title": self.title,
+            "display_title": self.title,
             "artist": self.artist,
             "artist_name": self.artist,
             "album": self.album,

@@ -66,9 +66,7 @@ class PluginsListResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-@router.get(
-    "", response_model=PluginsListResponse, dependencies=[Depends(require_auth)]
-)
+@router.get("", response_model=PluginsListResponse, dependencies=[Depends(require_auth)])
 def list_plugins():
     plugins = get_all_plugins()
     return PluginsListResponse(plugins=plugins)
@@ -113,11 +111,7 @@ def get_ui_manifest(response: Response):
     plugin_map: dict = {}
 
     for type_key, components in registry.items():
-        category = (
-            type_key.rstrip("s")
-            if type_key.endswith("s") and type_key != "settings"
-            else type_key
-        )
+        category = type_key.rstrip("s") if type_key.endswith("s") and type_key != "settings" else type_key
         for comp in components:
             pid = comp.get("plugin_id")
             if pid is None:
@@ -171,9 +165,7 @@ def update_plugin_config(data: UpdateConfigRequest):
         config_manager.set_disabled_plugins(disabled_list)
 
     if data.active_matching_engine is not None:
-        config_manager.set(
-            "settings.active_matching_engine", data.active_matching_engine
-        )
+        config_manager.set("settings.active_matching_engine", data.active_matching_engine)
 
     return GenericSuccessResponse(success=True)
 
@@ -183,9 +175,7 @@ class ReposListResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-@router.get(
-    "/repos", response_model=ReposListResponse, dependencies=[Depends(require_auth)]
-)
+@router.get("/repos", response_model=ReposListResponse, dependencies=[Depends(require_auth)])
 def get_repos():
     repos = plugin_store.get_repositories()
     return ReposListResponse(repos=repos)
@@ -223,9 +213,7 @@ def remove_repo(data: RepoRequest):
     raise HTTPException(status_code=500, detail="Failed to remove repository")
 
 
-@router.get(
-    "/store", response_model=PluginsListResponse, dependencies=[Depends(require_auth)]
-)
+@router.get("/store", response_model=PluginsListResponse, dependencies=[Depends(require_auth)])
 def get_plugin_store():
     try:
         plugins = plugin_store.get_all_store_plugins()
@@ -238,6 +226,10 @@ def get_plugin_store():
 class PluginActionRequest(BaseModel):
     plugin: dict[str, Any]
     channel: str | None = None
+    version: str | None = None
+    target_version: str | None = None
+    force_consent: bool | None = None
+    consent_granted: bool | None = None
 
 
 @router.post("/install", dependencies=[Depends(require_auth)])
@@ -248,29 +240,36 @@ def install_plugin(request: Request, data: PluginActionRequest):
     channel = data.channel or plugin_info.get("channel", "stable")
     if channel == "release":
         channel = "stable"
-    force_consent = request.query_params.get("force_consent") == "true"
+    force_consent = (
+        request.query_params.get("force_consent") == "true"
+        or request.query_params.get("consent_granted") == "true"
+        or bool(data.force_consent)
+        or bool(data.consent_granted)
+        or bool(plugin_info.get("force_consent"))
+        or bool(plugin_info.get("consent_granted"))
+    )
 
     if not plugin_info:
         raise HTTPException(status_code=400, detail="Plugin info required")
 
     try:
-        success = plugin_store.install_plugin(
-            plugin_info, channel=channel, force_consent=force_consent
-        )
+        success = plugin_store.install_plugin(plugin_info, channel=channel, force_consent=force_consent)
         if success:
             return {"success": True}
-        raise HTTPException(
-            status_code=500, detail=f"Failed to install plugin on channel {channel}"
-        )
+        raise HTTPException(status_code=500, detail=f"Failed to install plugin on channel {channel}")
     except PrivilegeEscalationError as e:
         from fastapi.responses import JSONResponse
 
         return JSONResponse(
             status_code=403,
             content={
+                "status": "consent_required",
+                "code": "PRIVILEGE_ESCALATION_REQUIRED",
                 "requires_consent": True,
+                "scopes": e.escalations,
                 "escalations": e.escalations,
-                "message": "This update requires elevated permissions.",
+                "plugin_id": str(e.plugin_id or plugin_info.get("id") or plugin_info.get("plugin_id") or ""),
+                "message": "This installation requires elevated permissions.",
             },
         )
     except HTTPException:
@@ -285,7 +284,14 @@ def update_plugin(request: Request, data: PluginActionRequest):
     from core.nexus_framework.plugin_store import PrivilegeEscalationError
 
     plugin_info = data.plugin
-    force_consent = request.query_params.get("force_consent") == "true"
+    force_consent = (
+        request.query_params.get("force_consent") == "true"
+        or request.query_params.get("consent_granted") == "true"
+        or bool(data.force_consent)
+        or bool(data.consent_granted)
+        or bool(plugin_info.get("force_consent"))
+        or bool(plugin_info.get("consent_granted"))
+    )
 
     if not plugin_info:
         raise HTTPException(status_code=400, detail="Plugin info required")
@@ -299,9 +305,7 @@ def update_plugin(request: Request, data: PluginActionRequest):
         plugin_id_int = db.get_service_id(plugin_name)
         if not plugin_id_int:
             try:
-                plugin_id_int = int(
-                    plugin_info.get("plugin_id") or plugin_info.get("id")
-                )
+                plugin_id_int = int(plugin_info.get("plugin_id") or plugin_info.get("id"))
             except (ValueError, TypeError):
                 pass
 
@@ -323,20 +327,46 @@ def update_plugin(request: Request, data: PluginActionRequest):
                 detail=f"Plugin {plugin_name} not found in database registry.",
             )
 
-        success = plugin_store.update_plugin(db_plugin_id, force_consent=force_consent)
+        import inspect
+
+        channel = data.channel
+        if not channel and isinstance(plugin_info, dict):
+            channel = plugin_info.get("channel")
+
+        target_version = data.version or data.target_version
+        if not target_version and isinstance(plugin_info, dict):
+            target_version = plugin_info.get("version") or plugin_info.get("target_version")
+
+        update_kwargs = {"force_consent": force_consent}
+        if channel:
+            update_kwargs["channel"] = channel
+        if target_version:
+            update_kwargs["target_version"] = target_version
+
+        sig = inspect.signature(plugin_store.update_plugin)
+        params = sig.parameters
+        filtered_kwargs = {
+            k: v
+            for k, v in update_kwargs.items()
+            if k in params or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())
+        }
+
+        success = plugin_store.update_plugin(db_plugin_id, **filtered_kwargs)
         if success:
             return {"success": True}
-        raise HTTPException(
-            status_code=500, detail=f"Failed to update plugin {plugin_name}"
-        )
+        raise HTTPException(status_code=500, detail=f"Failed to update plugin {plugin_name}")
     except PrivilegeEscalationError as e:
         from fastapi.responses import JSONResponse
 
         return JSONResponse(
             status_code=403,
             content={
+                "status": "consent_required",
+                "code": "PRIVILEGE_ESCALATION_REQUIRED",
                 "requires_consent": True,
+                "scopes": e.escalations,
                 "escalations": e.escalations,
+                "plugin_id": str(e.plugin_id or db_plugin_id or ""),
                 "message": "This update requires elevated permissions.",
             },
         )
@@ -366,9 +396,7 @@ def rollback_plugin(data: PluginActionRequest):
         plugin_id_int = db.get_service_id(plugin_name)
         if not plugin_id_int:
             try:
-                plugin_id_int = int(
-                    plugin_info.get("plugin_id") or plugin_info.get("id")
-                )
+                plugin_id_int = int(plugin_info.get("plugin_id") or plugin_info.get("id"))
             except (ValueError, TypeError):
                 pass
 
@@ -500,9 +528,7 @@ def set_plugin_beta_opt(plugin_id: str, data: BetaOptRequest):
             loader.reload_plugin(db_plugin_id)
             logger.info(f"Hot-reloaded plugin {db_plugin_id} after beta-opt change")
         except Exception as re:
-            logger.warning(
-                f"Failed to hot-reload plugin {db_plugin_id} after beta-opt change: {re}"
-            )
+            logger.warning(f"Failed to hot-reload plugin {db_plugin_id} after beta-opt change: {re}")
 
         return GenericSuccessResponse(success=True)
     except HTTPException:
@@ -554,14 +580,9 @@ def uninstall_plugin_route(data: UninstallPluginRequest):
         if isinstance(plugin_id_raw, int):
             plugin_id = plugin_id_raw
         elif author and plugin_name:
-            plugin_id = (
-                binascii.crc32(f"{author}.{plugin_name}".lower().encode("utf-8"))
-                & 0xFFFFFFFF
-            )
+            plugin_id = binascii.crc32(f"{author}.{plugin_name}".lower().encode("utf-8")) & 0xFFFFFFFF
         else:
-            plugin_id = (
-                binascii.crc32(str(plugin_id_raw).lower().encode("utf-8")) & 0xFFFFFFFF
-            )
+            plugin_id = binascii.crc32(str(plugin_id_raw).lower().encode("utf-8")) & 0xFFFFFFFF
 
     try:
         success = plugin_store.uninstall_plugin(plugin_id)
@@ -572,6 +593,59 @@ def uninstall_plugin_route(data: UninstallPluginRequest):
         raise
     except Exception as e:
         logger.error(f"Uninstall error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to uninstall plugin")
+
+
+@router.delete(
+    "/{plugin_id}",
+    response_model=GenericSuccessResponse,
+    dependencies=[Depends(require_auth)],
+)
+def delete_plugin_route(plugin_id: str):
+    """
+    Clean uninstallation endpoint:
+    Deletes the plugin, unlinking entries from services, service_config, and ui_components
+    and removing physical files on disk under db_write_lease().
+    """
+    from core.plugins.sdk import compute_plugin_crc32
+    from database.config_database import get_config_database
+
+    db = get_config_database()
+    target_plugin_id = None
+
+    if plugin_id.isdigit():
+        numeric_id = int(plugin_id)
+        with config_db_connection() as conn:
+            c = conn.cursor()
+            c.execute("SELECT id, plugin_id FROM services WHERE plugin_id=? OR id=?", (numeric_id, numeric_id))
+            row = c.fetchone()
+            if row:
+                target_plugin_id = row["plugin_id"] or numeric_id
+            else:
+                target_plugin_id = numeric_id
+    else:
+        service_id = db.get_service_id(plugin_id)
+        if service_id:
+            with config_db_connection() as conn:
+                c = conn.cursor()
+                c.execute("SELECT plugin_id FROM services WHERE id=?", (service_id,))
+                row = c.fetchone()
+                if row and row["plugin_id"] is not None:
+                    target_plugin_id = int(row["plugin_id"])
+                else:
+                    target_plugin_id = service_id
+        else:
+            target_plugin_id = compute_plugin_crc32(plugin_id)
+
+    try:
+        success = plugin_store.uninstall_plugin(target_plugin_id)
+        if success:
+            return GenericSuccessResponse(success=True)
+        raise HTTPException(status_code=500, detail=f"Failed to uninstall plugin {plugin_id}")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Uninstall error for {plugin_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to uninstall plugin")
 
 
@@ -638,9 +712,7 @@ def toggle_plugin(plugin_id: str, data: TogglePluginRequest | None = None):
     with config_db_connection() as conn:
         c = conn.cursor()
         if db_id is not None:
-            c.execute(
-                "UPDATE services SET is_active=? WHERE id=?", (target_active, db_id)
-            )
+            c.execute("UPDATE services SET is_active=? WHERE id=?", (target_active, db_id))
         elif db_plugin_id is not None:
             c.execute(
                 "UPDATE services SET is_active=? WHERE plugin_id=?",
@@ -673,9 +745,7 @@ def toggle_plugin(plugin_id: str, data: TogglePluginRequest | None = None):
             app_root = Path(__file__).parent.parent.parent
             loader = PluginLoader(app_root)
             loader.reload_plugin(db_plugin_id)
-            logger.info(
-                f"Hot-reloaded plugin {plugin_id} (id: {db_plugin_id}) after enable toggle"
-            )
+            logger.info(f"Hot-reloaded plugin {plugin_id} (id: {db_plugin_id}) after enable toggle")
         elif not target_enabled:
             from core.nexus_framework.plugin_state_manager import (
                 PluginLifecycleState,
@@ -693,9 +763,7 @@ def toggle_plugin(plugin_id: str, data: TogglePluginRequest | None = None):
                     PluginLifecycleState.UNCONFIGURED,
                     "Plugin disabled",
                 )
-            plugin_state_manager.set_state(
-                target_ident, PluginLifecycleState.UNCONFIGURED, "Plugin disabled"
-            )
+            plugin_state_manager.set_state(target_ident, PluginLifecycleState.UNCONFIGURED, "Plugin disabled")
             logger.info(f"Plugin {plugin_id} disabled and state marked UNCONFIGURED")
     except Exception as e:
         logger.warning(f"Hot-reload/state change failed for {plugin_id}: {e}")
@@ -851,9 +919,7 @@ def list_download_clients():
                         }
                     )
             except Exception as e:
-                logger.error(
-                    f"Error processing plugin {plugin_name} for download clients: {e}"
-                )
+                logger.error(f"Error processing plugin {plugin_name} for download clients: {e}")
                 continue
 
         return download_clients
@@ -878,9 +944,7 @@ def get_active_download_client():
         raise
     except Exception as e:
         logger.error(f"Error getting active download client: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=500, detail="Failed to get active download client"
-        )
+        raise HTTPException(status_code=500, detail="Failed to get active download client")
 
 
 class ActivateClientRequest(BaseModel):
@@ -901,9 +965,7 @@ def set_active_download_client(data: ActivateClientRequest):
 
         plugin_class = PluginRegistry.get_plugin_class(client_name)
         if not plugin_class:
-            raise HTTPException(
-                status_code=404, detail=f"Plugin {client_name} not found"
-            )
+            raise HTTPException(status_code=404, detail=f"Plugin {client_name} not found")
 
         if not getattr(plugin_class, "supports_downloads", False):
             raise HTTPException(
@@ -919,9 +981,7 @@ def set_active_download_client(data: ActivateClientRequest):
         raise
     except Exception as e:
         logger.error(f"Error setting active download client: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=500, detail="Failed to set active download client"
-        )
+        raise HTTPException(status_code=500, detail="Failed to set active download client")
 
 
 @router.post("/{plugin_id}/rollback", dependencies=[Depends(require_auth)])
@@ -935,9 +995,7 @@ def rollback_plugin(plugin_id: str):
         if success:
             return {"success": True}
         else:
-            raise HTTPException(
-                status_code=400, detail="Rollback failed or no snapshot found"
-            )
+            raise HTTPException(status_code=400, detail="Rollback failed or no snapshot found")
     except HTTPException:
         raise
     except Exception as e:
@@ -1007,8 +1065,7 @@ def get_plugin_accounts(plugin_id: str):
                         "id": acc.get("user_id") or str(acc.get("id")),
                         "user_id": acc.get("user_id") or str(acc.get("id")),
                         "account_name": acc.get("account_name"),
-                        "display_name": acc.get("display_name")
-                        or acc.get("account_name"),
+                        "display_name": acc.get("display_name") or acc.get("account_name"),
                         "name": acc.get("display_name") or acc.get("account_name"),
                         "username": acc.get("account_name"),
                         "is_admin": False,
@@ -1021,9 +1078,7 @@ def get_plugin_accounts(plugin_id: str):
             "total": len(accounts_list),
         }
     except Exception as e:
-        logger.error(
-            f"Error fetching accounts for plugin {plugin_id}: {e}", exc_info=True
-        )
+        logger.error(f"Error fetching accounts for plugin {plugin_id}: {e}", exc_info=True)
         return {
             "plugin": str(plugin_id),
             "items": [],
@@ -1040,34 +1095,22 @@ def get_plugin_playlists(plugin_id: str):
 
         plugin_cls = PluginRegistry.get_plugin_class(plugin_id)
         if not plugin_cls:
-            raise HTTPException(
-                status_code=404, detail=f"Plugin {plugin_id} not found or not installed"
-            )
+            raise HTTPException(status_code=404, detail=f"Plugin {plugin_id} not found or not installed")
 
         if PluginRegistry.is_plugin_disabled(plugin_id):
-            raise HTTPException(
-                status_code=403, detail=f"Plugin {plugin_id} is disabled"
-            )
+            raise HTTPException(status_code=403, detail=f"Plugin {plugin_id} is disabled")
 
         try:
             plugin = PluginRegistry.create_instance(plugin_id)
         except Exception as e:
             logger.error(f"Error instantiating plugin {plugin_id}: {e}")
-            raise HTTPException(
-                status_code=500, detail=f"Plugin {plugin_id} could not be initialized"
-            )
+            raise HTTPException(status_code=500, detail=f"Plugin {plugin_id} could not be initialized")
 
         if not plugin:
-            raise HTTPException(
-                status_code=404, detail=f"Plugin {plugin_id} instance not found"
-            )
+            raise HTTPException(status_code=404, detail=f"Plugin {plugin_id} instance not found")
 
         multi_account_plugins = ["spotify", "tidal"]
-        short_name = (
-            plugin_cls.name.split(".")[-1].lower()
-            if hasattr(plugin_cls, "name") and plugin_cls.name
-            else ""
-        )
+        short_name = plugin_cls.name.split(".")[-1].lower() if hasattr(plugin_cls, "name") and plugin_cls.name else ""
         if short_name in multi_account_plugins:
             try:
                 from services.storage_service import get_storage_service
@@ -1094,9 +1137,7 @@ def get_plugin_playlists(plugin_id: str):
                     try:
                         account_id = account["id"]
                         account_name = (
-                            account.get("display_name")
-                            or account.get("account_name")
-                            or f"Account {account_id}"
+                            account.get("display_name") or account.get("account_name") or f"Account {account_id}"
                         )
 
                         if short_name == "spotify":
@@ -1106,10 +1147,7 @@ def get_plugin_playlists(plugin_id: str):
                         else:
                             continue
 
-                        if (
-                            hasattr(client, "is_configured")
-                            and not client.is_configured()
-                        ):
+                        if hasattr(client, "is_configured") and not client.is_configured():
                             continue
 
                         if hasattr(client, "get_user_playlists"):
@@ -1125,18 +1163,14 @@ def get_plugin_playlists(plugin_id: str):
                                 original_name = p_dict.get("name", "Unknown")
                                 p_dict["name"] = original_name
                                 p_dict["source_account_name"] = account_name
-                                mapped_user_id = _match_plex_user_for_account(
-                                    plex_user_map, account_name
-                                )
+                                mapped_user_id = _match_plex_user_for_account(plex_user_map, account_name)
                                 if mapped_user_id:
                                     p_dict["target_user_id"] = mapped_user_id
                                 p_dict["account_id"] = account_id
                                 all_playlists.append(p_dict)
 
                     except Exception as acc_err:
-                        logger.warning(
-                            f"Error fetching playlists for account {account.get('id')}: {acc_err}"
-                        )
+                        logger.warning(f"Error fetching playlists for account {account.get('id')}: {acc_err}")
                         continue
 
                 return {
@@ -1150,9 +1184,7 @@ def get_plugin_playlists(plugin_id: str):
                     f"Error handling multi-account logic for {short_name}: {e}",
                     exc_info=True,
                 )
-                raise HTTPException(
-                    status_code=500, detail="Failed to retrieve multi-account playlists"
-                )
+                raise HTTPException(status_code=500, detail="Failed to retrieve multi-account playlists")
 
         if hasattr(plugin, "is_configured") and not plugin.is_configured():
             logger.info(f"Plugin {plugin_id} is not configured, returning empty list")
@@ -1164,9 +1196,7 @@ def get_plugin_playlists(plugin_id: str):
             }
 
         if not hasattr(plugin, "get_user_playlists"):
-            raise HTTPException(
-                status_code=400, detail=f"Plugin {plugin_id} does not support playlists"
-            )
+            raise HTTPException(status_code=400, detail=f"Plugin {plugin_id} does not support playlists")
 
         logger.info(f"[ROUTE] Calling get_user_playlists on {plugin_id} plugin")
         playlists = plugin.get_user_playlists()
@@ -1179,9 +1209,7 @@ def get_plugin_playlists(plugin_id: str):
                 serialized.append(p)
             else:
                 try:
-                    serialized.append(
-                        {"id": getattr(p, "id", ""), "name": getattr(p, "name", str(p))}
-                    )
+                    serialized.append({"id": getattr(p, "id", ""), "name": getattr(p, "name", str(p))})
                 except:
                     serialized.append({"name": str(p)})
 
@@ -1212,13 +1240,9 @@ def get_plugin_settings(plugin_id: str):
         try:
             service_id = config_db.get_or_create_service_id(normalized_plugin_id)
             if not service_id:
-                raise HTTPException(
-                    status_code=404, detail=f"Plugin {plugin_id} not found"
-                )
+                raise HTTPException(status_code=404, detail=f"Plugin {plugin_id} not found")
         except Exception as e:
-            logger.error(
-                f"Error in get_or_create_service_id for {plugin_id}: {e}", exc_info=True
-            )
+            logger.error(f"Error in get_or_create_service_id for {plugin_id}: {e}", exc_info=True)
             raise HTTPException(status_code=404, detail=f"Plugin {plugin_id} not found")
 
         keys_of_interest = [
@@ -1242,9 +1266,7 @@ def get_plugin_settings(plugin_id: str):
 
         lan_ip = get_lan_ip()
         callback_id = normalized_plugin_id.split(".")[-1].lower()
-        config["redirect_uri"] = (
-            f"https://{lan_ip}:5001/api/oauth/callback/plugins/{callback_id}"
-        )
+        config["redirect_uri"] = f"https://{lan_ip}:5001/api/oauth/callback/plugins/{callback_id}"
 
         schema = _get_mock_schema(callback_id)
         return {"plugin": plugin_id, "settings": config, "schema": schema}
@@ -1291,9 +1313,7 @@ async def update_plugin_settings(plugin_id: str, request: Request):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(
-            f"Error updating settings for {plugin_id}: {type(e).__name__} - {e}"
-        )
+        logger.error(f"Error updating settings for {plugin_id}: {type(e).__name__} - {e}")
         raise HTTPException(status_code=500, detail="Failed to update settings")
 
 
@@ -1390,43 +1410,23 @@ def _enrich_provider_capabilities(provider_dict, provider_name=None):
         name = provider_name or provider_dict.get("name") or provider_dict.get("id")
 
         caps = fetch_capabilities(name)
-        provider_dict["metadata_richness"] = (
-            caps.metadata.name if hasattr(caps, "metadata") else "MEDIUM"
-        )
-        provider_dict["supports_streaming"] = (
-            caps.supports_streaming if hasattr(caps, "supports_streaming") else False
-        )
-        provider_dict["supports_downloads"] = (
-            caps.supports_downloads if hasattr(caps, "supports_downloads") else False
-        )
-        provider_dict["supports_cover_art"] = (
-            caps.supports_cover_art if hasattr(caps, "supports_cover_art") else False
-        )
+        provider_dict["metadata_richness"] = caps.metadata.name if hasattr(caps, "metadata") else "MEDIUM"
+        provider_dict["supports_streaming"] = caps.supports_streaming if hasattr(caps, "supports_streaming") else False
+        provider_dict["supports_downloads"] = caps.supports_downloads if hasattr(caps, "supports_downloads") else False
+        provider_dict["supports_cover_art"] = caps.supports_cover_art if hasattr(caps, "supports_cover_art") else False
         provider_dict["supports_library_scan"] = (
-            caps.supports_library_scan
-            if hasattr(caps, "supports_library_scan")
-            else False
+            caps.supports_library_scan if hasattr(caps, "supports_library_scan") else False
         )
         provider_dict["playlist_support"] = (
-            caps.supports_playlists.name
-            if hasattr(caps, "supports_playlists") and caps.supports_playlists
-            else "NONE"
+            caps.supports_playlists.name if hasattr(caps, "supports_playlists") and caps.supports_playlists else "NONE"
         )
 
         if hasattr(caps, "search"):
             provider_dict["search_capabilities"] = {
-                "tracks": caps.search.tracks
-                if hasattr(caps.search, "tracks")
-                else False,
-                "artists": caps.search.artists
-                if hasattr(caps.search, "artists")
-                else False,
-                "albums": caps.search.albums
-                if hasattr(caps.search, "albums")
-                else False,
-                "playlists": caps.search.playlists
-                if hasattr(caps.search, "playlists")
-                else False,
+                "tracks": caps.search.tracks if hasattr(caps.search, "tracks") else False,
+                "artists": caps.search.artists if hasattr(caps.search, "artists") else False,
+                "albums": caps.search.albums if hasattr(caps.search, "albums") else False,
+                "playlists": caps.search.playlists if hasattr(caps.search, "playlists") else False,
             }
     except KeyError:
         provider_dict["metadata_richness"] = "MEDIUM"
@@ -1469,12 +1469,8 @@ def get_plugins_by_capability(capability: str):
             "total": len(plugins),
         }
     except Exception as e:
-        logger.error(
-            f"Error getting plugins for capability {capability}: {e}", exc_info=True
-        )
-        raise HTTPException(
-            status_code=500, detail="Failed to get plugins for capability"
-        )
+        logger.error(f"Error getting plugins for capability {capability}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to get plugins for capability")
 
 
 @router.get("/{plugin_id}")
@@ -1492,9 +1488,7 @@ def get_plugin_details(plugin_id: str):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(
-            f"Error getting plugin details for {plugin_id}: {e}", exc_info=True
-        )
+        logger.error(f"Error getting plugin details for {plugin_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to get plugin details")
 
 
@@ -1538,9 +1532,7 @@ def get_plugin_credentials(plugin_id: str):
 
         lan_ip = get_lan_ip()
         callback_id = normalized_plugin_id.split(".")[-1].lower()
-        credentials["redirect_uri"] = (
-            f"https://{lan_ip}:5001/api/oauth/callback/plugins/{callback_id}"
-        )
+        credentials["redirect_uri"] = f"https://{lan_ip}:5001/api/oauth/callback/plugins/{callback_id}"
 
         return {"plugin": plugin_id, "credentials": credentials}
     except HTTPException:
@@ -1583,14 +1575,11 @@ def set_plugin_credentials(plugin_id: str, data: SetCredentialsRequest):
 
         for key, value in credentials.items():
             is_sensitive = any(
-                sensitive_word in key.lower()
-                for sensitive_word in ["key", "token", "password", "secret"]
+                sensitive_word in key.lower() for sensitive_word in ["key", "token", "password", "secret"]
             )
             if is_sensitive:
                 value = _normalize_sensitive_value_for_save(key, value)
-            config_db.set_service_config(
-                service_id, key, value, is_sensitive=is_sensitive
-            )
+            config_db.set_service_config(service_id, key, value, is_sensitive=is_sensitive)
 
         logger.info(f"Credentials saved for {plugin_id}")
 
@@ -1608,9 +1597,7 @@ def set_plugin_credentials(plugin_id: str, data: SetCredentialsRequest):
 
 @router.get("/{plugin_id}/ui/{filename:path}", dependencies=[Depends(require_auth)])
 def serve_plugin_asset(plugin_id: str, filename: str):
-    logger.info(
-        f"[serve_plugin_asset] Request received for plugin_id={plugin_id}, filename={filename}"
-    )
+    logger.info(f"[serve_plugin_asset] Request received for plugin_id={plugin_id}, filename={filename}")
     install_path = None
     try:
         with config_db_connection() as conn:

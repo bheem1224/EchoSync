@@ -419,7 +419,10 @@ class PluginDatabaseFactory:
         session = self.SessionLocal()
         try:
             yield session
-            session.commit()
+            from core.task_manager import db_write_lease
+
+            with db_write_lease(task_name=f"plugin_db_{self.plugin_id}"):
+                session.commit()
         except Exception:
             session.rollback()
             raise
@@ -476,7 +479,10 @@ class WorkingDatabase:
         session = self.SessionLocal()
         try:
             yield session
-            session.commit()
+            from core.task_manager import db_write_lease
+
+            with db_write_lease(task_name="working_database_session"):
+                session.commit()
         except Exception:
             session.rollback()
             raise
@@ -490,7 +496,9 @@ class WorkingDatabase:
 
     def get_system_user_id(self) -> int:
         """Get or create the system user ID for automated flags."""
-        with self.session_scope() as session:
+        from core.task_manager import db_write_lease
+
+        with db_write_lease(task_name="working_system_user"), self.session_scope() as session:
             account = session.query(Account).filter(Account.username == "Echosync System").first()
             if account:
                 return account.id
