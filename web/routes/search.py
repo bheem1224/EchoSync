@@ -3,11 +3,12 @@ import json
 import threading
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from web.services.search_service import SearchAdapter
 
 router = APIRouter(prefix="/api/v1/core/search", tags=["Search"])
+v1_router = APIRouter(prefix="/api/v1/search", tags=["Search"])
 
 
 @router.get("/")
@@ -45,9 +46,7 @@ async def aggregate_search(request: Request):
         except Exception as e:
             from core.tiered_logger import get_logger
 
-            get_logger("search_route").error(
-                f"Error in aggregate_search stream generator: {e}"
-            )
+            get_logger("search_route").error(f"Error in aggregate_search stream generator: {e}")
             cancel_event.set()
         finally:
             cancel_event.set()
@@ -77,6 +76,7 @@ async def federated_discovery(request: Request):
 
 
 @router.post("/route")
+@v1_router.post("/route")
 async def route_search_result(request: Request):
     try:
         payload = await request.json()
@@ -90,4 +90,4 @@ async def route_search_result(request: Request):
     result = adapter.route_result(item=item, action=action, target=target)
 
     status = 200 if result.get("accepted") else 400
-    return result, status
+    return JSONResponse(content=result, status_code=status)

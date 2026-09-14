@@ -157,10 +157,16 @@
       if (
         err.response?.status === 403 &&
         (err.response?.data?.requires_consent ||
-          err.response?.data?.status === "consent_required")
+          err.response?.data?.status === "consent_required" ||
+          err.response?.data?.escalated_scopes ||
+          err.response?.data?.scopes ||
+          err.response?.data?.escalations)
       ) {
         escalationData =
-          err.response.data.scopes || err.response.data.escalations;
+          err.response.data.escalated_scopes ||
+          err.response.data.scopes ||
+          err.response.data.escalations ||
+          [];
         pluginAwaitingConsent = { ...plugin, isUpdate };
         showConsentModal = true;
       } else {
@@ -435,7 +441,7 @@
 
 <PluginConsentModal
   show={showConsentModal}
-  {pluginAwaitingConsent}
+  plugin={pluginAwaitingConsent}
   {escalationData}
   on:confirm={handleAcceptConsent}
   on:cancel={() => (showConsentModal = false)}

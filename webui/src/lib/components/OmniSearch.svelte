@@ -960,7 +960,8 @@
                         <button
                           class="action-btn play-btn flex items-center justify-center"
                           title="Play"
-                          on:click={() => handleAction(item, "play")}
+                          on:click|stopPropagation={() =>
+                            handleAction(item, "play")}
                         >
                           <svg
                             xmlns="http://www.w3.org/2000/svg"

@@ -650,3 +650,100 @@ def test_reentrant_db_write_lease_in_service_registration(regression_env):
         row = cursor.fetchone()
         assert row is not None
         assert row[0] == test_plugin_id
+
+
+def test_register_service_path_boundary_enforcement(regression_env, tmp_path):
+    """Verifies that register_service nullifies absolute_install_path if it lies
+    outside of config_manager.get_plugins_dir().
+    """
+    config_db = regression_env["config_db"]
+    outside_dir = tmp_path / "outside_plugins" / "malicious"
+    outside_dir.mkdir(parents=True, exist_ok=True)
+
+    test_plugin_id = 12345678
+    config_db.register_service(
+        name="EchoSync.outside_plugin",
+        service_type="provider",
+        description="Outside Plugin",
+        absolute_install_path=str(outside_dir),
+        plugin_id=test_plugin_id,
+        version="1.0.0",
+    )
+
+    with config_db._get_connection() as conn:
+        c = conn.cursor()
+        c.execute("SELECT absolute_install_path FROM services WHERE plugin_id = ?", (test_plugin_id,))
+        row = c.fetchone()
+        assert row is not None
+        assert row[0] is None, "Install path outside plugins_dir must be nullified to None!"
+
+
+def test_plugin_store_uninstall_boundary_check(regression_env, tmp_path):
+    """Verifies that uninstall_plugin does not delete physical folders outside plugins_dir."""
+    from core.nexus_framework.plugin_store import plugin_store
+
+    config_db = regression_env["config_db"]
+    outside_dir = tmp_path / "protected_outside_folder"
+    outside_dir.mkdir(parents=True, exist_ok=True)
+    sentinel_file = outside_dir / "keep_me.txt"
+    sentinel_file.write_text("important")
+
+    test_plugin_id = 87654321
+    # Manually insert with outside path to simulate legacy/out-of-bounds row
+    with config_db._get_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO services(name, service_type, description, absolute_install_path, plugin_id, version, is_active)
+            VALUES('EchoSync.out_of_bounds', 'provider', 'desc', ?, ?, '1.0.0', 1)
+            """,
+            (str(outside_dir), test_plugin_id),
+        )
+        conn.commit()
+
+    success = plugin_store.uninstall_plugin(test_plugin_id)
+    assert success is True
+    # Verify folder was NOT deleted
+    assert sentinel_file.exists(), "Protected folder outside plugins_dir must not be deleted!"
+    # Verify DB row was purged
+    with config_db._get_connection() as conn:
+        c = conn.cursor()
+        c.execute("SELECT id FROM services WHERE plugin_id = ?", (test_plugin_id,))
+        assert c.fetchone() is None, "Service row should be deleted even if folder deletion skipped"
+
+
+def test_search_route_dual_prefix_and_json_response():
+    """Verifies that search /route endpoint returns JSONResponse and is mounted on both prefixes."""
+    from fastapi.testclient import TestClient
+    from web.api_app import create_app
+
+    app = create_app(testing=True)
+    client = TestClient(app)
+    # Test POST /api/v1/search/route
+    resp1 = client.post("/api/v1/search/route", json={"item": {"title": "Test"}, "action": "unknown"})
+    assert resp1.status_code in (200, 400)
+    assert isinstance(resp1.json(), dict)
+
+    # Test POST /api/v1/core/search/route
+    resp2 = client.post("/api/v1/core/search/route", json={"item": {"title": "Test"}, "action": "unknown"})
+    assert resp2.status_code in (200, 400)
+    assert isinstance(resp2.json(), dict)
+
+
+@pytest.mark.asyncio
+async def test_telemetry_stream_endpoint():
+    """Verifies that the telemetry stream endpoint generates expected typed SSE events."""
+    from unittest.mock import AsyncMock
+    from web.routes.telemetry import telemetry_stream
+
+    req = AsyncMock()
+    req.is_disconnected.side_effect = [False, False, True]
+    response = await telemetry_stream(req)
+    events = []
+    async for item in response.body_iterator:
+        events.append(item.get("event"))
+        if len(events) >= 3:
+            break
+
+    assert "system_stats" in events
+    assert "system_health" in events
+    assert "queue_summary" in events

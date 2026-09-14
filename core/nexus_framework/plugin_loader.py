@@ -1687,12 +1687,19 @@ def get_all_plugins() -> list:
             except Exception:
                 caps = {}
 
+            is_core_service = (
+                not row["absolute_install_path"]
+                or name.lower() in ("system", "core")
+                or str(row["absolute_install_path"]).endswith(os.sep + "core")
+            )
+
             plugin_info = {
                 "id": name,
                 "plugin_id": row["plugin_id"],
                 "name": name,
                 "description": row["description"] or "Community plugin",
-                "type": "community",
+                "type": "core" if is_core_service else "community",
+                "is_core": is_core_service,
                 "version": row["version"] or "Unknown",
                 "abs_path": row["absolute_install_path"],
                 "enabled": bool(row["is_active"]),

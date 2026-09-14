@@ -1693,9 +1693,20 @@ class PluginStore:
             else:
                 dest_dir = self.plugins_dir / str(db_plugin_id)
 
-            if dest_dir.exists():
-                shutil.rmtree(dest_dir, ignore_errors=True)
-                logger.info(f"Successfully deleted plugin family directory: {dest_dir}")
+            try:
+                plugins_dir_resolved = Path(self.plugins_dir).resolve()
+                dest_dir_resolved = dest_dir.resolve()
+                if dest_dir_resolved.is_relative_to(plugins_dir_resolved) and dest_dir_resolved != plugins_dir_resolved:
+                    if dest_dir.exists():
+                        shutil.rmtree(dest_dir, ignore_errors=True)
+                        logger.info(f"Successfully deleted plugin family directory: {dest_dir}")
+                else:
+                    logger.warning(
+                        f"Skipping physical folder deletion: {dest_dir} is outside plugin directory boundary ({self.plugins_dir}). DB rows cleaned."
+                    )
+            except Exception as pe:
+                logger.warning(f"Error checking directory boundary for uninstallation of {dest_dir}: {pe}")
+
             return True
         except Exception as e:
             logger.error("Rollback operation halted: Atomic state restoration failed.")

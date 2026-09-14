@@ -650,14 +650,29 @@ class ConfigDatabase:
             # Fallback CRC32 generation if not provided (ALWAYS use full lowercase namespace for consistency)
             plugin_id = binascii.crc32(name.lower().encode("utf-8")) & 0xFFFFFFFF
 
+        from pathlib import Path
+        from core.settings import config_manager
+
+        core_services = {"system"}
         if absolute_install_path is None:
             # Check if name is a core streaming/built-in service
-            core_services = {"system"}
             if name.lower() in core_services:
-                from pathlib import Path
-
                 app_root = Path(__file__).parent.parent
                 absolute_install_path = str((app_root / "core").resolve())
+        else:
+            # If path provided but not inside plugins dir and not a core service, invalidate path
+            if name.lower() not in core_services:
+                try:
+                    plugins_dir_resolved = Path(config_manager.get_plugins_dir()).resolve()
+                    path_resolved = Path(absolute_install_path).resolve()
+                    if not path_resolved.is_relative_to(plugins_dir_resolved):
+                        logger.warning(
+                            f"Rejecting out-of-boundary plugin path {absolute_install_path} for service {name}; setting to None"
+                        )
+                        absolute_install_path = None
+                except Exception as e:
+                    logger.warning(f"Error checking plugin install path boundary: {e}")
+                    absolute_install_path = None
 
         try:
             from core.task_manager import db_write_lease

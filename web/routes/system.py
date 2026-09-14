@@ -202,14 +202,6 @@ def system_stats():
         # Get app CPU (non-blocking)
         app_cpu = process.cpu_percent(interval=None)
 
-        # Wait a tiny bit for meaningful deltas
-        import time
-
-        time.sleep(0.5)
-
-        sys_cpu = psutil.cpu_percent(interval=None)
-        app_cpu = process.cpu_percent(interval=None)
-
         return {
             "memory": {
                 "total": sys_mem.total,
