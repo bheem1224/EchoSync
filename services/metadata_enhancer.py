@@ -2267,13 +2267,43 @@ class RetroactiveEnhancer:
                                         file_path=first_local_path or "",
                                         original_title=baseline_title or first_tag_title,
                                     )
-                                    t_track.musicbrainz_id = "NOT_FOUND"
                                     item["metadata_status"]["trust_gate_rejected"] = True
-                                    item["metadata_status"]["enhancement_attempts"] = (
-                                        item["metadata_status"].get("enhancement_attempts", 0) + 1
+                                    has_signature = bool(
+                                        item["metadata_status"].get("echosync_signature")
+                                        or getattr(t_track, "echosync_signature", None)
                                     )
-                                    results_to_commit.append(item)
-                                    continue
+                                    if not has_signature:
+                                        track_id = getattr(t_track, "id", item.get("id"))
+                                        logger.info(
+                                            f"[enhancer] Targeted MBID fetch rejected for track {track_id}; demoting to acoustic waterfall"
+                                        )
+                                        # Invalidate stale MBID and append to bucket_heavy for immediate fingerprinting
+                                        t_track.musicbrainz_id = None
+                                        item["ignore_embedded_mbid"] = True
+                                        bucket_heavy.append((item, valid_media_paths, all_file_tags))
+                                        continue
+                                    else:
+                                        t_track.musicbrainz_id = "NOT_FOUND"
+                                        item["metadata_status"]["enhancement_attempts"] = (
+                                            item["metadata_status"].get("enhancement_attempts", 0) + 1
+                                        )
+                                        results_to_commit.append(item)
+                                        continue
+
+                                if not cand_title:
+                                    has_signature = bool(
+                                        item["metadata_status"].get("echosync_signature")
+                                        or getattr(t_track, "echosync_signature", None)
+                                    )
+                                    if not has_signature:
+                                        track_id = getattr(t_track, "id", item.get("id"))
+                                        logger.info(
+                                            f"[enhancer] Targeted MBID fetch returned candidate with no title for track {track_id}; demoting to acoustic waterfall"
+                                        )
+                                        t_track.musicbrainz_id = None
+                                        item["ignore_embedded_mbid"] = True
+                                        bucket_heavy.append((item, valid_media_paths, all_file_tags))
+                                        continue
 
                                 if meta.get("title"):
                                     t_track.title = meta["title"]
@@ -2342,11 +2372,46 @@ class RetroactiveEnhancer:
                                 item["metadata_changed"] = True
                                 results_to_commit.append(item)
                             else:
-                                # MBID targeted fetch returned nothing, route to heavyweight fingerprint + waterfall discovery
-                                bucket_heavy.append((item, valid_media_paths, all_file_tags))
+                                # MBID targeted fetch returned nothing / no valid data, demote to acoustic waterfall
+                                has_signature = bool(
+                                    item["metadata_status"].get("echosync_signature")
+                                    or getattr(t_track, "echosync_signature", None)
+                                )
+                                if not has_signature:
+                                    track_id = getattr(t_track, "id", item.get("id"))
+                                    logger.info(
+                                        f"[enhancer] Targeted MBID fetch returned no valid data for track {track_id}; demoting to acoustic waterfall"
+                                    )
+                                    t_track.musicbrainz_id = None
+                                    item["ignore_embedded_mbid"] = True
+                                    bucket_heavy.append((item, valid_media_paths, all_file_tags))
+                                else:
+                                    t_track.musicbrainz_id = "NOT_FOUND"
+                                    item["metadata_status"]["enhancement_attempts"] = (
+                                        item["metadata_status"].get("enhancement_attempts", 0) + 1
+                                    )
+                                    results_to_commit.append(item)
                     else:
                         for item, valid_media_paths, all_file_tags in bucket_target:
-                            bucket_heavy.append((item, valid_media_paths, all_file_tags))
+                            t_track = item["track"]
+                            has_signature = bool(
+                                item["metadata_status"].get("echosync_signature")
+                                or getattr(t_track, "echosync_signature", None)
+                            )
+                            if not has_signature:
+                                track_id = getattr(t_track, "id", item.get("id"))
+                                logger.info(
+                                    f"[enhancer] Targeted MBID fetch unavailable for track {track_id}; demoting to acoustic waterfall"
+                                )
+                                t_track.musicbrainz_id = None
+                                item["ignore_embedded_mbid"] = True
+                                bucket_heavy.append((item, valid_media_paths, all_file_tags))
+                            else:
+                                t_track.musicbrainz_id = "NOT_FOUND"
+                                item["metadata_status"]["enhancement_attempts"] = (
+                                    item["metadata_status"].get("enhancement_attempts", 0) + 1
+                                )
+                                results_to_commit.append(item)
 
                 # Step 4: Heavyweight Fingerprint Discovery & Text Waterfall Fallback
                 for item, valid_media_paths, all_file_tags in bucket_heavy:
@@ -2476,16 +2541,20 @@ class RetroactiveEnhancer:
                             )
                             file_dur_sec = file_dur_ms / 1000.0 if file_dur_ms else None
                             res_req = ResolutionRequest(
-                                media_id=_first_media.media_id if _first_media else f"media_{t_track.id}",
+                                media_id=_first_media.media_id
+                                if _first_media
+                                else f"media_{getattr(t_track, 'id', item['id'])}",
                                 sync_id=t_track.sync_id if hasattr(t_track, "sync_id") else None,
                                 file_path=first_local_path,
                                 baseline_title=baseline_title,
-                                baseline_artist=t_track.artist or getattr(t_track, "artist_name", None),
+                                baseline_artist=getattr(t_track, "artist", None)
+                                or getattr(t_track, "artist_name", None),
                                 baseline_album=t_track.album_title if hasattr(t_track, "album_title") else None,
                                 baseline_isrc=t_track.isrc if hasattr(t_track, "isrc") else None,
                                 chromaprint=target_cp or t_track.fingerprint,
                                 duration=file_dur_sec,
                                 duration_ms=file_dur_ms,
+                                ignore_embedded_mbid=bool(item.get("ignore_embedded_mbid")),
                             )
                             res_result = self.resolution_engine.resolve_track(res_req)
 

@@ -865,8 +865,16 @@ class MetadataResolutionEngine:
                                     confidence_score=0.99,
                                     resolution_method="embedded_mbid",
                                 )
+                        else:
+                            logger.info(
+                                "[resolution_engine] Embedded MBID %s returned no metadata; falling through to AcoustID.",
+                                embedded_mbid,
+                            )
                     except Exception as e_mb:
-                        logger.debug("[resolution_engine] Embedded MBID lookup failed: %s", e_mb)
+                        logger.debug(
+                            "[resolution_engine] Embedded MBID lookup failed: %s; falling through to AcoustID.",
+                            e_mb,
+                        )
 
         # ── Stage 2: Local Chromaprint Cache ──────────────────────────────────
         if chromaprint and not request.ignore_cache:
