@@ -954,6 +954,26 @@ class ConfigManager:
         """Returns the absolute path to the configuration root directory."""
         return self.config_dir
 
+    def get_downloads_dir(self) -> Path:
+        """Returns the absolute path to the intake/downloads root directory."""
+        val = (
+            self.get("storage.download_dir")
+            or self.get("storage.downloads_dir")
+            or self.get("downloads_dir")
+            or "/data/downloads"
+        )
+        return Path(val)
+
+    def get_library_dir(self) -> Path:
+        """Returns the absolute path to the local music library root directory."""
+        val = (
+            self.get("storage.library_dir")
+            or self.get("library_dir")
+            or self.get("storage_locations.library")
+            or "/data/library"
+        )
+        return Path(val)
+
     def get_disabled_plugins(self) -> list[str]:
         """Return the list of disabled providers/plugins."""
         return self.get("disabled_plugins", [])

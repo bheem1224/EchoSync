@@ -85,9 +85,7 @@ def get_prefer_canonical_studio_album() -> bool:
         from database.config_database import get_config_database
 
         db = get_config_database()
-        val = db.get_system_setting(
-            "metadata_enhancement.prefer_canonical_studio_album"
-        )
+        val = db.get_system_setting("metadata_enhancement.prefer_canonical_studio_album")
         if val is not None:
             if isinstance(val, bool):
                 return val
@@ -157,11 +155,15 @@ def get_library_preferences() -> tuple[str, str]:
 
             db = get_config_database()
             if not library_root:
-                lib_val = db.get_system_setting("storage_locations.library") or db.get_system_setting("storage.library_dir")
+                lib_val = db.get_system_setting("storage_locations.library") or db.get_system_setting(
+                    "storage.library_dir"
+                )
                 if lib_val:
                     library_root = str(lib_val)
             if not renaming_pattern:
-                pat_val = db.get_system_setting("library_import.renaming_pattern") or db.get_system_setting("auto_import.file_organization_pattern")
+                pat_val = db.get_system_setting("library_import.renaming_pattern") or db.get_system_setting(
+                    "auto_import.file_organization_pattern"
+                )
                 if pat_val:
                     renaming_pattern = str(pat_val)
         except Exception:
@@ -187,12 +189,7 @@ def get_library_preferences() -> tuple[str, str]:
 
 def extract_year_token(meta: dict[str, Any]) -> str:
     """Extract 4-digit release year from metadata."""
-    raw_year = (
-        meta.get("year")
-        or meta.get("release_year")
-        or meta.get("date")
-        or meta.get("release_date")
-    )
+    raw_year = meta.get("year") or meta.get("release_year") or meta.get("date") or meta.get("release_date")
     if not raw_year:
         return ""
     m = re.search(r"\b(19\d\d|20\d\d)\b", str(raw_year))
@@ -293,11 +290,7 @@ def build_destination_path(
         album = "Singles"
         working_pattern = singles_pattern or pattern
     else:
-        album = (
-            sanitize_path_segment(raw_album)
-            if raw_album
-            else ("Singles" if is_single else "Unknown Album")
-        )
+        album = sanitize_path_segment(raw_album) if raw_album else ("Singles" if is_single else "Unknown Album")
         if not album:
             album = "Singles" if is_single else "Unknown Album"
         working_pattern = pattern
@@ -316,17 +309,9 @@ def build_destination_path(
     raw_track_val = (
         meta.get("track_number")
         if meta.get("track_number") is not None
-        else (
-            meta.get("track_no")
-            if meta.get("track_no") is not None
-            else meta.get("track")
-        )
+        else (meta.get("track_no") if meta.get("track_no") is not None else meta.get("track"))
     )
-    if is_single and (
-        raw_track_val is None
-        or raw_track_val == 0
-        or str(raw_track_val).strip() in ("", "0", "00")
-    ):
+    if is_single and (raw_track_val is None or raw_track_val == 0 or str(raw_track_val).strip() in ("", "0", "00")):
         track_num = ""
     else:
         track_num = extract_track_token(meta)
@@ -377,12 +362,14 @@ def ensure_path_invariance(session: Any, track: Any, local_media: Any) -> Path:
     If target_path != current_path, relocate file via Gatekeeper.authorize_and_execute,
     suppress library watcher events, update local_media.file_path, and prune empty source folders.
     """
-    import logging
-
     from core.io_gatekeeper import Gatekeeper
     from core.settings import config_manager
     from core.system_watcher import suppress_path
+    from core.tiered_logger import get_logger
     from core.utils.file_utils import prune_empty_parent_directories
+    from database.music_database import Album, Artist, LocalMedia
+
+    logger = get_logger("path_formatter")
 
     if not local_media or not getattr(local_media, "file_path", None):
         return Path("")
@@ -391,16 +378,43 @@ def ensure_path_invariance(session: Any, track: Any, local_media: Any) -> Path:
     if not current_path.exists():
         return current_path
 
-    artist_name = (
-        track.artist.name
-        if getattr(track, "artist", None) and track.artist
-        else "Unknown Artist"
-    )
-    album_title = (
-        track.album.title
-        if getattr(track, "album", None) and track.album
-        else "Unknown Album"
-    )
+    # Strictly forbid physical file moves/renames on unverified or placeholder metadata
+    default_artist_id = None
+    default_album_id = None
+    try:
+        def_art = session.query(Artist).filter_by(name="Unknown Artist").first()
+        if def_art:
+            default_artist_id = def_art.id
+        def_alb = session.query(Album).filter_by(title="Unknown Album").first()
+        if def_alb:
+            default_album_id = def_alb.id
+    except Exception:
+        pass
+
+    track_artist_id = getattr(track, "artist_id", None)
+    track_album_id = getattr(track, "album_id", None)
+    if (
+        not track
+        or track_artist_id is None
+        or track_album_id is None
+        or (default_artist_id is not None and track_artist_id == default_artist_id)
+        or (default_album_id is not None and track_album_id == default_album_id)
+    ):
+        logger.debug(
+            "[path_formatter] Aborting path invariance: track %s has placeholder or missing tags",
+            getattr(track, "id", None),
+        )
+        return current_path
+
+    if not getattr(track, "echosync_signature", None) and not getattr(track, "is_verified", False):
+        logger.debug(
+            "[path_formatter] Aborting path invariance: track %s lacks ECHOSYNC_SIGNATURE or verification",
+            getattr(track, "id", None),
+        )
+        return current_path
+
+    artist_name = track.artist.name if getattr(track, "artist", None) and track.artist else "Unknown Artist"
+    album_title = track.album.title if getattr(track, "album", None) and track.album else "Unknown Album"
 
     metadata_dict = {
         "artist": artist_name,
@@ -414,35 +428,69 @@ def ensure_path_invariance(session: Any, track: Any, local_media: Any) -> Path:
         or (
             track.album.release_date.year
             if getattr(track, "album", None) and getattr(track.album, "release_date", None)
-            else getattr(track.album, "release_year", None) if getattr(track, "album", None) else None
+            else getattr(track.album, "release_year", None)
+            if getattr(track, "album", None)
+            else None
         ),
         "ext": current_path.suffix.lstrip(".") or "flac",
     }
 
     target_path = build_destination_path(metadata_dict)
     if target_path.resolve() != current_path.resolve():
-        target_path.parent.mkdir(parents=True, exist_ok=True)
-        with suppress_path(str(target_path)):
-            Gatekeeper.authorize_and_execute(
-                operation="move",
-                source=str(current_path),
-                destination=str(target_path),
-            )
-        local_media.file_path = str(target_path)
-        session.flush()
+        # Check both filesystem existence and database allocation to resolve collisions
+        resolved_target = target_path
+        counter = 1
+        stem = target_path.stem
+        suffix = target_path.suffix
+        parent = target_path.parent
 
-        # Clean up empty source parent directories up to library root
-        try:
-            lib_root = config_manager.get(
-                "storage.library_dir"
-            ) or config_manager.get("library_dir")
-            stop_roots = {Path(lib_root).resolve()} if lib_root else set()
-            prune_empty_parent_directories(current_path, stop_at_roots=stop_roots)
-        except Exception as prune_err:
-            logging.getLogger("path_formatter").debug(
-                "Failed pruning empty parent directories for %s: %s",
-                current_path,
-                prune_err,
-            )
+        while True:
+            # Check filesystem existence (skip collision if resolved_target is current_path)
+            try:
+                exists_on_disk = resolved_target.resolve() != current_path.resolve() and resolved_target.exists()
+            except Exception:
+                exists_on_disk = False
+
+            # Check database allocation
+            exists_in_db = False
+            try:
+                media_id = getattr(local_media, "id", None)
+                query = session.query(LocalMedia).filter(LocalMedia.file_path == str(resolved_target))
+                if media_id is not None:
+                    query = query.filter(LocalMedia.id != media_id)
+                exists_in_db = query.first() is not None
+            except Exception:
+                pass
+
+            if not exists_on_disk and not exists_in_db:
+                break
+
+            resolved_target = parent / f"{stem} ({counter}){suffix}"
+            counter += 1
+
+        target_path = resolved_target
+
+        if target_path.resolve() != current_path.resolve():
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            with suppress_path(str(target_path)):
+                Gatekeeper.authorize_and_execute(
+                    operation="move",
+                    source=str(current_path),
+                    destination=str(target_path),
+                )
+            local_media.file_path = str(target_path)
+            session.flush()
+
+            # Clean up empty source parent directories up to library root
+            try:
+                lib_root = config_manager.get("storage.library_dir") or config_manager.get("library_dir")
+                stop_roots = {Path(lib_root).resolve()} if lib_root else set()
+                prune_empty_parent_directories(current_path, stop_at_roots=stop_roots)
+            except Exception as prune_err:
+                logger.debug(
+                    "Failed pruning empty parent directories for %s: %s",
+                    current_path,
+                    prune_err,
+                )
 
     return target_path

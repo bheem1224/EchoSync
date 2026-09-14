@@ -345,26 +345,30 @@ class LibraryWatcherService:
 
     def start(self) -> None:
         """
-        Resolve the library directory from config and start the OS watcher.
+        Resolve the intake/downloads directory from config and start the OS watcher.
 
-        If the library directory is not configured or does not exist, the
-        watcher is not started and a warning is logged.  This allows the app
-        to boot cleanly even before a user has pointed it at a library.
+        Architectural Invariant:
+        library_watcher must exclusively monitor the intake/downloads directory
+        (/data/downloads), NEVER the main music library directory (/data/library).
+        The main library directory is synchronized via the scheduled 6-hour
+        incremental rolling scan using mtime checks to prevent feedback storms.
         """
         if self._started:
             logger.warning("LibraryWatcherService.start() called more than once — ignoring")
             return
 
-        library_dir = config_manager.get("storage.library_dir") or config_manager.get("library_dir")
-        if not library_dir:
-            logger.warning("LibraryWatcherService: library directory is not configured — watcher disabled")
+        downloads_path = config_manager.get_downloads_dir()
+        if not downloads_path:
+            logger.warning("LibraryWatcherService: downloads directory is not configured — watcher disabled")
             return
 
-        library_path = Path(library_dir)
-        if not library_path.exists():
+        try:
+            downloads_path.mkdir(parents=True, exist_ok=True)
+        except Exception as mk_err:
             logger.warning(
-                "LibraryWatcherService: library directory does not exist (%s) — watcher disabled",
-                library_path,
+                "LibraryWatcherService: failed to create downloads directory (%s): %s — watcher disabled",
+                downloads_path,
+                mk_err,
             )
             return
 
@@ -373,7 +377,7 @@ class LibraryWatcherService:
         assert self._observer is not None
         self._observer.schedule(
             self._handler,
-            str(library_path),
+            str(downloads_path),
             recursive=True,
         )
         self._observer.start()
@@ -390,7 +394,7 @@ class LibraryWatcherService:
                 ProcessOwner(
                     owner_id="core.library_watcher",
                     owner_type=OwnerType.CORE,
-                    task_name="Library File Watcher",
+                    task_name="Downloads File Watcher",
                     category=ProcessCategory.WORKER_THREAD,
                     is_killable=True,
                     thread_id=getattr(self._observer, "ident", None),
@@ -399,8 +403,8 @@ class LibraryWatcherService:
         except Exception:
             pass
         logger.info(
-            "LibraryWatcherService started — monitoring '%s' (recursive)",
-            library_path,
+            "LibraryWatcherService started — monitoring intake directory '%s' (recursive)",
+            downloads_path,
         )
 
     def stop(self) -> None:

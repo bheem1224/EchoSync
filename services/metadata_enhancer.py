@@ -1923,10 +1923,12 @@ class RetroactiveEnhancer:
             # Step 1: Select tracks that still need work in a short session
             track_items = []
 
+            default_artist_id: int | None = None
             with db.session_scope() as session:
                 try:
                     from core.database.repositories.track_repo import TrackRepository
 
+                    default_artist_id = TrackRepository.get_or_create_default_artist(session)
                     candidates = TrackRepository.get_tracks_for_enhancement(
                         session,
                         current_batch_size,
@@ -2150,14 +2152,26 @@ class RetroactiveEnhancer:
                     # Determine missing fields
                     missing_fields = [key for key in required_keys if not item["metadata_status"].get(key)]
 
+                    track_artist_id = getattr(t_track, "artist_id", None)
+                    is_default_artist = default_artist_id is not None and track_artist_id == default_artist_id
                     has_identifiable_tags = bool(
-                        t_track.title
+                        not is_default_artist
+                        and t_track.title
                         and not is_generic_title(str(t_track.title))
                         and t_track.artist_name
                         and not str(t_track.artist_name).lower().strip().startswith("unknown")
                     )
 
-                    if t_track.musicbrainz_id and t_track.musicbrainz_id != "NOT_FOUND" and has_identifiable_tags:
+                    # Tracks linked to default "Unknown", with generic titles, or lacking identifiable tags
+                    # must NEVER use targeted MBID fetch and drop straight into bucket_heavy (Chromaprint/AcoustID waterfall)
+                    if (
+                        not has_identifiable_tags
+                        or is_default_artist
+                        or not t_track.artist_name
+                        or is_generic_title(str(t_track.title))
+                    ):
+                        bucket_heavy.append((item, valid_media_paths, all_file_tags))
+                    elif t_track.musicbrainz_id and t_track.musicbrainz_id != "NOT_FOUND":
                         if not missing_fields and not is_bad_metadata and not item.get("metadata_changed"):
                             bucket_trust.append((item, valid_media_paths, all_file_tags))
                         else:
@@ -2719,12 +2733,14 @@ class RetroactiveEnhancer:
                         from core.path_formatter import ensure_path_invariance
 
                         for media in track.media_files:
+                            mid = getattr(media, "id", None)
                             try:
                                 ensure_path_invariance(session, track, media)
                             except Exception as inv_err:
+                                session.rollback()
                                 logger.warning(
                                     "[enhancer] Path invariance check failed for media %s: %s",
-                                    getattr(media, "id", None),
+                                    mid,
                                     inv_err,
                                 )
 
