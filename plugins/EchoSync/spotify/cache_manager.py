@@ -1,7 +1,7 @@
 import json
 from datetime import UTC, datetime
 
-from sqlalchemy import JSON, Column, DateTime, MetaData, String, Table
+from sqlalchemy import JSON, Column, DateTime, MetaData, String, Table, false
 
 from core.event_bus import event_bus
 from core.matching_engine.text_utils import generate_deterministic_id
@@ -20,7 +20,7 @@ class SpotifyCacheManager:
     def __init__(self, sdk=None):
         self.sdk = sdk
         if self.sdk:
-            self.engine = self.sdk.get_database_connection(write_access=True)
+            self.engine = self.sdk.get_database_connection(write_access=false)
         else:
             raise ValueError("SpotifyCacheManager requires SDK instance to acquire isolated DB engine")
 
