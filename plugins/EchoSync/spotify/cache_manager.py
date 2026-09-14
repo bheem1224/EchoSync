@@ -1,7 +1,8 @@
 import json
+import os
 from datetime import UTC, datetime
 
-from sqlalchemy import JSON, Column, DateTime, MetaData, String, Table, false
+from sqlalchemy import JSON, Column, DateTime, MetaData, String, Table, create_engine
 
 from core.event_bus import event_bus
 from core.matching_engine.text_utils import generate_deterministic_id
@@ -20,9 +21,12 @@ class SpotifyCacheManager:
     def __init__(self, sdk=None):
         self.sdk = sdk
         if self.sdk:
-            self.engine = self.sdk.get_database_connection(write_access=false)
+            plugin_data_dir = self.sdk.get_plugin_data_dir()
+            os.makedirs(plugin_data_dir, exist_ok=True)
+            cache_db_path = os.path.join(plugin_data_dir, "cache.db")
+            self.engine = create_engine(f"sqlite:///{cache_db_path}")
         else:
-            raise ValueError("SpotifyCacheManager requires SDK instance to acquire isolated DB engine")
+            raise ValueError("SpotifyCacheManager requires SDK instance to acquire isolated cache database")
 
         self.metadata = MetaData()
         self._ensure_tables()

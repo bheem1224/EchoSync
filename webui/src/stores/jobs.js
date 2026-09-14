@@ -1,5 +1,6 @@
 import { writable } from 'svelte/store';
 import apiClient from '../api/client';
+import { API_BASE_URL } from '../api/client';
 
 // Terminal statuses that should be evicted from the active list once they are
 // older than this threshold.  A short grace window lets the UI flash the final
@@ -42,15 +43,44 @@ function createJobsStore() {
     }
   }
 
-  function poll(interval = 3000) {
+  let eventSource = null;
+
+  function poll() {
     load();
-    return setInterval(load, interval);
+    if (eventSource) eventSource.close();
+    eventSource = new EventSource(`${API_BASE_URL}/system/jobs/stream`, { withCredentials: true });
+    eventSource.onmessage = (event) => {
+      try {
+        const payload = JSON.parse(event.data);
+        const activeJobs = [
+          ...(payload.running_jobs || []),
+          ...(payload.pending_jobs || []),
+          ...(payload.blocked_jobs || []),
+        ];
+        update((state) => ({
+          ...state,
+          active: activeJobs.filter(isActiveJob),
+          history: payload.history || state.history,
+        }));
+      } catch (error) {
+        console.error('Failed to parse jobs SSE event:', error);
+      }
+    };
+    return eventSource;
+  }
+
+  function stop() {
+    if (eventSource) {
+      eventSource.close();
+      eventSource = null;
+    }
   }
 
   return {
     subscribe,
     load,
     poll,
+    stop,
   };
 }
 

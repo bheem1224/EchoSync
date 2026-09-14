@@ -1,6 +1,7 @@
 import hashlib
 import json
 from contextlib import contextmanager
+from enum import Enum
 from pathlib import Path
 from typing import Any
 
@@ -59,6 +60,41 @@ def resolve_case_insensitive_path(path: Path) -> Path:
 class GenericSuccessResponse(BaseModel):
     success: bool
     model_config = ConfigDict(from_attributes=True)
+
+
+class ChannelPreference(str, Enum):
+    INHERIT = "inherit"
+    BETA = "beta"
+    STABLE = "stable"
+
+
+def _channel_value(preference: ChannelPreference | str | bool | int | None) -> int | None:
+    if preference is None or preference == ChannelPreference.INHERIT or preference == "inherit":
+        return None
+    if preference is True or preference == 1 or preference == ChannelPreference.BETA or preference == "beta":
+        return 1
+    if preference is False or preference == 0 or preference == ChannelPreference.STABLE or preference == "stable":
+        return 0
+    raise ValueError(f"Unsupported channel preference: {preference}")
+
+
+def set_plugin_channel_preference(plugin_id: int, preference: ChannelPreference | str | bool | int | None) -> None:
+    """Persist one plugin's tri-state channel preference without touching siblings."""
+    from core.task_manager import db_write_lease
+    from database.config_database import get_config_database
+
+    target_val = _channel_value(preference)
+    db = get_config_database()
+    with db_write_lease(task_name=f"set_plugin_channel_preference_{plugin_id}"):
+        with db._open_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE services SET beta_opt_in=? WHERE plugin_id=?",
+                (target_val, plugin_id),
+            )
+            if cursor.rowcount == 0:
+                raise HTTPException(status_code=404, detail=f"Plugin {plugin_id} not found")
+            conn.commit()
 
 
 class PluginsListResponse(BaseModel):
@@ -474,7 +510,7 @@ def rollback_plugin_direct(plugin_id: str):
 
 
 class BetaOptRequest(BaseModel):
-    beta_opt_in: bool | None = None
+    beta_opt_in: ChannelPreference | bool | None = None
 
 
 @router.post(
@@ -483,11 +519,6 @@ class BetaOptRequest(BaseModel):
     dependencies=[Depends(require_auth)],
 )
 def set_plugin_beta_opt(plugin_id: str, data: BetaOptRequest):
-    val = data.beta_opt_in
-    db_val = None
-    if val is not None:
-        db_val = 1 if bool(val) else 0
-
     try:
         from database.config_database import get_config_database
 
@@ -511,14 +542,10 @@ def set_plugin_beta_opt(plugin_id: str, data: BetaOptRequest):
                 row = c.fetchone()
                 if row:
                     db_plugin_id = row["plugin_id"]
-                    c.execute(
-                        "UPDATE services SET beta_opt_in=? WHERE plugin_id=?",
-                        (db_val, db_plugin_id),
-                    )
-                    conn.commit()
 
         if not db_plugin_id:
             raise HTTPException(status_code=404, detail=f"Plugin {plugin_id} not found")
+        set_plugin_channel_preference(db_plugin_id, data.beta_opt_in)
 
         try:
             from core.nexus_framework.plugin_loader import PluginLoader

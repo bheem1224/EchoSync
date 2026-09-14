@@ -42,6 +42,36 @@ def compute_plugin_crc32(namespace: str) -> int:
     return zlib.crc32(clean_ns.encode("utf-8")) & 0xFFFFFFFF
 
 
+def _hydrate_manifest_permissions(plugin_id: int, manifest_permissions: Any) -> Any:
+    """Restore permissions only when the registry record has been blanked."""
+    if not manifest_permissions:
+        return manifest_permissions
+
+    from core.task_manager import db_write_lease
+    from database.config_database import get_config_database
+
+    db = get_config_database()
+    with db_write_lease(task_name=f"hydrate_plugin_permissions_{plugin_id}"):
+        with db._open_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT permissions FROM services WHERE plugin_id=?", (plugin_id,))
+            row = cursor.fetchone()
+            raw_permissions = row[0] if row else None
+            if raw_permissions not in (None, "", "{}", "[]"):
+                try:
+                    if json.loads(raw_permissions):
+                        return json.loads(raw_permissions)
+                except (TypeError, json.JSONDecodeError):
+                    pass
+            serialized = json.dumps(manifest_permissions)
+            cursor.execute(
+                "UPDATE services SET permissions=? WHERE plugin_id=?",
+                (serialized, plugin_id),
+            )
+            conn.commit()
+    return manifest_permissions
+
+
 def generate_plugin_id(name: str) -> int:
     """Generate a consistent 32-bit integer ID from a plugin name."""
     if isinstance(name, str) and "@" in name:
@@ -1270,6 +1300,17 @@ class PluginLoader:
                     except Exception:
                         pass
 
+                manifest_permissions = manifest_data.get("permissions", [])
+                if is_beta:
+                    beta_manifest = package_dir / "beta" / "manifest.json"
+                    if beta_manifest.exists():
+                        try:
+                            beta_data = json.loads(beta_manifest.read_text(encoding="utf-8"))
+                            manifest_permissions = beta_data.get("permissions", manifest_permissions)
+                        except Exception:
+                            pass
+                hydrated_permissions = _hydrate_manifest_permissions(plugin_id, manifest_permissions)
+
                 # Standardized ID Resolution
                 provider_id = manifest_data.get("id") or f"plugin.{clean_ns}"
 
@@ -1283,6 +1324,7 @@ class PluginLoader:
                     DisabledPlugin.version = version
                     DisabledPlugin.author = author
                     DisabledPlugin.category = category
+                    DisabledPlugin.permissions = hydrated_permissions
 
                     PluginRegistry.register(DisabledPlugin, name=provider_id, source_type="community")
                     self._update_db_version(plugin_id, version, capabilities_json="{}")
@@ -1306,6 +1348,7 @@ class PluginLoader:
                         version = wrapper.version
                         author = wrapper.author
                         category = wrapper.category
+                        permissions = hydrated_permissions
                         _wrapper_instance = wrapper
 
                         def __init__(self):
@@ -1368,6 +1411,7 @@ class PluginLoader:
                 # Registration
                 if hasattr(module, "ProviderClass"):
                     provider_cls = module.ProviderClass
+                    provider_cls.permissions = hydrated_permissions
                     PluginRegistry.register(provider_cls, name=provider_id, source_type="community")
                     caps_json = "{}"
                     caps = getattr(provider_cls, "capabilities", None)
@@ -1406,6 +1450,7 @@ class PluginLoader:
                     for attr_name in dir(module):
                         attr = getattr(module, attr_name)
                         if isinstance(attr, type) and issubclass(attr, PluginBase) and attr is not PluginBase:
+                            attr.permissions = hydrated_permissions
                             PluginRegistry.register(attr, name=provider_id, source_type="community")
                             caps_json = "{}"
                             caps = getattr(attr, "capabilities", None)
@@ -1655,7 +1700,7 @@ def get_all_plugins() -> list:
         c = conn.cursor()
         try:
             c.execute(
-                "SELECT name, plugin_id, absolute_install_path, description, version, is_active, capabilities FROM services"
+                "SELECT name, plugin_id, absolute_install_path, description, version, is_active, capabilities, beta_opt_in FROM services"
             )
             rows = c.fetchall()
         except sqlite3.OperationalError as oe:
@@ -1686,6 +1731,11 @@ def get_all_plugins() -> list:
                 or str(row["absolute_install_path"]).endswith(os.sep + "core")
             )
 
+            channel_preference = (
+                "beta" if row["beta_opt_in"] == 1
+                else "stable" if row["beta_opt_in"] == 0
+                else "inherit"
+            )
             plugin_info = {
                 "id": name,
                 "plugin_id": row["plugin_id"],
@@ -1697,6 +1747,8 @@ def get_all_plugins() -> list:
                 "abs_path": row["absolute_install_path"],
                 "enabled": bool(row["is_active"]),
                 "capabilities": caps,
+                "beta_opt_in": channel_preference,
+                "channel_preference": channel_preference,
             }
             plugins_map[name] = plugin_info
 

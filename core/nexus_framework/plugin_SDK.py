@@ -1272,6 +1272,13 @@ class _SDK:
 
         return caller_mod.replace("plugins.", "").replace("core.", "").split(".")[0]
 
+    def get_plugin_data_dir(self) -> str:
+        """Return private persistent storage for the calling plugin."""
+        import os
+
+        plugin_name = self._get_plugin_id()
+        return os.path.join("/data/plugins_data", plugin_name)
+
     def get_database_connection(self, write_access: bool = False, require_library: bool = True):
         """
         Returns an SQLAlchemy engine connected to the calling plugin's isolated SQLite database.

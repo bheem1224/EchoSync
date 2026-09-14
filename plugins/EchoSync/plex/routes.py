@@ -202,7 +202,7 @@ plex_oauth_sessions = {}
 plex_oauth_lock = threading.Lock()
 
 
-@router.post("/auth/start")
+@router.api_route("/auth/start", methods=["GET", "POST"])
 async def start_oauth(request: Request):
     """
     Start Plex OAuth flow using PIN-based authentication.
@@ -288,6 +288,18 @@ async def start_oauth(request: Request):
     except Exception as e:
         logger.error(f"Error starting Plex OAuth: {e}", exc_info=True)
         return JSONResponse(content={"error": "Failed to start Plex authentication"}, status_code=500)
+
+
+@router.api_route("/auth/callback", methods=["GET", "POST"])
+async def oauth_callback(request: Request):
+    """Complete a PIN flow through the same status check used by the UI."""
+    session_id = request.query_params.get("session_id")
+    if not session_id and request.method == "POST":
+        payload = await request.json()
+        session_id = payload.get("session_id") if isinstance(payload, dict) else None
+    if not session_id:
+        return JSONResponse(content={"error": "session_id is required"}, status_code=400)
+    return poll_oauth(session_id)
 
 
 @router.get("/auth/poll/{session_id}")
