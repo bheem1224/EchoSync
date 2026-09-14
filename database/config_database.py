@@ -660,39 +660,43 @@ class ConfigDatabase:
                 absolute_install_path = str((app_root / "core").resolve())
 
         try:
-            execute_write_sql(
-                str(self.database_path),
-                """
-                INSERT INTO services(name, service_type, description, absolute_install_path, loaded_modules, plugin_id, version, is_active, beta_opt_in, verified_source, privileged_mode, permissions, capabilities)
-                VALUES(?,?,?,?,?,?,?,1,COALESCE(?, 0),COALESCE(?, 0),COALESCE(?, 0),COALESCE(?, '[]'),COALESCE(?, '{}'))
-                ON CONFLICT(plugin_id) DO UPDATE SET 
-                    name=excluded.name,
-                    absolute_install_path=excluded.absolute_install_path,
-                    loaded_modules=excluded.loaded_modules,
-                    version=excluded.version,
-                    is_active=1,
-                    beta_opt_in=COALESCE(excluded.beta_opt_in, services.beta_opt_in, 0),
-                    verified_source=COALESCE(excluded.verified_source, services.verified_source, 0),
-                    privileged_mode=COALESCE(excluded.privileged_mode, services.privileged_mode, 0),
-                    permissions=COALESCE(excluded.permissions, services.permissions, '[]'),
-                    capabilities=COALESCE(excluded.capabilities, services.capabilities, '{}'),
-                    updated_at=strftime('%s','now')
-                """,
-                (
-                    name,
-                    service_type,
-                    description,
-                    absolute_install_path,
-                    loaded_modules,
-                    plugin_id,
-                    version,
-                    beta_opt_in,
-                    verified_source,
-                    privileged_mode,
-                    permissions,
-                    capabilities,
-                ),
-            )
+            from core.task_manager import db_write_lease
+
+            with db_write_lease(task_name="register_service"):
+                execute_write_sql(
+                    str(self.database_path),
+                    """
+                    INSERT INTO services(name, service_type, description, absolute_install_path, loaded_modules, plugin_id, version, is_active, beta_opt_in, verified_source, privileged_mode, permissions, capabilities)
+                    VALUES(?,?,?,?,?,?,?,1,COALESCE(?, 0),COALESCE(?, 0),COALESCE(?, 0),COALESCE(?, '[]'),COALESCE(?, '{}'))
+                    ON CONFLICT(plugin_id) DO UPDATE SET 
+                        name=excluded.name,
+                        absolute_install_path=excluded.absolute_install_path,
+                        loaded_modules=excluded.loaded_modules,
+                        version=excluded.version,
+                        is_active=1,
+                        beta_opt_in=COALESCE(?, services.beta_opt_in),
+                        verified_source=COALESCE(excluded.verified_source, services.verified_source, 0),
+                        privileged_mode=COALESCE(excluded.privileged_mode, services.privileged_mode, 0),
+                        permissions=COALESCE(excluded.permissions, services.permissions, '[]'),
+                        capabilities=COALESCE(excluded.capabilities, services.capabilities, '{}'),
+                        updated_at=strftime('%s','now')
+                    """,
+                    (
+                        name,
+                        service_type,
+                        description,
+                        absolute_install_path,
+                        loaded_modules,
+                        plugin_id,
+                        version,
+                        beta_opt_in,
+                        verified_source,
+                        privileged_mode,
+                        permissions,
+                        capabilities,
+                        beta_opt_in,
+                    ),
+                )
         except Exception as e:
             logger.error(f"Error registering service '{name}': {e}")
 

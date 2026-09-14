@@ -917,9 +917,7 @@ class PluginLoader:
                                 m_data.get("description", ""),
                                 str(plugin_item.resolve()),
                                 m_data.get("version", "1.0.0"),
-                                1
-                                if m_data.get("verified_source") == "official" or m_data.get("author") == "EchoSync"
-                                else 0,
+                                1 if m_data.get("verified_source") == "official" else 0,
                                 1 if m_data.get("privileged") or m_data.get("privileged_mode") else 0,
                                 json.dumps(seeded_manifest_perms),
                             ),
@@ -1061,7 +1059,7 @@ class PluginLoader:
             if manifest_file.exists():
                 try:
                     manifest_data = json.loads(manifest_file.read_text(encoding="utf-8"))
-                    if manifest_data.get("verified_source") == "official" or manifest_data.get("author") == "EchoSync":
+                    if manifest_data.get("verified_source") == "official":
                         bypass_security = True
                     privileged = (
                         manifest_data.get("privileged") is True
@@ -1317,13 +1315,21 @@ class PluginLoader:
                     self._update_db_version(plugin_id, version, capabilities_json="{}")
                     return True
 
-                plugins_root = Path("/data/plugins")
+                plugins_root = Path(config_manager.get_plugins_dir())
                 if str(plugins_root.parent) not in sys.path:
                     sys.path.insert(0, str(plugins_root.parent))
                 if str(plugins_root) not in sys.path:
                     sys.path.insert(0, str(plugins_root))
 
                 sys.path.insert(0, str(package_dir))
+
+                import plugins
+
+                plugins_root_resolved = str(plugins_root.resolve())
+                if "plugins" in sys.modules and hasattr(sys.modules["plugins"], "__path__"):
+                    plugin_paths = sys.modules["plugins"].__path__
+                    if plugins_root_resolved not in plugin_paths:
+                        plugin_paths.insert(0, plugins_root_resolved)
                 try:
                     importlib.invalidate_caches()
                     module = importlib.import_module(module_path)
