@@ -325,23 +325,3 @@ def release_system_memory() -> None:
             ctypes.CDLL("libc.so.6").malloc_trim(0)
         except Exception:
             pass
-
-
-# Register core system workers
-try:
-    import threading
-
-    from core.task_manager.models import OwnerType, ProcessCategory, ProcessOwner
-
-    supervisor.register_process(
-        ProcessOwner(
-            owner_id="core.scheduler",
-            owner_type=OwnerType.CORE,
-            task_name="Task Scheduler Daemon",
-            category=ProcessCategory.CORE_SYSTEM,
-            is_killable=False,
-            thread_id=threading.main_thread().ident,
-        )
-    )
-except Exception:
-    pass

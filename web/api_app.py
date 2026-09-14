@@ -18,7 +18,6 @@ from core.settings import config_manager
 from core.tiered_logger import get_logger
 
 logger = get_logger("api_app")
-from core.task_manager import register_all_system_jobs
 
 # Core routers that have been migrated to FastAPI
 from web.routes.accounts import router as accounts_bp
@@ -135,7 +134,25 @@ async def lifespan(app: FastAPI):
         from core.backend_services import start_services
         from core.task_manager.models import OwnerType, ProcessCategory, ProcessOwner
         from core.task_manager.supervisor import supervisor
+        from core.task_manager.system_jobs import register_all_system_jobs
         from core.task_manager.task_queue import start_job_queue
+
+        # Register core task scheduler daemon
+        try:
+            import threading
+
+            supervisor.register_process(
+                ProcessOwner(
+                    owner_id="core.scheduler",
+                    owner_type=OwnerType.CORE,
+                    task_name="Task Scheduler Daemon",
+                    category=ProcessCategory.CORE_SYSTEM,
+                    is_killable=False,
+                    thread_id=threading.main_thread().ident,
+                )
+            )
+        except Exception:
+            pass
 
         # Ensure scheduled jobs are registered before starting the queue
         register_all_system_jobs()

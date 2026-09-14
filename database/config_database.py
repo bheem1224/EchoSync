@@ -664,8 +664,12 @@ class ConfigDatabase:
             if name.lower() not in core_services:
                 try:
                     plugins_dir_resolved = Path(config_manager.get_plugins_dir()).resolve()
+                    repo_plugins_dir = (Path(__file__).resolve().parent.parent / "plugins").resolve()
                     path_resolved = Path(absolute_install_path).resolve()
-                    if not path_resolved.is_relative_to(plugins_dir_resolved):
+                    if not (
+                        path_resolved.is_relative_to(plugins_dir_resolved)
+                        or path_resolved.is_relative_to(repo_plugins_dir)
+                    ):
                         logger.warning(
                             f"Rejecting out-of-boundary plugin path {absolute_install_path} for service {name}; setting to None"
                         )

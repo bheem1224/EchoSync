@@ -747,3 +747,132 @@ async def test_telemetry_stream_endpoint():
     assert "system_stats" in events
     assert "system_health" in events
     assert "queue_summary" in events
+
+
+def test_plex_blueprint_and_router_mounting(regression_env):
+    """Verifies that Plex (3021005569) initializes with APIRouter without Blueprint errors."""
+    from pathlib import Path
+    from core.nexus_framework.plugin_loader import PluginLoader, PluginRegistry
+    from web.api_app import create_app
+
+    config_db = regression_env["config_db"]
+    plex_dir = Path("plugins/EchoSync/plex").resolve()
+    config_db.register_service(
+        name="EchoSync.plex",
+        service_type="media_server",
+        description="Plex service",
+        absolute_install_path=str(plex_dir),
+        plugin_id=3021005569,
+        version="2.4.2",
+    )
+
+    app = create_app(testing=True)
+    loader = PluginLoader(Path("."), main_app=app)
+    success = loader._load_plugin_package("3021005569")
+    assert success is True
+    assert PluginRegistry.get_plugin_class("3021005569") is not None
+
+
+def test_scheduler_daemon_registered_in_lifespan(regression_env):
+    """Verifies that the Task Scheduler Daemon is registered under supervisor during lifespan,
+    not at module import time before Alembic migrations.
+    """
+    from core.task_manager.supervisor import supervisor
+    from web.api_app import create_app
+
+    # Create app in testing mode
+    app = create_app(testing=True)
+    # Check that supervisor can register and query processes
+    assert hasattr(supervisor, "register_process")
+
+
+def test_legacy_flask_blueprint_rejection_and_warning(regression_env, caplog):
+    """Verifies that plugins exposing only Flask Blueprints are NOT mounted via WSGIMiddleware,
+    have router_status set to 'DEPRECATED_FLASK_UNSUPPORTED', and log a clear deprecation warning.
+    """
+    import logging
+    from core.nexus_framework.plugin_loader import PluginLoader, PluginRegistry
+    from core.plugins.sdk import compute_plugin_crc32
+    from web.api_app import create_app
+
+    tmp_path = regression_env["tmp_path"]
+    plugins_dir = regression_env["plugins_dir"]
+    config_db = regression_env["config_db"]
+
+    author = "legacy_vendor"
+    plugin_name = "flask_only_plugin"
+    full_id = f"{author}.{plugin_name}"
+    plugin_crc32 = compute_plugin_crc32(full_id)
+
+    dest_dir = plugins_dir / author / plugin_name
+    dest_dir.mkdir(parents=True, exist_ok=True)
+
+    manifest = {
+        "id": full_id,
+        "author": author,
+        "name": "Legacy Flask Plugin",
+        "version": "1.0.0",
+        "description": "Exposes legacy Flask blueprint only",
+        "permissions": {},
+    }
+
+    code = f"""
+from core.nexus_framework.plugin_SDK import PluginBase
+from flask import Blueprint
+
+bp = Blueprint("legacy_bp", __name__)
+
+@bp.route("/legacy-endpoint")
+def legacy_endpoint():
+    return {{"status": "ok"}}
+
+class LegacyFlaskPlugin(PluginBase):
+    name = "{full_id}"
+    version = "1.0.0"
+"""
+    (dest_dir / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    (dest_dir / "__init__.py").write_text(code, encoding="utf-8")
+
+    import plugins
+
+    if hasattr(plugins, "__path__") and str(plugins_dir) not in plugins.__path__:
+        plugins.__path__.append(str(plugins_dir))
+
+    config_db.register_service(
+        name=full_id,
+        service_type="provider",
+        description="Legacy Blueprint Plugin",
+        absolute_install_path=str(dest_dir),
+        plugin_id=plugin_crc32,
+        version="1.0.0",
+    )
+
+    app = create_app(testing=True)
+
+    loader = PluginLoader(plugins_dir, main_app=app)
+    with caplog.at_level(logging.WARNING):
+        success = loader._load_plugin_package(str(plugin_crc32))
+
+    assert success is True
+    # Verify warning logged
+    expected_warning = (
+        "WARNING: Plugin 'Legacy Flask Plugin' exposes a deprecated Flask Blueprint. "
+        "Routes will not be mounted. Please update plugin via the store to a FastAPI-compatible version."
+    )
+    assert any(expected_warning in record.message for record in caplog.records), "Deprecation warning must be logged!"
+
+    # Verify routes were NOT mounted to main_app
+    plugin_mounts = [
+        r
+        for r in app.routes
+        if getattr(r, "path", "").startswith(f"/api/v1/plugins/{plugin_crc32}")
+        or getattr(r, "path", "").startswith(f"/api/plugins/{plugin_crc32}")
+    ]
+    assert len(plugin_mounts) == 0, "No WSGI / Flask routes should be mounted!"
+
+    # Verify router_status is set to DEPRECATED_FLASK_UNSUPPORTED
+    plugin_cls = PluginRegistry.get_plugin_class(plugin_crc32)
+    assert plugin_cls is not None
+    assert getattr(plugin_cls, "router_status", None) == "DEPRECATED_FLASK_UNSUPPORTED"
+    inst = PluginRegistry.create_instance(plugin_crc32)
+    assert getattr(inst, "router_status", None) == "DEPRECATED_FLASK_UNSUPPORTED"

@@ -1455,6 +1455,8 @@ class PluginLoader:
                         logger.debug(f"No PluginBase found in {module_path}")
 
                 # Core-Driven Inversion of Control (IoC) Startup Hooks
+                plugin_instance = None
+                plugin_cls = None
                 try:
                     plugin_cls = PluginRegistry.get_plugin_class(provider_id)
                     if plugin_cls:
@@ -1493,6 +1495,8 @@ class PluginLoader:
                     logger.debug(f"Raw exception data: {e}", exc_info=True)
 
                 # Collect FastAPI Routers and legacy Flask Blueprints
+                from flask import Blueprint as FlaskBlueprint
+
                 plugin_routers = []
                 flask_blueprints = []
                 seen_router_ids = set()
@@ -1503,9 +1507,27 @@ class PluginLoader:
                             seen_router_ids.add(id(attr_val))
                             logger.info(f"Found APIRouter {attr_name} in {module_path}")
                             plugin_routers.append(attr_val)
-                    elif type(attr_val).__name__ == "Blueprint":
+                    elif isinstance(attr_val, FlaskBlueprint) and not isinstance(attr_val, bool):
                         flask_blueprints.append(attr_val)
                 logger.info(f"Plugin routers collected: {len(plugin_routers)}")
+
+                if flask_blueprints and not plugin_routers:
+                    name = manifest_data.get("name") or getattr(plugin_cls, "name", None) or plugin_name or provider_id
+                    if not plugin_instance:
+                        if not plugin_cls:
+                            plugin_cls = PluginRegistry.get_plugin_class(provider_id)
+                        if plugin_cls:
+                            try:
+                                plugin_instance = plugin_cls()
+                            except Exception:
+                                pass
+                    if plugin_instance:
+                        setattr(plugin_instance, "router_status", "DEPRECATED_FLASK_UNSUPPORTED")
+                    if plugin_cls:
+                        setattr(plugin_cls, "router_status", "DEPRECATED_FLASK_UNSUPPORTED")
+                    logger.warning(
+                        f"WARNING: Plugin '{name}' exposes a deprecated Flask Blueprint. Routes will not be mounted. Please update plugin via the store to a FastAPI-compatible version."
+                    )
 
                 if hasattr(self, "main_app") and self.main_app:
                     mount_prefixes = [
@@ -1549,35 +1571,6 @@ class PluginLoader:
                                     break
                             self.main_app.routes.insert(insert_idx, mount_route)
                         logger.info(f"Mounted FastAPI sub-application for {plugin_id} at {mount_prefixes}")
-
-                    elif flask_blueprints:
-                        try:
-                            from fastapi.middleware.wsgi import WSGIMiddleware
-                            from flask import Flask
-
-                            flask_app = Flask(f"plugin_{plugin_id}")
-                            for bp in flask_blueprints:
-                                bp.url_prefix = ""
-                                flask_app.register_blueprint(bp)
-
-                            for pfx in mount_prefixes:
-                                self.main_app.mount(pfx, WSGIMiddleware(flask_app))
-                                # Reorder routes so plugin mounts precede the SPA StaticFiles mount ('/')
-                                mount_route = self.main_app.routes.pop()
-                                insert_idx = len(self.main_app.routes)
-                                for idx, r in enumerate(self.main_app.routes):
-                                    if getattr(r, "path", None) == "" and getattr(r, "name", None) == "static":
-                                        insert_idx = idx
-                                        break
-                                self.main_app.routes.insert(insert_idx, mount_route)
-                            logger.info(
-                                f"Mounted legacy Flask WSGI sub-application for {plugin_id} at {mount_prefixes}"
-                            )
-                        except Exception as bp_err:
-                            logger.error(
-                                f"Failed to mount legacy Flask Blueprint for {plugin_id}: {bp_err}",
-                                exc_info=True,
-                            )
 
                 # Persist combined loaded_modules to DB (Single-Shot Write)
                 try:
@@ -1987,6 +1980,8 @@ class PluginRegistry:
         # Store the canonical registered ID on the instance for backend services
         instance._registered_name = str(plugin_id)
         instance.plugin_id_int = plugin_id
+        if hasattr(plugin_cls, "router_status") and not hasattr(instance, "router_status"):
+            instance.router_status = plugin_cls.router_status
 
         return instance
 

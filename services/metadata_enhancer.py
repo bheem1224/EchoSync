@@ -35,7 +35,9 @@ from core.matching_engine.text_utils import (
     normalize_track_comparison_fields,
 )
 from core.matching_engine.trust_gate import (
+    is_generic_title,
     sanitize_title_from_filename,
+    should_bypass_filename_trust_gate,
     verify_title_trust_gate,
 )
 from core.metadata.schemas import ResolutionRequest
@@ -1309,8 +1311,33 @@ class RetroactiveEnhancer:
         payload = build_native_tag_payload(meta_dict)
         tags_to_write = {k: v for k, v in payload.items() if v not in (None, "")}
 
+        # Prevent stripping / placeholder poisoning: never write "Unknown" placeholders to physical file tags
+        placeholders_to_strip = {
+            "unknown",
+            "unknown artist",
+            "unknown album",
+            "unknown title",
+            "various artists",
+        }
+        target_keys = (
+            "artist",
+            "album",
+            "title",
+            "display_title",
+            "sort_title",
+            "album_artist",
+            "albumartist",
+        )
+        cleaned_tags = {}
+        for k, v in tags_to_write.items():
+            if k.lower() in target_keys and str(v).strip().lower() in placeholders_to_strip:
+                continue
+            cleaned_tags[k] = v
+        tags_to_write = cleaned_tags
+
         if not tags_to_write:
-            raise MetadataWriteVerificationError(f"No writable tags provided for {path.name}")
+            logger.info("No non-placeholder writable tags provided for %s; skipping tag write", path.name)
+            return {}
 
         # Attempt to ensure write permissions on file and parent directory before native write
         try:
@@ -1351,9 +1378,14 @@ class RetroactiveEnhancer:
         if not isinstance(verified_tags, dict):
             raise MetadataWriteVerificationError(f"Extracted metadata is not a dictionary for {path.name}")
 
-        exp_t = tags_to_write.get("title") or meta_dict.get("title") or getattr(metadata, "title", None) or ""
-        exp_a = tags_to_write.get("artist") or meta_dict.get("artist") or getattr(metadata, "artist", None) or ""
-        exp_isrc = tags_to_write.get("isrc") or meta_dict.get("isrc") or getattr(metadata, "isrc", None) or ""
+        exp_t = tags_to_write.get("title") or ""
+        exp_a = tags_to_write.get("artist") or ""
+        exp_isrc = tags_to_write.get("isrc") or ""
+
+        if exp_t and str(exp_t).strip().lower() in placeholders_to_strip:
+            exp_t = ""
+        if exp_a and str(exp_a).strip().lower() in placeholders_to_strip:
+            exp_a = ""
 
         read_title = (verified_tags.get("title") or "").strip().lower()
         expected_title = str(exp_t).strip().lower()
@@ -2118,7 +2150,14 @@ class RetroactiveEnhancer:
                     # Determine missing fields
                     missing_fields = [key for key in required_keys if not item["metadata_status"].get(key)]
 
-                    if t_track.musicbrainz_id and t_track.musicbrainz_id != "NOT_FOUND":
+                    has_identifiable_tags = bool(
+                        t_track.title
+                        and not is_generic_title(str(t_track.title))
+                        and t_track.artist_name
+                        and not str(t_track.artist_name).lower().strip().startswith("unknown")
+                    )
+
+                    if t_track.musicbrainz_id and t_track.musicbrainz_id != "NOT_FOUND" and has_identifiable_tags:
                         if not missing_fields and not is_bad_metadata and not item.get("metadata_changed"):
                             bucket_trust.append((item, valid_media_paths, all_file_tags))
                         else:

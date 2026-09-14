@@ -11,7 +11,10 @@ router = APIRouter(prefix="/api/v1/core/search", tags=["Search"])
 v1_router = APIRouter(prefix="/api/v1/search", tags=["Search"])
 
 
+@router.get("")
 @router.get("/")
+@v1_router.get("")
+@v1_router.get("/")
 async def aggregate_search(request: Request):
     q = request.query_params.get("q")
     if not q:
@@ -55,6 +58,7 @@ async def aggregate_search(request: Request):
 
 
 @router.get("/discovery")
+@v1_router.get("/discovery")
 async def federated_discovery(request: Request):
     q = request.query_params.get("q")
     if not q:

@@ -93,12 +93,34 @@ def sanitize_title_from_filename(filename: str | Path) -> str:
 clean_title_from_filename = sanitize_title_from_filename
 
 
+def should_bypass_filename_trust_gate(
+    acoustid_score: float,
+    duration_delta_sec: float,
+    has_signature: bool = False,
+    has_identifiable_tags: bool = False,
+) -> bool:
+    """Determines whether acoustic ground truth vetoes raw filename string baselines.
+
+    Rules:
+    - Rule A (Unsigned Files): When a file lacks ECHOSYNC_SIGNATURE, an AcoustID match
+      with acoustid_score >= 0.92 and duration_delta_sec <= 1.0s has absolute veto authority
+      over filename baselines, bypassing filename contradiction checks.
+    - Rule B (Signed Files): If has_signature is True, acoustic matches never bypass trust gates
+      or automatically overwrite curated files; divergences are routed to the Review Queue.
+    """
+    if has_signature:
+        return False
+
+    return acoustid_score >= 0.92 and duration_delta_sec <= 1.0
+
+
 def verify_title_trust_gate(
     candidate_title: str,
     baseline_title: str | None = None,
     filename: str | None = None,
     tag_title: str | None = None,
     min_similarity: float = 0.60,
+    bypass_filename_check: bool = False,
 ) -> bool:
     """Verify that a proposed candidate title is sufficiently similar to the baseline title.
 
@@ -109,10 +131,14 @@ def verify_title_trust_gate(
 
     Returns True if similarity >= min_similarity (default 0.60), False otherwise.
     If baseline_title contradicts an identifiable physical filename, the candidate MUST
-    confirm against the physical filename to prevent circular cache poisoning.
+    confirm against the physical filename to prevent circular cache poisoning, unless
+    bypass_filename_check is True (acoustically vetoed by indisputable AcoustID match).
     """
     if not candidate_title or not str(candidate_title).strip():
         return False
+
+    if bypass_filename_check:
+        return True
 
     clean_candidate = str(candidate_title).lower().strip()
     norm_candidate = normalize_title(clean_candidate)
