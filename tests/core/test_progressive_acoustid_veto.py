@@ -195,6 +195,11 @@ def test_signed_file_divergence_routes_to_review_queue(monkeypatch, tmp_path):
             "channels": 2,
         },
     )
+    monkeypatch.setattr(
+        echosync_core,
+        "verify_audio_signature",
+        lambda path, title, artist, sig: True,
+    )
 
     dummy_chromaprint = "D" * 60
     monkeypatch.setattr(
@@ -267,6 +272,104 @@ def test_signed_file_divergence_routes_to_review_queue(monkeypatch, tmp_path):
     assert task_kwargs["track_data"]["reason"] == "SIGNED_METADATA_DIVERGENCE"
     assert task_kwargs["track_data"]["current_title"] == "User Curated Title"
     assert task_kwargs["track_data"]["proposed_title"] == "Radically Different Title"
+
+
+def test_tampered_signature_with_high_acoustid_score_auto_applies(monkeypatch, tmp_path):
+    """Corrupted/tampered ECHOSYNC_SIGNATURE fails verification and auto-applies AcoustID match without ReviewTask."""
+    audio_file = tmp_path / "07 - My First Guitar (13).flac"
+    audio_file.write_bytes(b"dummy audio content")
+
+    file_dur_ms = 220000
+
+    # Tag header contains stale/tampered ECHOSYNC_SIGNATURE
+    monkeypatch.setattr(
+        echosync_core,
+        "extract_metadata",
+        lambda p: {
+            "title": "My First Guitar (5)",
+            "artist": "Bon Jovi",
+            "album": "Forever",
+            "echosync_signature": "STALE_TAMPERED_SIG_HEX",
+            "duration_ms": file_dur_ms,
+            "channels": 2,
+        },
+    )
+
+    # Cryptographic verification fails
+    monkeypatch.setattr(
+        echosync_core,
+        "verify_audio_signature",
+        lambda path, title, artist, sig: False,
+    )
+
+    dummy_chromaprint = "T" * 60
+    monkeypatch.setattr(
+        FingerprintGenerator,
+        "generate_with_duration",
+        lambda p: (dummy_chromaprint, file_dur_ms / 1000.0),
+    )
+
+    cand_meta = {
+        "title": "Living Proof",
+        "artist": "Bon Jovi",
+        "album": "Forever",
+        "duration_ms": file_dur_ms + 200,
+        "release_id": "rel-bonjovi-living-proof",
+        "release_group": {"primary_type": "Album"},
+    }
+
+    mock_acoustid = MagicMock()
+    mock_acoustid.resolve_fingerprint_details.return_value = {
+        "acoustid_id": "acoustid-bonjovi-lp",
+        "score": 0.97,
+        "recordings": [
+            {
+                "id": "mbid-living-proof",
+                "title": "Living Proof",
+                "artist": "Bon Jovi",
+                "duration": (file_dur_ms + 200) / 1000.0,
+                "score": 0.97,
+            }
+        ],
+        "mbids": ["mbid-living-proof"],
+    }
+
+    mock_mb = MagicMock()
+    mock_mb.get_metadata.return_value = cand_meta
+
+    engine = MetadataResolutionEngine(
+        acoustid_provider=mock_acoustid,
+        metadata_provider=mock_mb,
+    )
+
+    staged_tasks = []
+
+    def mock_create_review_task(**kwargs):
+        staged_tasks.append(kwargs)
+        return MagicMock()
+
+    monkeypatch.setattr(TaskRepository, "create_review_task", mock_create_review_task)
+
+    req = ResolutionRequest(
+        media_id="media_tampered_1",
+        file_path=audio_file,
+        baseline_title="My First Guitar (5)",
+        baseline_artist="Bon Jovi",
+        baseline_album="Forever",
+    )
+
+    result = engine.resolve_track(req)
+
+    # Invariant: Invalid signature is voided; AcoustID ground truth auto-applies
+    assert result is not None
+    assert result.resolution_method == "acoustid"
+    assert result.title == "Living Proof"
+    assert result.artist == "Bon Jovi"
+    assert result.musicbrainz_track_id == "mbid-living-proof"
+    assert result.confidence_score == 0.95
+
+    # Invariant: NO ReviewTask staged because the signature was corrupted/void
+    assert len(staged_tasks) == 0
 
 
 def test_untagged_file_embedded_mbid_skipped_to_chromaprint(monkeypatch, tmp_path):

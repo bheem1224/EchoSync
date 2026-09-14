@@ -717,41 +717,46 @@ class MetadataResolutionEngine:
                 filename_contradicts_baseline = True
 
         # ── Stage 0: Zero-Trust Signature Gate (ECHOSYNC_SIGNATURE) ───────────
+        signature_valid: bool = False
         sig_tag = raw_tags.get("echosync_signature") or raw_tags.get("ECHOSYNC_SIGNATURE")
-        if sig_tag and not request.ignore_cache and baseline_title and baseline_artist:
+        if sig_tag and baseline_title and baseline_artist:
             try:
                 import echosync_core
 
                 if hasattr(echosync_core, "verify_audio_signature"):
-                    if echosync_core.verify_audio_signature(
-                        str(file_path), baseline_title, baseline_artist, str(sig_tag).strip()
-                    ):
-                        logger.info(
-                            "[resolution_engine] Stage 0 HIT (Verified ECHOSYNC_SIGNATURE): %s",
-                            file_path.name,
+                    signature_valid = bool(
+                        echosync_core.verify_audio_signature(
+                            str(file_path), str(baseline_title), str(baseline_artist), str(sig_tag).strip()
                         )
-                        return ResolutionResult(
-                            media_id=request.media_id,
-                            sync_id=request.sync_id,
-                            title=baseline_title,
-                            artist=baseline_artist,
-                            album=baseline_album or None,
-                            year=parsed_year,
-                            track_number=parsed_track_num,
-                            disc_number=parsed_disc_num,
-                            musicbrainz_track_id=raw_tags.get("musicbrainz_track_id")
-                            or raw_tags.get("musicbrainz_id")
-                            or raw_tags.get("mbid")
-                            or raw_tags.get("recording_id"),
-                            musicbrainz_release_id=raw_tags.get("musicbrainz_album_id")
-                            or raw_tags.get("musicbrainz_release_id"),
-                            acoustid_id=raw_tags.get("acoustid_id"),
-                            chromaprint=chromaprint,
-                            duration_ms=duration_ms,
-                            isrc=tag_isrc,
-                            confidence_score=1.0,
-                            resolution_method="signature_verified",
-                        )
+                    )
+                    if signature_valid:
+                        if not request.ignore_cache:
+                            logger.info(
+                                "[resolution_engine] Stage 0 HIT (Verified ECHOSYNC_SIGNATURE): %s",
+                                file_path.name,
+                            )
+                            return ResolutionResult(
+                                media_id=request.media_id,
+                                sync_id=request.sync_id,
+                                title=baseline_title,
+                                artist=baseline_artist,
+                                album=baseline_album or None,
+                                year=parsed_year,
+                                track_number=parsed_track_num,
+                                disc_number=parsed_disc_num,
+                                musicbrainz_track_id=raw_tags.get("musicbrainz_track_id")
+                                or raw_tags.get("musicbrainz_id")
+                                or raw_tags.get("mbid")
+                                or raw_tags.get("recording_id"),
+                                musicbrainz_release_id=raw_tags.get("musicbrainz_album_id")
+                                or raw_tags.get("musicbrainz_release_id"),
+                                acoustid_id=raw_tags.get("acoustid_id"),
+                                chromaprint=chromaprint,
+                                duration_ms=duration_ms,
+                                isrc=tag_isrc,
+                                confidence_score=1.0,
+                                resolution_method="signature_verified",
+                            )
                     else:
                         logger.warning(
                             "[resolution_engine] Stage 0 FAILED: ECHOSYNC_SIGNATURE mismatch/tampering detected on %s",
@@ -762,6 +767,7 @@ class MetadataResolutionEngine:
                     "[resolution_engine] Stage 0 signature verification error: %s",
                     sig_err,
                 )
+                signature_valid = False
 
         # ── Fast-Path: Embedded MusicBrainz ID in Tags ─────────────────────────
         embedded_mbid = (
@@ -952,12 +958,12 @@ class MetadataResolutionEngine:
                 baseline_artist=baseline_artist,
                 baseline_album=baseline_album,
                 request=request,
-                has_signature=bool(sig_tag),
+                has_signature=signature_valid,
                 has_identifiable_tags=has_identifiable_tags,
             )
             if acoustid_res:
-                # Rule B: Check for signed file divergence
-                if bool(sig_tag):
+                # Rule B: Check for signed file divergence (valid cryptographic signatures only)
+                if signature_valid:
                     cand_t = str(acoustid_res.get("title") or "").strip().lower()
                     base_t = str(baseline_title or "").strip().lower()
                     title_sim = difflib.SequenceMatcher(None, base_t, cand_t).ratio() if base_t and cand_t else 1.0
@@ -1019,6 +1025,14 @@ class MetadataResolutionEngine:
                             confidence_score=1.0,
                             resolution_method="signature_verified",
                         )
+                elif bool(sig_tag) and (
+                    acoustid_res.get("candidate_score", 0.0) >= 0.92 or acoustid_res.get("acoustid_score", 0.0) >= 0.92
+                ):
+                    logger.info(
+                        "[resolution_engine] Overriding invalid/corrupted signature with AcoustID ground truth (score=%s) on %s",
+                        acoustid_res.get("candidate_score") or acoustid_res.get("acoustid_score", 0.0),
+                        file_path.name,
+                    )
 
             if acoustid_res:
                 logger.info(

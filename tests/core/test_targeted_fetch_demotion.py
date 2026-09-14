@@ -375,6 +375,11 @@ def test_targeted_fetch_signed_track_does_not_clobber(test_environment, monkeypa
             "channels": 2,
         },
     )
+    monkeypatch.setattr(
+        echosync_core,
+        "verify_audio_signature",
+        lambda path, title, artist, sig: True,
+    )
 
     mock_mb = MagicMock()
     mock_mb.capabilities = type("Caps", (), {"supports_batching": False})()
@@ -404,3 +409,160 @@ def test_targeted_fetch_signed_track_does_not_clobber(test_environment, monkeypa
         assert len(staged) >= 1
         assert "Title similarity failed trust gate" in staged[0].context_data["divergence_reason"]
         assert staged[0].reason == "METADATA_DIVERGENCE"
+
+
+def test_targeted_fetch_tampered_signature_voids_and_demotes_to_acoustic_waterfall(test_environment, monkeypatch):
+    """Tracks with invalid/corrupted ECHOSYNC_SIGNATURE void the signature, demote to acoustic waterfall,
+
+    and auto-apply canonical AcoustID tags without ReviewTask staging.
+    """
+    music_db = test_environment["music_db"]
+    working_db = test_environment["working_db"]
+    tmp_path = test_environment["tmp_path"]
+
+    audio_file = tmp_path / "07 - My First Guitar (13).flac"
+    audio_file.write_bytes(b"dummy corrupted signature audio stream")
+
+    file_dur_ms = 220000
+
+    with music_db.session_scope() as session:
+        artist = Artist(name="Bon Jovi", normalized_name="bon jovi")
+        album = Album(title="Unknown Album", normalized_title="unknown album", artist=artist)
+        session.add_all([artist, album])
+        session.flush()
+
+        track = Track(
+            title="My First Guitar (5)",
+            normalized_title="my first guitar (5)",
+            sync_id="sync_tampered_track_2693",
+            musicbrainz_id="mbid-stale-target",
+            artist=artist,
+            album=album,
+            duration=file_dur_ms,
+            echosync_signature="CORRUPTED_SIGNATURE_HEX",
+            metadata_status={"echosync_signature": "CORRUPTED_SIGNATURE_HEX"},
+        )
+        session.add(track)
+        session.flush()
+
+        media = LocalMedia(
+            track_id=track.id,
+            file_path=str(audio_file),
+            file_format="flac",
+            media_id="media_tampered_01",
+        )
+        session.add(media)
+
+    monkeypatch.setattr(
+        echosync_core,
+        "extract_metadata",
+        lambda p: {
+            "title": "My First Guitar (5)",
+            "artist": "Bon Jovi",
+            "album": "Unknown Album",
+            "musicbrainz_id": "mbid-stale-target",
+            "echosync_signature": "CORRUPTED_SIGNATURE_HEX",
+            "duration_ms": file_dur_ms,
+            "channels": 2,
+        },
+    )
+
+    # Signature verification fails (tampered/mismatched)
+    monkeypatch.setattr(
+        echosync_core,
+        "verify_audio_signature",
+        lambda path, title, artist, sig: False,
+    )
+
+    new_signatures_generated = []
+
+    def mock_gen_sig(p, title, artist):
+        sig = f"VALID_SIG_{title}_{artist}"
+        new_signatures_generated.append((p, sig))
+        return sig
+
+    monkeypatch.setattr(echosync_core, "generate_audio_signature", mock_gen_sig)
+
+    dummy_chromaprint = "A" * 60
+    monkeypatch.setattr(
+        FingerprintGenerator,
+        "generate_with_duration",
+        lambda p: (dummy_chromaprint, file_dur_ms / 1000.0),
+    )
+
+    # MBID fetch returns candidate that fails trust gate against baseline title
+    mock_mb = MagicMock()
+    mock_mb.capabilities = type("Caps", (), {"supports_batching": False})()
+    mock_mb.get_metadata.side_effect = lambda mbid: (
+        {
+            "title": "I Wrote You a Song",
+            "artist": "Bon Jovi",
+            "album": "Forever",
+            "year": 2024,
+        }
+        if mbid == "mbid-stale-target"
+        else {
+            "title": "Living Proof",
+            "artist": "Bon Jovi",
+            "album": "Forever",
+            "year": 2024,
+            "release_id": "rel-bonjovi-lp",
+            "release_group": {"primary_type": "Album"},
+        }
+    )
+
+    mock_acoustid = MagicMock()
+    mock_acoustid.resolve_fingerprint_details.return_value = {
+        "acoustid_id": "acoustid-bonjovi-lp",
+        "score": 0.97,
+        "recordings": [
+            {
+                "id": "mbid-living-proof",
+                "title": "Living Proof",
+                "artist": "Bon Jovi",
+                "duration": file_dur_ms / 1000.0,
+                "score": 0.97,
+            }
+        ],
+        "mbids": ["mbid-living-proof"],
+    }
+
+    def plugin_resolver(name):
+        if name in (1990722619, "EchoSync.musicbrainz", "musicbrainz") or "musicbrainz" in str(name).lower():
+            return mock_mb
+        if name in (3801077393, "EchoSync.acoustid", "acoustid") or "acoustid" in str(name).lower():
+            return mock_acoustid
+        return None
+
+    monkeypatch.setattr(PluginRegistry, "get_plugin", plugin_resolver)
+    monkeypatch.setattr(
+        PluginRegistry,
+        "get_plugins_with_capability",
+        lambda cap: (
+            [mock_acoustid]
+            if cap == Capability.RESOLVE_FINGERPRINT
+            else ([mock_mb] if cap == Capability.FETCH_METADATA else [])
+        ),
+    )
+
+    monkeypatch.setattr("core.path_formatter.ensure_path_invariance", lambda session, track, media: None)
+    monkeypatch.setattr(RetroactiveEnhancer, "tag_file_verified", lambda self, path, tags: tags)
+
+    enhancer = RetroactiveEnhancer()
+    enhancer.enhance_library_metadata(batch_size=1, limit=1, check_all_files=False)
+
+    # Invariants:
+    # 1. Invalid signature was voided; track demoted to acoustic waterfall and resolved as 'Living Proof'
+    # 2. SuggestionStagingQueue has NO staged review items
+    # 3. New valid signature was stamped
+    with music_db.session_scope() as session:
+        t = session.query(Track).filter_by(sync_id="sync_tampered_track_2693").first()
+        assert t is not None
+        assert t.title == "Living Proof"
+        assert t.musicbrainz_id == "mbid-living-proof"
+        assert t.echosync_signature is not None
+        assert t.echosync_signature.startswith("VALID_SIG_Living Proof")
+
+    with working_db.session_scope() as session:
+        staged = session.query(SuggestionStagingQueue).all()
+        assert len(staged) == 0

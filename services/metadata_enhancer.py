@@ -2139,6 +2139,45 @@ class RetroactiveEnhancer:
                     if found_isrc:
                         t_track.isrc = found_isrc
 
+                    # Check cryptographic signature validity across associated media
+                    sig_to_verify = None
+                    for _media, _lpath, _tags in all_file_tags:
+                        sig_val = _tags.get("echosync_signature") or _tags.get("ECHOSYNC_SIGNATURE")
+                        if sig_val:
+                            sig_to_verify = str(sig_val).strip()
+                            break
+                    if not sig_to_verify:
+                        sig_to_verify = item["metadata_status"].get("echosync_signature") or getattr(
+                            t_track, "echosync_signature", None
+                        )
+
+                    sig_valid = False
+                    if sig_to_verify and t_track.title and t_track.artist_name and valid_media_paths:
+                        first_path = valid_media_paths[0][1]
+                        try:
+                            if hasattr(echosync_core, "verify_audio_signature"):
+                                sig_valid = bool(
+                                    echosync_core.verify_audio_signature(
+                                        str(first_path),
+                                        str(t_track.title),
+                                        str(t_track.artist_name),
+                                        str(sig_to_verify).strip(),
+                                    )
+                                )
+                        except Exception as sig_err:
+                            logger.debug("Signature verification error: %s", sig_err)
+                            sig_valid = False
+
+                    item["metadata_status"]["signature_valid"] = sig_valid
+                    if not sig_valid and sig_to_verify:
+                        logger.warning(
+                            "[enhancer] File %s has invalid/corrupted ECHOSYNC_SIGNATURE; voiding signature",
+                            valid_media_paths[0][1].name if valid_media_paths else item.get("id"),
+                        )
+                        item["metadata_status"]["echosync_signature"] = None
+                        if hasattr(t_track, "echosync_signature"):
+                            t_track.echosync_signature = None
+
                     # Determine whether track has bad metadata that requires enhancement
                     is_bad_metadata = (
                         not t_track.artist_name
@@ -2172,7 +2211,12 @@ class RetroactiveEnhancer:
                     ):
                         bucket_heavy.append((item, valid_media_paths, all_file_tags))
                     elif t_track.musicbrainz_id and t_track.musicbrainz_id != "NOT_FOUND":
-                        if not missing_fields and not is_bad_metadata and not item.get("metadata_changed"):
+                        if (
+                            not missing_fields
+                            and not is_bad_metadata
+                            and not item.get("metadata_changed")
+                            and (sig_valid or not sig_to_verify)
+                        ):
                             bucket_trust.append((item, valid_media_paths, all_file_tags))
                         else:
                             bucket_target.append((item, valid_media_paths, all_file_tags))
@@ -2261,17 +2305,8 @@ class RetroactiveEnhancer:
                                         baseline_title,
                                         first_filename,
                                     )
-                                    stage_metadata_divergence(
-                                        sync_id=t_track.sync_id if hasattr(t_track, "sync_id") else None,
-                                        candidate_metadata=meta,
-                                        file_path=first_local_path or "",
-                                        original_title=baseline_title or first_tag_title,
-                                    )
                                     item["metadata_status"]["trust_gate_rejected"] = True
-                                    has_signature = bool(
-                                        item["metadata_status"].get("echosync_signature")
-                                        or getattr(t_track, "echosync_signature", None)
-                                    )
+                                    has_signature = bool(item["metadata_status"].get("signature_valid"))
                                     if not has_signature:
                                         track_id = getattr(t_track, "id", item.get("id"))
                                         logger.info(
@@ -2283,6 +2318,12 @@ class RetroactiveEnhancer:
                                         bucket_heavy.append((item, valid_media_paths, all_file_tags))
                                         continue
                                     else:
+                                        stage_metadata_divergence(
+                                            sync_id=t_track.sync_id if hasattr(t_track, "sync_id") else None,
+                                            candidate_metadata=meta,
+                                            file_path=first_local_path or "",
+                                            original_title=baseline_title or first_tag_title,
+                                        )
                                         t_track.musicbrainz_id = "NOT_FOUND"
                                         item["metadata_status"]["enhancement_attempts"] = (
                                             item["metadata_status"].get("enhancement_attempts", 0) + 1
@@ -2291,10 +2332,7 @@ class RetroactiveEnhancer:
                                         continue
 
                                 if not cand_title:
-                                    has_signature = bool(
-                                        item["metadata_status"].get("echosync_signature")
-                                        or getattr(t_track, "echosync_signature", None)
-                                    )
+                                    has_signature = bool(item["metadata_status"].get("signature_valid"))
                                     if not has_signature:
                                         track_id = getattr(t_track, "id", item.get("id"))
                                         logger.info(
@@ -2319,42 +2357,38 @@ class RetroactiveEnhancer:
                                 if not t_track.isrc and meta.get("isrc"):
                                     t_track.isrc = meta.get("isrc")
 
-                                update_tags = {
-                                    "musicbrainz_id": mbid,
-                                    "recording_id": mbid,
-                                }
-                                if t_track.title:
-                                    update_tags["title"] = t_track.title
-                                if t_track.artist_name:
-                                    update_tags["artist"] = t_track.artist_name
-                                if t_track.album_title:
-                                    update_tags["album"] = t_track.album_title
-                                if t_track.isrc:
-                                    update_tags["isrc"] = t_track.isrc
-                                if t_track.release_year:
-                                    update_tags["year"] = str(t_track.release_year)
-                                    update_tags["date"] = str(t_track.release_year)
-
-                                # Generate and stamp echosync_signature
-                                try:
-                                    first_path = valid_media_paths[0][1] if valid_media_paths else None
-                                    if first_path and t_track.title and t_track.artist_name:
-                                        import echosync_core
-
-                                        sig = echosync_core.generate_audio_signature(
-                                            str(first_path), t_track.title, t_track.artist_name
-                                        )
-                                        if sig:
-                                            item["metadata_status"]["echosync_signature"] = sig
-                                            if hasattr(t_track, "echosync_signature"):
-                                                t_track.echosync_signature = sig
-                                            update_tags["echosync_signature"] = sig
-                                            update_tags["ECHOSYNC_SIGNATURE"] = sig
-                                except Exception as sig_err:
-                                    logger.debug("Failed to generate signature for %s: %s", t_track.title, sig_err)
-
-                                # Write tags to EVERY associated media file via tag_file_verified
                                 for media, local_path in valid_media_paths:
+                                    update_tags = {}
+                                    if meta.get("title"):
+                                        update_tags["title"] = meta["title"]
+                                    if meta.get("artist"):
+                                        update_tags["artist"] = meta["artist"]
+                                    if meta.get("album"):
+                                        update_tags["album"] = meta["album"]
+                                    if meta.get("year"):
+                                        update_tags["year"] = str(meta["year"])
+                                    if meta.get("isrc"):
+                                        update_tags["isrc"] = meta["isrc"]
+                                    update_tags["musicbrainz_id"] = mbid
+                                    update_tags["recording_id"] = mbid
+
+                                    # Generate and stamp echosync_signature
+                                    try:
+                                        first_path = valid_media_paths[0][1] if valid_media_paths else None
+                                        if first_path and t_track.title and t_track.artist_name:
+                                            sig = echosync_core.generate_audio_signature(
+                                                str(first_path), t_track.title, t_track.artist_name
+                                            )
+                                            if sig:
+                                                item["metadata_status"]["echosync_signature"] = sig
+                                                if hasattr(t_track, "echosync_signature"):
+                                                    t_track.echosync_signature = sig
+                                                update_tags["echosync_signature"] = sig
+                                                update_tags["ECHOSYNC_SIGNATURE"] = sig
+                                    except Exception as sig_err:
+                                        logger.debug("Failed to generate signature for %s: %s", t_track.title, sig_err)
+
+                                    # Update physical tags using tag_file_verified
                                     try:
                                         self.tag_file_verified(local_path, update_tags)
                                     except Exception as write_err:
@@ -2373,10 +2407,7 @@ class RetroactiveEnhancer:
                                 results_to_commit.append(item)
                             else:
                                 # MBID targeted fetch returned nothing / no valid data, demote to acoustic waterfall
-                                has_signature = bool(
-                                    item["metadata_status"].get("echosync_signature")
-                                    or getattr(t_track, "echosync_signature", None)
-                                )
+                                has_signature = bool(item["metadata_status"].get("signature_valid"))
                                 if not has_signature:
                                     track_id = getattr(t_track, "id", item.get("id"))
                                     logger.info(
@@ -2394,10 +2425,7 @@ class RetroactiveEnhancer:
                     else:
                         for item, valid_media_paths, all_file_tags in bucket_target:
                             t_track = item["track"]
-                            has_signature = bool(
-                                item["metadata_status"].get("echosync_signature")
-                                or getattr(t_track, "echosync_signature", None)
-                            )
+                            has_signature = bool(item["metadata_status"].get("signature_valid"))
                             if not has_signature:
                                 track_id = getattr(t_track, "id", item.get("id"))
                                 logger.info(
@@ -2501,12 +2529,13 @@ class RetroactiveEnhancer:
                                     baseline_title,
                                     first_filename,
                                 )
-                                stage_metadata_divergence(
-                                    sync_id=t_track.sync_id if hasattr(t_track, "sync_id") else None,
-                                    candidate_metadata=cached_meta,
-                                    file_path=first_local_path or "",
-                                    original_title=baseline_title or first_tag_title,
-                                )
+                                if item["metadata_status"].get("signature_valid"):
+                                    stage_metadata_divergence(
+                                        sync_id=t_track.sync_id if hasattr(t_track, "sync_id") else None,
+                                        candidate_metadata=cached_meta,
+                                        file_path=first_local_path or "",
+                                        original_title=baseline_title or first_tag_title,
+                                    )
                                 cached_meta = None
                             else:
                                 new_musicbrainz_id = cached_meta.get("musicbrainz_id") or cached_meta.get(
