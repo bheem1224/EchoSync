@@ -84,7 +84,7 @@ def resolve_plugin_directory(
     channel_preference: str = "inherit",
     absolute_install_path: str | None = None,
 ) -> tuple[Path, str]:
-    """Resolve the canonical plugin directory path and effective channel."""
+    """Resolve an installed plugin directory without assuming stable exists."""
     effective_channel = (
         config_manager.get("system.channel_preference", "stable")
         if channel_preference == "inherit"
@@ -93,8 +93,7 @@ def resolve_plugin_directory(
     if not effective_channel:
         effective_channel = "stable"
 
-    # Resolve base plugin root cleanly by stripping existing trailing channel leaves
-    base_dir = None
+    base_dir: Path | None = None
     if absolute_install_path:
         p = Path(absolute_install_path)
         if p.name in ("beta", "stable"):
@@ -118,23 +117,23 @@ def resolve_plugin_directory(
         else:
             base_dir = p_dir / name
 
-    # Check targeted channel candidate first
-    candidate = base_dir / effective_channel
-    if candidate.exists() and (
-        (candidate / "plugin.json").exists()
-        or (candidate / "manifest.json").exists()
-        or (candidate / "__init__.py").exists()
-    ):
-        return candidate, effective_channel
+    candidates: list[tuple[Path, str]] = [
+        (base_dir / effective_channel, effective_channel),
+        (base_dir, "root"),
+        (base_dir / "stable", "stable"),
+        (base_dir / "beta", "beta"),
+    ]
+    seen: set[Path] = set()
+    for path, channel in candidates:
+        if path in seen:
+            continue
+        seen.add(path)
+        if path.exists() and (
+            (path / "plugin.json").is_file() or (path / "manifest.json").is_file()
+        ):
+            return path, channel
 
-    # Fallback to root or stable
-    if (
-        (base_dir / "plugin.json").exists()
-        or (base_dir / "manifest.json").exists()
-        or (base_dir / "__init__.py").exists()
-    ):
-        return base_dir, "stable"
-    return base_dir / "stable", "stable"
+    return base_dir / effective_channel, effective_channel
 
 
 def get_relative_entry_path(url_or_path: str) -> str:
@@ -604,7 +603,7 @@ class PluginLoader:
         except Exception as e:
             logger.error(f"Failed during memory purge during unload: {e}")
 
-    def reload_plugin(self, plugin_id: int):
+    def reload_plugin(self, plugin_id: int, absolute_install_path: str | None = None):
         """Perform a true Zero-Downtime hot reload of a plugin."""
         logger.info(f"🔄 HOT-SWAP INITIATED: {plugin_id}")
 
@@ -648,14 +647,34 @@ class PluginLoader:
             conn.close()
 
         clean_ns = base_ns.split("@")[0]
-        plugin_dir, channel = resolve_plugin_directory(
-            name=clean_ns,
-            channel_preference=pref,
-            absolute_install_path=install_path,
-        )
+        if absolute_install_path:
+            plugin_dir = Path(absolute_install_path)
+            channel = "beta" if plugin_dir.name == "beta" else "stable"
+        else:
+            plugin_dir, channel = resolve_plugin_directory(
+                name=clean_ns,
+                channel_preference=pref,
+                absolute_install_path=install_path,
+            )
 
-        if not plugin_dir.exists():
-            raise ValueError(f"Plugin directory {plugin_dir} does not exist.")
+        if not plugin_dir.exists() or not (
+            (plugin_dir / "plugin.json").is_file() or (plugin_dir / "manifest.json").is_file()
+        ):
+            raise FileNotFoundError(
+                f"No valid plugin directory found for {clean_ns}; checked {plugin_dir} "
+                f"(channel={channel}, install_path={install_path!r})"
+            )
+
+        if not absolute_install_path and str(plugin_dir.resolve()) != str(install_path):
+            from core.task_manager import db_write_lease
+
+            with db_write_lease(task_name=f"update_plugin_path_{plugin_id}"):
+                with db._open_connection() as update_conn:
+                    update_conn.execute(
+                        "UPDATE services SET absolute_install_path=? WHERE plugin_id=?",
+                        (str(plugin_dir.resolve()), plugin_id),
+                    )
+                    update_conn.commit()
 
         logger.info(f"Reloading {plugin_id} ({channel}) from {plugin_dir}")
 
@@ -1381,6 +1400,8 @@ class PluginLoader:
                 category = "provider"
 
                 manifest_file = package_dir / "manifest.json"
+                if not manifest_file.exists():
+                    manifest_file = package_dir / "plugin.json"
                 manifest_data = {}
                 if manifest_file.exists():
                     try:

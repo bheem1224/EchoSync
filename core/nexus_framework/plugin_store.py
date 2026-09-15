@@ -1225,6 +1225,13 @@ class PluginStore:
                                 if backup_dir and backup_dir.exists():
                                     shutil.rmtree(target_dir, ignore_errors=True)
                                     os.rename(str(backup_dir), str(target_dir))
+                                if not target_dir.is_dir() or not (
+                                    (target_dir / "plugin.json").is_file()
+                                    or (target_dir / "manifest.json").is_file()
+                                ):
+                                    raise FileNotFoundError(
+                                        f"Rollback backup is not a valid plugin directory: {target_dir}"
+                                    )
 
                                 if "sandbox_db_path" in state_snapshot and state_snapshot["sandbox_db_path"].exists():
                                     shutil.copy2(
@@ -1346,7 +1353,10 @@ class PluginStore:
                                 # Attempt to resurrect the old plugin module in memory
                                 try:
                                     logger.info(f"Resurrecting old version of {plugin_id} in memory...")
-                                    loader.reload_plugin(int_plugin_id)
+                                    loader.reload_plugin(
+                                        int_plugin_id,
+                                        absolute_install_path=str(target_dir.resolve()),
+                                    )
                                     logger.info(f"Successfully resurrected old version of {plugin_id}.")
                                 except Exception as resurrect_err:
                                     logger.critical(

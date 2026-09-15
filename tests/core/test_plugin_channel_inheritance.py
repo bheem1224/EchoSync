@@ -92,7 +92,7 @@ def test_resolve_plugin_directory_inheritance_and_leaves(tmp_path):
             channel_preference="inherit",
             absolute_install_path=str(plugin_root),
         )
-        assert channel == "stable"
+        assert channel == "root"
         assert target_dir == plugin_root
 
     # 3. Explicit override: global is 'stable', but plugin explicitly prefers 'beta'
@@ -112,7 +112,7 @@ def test_resolve_plugin_directory_inheritance_and_leaves(tmp_path):
             channel_preference="stable",
             absolute_install_path=str(beta_dir),  # trailing /beta
         )
-        assert channel == "stable"
+        assert channel == "root"
         assert target_dir == plugin_root
 
 
@@ -131,6 +131,37 @@ def test_resolve_plugin_directory_plugin_json_support(tmp_path):
     )
     assert channel == "beta"
     assert target_dir == beta_dir
+
+
+def test_resolve_plugin_directory_beta_only(tmp_path):
+    plugin_root = tmp_path / "beta_only"
+    beta_dir = plugin_root / "beta"
+    beta_dir.mkdir(parents=True)
+    (beta_dir / "plugin.json").write_text(json.dumps({"id": "beta_only"}))
+
+    target_dir, channel = resolve_plugin_directory(
+        name="beta_only",
+        channel_preference="stable",
+        absolute_install_path=str(plugin_root),
+    )
+
+    assert target_dir == beta_dir
+    assert channel == "beta"
+
+
+def test_resolve_plugin_directory_root_only(tmp_path):
+    plugin_root = tmp_path / "root_only"
+    plugin_root.mkdir()
+    (plugin_root / "plugin.json").write_text(json.dumps({"id": "root_only"}))
+
+    target_dir, channel = resolve_plugin_directory(
+        name="root_only",
+        channel_preference="beta",
+        absolute_install_path=str(plugin_root),
+    )
+
+    assert target_dir == plugin_root
+    assert channel == "root"
 
 
 def test_set_plugin_channel_preference_isolation(tmp_path):
