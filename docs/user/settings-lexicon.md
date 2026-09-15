@@ -37,3 +37,6 @@ File renaming and path structure in `data/library` follow configurable templates
 
 - **Track Template:** `{artist}/{album}/{track_number:02d} - {title}.{ext}`
 - **Compilation Template:** `Compilations/{album}/{track_number:02d} - {artist} - {title}.{ext}`
+
+---
+*Part of the EchoSync Wiki Documentation Suite.*

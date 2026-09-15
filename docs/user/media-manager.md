@@ -39,3 +39,6 @@ The Suggestion Engine analyzes user listening behavior and audio features (tempo
 - **Content-Based Filtering:** Computes vibe profiles based on listening history.
 - **Stale Track Pruning:** Flags tracks with low play counts or corrupt audio for review or quarantine.
 - **Dynamic Recommendations:** Surfaces unacquired tracks matching vibe signatures into `working.db` suggestion queue.
+
+---
+*Part of the EchoSync Wiki Documentation Suite.*

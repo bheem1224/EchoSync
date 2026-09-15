@@ -144,3 +144,6 @@ this.dispatchEvent(new CustomEvent('plugin-action', {
   composed: true
 }));
 ```
+
+---
+*Part of the EchoSync Wiki Documentation Suite.*
