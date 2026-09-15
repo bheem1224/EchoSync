@@ -1877,7 +1877,7 @@ class RetroactiveEnhancer:
 
     def enhance_library_metadata(
         self,
-        batch_size=50,
+        batch_size=10,
         check_all_files: bool = False,
         limit: int | None = None,
         force_refresh: bool = False,
@@ -1889,15 +1889,38 @@ class RetroactiveEnhancer:
         committed in its own session so memory stays flat even on large libraries.
         Adheres strictly to the canonical EchosyncTrack model with nested EchosyncMedia objects.
         """
+        from core.task_manager import TaskCategory, lease_task
+
+        with lease_task("metadata_enhancement", category=TaskCategory.BACKGROUND_METADATA) as job_id:
+            self._enhance_library_metadata_loop(
+                job_id=job_id,
+                batch_size=batch_size,
+                check_all_files=check_all_files,
+                limit=limit,
+                force_refresh=force_refresh,
+                require_signature=require_signature,
+            )
+
+    def _enhance_library_metadata_loop(
+        self,
+        job_id: str,
+        batch_size=10,
+        check_all_files: bool = False,
+        limit: int | None = None,
+        force_refresh: bool = False,
+        require_signature: bool = False,
+    ) -> None:
+        import gc
         from pathlib import Path
 
         import echosync_core
 
         from core.db.echo_sync_track import EchosyncTrack
+        from core.task_manager import is_paused, wait_for_resume
         from core.utils import PathMapper
         from database.music_database import (
-            AudioFingerprint,
             Album,
+            AudioFingerprint,
             Track,
             get_database,
         )
@@ -1913,6 +1936,8 @@ class RetroactiveEnhancer:
 
         required_keys = hook_manager.apply_filters("register_metadata_requirements", [])
         for _iteration in range(MAX_ITERATIONS):
+            if is_paused(job_id):
+                wait_for_resume(job_id)
             if limit is not None and total_processed >= limit:
                 logger.info("Reached target enhancement limit of %d tracks. Halting.", limit)
                 break
@@ -1931,9 +1956,7 @@ class RetroactiveEnhancer:
                     from core.database.repositories.track_repo import TrackRepository
 
                     default_artist_id = TrackRepository.get_or_create_default_artist(session)
-                    default_album = (
-                        session.query(Album).filter(Album.title.in_(["Unknown Album", "Unknown"])).first()
-                    )
+                    default_album = session.query(Album).filter(Album.title.in_(["Unknown Album", "Unknown"])).first()
                     default_album_id = default_album.id if default_album else 1804
                     candidates = TrackRepository.get_tracks_for_enhancement(
                         session,
@@ -2859,6 +2882,12 @@ class RetroactiveEnhancer:
                     flag_modified(track, "metadata_status")
                     total_processed += 1
 
+                session.commit()
+                session.expunge_all()
+                if is_paused(job_id):
+                    wait_for_resume(job_id)
+                gc.collect()
+
     def enrich_plugin_metadata(
         self,
         target_plugin: str = "EchoSync.cjk",
@@ -2955,7 +2984,7 @@ def register_metadata_enhancer_service():
 
 
 def run_retroactive_enhancement(
-    batch_size: int = 100,
+    batch_size: int = 10,
     check_all_files: bool = False,
     limit: int | None = None,
     progress_callback: Any | None = None,

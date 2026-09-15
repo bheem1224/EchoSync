@@ -112,6 +112,7 @@ class JobQueue:
         self._is_running: dict[str, bool] = {}
         self._active_threads: dict[str, threading.Thread] = {}
         self._active_processes: dict[str, Any] = {}
+        self._paused_jobs: set[str] = set()
         self._max_pending_jobs = 100
         self._engine = engine
 
@@ -823,6 +824,100 @@ class JobQueue:
         with self._lock:
             return [job.to_dict() for job in self._jobs.values()]
 
+    def is_paused(self, name: str) -> bool:
+        """Check if a job has been paused."""
+        with self._lock:
+            if name in self._paused_jobs:
+                return True
+            job = self._jobs.get(name)
+            if job and job.state == TaskStatus.PAUSED:
+                return True
+            return False
+
+    def pause_job(self, name: str) -> bool:
+        """Cooperatively pause a running or scheduled job."""
+        with self._lock:
+            self._paused_jobs.add(name)
+            job = self._jobs.get(name)
+            if job:
+                job.state = TaskStatus.PAUSED
+            logger.info(f"[JobQueue] Job '{name}' paused")
+            return True
+
+    def resume_job(self, name: str) -> bool:
+        """Resume a paused job."""
+        with self._lock:
+            self._paused_jobs.discard(name)
+            job = self._jobs.get(name)
+            if job and job.state == TaskStatus.PAUSED:
+                job.state = TaskStatus.RUNNING if job.running else TaskStatus.QUEUED
+            logger.info(f"[JobQueue] Job '{name}' resumed")
+            return True
+
+    def wait_for_resume(self, name: str, poll_interval: float = 0.25, timeout: float | None = None) -> bool:
+        """Cooperatively block execution while the specified job remains paused."""
+        start_time = time.time()
+        while self.is_paused(name):
+            if timeout is not None and (time.time() - start_time) >= timeout:
+                logger.warning(f"[JobQueue] wait_for_resume('{name}') timed out after {timeout}s")
+                return False
+            time.sleep(poll_interval)
+        return True
+
+    @contextmanager
+    def lease_task(
+        self,
+        name: str,
+        category: TaskCategory = TaskCategory.BACKGROUND_METADATA,
+        tags: list[str] | None = None,
+    ):
+        """Acquires a single leased parent task in the JobQueue for long-running workflows.
+
+        Prevents queue saturation by executing work in-line under this lease while
+        allowing cooperative pause/resume and state tracking.
+        """
+        now = time.time()
+        job = ScheduledJob(
+            next_run=now,
+            name=name,
+            func=lambda: None,
+            category=category,
+            state=TaskStatus.RUNNING,
+            running=True,
+            last_started=now,
+            tags=tags or ["leased", "parent_task"],
+        )
+        with self._lock:
+            self._jobs[name] = job
+            self._is_running[name] = True
+        logger.info(f"[JobQueue] Leased parent task '{name}' started")
+        try:
+            yield name
+            with self._lock:
+                if name in self._jobs:
+                    self._jobs[name].state = TaskStatus.COMPLETED
+                    self._jobs[name].running = False
+                    self._jobs[name].last_finished = time.time()
+                    self._jobs[name].last_success = time.time()
+                    self._jobs[name].total_successes += 1
+            logger.info(f"[JobQueue] Leased parent task '{name}' completed successfully")
+        except Exception as e:
+            with self._lock:
+                if name in self._jobs:
+                    self._jobs[name].state = TaskStatus.FAILED_TERMINAL
+                    self._jobs[name].running = False
+                    self._jobs[name].last_finished = time.time()
+                    self._jobs[name].last_error = str(e)
+                    self._jobs[name].last_error_time = time.time()
+                    self._jobs[name].total_failures += 1
+            logger.error(f"[JobQueue] Leased parent task '{name}' failed: {e}")
+            raise
+        finally:
+            with self._lock:
+                self._is_running.pop(name, None)
+                self._paused_jobs.discard(name)
+                self._jobs.pop(name, None)
+
 
 job_queue = JobQueue()
 task_queue = job_queue
@@ -831,6 +926,37 @@ task_queue = job_queue
 def list_jobs() -> list[dict[str, Any]]:
     """Top-level helper function to return all registered jobs as dictionaries."""
     return job_queue.list_jobs()
+
+
+def is_paused(name: str) -> bool:
+    """Top-level helper to check if a job is paused."""
+    return job_queue.is_paused(name)
+
+
+def wait_for_resume(name: str, poll_interval: float = 0.25, timeout: float | None = None) -> bool:
+    """Top-level helper to wait for a paused job to resume."""
+    return job_queue.wait_for_resume(name, poll_interval=poll_interval, timeout=timeout)
+
+
+def pause_job(name: str) -> bool:
+    """Top-level helper to pause a job."""
+    return job_queue.pause_job(name)
+
+
+def resume_job(name: str) -> bool:
+    """Top-level helper to resume a paused job."""
+    return job_queue.resume_job(name)
+
+
+@contextmanager
+def lease_task(
+    name: str,
+    category: TaskCategory = TaskCategory.BACKGROUND_METADATA,
+    tags: list[str] | None = None,
+):
+    """Top-level context manager to lease a parent task."""
+    with job_queue.lease_task(name=name, category=category, tags=tags) as job_id:
+        yield job_id
 
 
 def trigger_job_by_name(name: str, params: dict[str, Any] | None = None) -> bool:

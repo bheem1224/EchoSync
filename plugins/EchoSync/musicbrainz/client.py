@@ -385,6 +385,9 @@ class MusicBrainzClient(PluginBase):
                     }
                 )
 
+            payload = None
+            recordings = None
+            response = None
             return results
         except Exception as exc:
             logger.warning(f"MusicBrainz search_metadata exception for '{query}': {exc}")
@@ -1067,7 +1070,6 @@ class MusicBrainzClient(PluginBase):
                 if data.get("length") and str(data.get("length")).isdigit()
                 else None,
                 "length": int(data.get("length")) if data.get("length") and str(data.get("length")).isdigit() else None,
-                "releases": releases,
             }
 
             credits = data.get("artist-credit") or []
@@ -1135,6 +1137,12 @@ class MusicBrainzClient(PluginBase):
             isrcs = data.get("isrcs") or []
             if isrcs:
                 result["isrc"] = isrcs[0]
+
+            # Explicitly discard raw payload references to eliminate heap bloat
+            data = None
+            releases = None
+            credits = None
+            response = None
 
             return result
 
