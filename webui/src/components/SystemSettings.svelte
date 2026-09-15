@@ -1,8 +1,8 @@
 <script>
-  import { onMount, onDestroy } from 'svelte';
-  import { feedback } from '../stores/feedback';
-  import apiClient from '../api/client';
-  import BackupSettings from './BackupSettings.svelte';
+  import { onMount, onDestroy } from "svelte";
+  import { feedback } from "../stores/feedback";
+  import apiClient from "../api/client";
+  import BackupSettings from "./BackupSettings.svelte";
 
   let cpuUsage = $state(0);
   let systemCpuUsage = $state(0);
@@ -12,7 +12,11 @@
   let systemMemoryUsage = $state(0);
   let appMemoryMb = $state(0);
 
-  let libraryStats = $state({ totalTracks: '—', totalAlbums: '—', storageUsed: '—' });
+  let libraryStats = $state({
+    totalTracks: "—",
+    totalAlbums: "—",
+    storageUsed: "—",
+  });
 
   let providerStates = $state([]);
   let loadingProviders = $state(true);
@@ -32,60 +36,108 @@
 
   async function loadProviders() {
     try {
-      const response = await apiClient.get('/system/plugins');
+      const response = await apiClient.get("/system/plugins");
       if (response.data && Array.isArray(response.data.plugins)) {
-        providerStates = response.data.plugins.map(provider => ({
+        providerStates = response.data.plugins.map((provider) => ({
           id: provider.plugin_id || provider.id,
           name: provider.name,
           display_name: provider.display_name || provider.name || provider.id,
           configured: provider.is_configured || false,
           disabled: !provider.enabled, // backend returns 'enabled', frontend uses 'disabled'
-          version: provider.version || '0.0.0',
-          author: provider.author || 'Unknown',
-          category: provider.category || 'plugin',
-          source_type: provider.source_type || 'community',
-          channel: provider.channel
+          version: provider.version || "0.0.0",
+          author: provider.author || "Unknown",
+          category: provider.category || "plugin",
+          source_type: provider.source_type || "community",
+          channel: provider.channel,
+          is_core: Boolean(
+            provider.is_core ||
+              provider.source_type === "core" ||
+              !provider.abs_path,
+          ),
         }));
       }
     } catch (error) {
-      console.error('Failed to load plugins:', error);
-      feedback.addToast('Failed to load plugin list', 'error');
+      console.error("Failed to load plugins:", error);
+      feedback.addToast("Failed to load plugin list", "error");
     } finally {
       loadingProviders = false;
     }
   }
 
+  async function handleUninstallProvider(provider) {
+    const confirmed = confirm(
+      `Are you sure you want to uninstall ${provider.display_name || provider.name}? This will remove its files and configuration.`,
+    );
+    if (!confirmed) return;
+
+    try {
+      const response = await apiClient.delete(`/system/plugins/${provider.id}`);
+      if (response.data && response.data.success) {
+        feedback.addToast(
+          `${provider.display_name || provider.name} uninstalled successfully.`,
+          "success",
+        );
+        await loadProviders();
+      } else {
+        feedback.addToast(`Failed to uninstall ${provider.name}`, "error");
+      }
+    } catch (error) {
+      console.error("Failed to uninstall provider:", error);
+      feedback.addToast(
+        `Failed to uninstall ${provider.name}: ${error.message}`,
+        "error",
+      );
+    }
+  }
+
   async function refreshStats() {
     try {
-      const s = await apiClient.get('/system/stats');
+      const s = await apiClient.get("/system/stats");
       if (s && s.data) {
         cpuUsage = Math.round(s.data.cpu?.app || 0);
-        appMemoryMb = Math.round((s.data.memory?.app_rss || 0) / (1024 ** 2));
+        appMemoryMb = Math.round((s.data.memory?.app_rss || 0) / 1024 ** 2);
         systemCpuUsage = Math.round(s.data.cpu?.system || 0);
-        memoryTotalGb = Math.round(((s.data.memory?.total || 0) / (1024 ** 3)) * 10) / 10;
-        memoryUsedGb = Math.round(((s.data.memory?.total || 0) - (s.data.memory?.available || 0)) / (1024 ** 3) * 10) / 10;
+        memoryTotalGb =
+          Math.round(((s.data.memory?.total || 0) / 1024 ** 3) * 10) / 10;
+        memoryUsedGb =
+          Math.round(
+            (((s.data.memory?.total || 0) - (s.data.memory?.available || 0)) /
+              1024 ** 3) *
+              10,
+          ) / 10;
         systemMemoryUsage = Math.round(s.data.memory?.percent || 0);
-        const rawMemPercent = ((s.data.memory?.app_rss || 0) / (s.data.memory?.total || 1)) * 100;
+        const rawMemPercent =
+          ((s.data.memory?.app_rss || 0) / (s.data.memory?.total || 1)) * 100;
         memoryUsage = Math.max(rawMemPercent, 1);
       }
 
-      const health = await apiClient.get('/system/health');
+      const health = await apiClient.get("/system/health");
       if (health && health.data && health.data.library) {
         libraryStats = {
-          totalTracks: health.data.library.total_tracks !== undefined ? String(health.data.library.total_tracks) : libraryStats.totalTracks,
-          totalFiles: health.data.library.total_files !== undefined ? String(health.data.library.total_files) : libraryStats.totalFiles,
-          totalAlbums: health.data.library.total_albums !== undefined ? String(health.data.library.total_albums) : libraryStats.totalAlbums,
-          storageUsed: health.data.library.storage_used || libraryStats.storageUsed
+          totalTracks:
+            health.data.library.total_tracks !== undefined
+              ? String(health.data.library.total_tracks)
+              : libraryStats.totalTracks,
+          totalFiles:
+            health.data.library.total_files !== undefined
+              ? String(health.data.library.total_files)
+              : libraryStats.totalFiles,
+          totalAlbums:
+            health.data.library.total_albums !== undefined
+              ? String(health.data.library.total_albums)
+              : libraryStats.totalAlbums,
+          storageUsed:
+            health.data.library.storage_used || libraryStats.storageUsed,
         };
       }
     } catch (e) {
-      console.warn('Failed to refresh stats', e);
+      console.warn("Failed to refresh stats", e);
     }
   }
 
   async function handleRebuildDatabase() {
     const confirmed = confirm(
-      'WARNING: This will completely erase your local database schemas, including all tracks, matched states, and history. You will need to perform a full Library Import afterwards. Are you sure you want to proceed?'
+      "WARNING: This will completely erase your local database schemas, including all tracks, matched states, and history. You will need to perform a full Library Import afterwards. Are you sure you want to proceed?",
     );
 
     if (!confirmed) return;
@@ -93,15 +145,25 @@
     isRebuildingDatabase = true;
 
     try {
-      const response = await apiClient.post('/database/rebuild');
+      const response = await apiClient.post("/database/rebuild");
       if (response.data && response.data.success) {
-        feedback.addToast('Database rebuilt successfully! Go to the Library page to trigger a new import.', 'success');
+        feedback.addToast(
+          "Database rebuilt successfully! Go to the Library page to trigger a new import.",
+          "success",
+        );
       } else {
-        feedback.addToast('Failed to rebuild database: ' + (response.data?.error || 'Unknown error'), 'error');
+        feedback.addToast(
+          "Failed to rebuild database: " +
+            (response.data?.error || "Unknown error"),
+          "error",
+        );
       }
     } catch (error) {
-      console.error('Failed to rebuild database:', error);
-      feedback.addToast('Failed to rebuild database: ' + (error.message || 'Unknown error'), 'error');
+      console.error("Failed to rebuild database:", error);
+      feedback.addToast(
+        "Failed to rebuild database: " + (error.message || "Unknown error"),
+        "error",
+      );
     } finally {
       isRebuildingDatabase = false;
     }
@@ -110,20 +172,26 @@
   async function handleToggleProvider(provider) {
     try {
       const targetEnabled = provider.disabled; // If currently disabled, target is enabled (true)
-      const response = await apiClient.post(`/system/plugins/${provider.id}/toggle`, {
-        enabled: targetEnabled
-      });
-      
+      const response = await apiClient.post(
+        `/system/plugins/${provider.id}/toggle`,
+        {
+          enabled: targetEnabled,
+        },
+      );
+
       if (response.data && response.data.success) {
         provider.disabled = !targetEnabled;
         feedback.addToast(
-          `${provider.name} ${targetEnabled ? 'enabled' : 'disabled'}. Restart required to finalize changes.`, 
-          'success'
+          `${provider.name} ${targetEnabled ? "enabled" : "disabled"}. Restart required to finalize changes.`,
+          "success",
         );
       }
     } catch (error) {
-      console.error('Failed to toggle provider:', error);
-      feedback.addToast(`Failed to toggle ${provider.name}: ${error.message}`, 'error');
+      console.error("Failed to toggle provider:", error);
+      feedback.addToast(
+        `Failed to toggle ${provider.name}: ${error.message}`,
+        "error",
+      );
     }
   }
 </script>
@@ -131,11 +199,15 @@
 <section class="min-h-full bg-gray-900 text-gray-100 rounded-xl p-4 md:p-6">
   <header class="mb-6">
     <h1 class="text-2xl font-semibold tracking-tight">System</h1>
-    <p class="text-sm text-gray-400">System health, library metrics, and plugin controls.</p>
+    <p class="text-sm text-gray-400">
+      System health, library metrics, and plugin controls.
+    </p>
   </header>
 
   <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
-    <article class="bg-gray-800 border border-gray-700/60 rounded-xl p-5 shadow-sm">
+    <article
+      class="bg-gray-800 border border-gray-700/60 rounded-xl p-5 shadow-sm"
+    >
       <h2 class="text-base font-semibold mb-4">System Resources</h2>
 
       <div class="space-y-4">
@@ -144,11 +216,13 @@
             <span class="text-gray-300 font-medium">CPU Usage</span>
             <div class="text-right">
               <span class="text-white font-bold">{cpuUsage}%</span>
-              <span class="text-gray-500 text-xs ml-1">(System Total: {systemCpuUsage}%)</span>
+              <span class="text-gray-500 text-xs ml-1"
+                >(System Total: {systemCpuUsage}%)</span
+              >
             </div>
           </div>
           <div class="h-1.5 bg-gray-800 rounded-full overflow-hidden">
-            <div 
+            <div
               class="h-full bg-blue-500 rounded-full transition-all duration-500"
               style="width: {cpuUsage}%"
             ></div>
@@ -160,11 +234,13 @@
             <span class="text-gray-300 font-medium">Memory Usage</span>
             <div class="text-right">
               <span class="text-white font-bold">{appMemoryMb} MB</span>
-              <span class="text-gray-500 text-xs ml-1">(System total: {memoryTotalGb} GB)</span>
+              <span class="text-gray-500 text-xs ml-1"
+                >(System total: {memoryTotalGb} GB)</span
+              >
             </div>
           </div>
           <div class="h-1.5 bg-gray-800 rounded-full overflow-hidden">
-            <div 
+            <div
               class="h-full bg-purple-500 rounded-full transition-all duration-500"
               style="width: {memoryUsage}%"
             ></div>
@@ -173,13 +249,22 @@
       </div>
     </article>
 
-    <article class="bg-gray-800 border border-gray-700/60 rounded-xl p-5 shadow-sm">
+    <article
+      class="bg-gray-800 border border-gray-700/60 rounded-xl p-5 shadow-sm"
+    >
       <h2 class="text-base font-semibold mb-4">Library Statistics</h2>
 
       <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <div class="bg-gray-900/60 rounded-lg border border-gray-700/40 p-3">
           <div class="flex items-center gap-2 text-gray-300 text-xs mb-2">
-            <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              class="w-4 h-4"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+            >
               <path d="M9 18V5l12-2v13" />
               <circle cx="6" cy="18" r="3" />
               <circle cx="18" cy="16" r="3" />
@@ -187,14 +272,25 @@
             Total Tracks
           </div>
           <div class="flex flex-col">
-            <span class="text-xl font-semibold">{libraryStats.totalTracks || 0}</span>
-            <span class="text-xs text-gray-500 mt-0.5">{libraryStats.totalFiles || 0} files</span>
+            <span class="text-xl font-semibold"
+              >{libraryStats.totalTracks || 0}</span
+            >
+            <span class="text-xs text-gray-500 mt-0.5"
+              >{libraryStats.totalFiles || 0} files</span
+            >
           </div>
         </div>
 
         <div class="bg-gray-900/60 rounded-lg border border-gray-700/40 p-3">
           <div class="flex items-center gap-2 text-gray-300 text-xs mb-2">
-            <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              class="w-4 h-4"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+            >
               <rect x="3" y="4" width="18" height="16" rx="2" />
               <path d="M8 4v16" />
             </svg>
@@ -205,7 +301,14 @@
 
         <div class="bg-gray-900/60 rounded-lg border border-gray-700/40 p-3">
           <div class="flex items-center gap-2 text-gray-300 text-xs mb-2">
-            <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              class="w-4 h-4"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+            >
               <ellipse cx="12" cy="5" rx="8" ry="3" />
               <path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5" />
               <path d="M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6" />
@@ -217,14 +320,32 @@
       </div>
     </article>
 
-    <article class="lg:col-span-2 bg-gray-800 border border-gray-700/60 rounded-xl p-5 shadow-sm">
+    <article
+      class="lg:col-span-2 bg-gray-800 border border-gray-700/60 rounded-xl p-5 shadow-sm"
+    >
       <h2 class="text-base font-semibold mb-4">Installed Plugins</h2>
 
       {#if loadingProviders}
         <div class="flex items-center justify-center py-8">
-          <svg class="animate-spin h-6 w-6 text-gray-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+          <svg
+            class="animate-spin h-6 w-6 text-gray-400"
+            xmlns="http://www.w3.org/2000/svg"
+            fill="none"
+            viewBox="0 0 24 24"
+          >
+            <circle
+              class="opacity-25"
+              cx="12"
+              cy="12"
+              r="10"
+              stroke="currentColor"
+              stroke-width="4"
+            ></circle>
+            <path
+              class="opacity-75"
+              fill="currentColor"
+              d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+            ></path>
           </svg>
           <span class="ml-3 text-gray-400">Loading plugins...</span>
         </div>
@@ -235,10 +356,14 @@
       {:else}
         <div class="space-y-3">
           {#each providerStates as provider (provider.id)}
-            <div class="flex items-center justify-between bg-gray-900/60 border border-gray-700/40 rounded-lg px-4 py-3 transition-all {provider.disabled ? 'opacity-50 grayscale' : ''}">
+            <div
+              class="flex items-center justify-between bg-gray-900/60 border border-gray-700/40 rounded-lg px-4 py-3 transition-all {provider.disabled
+                ? 'opacity-50 grayscale'
+                : ''}"
+            >
               <div class="flex items-center gap-4">
                 <!-- Toggle Switch -->
-                <button 
+                <button
                   on:click={() => handleToggleProvider(provider)}
                   class="relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none active:scale-90"
                   class:bg-emerald-600={!provider.disabled}
@@ -253,16 +378,29 @@
 
                 <div>
                   <div class="flex items-center gap-2">
-                    <p class="font-medium text-gray-100">{provider.display_name || provider.name}</p>
-                    {#if provider.source_type === 'core'}
-                      <span class="text-[9px] text-emerald-400 font-bold bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20 uppercase tracking-tight">Official</span>
+                    <p class="font-medium text-gray-100">
+                      {provider.display_name || provider.name}
+                    </p>
+                    {#if provider.source_type === "core"}
+                      <span
+                        class="text-[9px] text-emerald-400 font-bold bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20 uppercase tracking-tight"
+                        >Official</span
+                      >
                     {:else}
-                      <span class="text-[9px] text-purple-400 font-bold bg-purple-500/10 px-1.5 py-0.5 rounded border border-purple-500/20 uppercase tracking-tight">{provider.author}</span>
+                      <span
+                        class="text-[9px] text-purple-400 font-bold bg-purple-500/10 px-1.5 py-0.5 rounded border border-purple-500/20 uppercase tracking-tight"
+                        >{provider.author}</span
+                      >
                     {/if}
-                    <span class="text-[10px] text-gray-500 font-mono bg-gray-800/80 px-1.5 py-0.5 rounded border border-gray-700/50">
+                    <span
+                      class="text-[10px] text-gray-500 font-mono bg-gray-800/80 px-1.5 py-0.5 rounded border border-gray-700/50"
+                    >
                       v{provider.version}
-                      {#if provider.channel === 'beta'}
-                        <span class="ml-1 text-blue-400 font-bold uppercase tracking-wider">Beta</span>
+                      {#if provider.channel === "beta"}
+                        <span
+                          class="ml-1 text-blue-400 font-bold uppercase tracking-wider"
+                          >Beta</span
+                        >
                       {/if}
                     </span>
                   </div>
@@ -279,16 +417,34 @@
               </div>
 
               <div class="flex items-center gap-3">
-                <span class="text-xs text-gray-400 capitalize px-2 py-1 bg-gray-800 rounded">
+                {#if !provider.is_core}
+                  <button
+                    type="button"
+                    class="text-xs text-red-400 hover:text-red-300 bg-red-950/40 hover:bg-red-900/60 border border-red-800/60 px-2.5 py-1 rounded transition-colors"
+                    on:click={() => handleUninstallProvider(provider)}
+                    title="Uninstall Plugin"
+                  >
+                    Uninstall
+                  </button>
+                {/if}
+                <span
+                  class="text-xs text-gray-400 capitalize px-2 py-1 bg-gray-800 rounded"
+                >
                   {provider.category}
                 </span>
                 <div class="relative">
                   {#if provider.configured && !provider.disabled}
-                    <div class="w-2.5 h-2.5 bg-emerald-500 rounded-full shadow-[0_0_8px_rgba(16,185,129,0.4)]"></div>
+                    <div
+                      class="w-2.5 h-2.5 bg-emerald-500 rounded-full shadow-[0_0_8px_rgba(16,185,129,0.4)]"
+                    ></div>
                   {:else if provider.disabled}
-                    <div class="w-2.5 h-2.5 bg-red-500 rounded-full shadow-[0_0_8px_rgba(239,68,68,0.4)]"></div>
+                    <div
+                      class="w-2.5 h-2.5 bg-red-500 rounded-full shadow-[0_0_8px_rgba(239,68,68,0.4)]"
+                    ></div>
                   {:else}
-                    <div class="w-2.5 h-2.5 bg-amber-500 rounded-full shadow-[0_0_8px_rgba(245,158,11,0.4)]"></div>
+                    <div
+                      class="w-2.5 h-2.5 bg-amber-500 rounded-full shadow-[0_0_8px_rgba(245,158,11,0.4)]"
+                    ></div>
                   {/if}
                 </div>
               </div>
@@ -298,22 +454,38 @@
       {/if}
 
       <p class="mt-4 text-xs italic text-gray-300">
-        Green: Configured • Amber: Available but not yet configured • Red: Disabled
+        Green: Configured • Amber: Available but not yet configured • Red:
+        Disabled
       </p>
     </article>
 
-    <article class="lg:col-span-2 bg-gray-800 border border-gray-700/60 rounded-xl p-5 shadow-sm">
+    <article
+      class="lg:col-span-2 bg-gray-800 border border-gray-700/60 rounded-xl p-5 shadow-sm"
+    >
       <BackupSettings />
     </article>
 
-    <article class="lg:col-span-2 bg-red-950/40 border border-red-900/60 rounded-xl p-5 shadow-sm">
+    <article
+      class="lg:col-span-2 bg-red-950/40 border border-red-900/60 rounded-xl p-5 shadow-sm"
+    >
       <div class="flex items-start gap-3 mb-4">
-        <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M12 9v2m0 4v2m-6.773-4h13.546a2 2 0 011.82 2.975l-6.773 11.25a2 2 0 01-3.64 0l-6.773-11.25a2 2 0 011.82-2.975Z" />
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          class="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+        >
+          <path
+            d="M12 9v2m0 4v2m-6.773-4h13.546a2 2 0 011.82 2.975l-6.773 11.25a2 2 0 01-3.64 0l-6.773-11.25a2 2 0 011.82-2.975Z"
+          />
         </svg>
         <div>
           <h2 class="text-base font-semibold text-red-300 mb-1">Danger Zone</h2>
-          <p class="text-xs text-red-300/70">Advanced operations that cannot be undone. Proceed with caution.</p>
+          <p class="text-xs text-red-300/70">
+            Advanced operations that cannot be undone. Proceed with caution.
+          </p>
         </div>
       </div>
 
@@ -321,7 +493,10 @@
         <div class="flex items-center justify-between">
           <div>
             <p class="font-medium text-gray-100">Rebuild Database Schema</p>
-            <p class="text-xs text-gray-400 mt-1">Permanently erase all synced tracks and database history. Start fresh with a new library import.</p>
+            <p class="text-xs text-gray-400 mt-1">
+              Permanently erase all synced tracks and database history. Start
+              fresh with a new library import.
+            </p>
           </div>
           <button
             on:click={handleRebuildDatabase}
@@ -335,13 +510,36 @@
             class:opacity-60={isRebuildingDatabase}
           >
             {#if isRebuildingDatabase}
-              <svg class="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              <svg
+                class="animate-spin h-4 w-4"
+                xmlns="http://www.w3.org/2000/svg"
+                fill="none"
+                viewBox="0 0 24 24"
+              >
+                <circle
+                  class="opacity-25"
+                  cx="12"
+                  cy="12"
+                  r="10"
+                  stroke="currentColor"
+                  stroke-width="4"
+                ></circle>
+                <path
+                  class="opacity-75"
+                  fill="currentColor"
+                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                ></path>
               </svg>
               Rebuilding...
             {:else}
-              <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                class="w-4 h-4"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+              >
                 <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
                 <path d="M21 3v5h-5" />
                 <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />

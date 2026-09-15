@@ -10,6 +10,7 @@ import re
 from sqlalchemy import tuple_
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
+from core.task_manager import db_write_lease
 from core.tiered_logger import get_logger
 from core.user_history import UserTrackInteraction
 from database.config_database import get_config_database
@@ -83,25 +84,17 @@ class UserHistoryService:
             for server_id in active_servers:
                 try:
                     plugin_cls = PluginRegistry.get_plugin_class(server_id)
-                    server_name = (
-                        getattr(plugin_cls, "name", str(server_id))
-                        if plugin_cls
-                        else str(server_id)
-                    )
+                    server_name = getattr(plugin_cls, "name", str(server_id)) if plugin_cls else str(server_id)
 
                     plugin_id = self.config_db.get_or_create_service_id(server_name)
-                    accounts = self.config_db.get_accounts(
-                        service_id=plugin_id, is_active=True
-                    )
+                    accounts = self.config_db.get_accounts(service_id=plugin_id, is_active=True)
 
                     if not accounts:
                         self.logger.debug(f"No active accounts found for {server_name}")
                         continue
 
                     # Ensure all active managed users exist before history sync.
-                    stats["users_synced"] += self.sync_active_media_server_users(
-                        server_id, accounts
-                    )
+                    stats["users_synced"] += self.sync_active_media_server_users(server_id, accounts)
 
                     # Create provider instance
                     try:
@@ -114,19 +107,13 @@ class UserHistoryService:
 
                     # Check if provider supports history fetching
                     if not hasattr(provider, "fetch_user_history"):
-                        self.logger.debug(
-                            f"Provider ID {server_id} does not support fetch_user_history()"
-                        )
+                        self.logger.debug(f"Provider ID {server_id} does not support fetch_user_history()")
                         continue
 
                     # Sync history for each account
                     for account in accounts:
                         account_id_raw = account["id"]
-                        account_name = (
-                            account.get("display_name")
-                            or account.get("account_name")
-                            or "Unknown"
-                        )
+                        account_name = account.get("display_name") or account.get("account_name") or "Unknown"
 
                         # Handle provider-specific account ID casting/validation
                         try:
@@ -140,24 +127,18 @@ class UserHistoryService:
                                 f"Skipping account '{account_name}' on provider ID {server_id}: "
                                 f"account_id {account_id_raw!r} invalid"
                             )
-                            stats["errors"].append(
-                                f"Bad account_id for {account_name} on {server_id}"
-                            )
+                            stats["errors"].append(f"Bad account_id for {account_name} on {server_id}")
                             continue
 
                         try:
-                            self.logger.info(
-                                f"Syncing history from ID {server_id} for account {account_name}"
-                            )
+                            self.logger.info(f"Syncing history from ID {server_id} for account {account_name}")
 
                             # Fetch history from provider
                             interactions = provider.fetch_user_history(account_id)
                             stats["interactions_fetched"] += len(interactions)
 
                             if not interactions:
-                                self.logger.info(
-                                    f"No history items found for account {account_name}"
-                                )
+                                self.logger.info(f"No history items found for account {account_name}")
                                 stats["accounts_processed"] += 1
                                 continue
 
@@ -222,7 +203,7 @@ class UserHistoryService:
             Account object from working_db, or None if creation failed
         """
         try:
-            with self.working_db.session_scope() as session:
+            with db_write_lease(task_name="get_or_create_working_user"), self.working_db.session_scope() as session:
                 # Try to find existing user by provider_identifier
                 if provider_user_id:
                     user = (
@@ -237,11 +218,7 @@ class UserHistoryService:
                         return user
 
                 # Try to find by username + provider
-                user = (
-                    session.query(Account)
-                    .filter(Account.username == account_name, Account.plugin_id == 1)
-                    .first()
-                )
+                user = session.query(Account).filter(Account.username == account_name, Account.plugin_id == 1).first()
 
                 if user:
                     return user
@@ -260,24 +237,16 @@ class UserHistoryService:
             self.logger.error(f"Failed to get/create working user: {e}", exc_info=True)
             return None
 
-    def sync_active_media_server_users(
-        self, server_name: str, accounts: list[dict] | None = None
-    ) -> int:
+    def sync_active_media_server_users(self, server_name: str, accounts: list[dict] | None = None) -> int:
         """Ensure all active accounts for a server in config.db exist in working.db users."""
         users_synced = 0
         try:
             if accounts is None:
                 plugin_id = self.config_db.get_or_create_service_id(server_name)
-                accounts = self.config_db.get_accounts(
-                    service_id=plugin_id, is_active=True
-                )
+                accounts = self.config_db.get_accounts(service_id=plugin_id, is_active=True)
 
             for account in accounts or []:
-                account_name = (
-                    account.get("display_name")
-                    or account.get("account_name")
-                    or "Unknown"
-                )
+                account_name = account.get("display_name") or account.get("account_name") or "Unknown"
                 user = self._get_or_create_working_user(
                     account_id=account.get("id"),
                     account_name=account_name,
@@ -340,9 +309,7 @@ class UserHistoryService:
                             plugin_item_ids.add(normalized_id)
 
                     if not plugin_item_ids:
-                        self.logger.debug(
-                            "No plugin item IDs found in interactions; using text fallback only"
-                        )
+                        self.logger.debug("No plugin item IDs found in interactions; using text fallback only")
 
                     # Primary O(1) lookup via ExternalIdentifiers.
                     ext_idents = []
@@ -356,9 +323,7 @@ class UserHistoryService:
                             .join(Track, LocalMedia.track_id == Track.id)
                             .filter(
                                 ExternalIdentifier.plugin_source == plugin_source,
-                                ExternalIdentifier.plugin_item_id.in_(
-                                    list(plugin_item_ids)
-                                ),
+                                ExternalIdentifier.plugin_item_id.in_(list(plugin_item_ids)),
                             )
                             .all()
                         )
@@ -376,16 +341,9 @@ class UserHistoryService:
                     for interaction in interactions:
                         try:
                             extracted_id = self._extract_plugin_item_id(interaction)
-                            interaction_plugin_id = (
-                                self._normalize_plugin_item_id(extracted_id)
-                                or extracted_id
-                            )
+                            interaction_plugin_id = self._normalize_plugin_item_id(extracted_id) or extracted_id
 
-                            user_record = (
-                                work_session.query(Account)
-                                .filter_by(id=account_id)
-                                .first()
-                            )
+                            user_record = work_session.query(Account).filter_by(id=account_id).first()
                             playback_user_id = (
                                 user_record.remote_account_id
                                 if user_record and user_record.remote_account_id
@@ -397,20 +355,15 @@ class UserHistoryService:
                                     {
                                         "user_id": str(playback_user_id),
                                         "plugin_item_id": str(interaction_plugin_id),
-                                        "listened_at": interaction.last_played_at
-                                        or utc_now(),
+                                        "listened_at": interaction.last_played_at or utc_now(),
                                     }
                                 )
                         except Exception as e:
-                            self.logger.warning(
-                                f"Error preparing playback history for interaction: {e}"
-                            )
+                            self.logger.warning(f"Error preparing playback history for interaction: {e}")
 
                     if playback_payloads:
                         if self.working_db.engine.dialect.name == "sqlite":
-                            insert_stmt = sqlite_insert(PlaybackHistory).values(
-                                playback_payloads
-                            )
+                            insert_stmt = sqlite_insert(PlaybackHistory).values(playback_payloads)
                             upsert_stmt = insert_stmt.on_conflict_do_nothing(
                                 index_elements=[
                                     "user_id",
@@ -424,10 +377,7 @@ class UserHistoryService:
                     for interaction in interactions:
                         try:
                             extracted_id = self._extract_plugin_item_id(interaction)
-                            interaction_plugin_id = (
-                                self._normalize_plugin_item_id(extracted_id)
-                                or extracted_id
-                            )
+                            interaction_plugin_id = self._normalize_plugin_item_id(extracted_id) or extracted_id
 
                             if interaction_plugin_id in plugin_id_to_track:
                                 track = plugin_id_to_track[interaction_plugin_id]
@@ -441,10 +391,7 @@ class UserHistoryService:
                                 )
                                 continue
 
-                            if (
-                                interaction_plugin_id
-                                and interaction_plugin_id.startswith("ss:track:meta:")
-                            ):
+                            if interaction_plugin_id and interaction_plugin_id.startswith("ss:track:meta:"):
                                 interaction_records.append(
                                     {
                                         "interaction": interaction,
@@ -479,18 +426,11 @@ class UserHistoryService:
                         matched_tracks = (
                             music_session.query(Track)
                             .join(Track.artist)
-                            .filter(
-                                tuple_(Artist.name, Track.title).in_(list(unique_pairs))
-                            )
+                            .filter(tuple_(Artist.name, Track.title).in_(list(unique_pairs)))
                             .all()
                         )
-                        matched_pairs = {
-                            (track.artist.name, track.title) for track in matched_tracks
-                        }
-                        pair_to_track = {
-                            (track.artist.name, track.title): track
-                            for track in matched_tracks
-                        }
+                        matched_pairs = {(track.artist.name, track.title) for track in matched_tracks}
+                        pair_to_track = {(track.artist.name, track.title): track for track in matched_tracks}
 
                     rating_payload_by_sync_id: dict[str, dict[str, object]] = {}
 
@@ -513,11 +453,7 @@ class UserHistoryService:
                             continue
 
                         matched_count += 1
-                        rating_value = (
-                            float(interaction.rating)
-                            if interaction.rating is not None
-                            else None
-                        )
+                        rating_value = float(interaction.rating) if interaction.rating is not None else None
                         rating_payload_by_sync_id[sync_id] = {
                             "account_id": account_id,
                             "sync_id": sync_id,
@@ -598,9 +534,7 @@ class UserHistoryService:
 
         return raw
 
-    def _bulk_upsert_user_ratings(
-        self, work_session, rating_payloads: list[dict[str, object]]
-    ) -> None:
+    def _bulk_upsert_user_ratings(self, work_session, rating_payloads: list[dict[str, object]]) -> None:
         """Write matched user ratings in a single bulk transaction."""
         if not rating_payloads:
             return
@@ -616,14 +550,10 @@ class UserHistoryService:
             try:
                 needs_non_null_rating = False
                 with self.working_db.engine.connect() as conn:
-                    pragma_rows = conn.exec_driver_sql(
-                        "PRAGMA table_info('user_ratings')"
-                    ).fetchall()
+                    pragma_rows = conn.exec_driver_sql("PRAGMA table_info('user_ratings')").fetchall()
                     for row in pragma_rows:
                         col_name = str(row[1]) if len(row) > 1 else ""
-                        not_null_flag = (
-                            int(row[3]) if len(row) > 3 and row[3] is not None else 0
-                        )
+                        not_null_flag = int(row[3]) if len(row) > 3 and row[3] is not None else 0
                         if col_name == "rating" and not_null_flag == 1:
                             needs_non_null_rating = True
                             break
@@ -688,10 +618,7 @@ class UserHistoryService:
                     "Skipping bulk_update_mappings to prevent silent data corruption. "
                     "Re-insert via bulk_save_objects instead."
                 )
-                missing_pk_objects = [
-                    UserRating(**{k: v for k, v in m.items() if k != "id"})
-                    for m in update_mappings
-                ]
+                missing_pk_objects = [UserRating(**{k: v for k, v in m.items() if k != "id"}) for m in update_mappings]
                 work_session.bulk_save_objects(missing_pk_objects)
             else:
                 work_session.bulk_update_mappings(UserRating, update_mappings)

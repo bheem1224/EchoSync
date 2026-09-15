@@ -14,7 +14,7 @@ export const downloadStats = writable({
   isRunning: false
 });
 
-let pollingTimer = null;
+let eventSource = null;
 
 export async function fetchDownloads() {
   try {
@@ -67,15 +67,28 @@ export async function fetchDownloads() {
   }
 }
 
-export function startDownloadsPolling(intervalMs = 4000) {
+export function startDownloadsPolling() {
   fetchDownloads();
-  if (pollingTimer) clearInterval(pollingTimer);
-  pollingTimer = setInterval(fetchDownloads, intervalMs);
+  if (eventSource) eventSource.close();
+  eventSource = new EventSource('/api/v1/system/telemetry/stream', { withCredentials: true });
+  eventSource.addEventListener('queue_summary', (event) => {
+    try {
+      const summary = JSON.parse(event.data);
+      downloadStats.update((stats) => ({
+        ...stats,
+        activeCount: summary.active ?? stats.activeCount,
+        queuedCount: summary.queued ?? stats.queuedCount,
+      }));
+    } catch (error) {
+      console.error('Failed to parse download SSE event:', error);
+    }
+  });
+  return eventSource;
 }
 
 export function stopDownloadsPolling() {
-  if (pollingTimer) {
-    clearInterval(pollingTimer);
-    pollingTimer = null;
+  if (eventSource) {
+    eventSource.close();
+    eventSource = null;
   }
 }

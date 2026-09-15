@@ -6,7 +6,7 @@ import time
 import uuid
 from typing import Any
 
-from core.task_manager.models import ProcessCategory, ProcessOwner
+from core.task_manager.models import OwnerType, ProcessCategory, ProcessOwner
 from core.tiered_logger import get_logger
 
 try:
@@ -62,6 +62,54 @@ class ProcessSupervisor:
         )
         return registration_id
 
+    def spawn_supervised_thread(
+        self,
+        target: Any,
+        name: str = "SupervisedWorker",
+        owner_id: str = "core",
+        owner_type: OwnerType = OwnerType.CORE,
+        category: ProcessCategory = ProcessCategory.WORKER_THREAD,
+        daemon: bool = True,
+        args: tuple = (),
+        kwargs: dict[str, Any] | None = None,
+        cancellation_event: threading.Event | None = None,
+        bound_to_general_pool: bool = True,
+    ) -> tuple[threading.Thread, str]:
+        """Spawn a managed, tracked worker thread bound to JobQueue and registered with ProcessSupervisor."""
+        from core.task_manager.task_queue import job_queue
+
+        kwargs = kwargs or {}
+        reg_id_holder = [""]
+
+        def _wrapped():
+            acquired_pool = False
+            if bound_to_general_pool and hasattr(job_queue, "_general_workers"):
+                job_queue._general_workers.acquire()
+                acquired_pool = True
+
+            try:
+                target(*args, **kwargs)
+            finally:
+                if acquired_pool:
+                    job_queue._general_workers.release()
+                if reg_id_holder[0]:
+                    self.unregister_process(reg_id_holder[0])
+
+        thread = threading.Thread(target=_wrapped, name=name, daemon=daemon)
+        thread.start()
+
+        owner = ProcessOwner(
+            owner_id=owner_id,
+            owner_type=owner_type,
+            task_name=name,
+            category=category,
+            thread_id=thread.ident,
+            is_killable=True,
+        )
+        reg_id = self.register_process(owner, cancellation_event=cancellation_event)
+        reg_id_holder[0] = reg_id
+        return thread, reg_id
+
     def unregister_process(self, registration_id: str) -> None:
         """
         Removes completed or stopped tasks from the process registry.
@@ -72,13 +120,9 @@ class ProcessSupervisor:
             self._cancellation_events.pop(registration_id, None)
 
         if removed:
-            logger.debug(
-                f"Unregistered process '{registration_id}' for owner '{removed.owner_id}'"
-            )
+            logger.debug(f"Unregistered process '{registration_id}' for owner '{removed.owner_id}'")
 
-    def get_cancellation_event(
-        self, thread_id: int | None = None
-    ) -> threading.Event | None:
+    def get_cancellation_event(self, thread_id: int | None = None) -> threading.Event | None:
         """Look up the cancellation event for a given thread_id (defaults to current thread)."""
         target_tid = thread_id or threading.get_ident()
         with self._lock:
@@ -106,28 +150,18 @@ class ProcessSupervisor:
         Kills all sub-processes/threads registered under owner_id.
         """
         with self._lock:
-            target_ids = [
-                reg_id
-                for reg_id, owner in self._processes.items()
-                if owner.owner_id == owner_id
-            ]
+            target_ids = [reg_id for reg_id, owner in self._processes.items() if owner.owner_id == owner_id]
 
         if not target_ids:
-            logger.debug(
-                f"No active processes found for owner '{owner_id}' to terminate."
-            )
+            logger.debug(f"No active processes found for owner '{owner_id}' to terminate.")
             return
 
-        logger.info(
-            f"Terminating {len(target_ids)} process(es) registered under owner '{owner_id}'"
-        )
+        logger.info(f"Terminating {len(target_ids)} process(es) registered under owner '{owner_id}'")
 
         for reg_id in target_ids:
             self.kill_with_cleanup(reg_id)
 
-    def kill_with_cleanup(
-        self, registration_id: str, wait_secs: float = 3.0
-    ) -> tuple[bool, str]:
+    def kill_with_cleanup(self, registration_id: str, wait_secs: float = 3.0) -> tuple[bool, str]:
         """
         Safely terminate a specific registered process based on its category.
         Releases DB sessions it may be holding to prevent corruption.
@@ -147,9 +181,7 @@ class ProcessSupervisor:
             )
 
         task_label = f"'{owner.task_name}' (owner={owner.owner_id})"
-        logger.info(
-            f"[kill_with_cleanup] Initiating safe kill of {task_label} ({owner.category.value})"
-        )
+        logger.info(f"[kill_with_cleanup] Initiating safe kill of {task_label} ({owner.category.value})")
 
         thread_exited = False
 
@@ -157,24 +189,16 @@ class ProcessSupervisor:
             if wasm_wrapper and hasattr(wasm_wrapper, "engine"):
                 try:
                     wasm_wrapper.engine.increment_epoch()
-                    logger.info(
-                        f"[kill_with_cleanup] Triggered epoch interrupt for WASM Sandbox: {task_label}"
-                    )
+                    logger.info(f"[kill_with_cleanup] Triggered epoch interrupt for WASM Sandbox: {task_label}")
                 except Exception as e:
-                    logger.error(
-                        f"[kill_with_cleanup] Failed to trigger epoch interrupt: {e}"
-                    )
+                    logger.error(f"[kill_with_cleanup] Failed to trigger epoch interrupt: {e}")
             else:
-                logger.warning(
-                    f"[kill_with_cleanup] No WASM engine found to interrupt for {task_label}"
-                )
+                logger.warning(f"[kill_with_cleanup] No WASM engine found to interrupt for {task_label}")
 
         elif owner.category == ProcessCategory.WORKER_THREAD:
             if cancel_event:
                 cancel_event.set()
-                logger.info(
-                    f"[kill_with_cleanup] Set cooperative cancellation flag for {task_label}"
-                )
+                logger.info(f"[kill_with_cleanup] Set cooperative cancellation flag for {task_label}")
             else:
                 logger.warning(
                     f"[kill_with_cleanup] No cancellation event provided for worker thread {task_label}. Relying solely on DB session release."
@@ -190,18 +214,14 @@ class ProcessSupervisor:
         if owner.thread_id:
             deadline = time.monotonic() + wait_secs
             while time.monotonic() < deadline:
-                alive_ids = {
-                    t.ident for t in threading.enumerate() if t.ident is not None
-                }
+                alive_ids = {t.ident for t in threading.enumerate() if t.ident is not None}
                 if owner.thread_id not in alive_ids:
                     thread_exited = True
                     break
                 time.sleep(0.1)
 
             if thread_exited:
-                logger.info(
-                    f"[kill_with_cleanup] Thread for {task_label} exited cleanly."
-                )
+                logger.info(f"[kill_with_cleanup] Thread for {task_label} exited cleanly.")
             else:
                 logger.warning(
                     f"[kill_with_cleanup] Thread for {task_label} did not exit within {wait_secs}s — forcing session cleanup anyway."
@@ -242,13 +262,9 @@ class ProcessSupervisor:
                     os.kill(pid, signal.SIGABRT)
             else:
                 os.kill(pid, signal.SIGTERM)
-            logger.info(
-                f"Sent termination signal to process PID {pid} (Task: {task_name})"
-            )
+            logger.info(f"Sent termination signal to process PID {pid} (Task: {task_name})")
         except (ProcessLookupError, OSError) as exc:
-            logger.debug(
-                f"Process PID {pid} (Task: {task_name}) was already terminated or not found: {exc}"
-            )
+            logger.debug(f"Process PID {pid} (Task: {task_name}) was already terminated or not found: {exc}")
 
     def get_active_processes(self, owner_id: str | None = None) -> list[ProcessOwner]:
         with self._lock:
@@ -266,11 +282,7 @@ class ProcessSupervisor:
                 continue
 
             # Aggregate system metrics dynamically
-            if (
-                HAS_PSUTIL
-                and owner.pid
-                and owner.category == ProcessCategory.OS_SUBPROCESS
-            ):
+            if HAS_PSUTIL and owner.pid and owner.category == ProcessCategory.OS_SUBPROCESS:
                 try:
                     p = psutil.Process(owner.pid)
                     owner.cpu_percent = p.cpu_percent(interval=None)
@@ -313,23 +325,3 @@ def release_system_memory() -> None:
             ctypes.CDLL("libc.so.6").malloc_trim(0)
         except Exception:
             pass
-
-
-# Register core system workers
-try:
-    import threading
-
-    from core.task_manager.models import OwnerType, ProcessCategory, ProcessOwner
-
-    supervisor.register_process(
-        ProcessOwner(
-            owner_id="core.scheduler",
-            owner_type=OwnerType.CORE,
-            task_name="Task Scheduler Daemon",
-            category=ProcessCategory.CORE_SYSTEM,
-            is_killable=False,
-            thread_id=threading.main_thread().ident,
-        )
-    )
-except Exception:
-    pass

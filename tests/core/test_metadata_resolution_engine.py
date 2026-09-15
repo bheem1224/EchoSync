@@ -1407,3 +1407,120 @@ def test_acoustid_resolves_nested_releasegroups_with_single_mb_call(monkeypatch,
     # 3. Only ONE MusicBrainz call made
     assert queried_mbids == ["d2555d82-true-track"]
     assert len(queried_mbids) == 1
+
+
+def test_acoustid_high_confidence_acoustic_match_overrides_disjoint_title_tokens(monkeypatch, tmp_path):
+    """Verify that when AcoustID acoustic confidence is high (score >= 0.95, duration delta <= 1.0s),
+    completely disjoint title tokens (e.g. alternate language/transliteration) do NOT cap similarity
+    at 0.15 or drop the candidate. The physical acoustic floor (0.65) ensures survival.
+    """
+    audio_file = tmp_path / "01 - Shinkai.flac"
+    audio_file.write_bytes(b"dummy flac content")
+
+    mock_chromaprint = "AQABz0mSRIqYJEoUB9_shinkai" * 40
+    monkeypatch.setattr(FingerprintGenerator, "generate_with_duration", lambda p: (mock_chromaprint, 200.0))
+
+    mock_acoustid = MagicMock()
+    mock_acoustid.resolve_fingerprint_details.return_value = {
+        "acoustid_id": "acoustid_shinkai_uuid",
+        "recordings": [
+            {
+                "id": "mbid_deep_sea",
+                "title": "Deep Sea",  # Completely disjoint words from "Shinkai"
+                "artist": "Eve",
+                "duration": 200.2,  # Delta 0.2s <= 1.0s
+                "score": 0.98,  # High acoustic score >= 0.95
+            }
+        ],
+        "mbids": ["mbid_deep_sea"],
+        "score": 0.98,
+    }
+
+    mock_mb = MagicMock()
+    mock_mb.get_metadata.return_value = {
+        "title": "Deep Sea",
+        "artist": "Eve",
+        "album": "Otogi",
+        "recording_id": "mbid_deep_sea",
+        "duration_ms": 200200,
+        "release_group": {"primary_type": "Album"},
+    }
+
+    engine = MetadataResolutionEngine(
+        acoustid_provider=mock_acoustid,
+        metadata_provider=mock_mb,
+    )
+
+    req = ResolutionRequest(
+        media_id="test_shinkai",
+        file_path=audio_file,
+        baseline_title=None,
+        baseline_artist="Eve",
+        ignore_cache=True,
+    )
+
+    result = engine.resolve_track(req)
+
+    assert result is not None
+    assert result.musicbrainz_track_id == "mbid_deep_sea"
+    assert result.title == "Deep Sea"
+    assert result.resolution_method == "acoustid"
+    assert mock_mb.get_metadata.called
+
+
+def test_acoustid_generic_or_missing_baseline_artist_bypasses_step_b(monkeypatch, tmp_path):
+    """Verify that when baseline_artist is generic ('Various Artists', 'Unknown') or empty,
+    Step B disjoint artist filtering is completely bypassed.
+    """
+    audio_file = tmp_path / "05 - Track Title.flac"
+    audio_file.write_bytes(b"dummy flac content")
+
+    mock_chromaprint = "AQABz0mSRIqYJEoUB9_generic" * 40
+    monkeypatch.setattr(FingerprintGenerator, "generate_with_duration", lambda p: (mock_chromaprint, 180.0))
+
+    mock_acoustid = MagicMock()
+    mock_acoustid.resolve_fingerprint_details.return_value = {
+        "acoustid_id": "acoustid_generic_uuid",
+        "recordings": [
+            {
+                "id": "mbid_specific_artist",
+                "title": "Track Title",
+                "artist": "Specific Artist",
+                "duration": 180.0,
+                "score": 0.96,
+            }
+        ],
+        "mbids": ["mbid_specific_artist"],
+        "score": 0.96,
+    }
+
+    mock_mb = MagicMock()
+    mock_mb.get_metadata.return_value = {
+        "title": "Track Title",
+        "artist": "Specific Artist",
+        "album": "Specific Album",
+        "recording_id": "mbid_specific_artist",
+        "duration_ms": 180000,
+        "release_group": {"primary_type": "Album"},
+    }
+
+    engine = MetadataResolutionEngine(
+        acoustid_provider=mock_acoustid,
+        metadata_provider=mock_mb,
+    )
+
+    # Test with generic baseline artist "Various Artists"
+    req = ResolutionRequest(
+        media_id="test_generic_artist",
+        file_path=audio_file,
+        baseline_title=None,
+        baseline_artist="Various Artists",
+        ignore_cache=True,
+    )
+
+    result = engine.resolve_track(req)
+
+    assert result is not None
+    assert result.musicbrainz_track_id == "mbid_specific_artist"
+    assert result.artist == "Specific Artist"
+    assert mock_mb.get_metadata.called

@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from core.database.repositories.track_repo import TrackRepository, bulk_upsert_tracks
 from core.database.utils import calculate_safe_batch_size
 from core.db.echo_sync_track import EchosyncMedia, EchosyncTrack
+from core.task_manager import db_write_lease
 from database.music_database import get_database
 
 logger = logging.getLogger("ingestion_orchestrator")
@@ -46,24 +47,10 @@ def _parse_telemetry_dict(raw_dict: dict[str, Any]) -> EchosyncTrack | None:
 
         # --- Normalize flat FFI field names to EchosyncTrack constructor names ---
         # Unconditionally pop alias/computed fields so init=False fields are never passed to __init__
-        title_val = (
-            raw_dict.pop("raw_title", None)
-            or raw_dict.pop("title", None)
-            or "Unknown Title"
-        )
-        artist_val = (
-            raw_dict.pop("artist_name", None)
-            or raw_dict.pop("artist", None)
-            or "Unknown Artist"
-        )
-        album_val = (
-            raw_dict.pop("album_title", None)
-            or raw_dict.pop("album", None)
-            or "Unknown Album"
-        )
-        duration_val = raw_dict.pop("duration_ms", None) or raw_dict.pop(
-            "duration", None
-        )
+        title_val = raw_dict.pop("raw_title", None) or raw_dict.pop("title", None) or "Unknown Title"
+        artist_val = raw_dict.pop("artist_name", None) or raw_dict.pop("artist", None) or "Unknown Artist"
+        album_val = raw_dict.pop("album_title", None) or raw_dict.pop("album", None) or "Unknown Album"
+        duration_val = raw_dict.pop("duration_ms", None) or raw_dict.pop("duration", None)
         mbid_val = raw_dict.pop("musicbrainz_id", None) or raw_dict.pop("mbid", None)
         year_val = raw_dict.pop("year", None) or raw_dict.pop("release_year", None)
 
@@ -84,16 +71,12 @@ def _parse_telemetry_dict(raw_dict: dict[str, Any]) -> EchosyncTrack | None:
 
         # Hoist flat physical file fields into an EchosyncMedia if no media list was given
         flat_file_path = raw_dict.pop("file_path", None)
-        flat_file_format = raw_dict.pop("file_format", None) or raw_dict.pop(
-            "codec", None
-        )
+        flat_file_format = raw_dict.pop("file_format", None) or raw_dict.pop("codec", None)
         flat_bitrate = raw_dict.pop("bitrate", None)
         flat_sample_rate = raw_dict.pop("sample_rate", None)
         flat_bit_depth = raw_dict.pop("bit_depth", None)
         flat_channels = raw_dict.pop("channels", None)
-        flat_file_size = raw_dict.pop("file_size_bytes", None) or raw_dict.pop(
-            "file_size", None
-        )
+        flat_file_size = raw_dict.pop("file_size_bytes", None) or raw_dict.pop("file_size", None)
 
         if flat_file_path and not media_list:
             media_list.append(
@@ -111,9 +94,7 @@ def _parse_telemetry_dict(raw_dict: dict[str, Any]) -> EchosyncTrack | None:
         # Filter strictly by dataclass fields where f.init is True
         import dataclasses
 
-        valid_init_fields = {
-            f.name for f in dataclasses.fields(EchosyncTrack) if f.init
-        }
+        valid_init_fields = {f.name for f in dataclasses.fields(EchosyncTrack) if f.init}
         clean_data = {k: v for k, v in raw_dict.items() if k in valid_init_fields}
 
         track = EchosyncTrack(**clean_data)
@@ -135,11 +116,7 @@ class IngestionOrchestrator:
         batch_size: int | None = None,
         session_factory: Callable[[], Session] | None = None,
     ):
-        self.batch_size = (
-            batch_size
-            if batch_size is not None
-            else calculate_safe_batch_size(column_count=10)
-        )
+        self.batch_size = batch_size if batch_size is not None else calculate_safe_batch_size(column_count=10)
         self.session_factory = session_factory or (lambda: get_database().get_session())
 
     def ingest_telemetry_batch(self, pydict_batch: list[dict[str, Any]]) -> int:
@@ -167,7 +144,8 @@ class IngestionOrchestrator:
                 chunk = tracks[i : i + self.batch_size]
                 TrackRepository.resolve_artists_and_albums(session, chunk)
                 affected = bulk_upsert_tracks(session, chunk)
-                session.commit()
+                with db_write_lease(task_name="orchestrator_ingest_telemetry"):
+                    session.commit()
                 total_upserted += affected
 
             logger.info(

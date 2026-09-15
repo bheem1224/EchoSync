@@ -6,7 +6,7 @@
   import { player } from "../../stores/player";
   import TrackRow from "$lib/components/TrackRow.svelte";
   import Omnibar from "$lib/components/Omnibar.svelte";
-  import MetadataReviewModal from "$lib/components/MetadataReviewModal.svelte";
+  import MetadataEditorModal from "$lib/components/MetadataEditorModal.svelte";
 
   // Collection Data
   let libraryIndex = $state([]);
@@ -20,6 +20,7 @@
   // Metadata Review Modal State
   let reviewTask = $state(null);
   let showReviewModal = $state(false);
+  let selectedMediaId = $state(null);
 
   // Pagination / Virtualization for Artists Grid
   let visibleCount = $state(50);
@@ -154,14 +155,61 @@
     }
   }
 
-  function playTrack(track, artist, album) {
-    player.play({
+  function handlePlayTrack(
+    trackOrSyncId,
+    mediaIdOrArtist = null,
+    maybeAlbum = null,
+  ) {
+    let track = null;
+    let artist = selectedArtist;
+    let album = maybeAlbum;
+    let media_id = null;
+
+    if (typeof trackOrSyncId === "object" && trackOrSyncId !== null) {
+      track = trackOrSyncId;
+      if (typeof mediaIdOrArtist === "object" && mediaIdOrArtist !== null) {
+        artist = mediaIdOrArtist;
+      } else if (typeof mediaIdOrArtist === "string") {
+        media_id = mediaIdOrArtist;
+      }
+    } else {
+      const sync_id = trackOrSyncId;
+      media_id = typeof mediaIdOrArtist === "string" ? mediaIdOrArtist : null;
+      if (selectedArtist && selectedArtist.albums) {
+        for (const a of selectedArtist.albums) {
+          const found = a.tracks.find(
+            (t) => t.sync_id === sync_id || String(t.id) === String(sync_id),
+          );
+          if (found) {
+            track = found;
+            album = a;
+            break;
+          }
+        }
+      }
+      if (!track) {
+        track = { id: sync_id, sync_id: sync_id };
+      }
+    }
+
+    const sync_id = track.sync_id || track.id;
+    const streamUrl = media_id
+      ? `/api/v1/stream/${sync_id}?media_id=${encodeURIComponent(media_id)}`
+      : `/api/v1/stream/${sync_id}`;
+
+    const trackMetadata = {
       ...track,
-      artist: artist.name,
-      album: album.title,
-      cover: album.cover_image_url || artist.image_url,
-    });
+      artist: artist?.name || track.artist_name || "Unknown Artist",
+      album: album?.title || track.album_title || "Unknown Album",
+      cover: album?.cover_image_url || artist?.image_url || null,
+      streamUrl,
+      media_id,
+    };
+
+    player.playTrack(streamUrl, trackMetadata);
   }
+
+  const playTrack = handlePlayTrack;
 
   async function deleteTrack(trackId, album) {
     if (
@@ -222,13 +270,21 @@
     }
   }
 
-  async function openMetadataEditor(trackRef) {
+  async function openMetadataEditor(trackRef, media_id = null) {
+    selectedMediaId = media_id || null;
     try {
-      const res = await apiClient.post(
-        `/system/manager/track/${trackRef}/edit_metadata`,
-      );
+      const url = media_id
+        ? `/system/manager/track/${trackRef}/edit_metadata?media_id=${encodeURIComponent(media_id)}`
+        : `/system/manager/track/${trackRef}/edit_metadata`;
+      const res = await apiClient.post(url);
       if (res.data && res.data.task) {
         reviewTask = res.data.task;
+        if (media_id && reviewTask) {
+          reviewTask.media_id = media_id;
+          if (reviewTask.track_data) {
+            reviewTask.track_data.media_id = media_id;
+          }
+        }
         showReviewModal = true;
       } else {
         alert(
@@ -244,6 +300,7 @@
   function handleReviewClose() {
     showReviewModal = false;
     reviewTask = null;
+    selectedMediaId = null;
   }
 
   async function handleReviewApproved() {
@@ -265,7 +322,7 @@
 {:else}
   <!-- GRID VIEW -->
   {#if viewMode === "grid"}
-    <div class="mb-6">
+    <div class="mb-6 relative z-30">
       <Omnibar
         forcedPrefix="# "
         placeholder="Search your local library for artists, albums, or tracks..."
@@ -368,7 +425,9 @@
                     {track}
                     artist={selectedArtist}
                     {album}
+                    onplay={handlePlayTrack}
                     onPlay={playTrack}
+                    onedit={openMetadataEditor}
                     onDelete={deleteTrack}
                     {openMetadataEditor}
                     onFetchMetadata={openMetadataEditor}
@@ -386,8 +445,10 @@
 {/if}
 
 {#if showReviewModal && reviewTask}
-  <MetadataReviewModal
+  <MetadataEditorModal
     task={reviewTask}
+    mediaId={selectedMediaId}
+    media_id={selectedMediaId}
     on:close={handleReviewClose}
     on:approved={handleReviewApproved}
     on:saved={() => loadLibrary()}

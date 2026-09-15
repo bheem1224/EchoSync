@@ -46,14 +46,21 @@ class ErrorHandler:
             The result of the function, or None if all retries fail.
         """
         attempt = 0
+        from core.task_manager.supervisor import supervisor
+
         while attempt <= retries:
+            if supervisor.is_current_task_cancelled():
+                tiered_logger.log(
+                    log_tier,
+                    logging.WARNING,
+                    f"Task cancelled before attempt {attempt} for {func.__name__}",
+                )
+                return None
             try:
                 return func()
             except Exception as e:
                 # Use tiered logger for specific tier request, or standard logger
-                tiered_logger.log(
-                    log_tier, logging.ERROR, f"Error in function {func.__name__}: {e}"
-                )
+                tiered_logger.log(log_tier, logging.ERROR, f"Error in function {func.__name__}: {e}")
                 tiered_logger.log(log_tier, logging.DEBUG, traceback.format_exc())
 
                 if attempt == retries:
@@ -72,7 +79,19 @@ class ErrorHandler:
                     logging.INFO,
                     f"Retrying {func.__name__} in {backoff_time:.2f} seconds...",
                 )
-                time.sleep(backoff_time)
+                step = 0.2
+                elapsed = 0.0
+                while elapsed < backoff_time:
+                    if supervisor.is_current_task_cancelled():
+                        tiered_logger.log(
+                            log_tier,
+                            logging.WARNING,
+                            f"Task cancelled during retry backoff for {func.__name__}",
+                        )
+                        return None
+                    sleep_dur = min(step, backoff_time - elapsed)
+                    time.sleep(sleep_dur)
+                    elapsed += sleep_dur
                 attempt += 1
 
     @staticmethod

@@ -25,11 +25,7 @@ def get_local_track_details(
         with db.session_scope() as session:
             track = None
             if musicbrainz_id:
-                track = (
-                    session.query(Track)
-                    .filter(Track.musicbrainz_id == musicbrainz_id)
-                    .first()
-                )
+                track = session.query(Track).filter(Track.musicbrainz_id == musicbrainz_id).first()
             if not track and isrc:
                 track = session.query(Track).filter(Track.isrc == isrc).first()
             if not track and title and artist_name:
@@ -58,7 +54,6 @@ class SearchAdapter:
         """Aggregate search results from providers and yield them as chunks."""
         import asyncio
         import queue
-        import threading
 
         from core.nexus_framework.plugin_loader import (
             PluginRegistry,
@@ -161,13 +156,12 @@ class SearchAdapter:
                     if plugin_ids and plugin_id in plugin_ids:
                         is_explicitly_targeted = True
                     if plugin_names is not None:
-                        prov_names_lower = [
-                            p.lower().replace("echosync.", "") for p in plugin_names
-                        ] + [p.lower() for p in plugin_names]
+                        prov_names_lower = [p.lower().replace("echosync.", "") for p in plugin_names] + [
+                            p.lower() for p in plugin_names
+                        ]
                         if (
                             provider.name.lower() in prov_names_lower
-                            or provider.name.lower().replace("echosync.", "")
-                            in prov_names_lower
+                            or provider.name.lower().replace("echosync.", "") in prov_names_lower
                         ):
                             is_explicitly_targeted = True
 
@@ -181,9 +175,7 @@ class SearchAdapter:
                     if not is_downloader:
                         search_cap_keys = ["tracks", "artists", "albums", "playlists"]
                         if not any(
-                            getattr(caps.search, k, False)
-                            for k in (search_types or ["tracks"])
-                            if k in search_cap_keys
+                            getattr(caps.search, k, False) for k in (search_types or ["tracks"]) if k in search_cap_keys
                         ):
                             continue
 
@@ -199,11 +191,7 @@ class SearchAdapter:
                         return provider.name, []
                     try:
                         provider_results = []
-                        kinds_to_search = (
-                            ["tracks"]
-                            if is_downloader
-                            else (search_types or ["tracks"])
-                        )
+                        kinds_to_search = ["tracks"] if is_downloader else (search_types or ["tracks"])
 
                         active_quality_profile = None
                         if is_downloader:
@@ -217,12 +205,7 @@ class SearchAdapter:
                                 )
                                 if isinstance(profiles, list) and profiles:
                                     active_quality_profile = next(
-                                        (
-                                            p
-                                            for p in profiles
-                                            if isinstance(p, dict)
-                                            and p.get("is_default")
-                                        ),
+                                        (p for p in profiles if isinstance(p, dict) and p.get("is_default")),
                                         profiles[0],
                                     )
                             except Exception:
@@ -249,35 +232,25 @@ class SearchAdapter:
 
                             search_kwargs = {"type": search_type_singular, "limit": 10}
                             if is_downloader and active_quality_profile:
-                                search_kwargs["quality_profile"] = (
-                                    active_quality_profile
-                                )
+                                search_kwargs["quality_profile"] = active_quality_profile
 
                             try:
                                 import inspect
 
                                 sig = inspect.signature(provider.search)
                                 has_var_kw = any(
-                                    p.kind == inspect.Parameter.VAR_KEYWORD
-                                    for p in sig.parameters.values()
+                                    p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
                                 )
                                 if "cancel_event" in sig.parameters or has_var_kw:
                                     search_kwargs["cancel_event"] = cancel_event
                                 if "quality_profile" in sig.parameters or has_var_kw:
-                                    if (
-                                        active_quality_profile
-                                        and "quality_profile" not in search_kwargs
-                                    ):
-                                        search_kwargs["quality_profile"] = (
-                                            active_quality_profile
-                                        )
+                                    if active_quality_profile and "quality_profile" not in search_kwargs:
+                                        search_kwargs["quality_profile"] = active_quality_profile
                             except Exception:
                                 pass
 
                             # run blocking search in thread
-                            raw_items = await asyncio.to_thread(
-                                provider.search, query, **search_kwargs
-                            )
+                            raw_items = await asyncio.to_thread(provider.search, query, **search_kwargs)
                             if not raw_items:
                                 continue
 
@@ -291,80 +264,53 @@ class SearchAdapter:
                                 item_dict["plugin_id"] = plugin_id
                                 item_dict["plugin"] = provider.name
                                 item_dict["type"] = kind
-                                item_dict["confidence"] = getattr(
-                                    item_dict, "confidence", 1.0
-                                )
+                                item_dict["confidence"] = getattr(item_dict, "confidence", 1.0)
 
                                 if "title" not in item_dict and "name" in item_dict:
                                     item_dict["title"] = item_dict["name"]
-                                if (
-                                    "artist" not in item_dict
-                                    and "artist_name" in item_dict
-                                ):
+                                if "artist" not in item_dict and "artist_name" in item_dict:
                                     item_dict["artist"] = item_dict["artist_name"]
 
-                                is_local_provider = isinstance(
-                                    provider, MediaServerProvider
-                                )
+                                is_local_provider = isinstance(provider, MediaServerProvider)
 
                                 title = item_dict.get("title") or "Unknown"
                                 artist = item_dict.get("artist") or "Unknown"
-                                isrc = item_dict.get("isrc") or item_dict.get(
-                                    "identifiers", {}
-                                ).get("isrc")
-                                mb_id = item_dict.get(
-                                    "musicbrainz_id"
-                                ) or item_dict.get("identifiers", {}).get(
+                                isrc = item_dict.get("isrc") or item_dict.get("identifiers", {}).get("isrc")
+                                mb_id = item_dict.get("musicbrainz_id") or item_dict.get("identifiers", {}).get(
                                     "musicbrainz_recording_id"
                                 )
 
-                                is_local_db, local_artist_id = get_local_track_details(
-                                    title, artist, isrc, mb_id
-                                )
+                                is_local_db, local_artist_id = get_local_track_details(title, artist, isrc, mb_id)
                                 item_dict["is_local"] = is_local_db or is_local_provider
                                 if local_artist_id:
                                     item_dict["artist_id"] = local_artist_id
 
                                 item_dict["source"] = (
                                     "local"
-                                    if (
-                                        is_local_provider
-                                        or provider.name
-                                        in ("local_metadata", "local_server")
-                                    )
+                                    if (is_local_provider or provider.name in ("local_metadata", "local_server"))
                                     else provider.name
                                 )
 
-                                external_url = item_dict.get(
-                                    "external_url"
-                                ) or item_dict.get("url")
+                                external_url = item_dict.get("external_url") or item_dict.get("url")
                                 if not external_url:
                                     ext_urls = item_dict.get("external_urls", {})
                                     if isinstance(ext_urls, dict) and ext_urls:
-                                        external_url = next(
-                                            iter(ext_urls.values()), None
-                                        )
+                                        external_url = next(iter(ext_urls.values()), None)
                                     if not external_url:
                                         if mb_id:
                                             external_url = f"https://musicbrainz.org/recording/{mb_id}"
                                         else:
-                                            spot_id = item_dict.get(
-                                                "identifiers", {}
-                                            ).get("spotify_id")
+                                            spot_id = item_dict.get("identifiers", {}).get("spotify_id")
                                             if spot_id:
                                                 external_url = f"https://open.spotify.com/track/{spot_id}"
                                 item_dict["external_url"] = external_url
-                                item_dict["metadata_quality_score"] = getattr(
-                                    provider, "metadata_quality_score", 50
-                                )
+                                item_dict["metadata_quality_score"] = getattr(provider, "metadata_quality_score", 50)
 
                                 provider_results.append(item_dict)
 
                         return provider.name, provider_results
                     except Exception as e:
-                        get_logger("search_adapter").error(
-                            f"Search failed for {provider.name}: {e}"
-                        )
+                        get_logger("search_adapter").error(f"Search failed for {provider.name}: {e}")
                         return provider.name, []
 
                 tasks = [
@@ -400,9 +346,7 @@ class SearchAdapter:
                         valid_items.append(item)
 
                     # Sort chunk items by metadata_quality_score descending
-                    valid_items.sort(
-                        key=lambda x: x.get("metadata_quality_score", 50), reverse=True
-                    )
+                    valid_items.sort(key=lambda x: x.get("metadata_quality_score", 50), reverse=True)
 
                     if cancel_event and cancel_event.is_set():
                         break
@@ -415,9 +359,15 @@ class SearchAdapter:
         def thread_target():
             asyncio.run(async_worker())
 
-        t = threading.Thread(target=thread_target)
-        t.daemon = True
-        t.start()
+        from core.task_manager.supervisor import supervisor
+
+        t, reg_id = supervisor.spawn_supervised_thread(
+            target=thread_target,
+            name="SearchStreamWorker",
+            owner_id="web.search_service",
+            cancellation_event=cancel_event,
+            bound_to_general_pool=True,
+        )
 
         try:
             while True:
@@ -427,6 +377,14 @@ class SearchAdapter:
                     chunk = q.get(timeout=0.2)
                 except queue.Empty:
                     if not t.is_alive():
+                        while not q.empty():
+                            try:
+                                chunk = q.get_nowait()
+                                if chunk is None:
+                                    break
+                                yield chunk
+                            except queue.Empty:
+                                break
                         break
                     continue
                 if chunk is None:
@@ -437,9 +395,9 @@ class SearchAdapter:
                 cancel_event.set()
             return
         except Exception as e:
-            get_logger("search_adapter").error(
-                f"Error in aggregate_stream yield loop: {e}"
-            )
+            get_logger("search_adapter").error(f"Error in aggregate_stream yield loop: {e}")
+        finally:
+            supervisor.unregister_process(reg_id)
 
     def aggregate(
         self,
@@ -474,11 +432,7 @@ class SearchAdapter:
                 caps = get_plugin_capabilities(plugin_id)
             except Exception:
                 continue
-            if not any(
-                getattr(caps.search, search_cap_keys[k], False)
-                for k in search_types
-                if k in search_cap_keys
-            ):
+            if not any(getattr(caps.search, search_cap_keys[k], False) for k in search_types if k in search_cap_keys):
                 continue
             if plugin_ids and plugin_id not in plugin_ids:
                 continue
@@ -496,9 +450,7 @@ class SearchAdapter:
 
                 try:
                     search_type_singular = kind.removesuffix("s")
-                    provider_results = provider.search(
-                        query, type=search_type_singular, limit=10
-                    )
+                    provider_results = provider.search(query, type=search_type_singular, limit=10)
                     if not provider_results:
                         continue
 
@@ -525,16 +477,12 @@ class SearchAdapter:
                         # Database lookup for is_local and artist_id
                         title = item_dict.get("title") or "Unknown"
                         artist = item_dict.get("artist") or "Unknown"
-                        isrc = item_dict.get("isrc") or item_dict.get(
-                            "identifiers", {}
-                        ).get("isrc")
-                        mb_id = item_dict.get("musicbrainz_id") or item_dict.get(
-                            "identifiers", {}
-                        ).get("musicbrainz_recording_id")
-
-                        is_local_db, local_artist_id = get_local_track_details(
-                            title, artist, isrc, mb_id
+                        isrc = item_dict.get("isrc") or item_dict.get("identifiers", {}).get("isrc")
+                        mb_id = item_dict.get("musicbrainz_id") or item_dict.get("identifiers", {}).get(
+                            "musicbrainz_recording_id"
                         )
+
+                        is_local_db, local_artist_id = get_local_track_details(title, artist, isrc, mb_id)
 
                         item_dict["is_local"] = is_local_db or is_local_provider
                         if local_artist_id:
@@ -543,40 +491,27 @@ class SearchAdapter:
                         # Payload serialization enhancements
                         item_dict["source"] = (
                             "local"
-                            if (
-                                is_local_provider
-                                or provider.name in ("local_metadata", "local_server")
-                            )
+                            if (is_local_provider or provider.name in ("local_metadata", "local_server"))
                             else provider.name
                         )
 
-                        external_url = item_dict.get("external_url") or item_dict.get(
-                            "url"
-                        )
+                        external_url = item_dict.get("external_url") or item_dict.get("url")
                         if not external_url:
                             ext_urls = item_dict.get("external_urls", {})
                             if isinstance(ext_urls, dict) and ext_urls:
                                 external_url = next(iter(ext_urls.values()), None)
                             if not external_url:
                                 if mb_id:
-                                    external_url = (
-                                        f"https://musicbrainz.org/recording/{mb_id}"
-                                    )
+                                    external_url = f"https://musicbrainz.org/recording/{mb_id}"
                                 else:
-                                    spot_id = item_dict.get("identifiers", {}).get(
-                                        "spotify_id"
-                                    )
+                                    spot_id = item_dict.get("identifiers", {}).get("spotify_id")
                                     if spot_id:
-                                        external_url = (
-                                            f"https://open.spotify.com/track/{spot_id}"
-                                        )
+                                        external_url = f"https://open.spotify.com/track/{spot_id}"
                         item_dict["external_url"] = external_url
 
                         results.append(item_dict)
                 except Exception as e:
-                    get_logger("search_adapter").error(
-                        f"Search failed for {provider.name} ({kind}): {e}"
-                    )
+                    get_logger("search_adapter").error(f"Search failed for {provider.name} ({kind}): {e}")
 
         return results
 
@@ -610,14 +545,10 @@ class SearchAdapter:
             try:
                 # OPTIMIZATION: Use asyncio.to_thread instead of run_in_executor to better
                 # handle GIL and thread isolation for CPU-heavy matching logic
-                results = await asyncio.wait_for(
-                    asyncio.to_thread(provider.search, query, "track", 20), timeout=10.0
-                )
+                results = await asyncio.wait_for(asyncio.to_thread(provider.search, query, "track", 20), timeout=10.0)
                 return plugin_id, results
             except Exception as e:
-                get_logger("search_adapter").error(
-                    f"Discovery timeout/error for {plugin_id}: {e}"
-                )
+                get_logger("search_adapter").error(f"Discovery timeout/error for {plugin_id}: {e}")
                 return plugin_id, []
 
         tasks = [fetch_provider(p, pid) for p, pid in search_providers]
@@ -642,9 +573,7 @@ class SearchAdapter:
                 isrc = i_dict.get("isrc") or i_dict.get("identifiers", {}).get("isrc")
                 title = i_dict.get("title") or i_dict.get("name") or "Unknown"
                 artist = i_dict.get("artist") or i_dict.get("artist_name") or "Unknown"
-                mb_id = i_dict.get("musicbrainz_id") or i_dict.get(
-                    "identifiers", {}
-                ).get("musicbrainz_recording_id")
+                mb_id = i_dict.get("musicbrainz_id") or i_dict.get("identifiers", {}).get("musicbrainz_recording_id")
 
                 match_key = None
                 if isrc:
@@ -659,25 +588,21 @@ class SearchAdapter:
 
                     local_meta_id = generate_plugin_id("echosync.local_metadata")
                     local_server_id = generate_plugin_id("echosync.local_server")
-                    is_local_provider = isinstance(
-                        prov_instance, MediaServerProvider
-                    ) or plugin_id in [local_meta_id, local_server_id]
+                    is_local_provider = isinstance(prov_instance, MediaServerProvider) or plugin_id in [
+                        local_meta_id,
+                        local_server_id,
+                    ]
                     provider_name = prov_instance.name
                 except Exception:
                     is_local_provider = False
                     provider_name = "unknown"
 
-                is_local_db, local_artist_id = get_local_track_details(
-                    title, artist, isrc, mb_id
-                )
+                is_local_db, local_artist_id = get_local_track_details(title, artist, isrc, mb_id)
                 is_local = is_local_db or is_local_provider
 
                 source = (
                     "local"
-                    if (
-                        is_local_provider
-                        or provider_name in ("local_metadata", "local_server")
-                    )
+                    if (is_local_provider or provider_name in ("local_metadata", "local_server"))
                     else provider_name
                 )
 
@@ -692,9 +617,7 @@ class SearchAdapter:
                         else:
                             spot_id = i_dict.get("identifiers", {}).get("spotify_id")
                             if spot_id:
-                                external_url = (
-                                    f"https://open.spotify.com/track/{spot_id}"
-                                )
+                                external_url = f"https://open.spotify.com/track/{spot_id}"
 
                 if match_key in dedup_map:
                     if plugin_id not in dedup_map[match_key]["sources"]:

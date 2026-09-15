@@ -17,6 +17,18 @@ import time
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
+# --- Custom Verbose Log Level (Below DEBUG=10) ---
+VERBOSE = 5
+logging.addLevelName(VERBOSE, "VERBOSE")
+
+
+def _verbose_log(self, message, *args, **kws):
+    if self.isEnabledFor(VERBOSE):
+        self._log(VERBOSE, message, args, **kws)
+
+
+logging.Logger.verbose = _verbose_log
+
 # --- Custom Windows-Safe Rotating File Handler ---
 
 
@@ -94,9 +106,7 @@ class SafeRotatingFileHandler(RotatingFileHandler):
 
             except OSError:
                 if attempt < max_retries - 1:
-                    delay = 0.05 * (
-                        2**attempt
-                    )  # Exponential backoff: 50ms, 100ms, 200ms, 400ms, 800ms
+                    delay = 0.05 * (2**attempt)  # Exponential backoff: 50ms, 100ms, 200ms, 400ms, 800ms
                     time.sleep(delay)
                 else:
                     # After all retries failed, silently skip rotation
@@ -161,7 +171,8 @@ class SafeFormatter(logging.Formatter):
         if not text:
             return ""
         return "".join(
-            c for c in str(text)
+            c
+            for c in str(text)
             if not (
                 0x1F000 <= ord(c) <= 0x1FAFF
                 or 0x2700 <= ord(c) <= 0x27BF
@@ -176,9 +187,7 @@ class SafeFormatter(logging.Formatter):
             return super().format(record)
         except UnicodeEncodeError:
             # Strip emojis and try again for Windows compatibility
-            record.getMessage = lambda: self.strip_emojis(
-                record.msg % record.args if record.args else record.msg
-            )
+            record.getMessage = lambda: self.strip_emojis(record.msg % record.args if record.args else record.msg)
             return super().format(record)
 
 
@@ -226,7 +235,7 @@ class ColoredFormatter(SafeFormatter):
 
         msg = record.getMessage()
         if msg.startswith("["):
-            match = re.match(r"^(\[[^\]]+\])( - )", msg)
+            match = re.match(r"^((?:\[[^\]]+\]\s*)+)( - )", msg)
             if match:
                 tag = match.group(1)
                 color = self._hash_to_color(tag)
@@ -245,12 +254,15 @@ class ColoredFormatter(SafeFormatter):
 
 class SourceTagAdapter(logging.LoggerAdapter):
     """
-    Adapter that adds a source tag to log messages based on the logger name.
+    Adapter that adds a source tag to log messages based on the logger name and origin taint.
     """
 
     def __init__(self, logger, extra=None):
         super().__init__(logger, extra or {})
         self.tag = self._derive_tag(logger.name)
+        plugin_id = self.extra.get("plugin_id")
+        if plugin_id is not None:
+            self.tag = f"{self.tag} [TAINT:{plugin_id}]"
 
     def _derive_tag(self, name: str) -> str:
         if name.startswith("core"):
@@ -271,6 +283,10 @@ class SourceTagAdapter(logging.LoggerAdapter):
         # Prepend tag to message
         return f"{self.tag} - {msg}", kwargs
 
+    def verbose(self, msg, *args, **kwargs):
+        """Delegate verbose-level log call (level 5)."""
+        self.log(VERBOSE, msg, *args, **kwargs)
+
 
 # --- Global Setup ---
 
@@ -280,9 +296,7 @@ class SourceTagAdapter(logging.LoggerAdapter):
 _active_console_handler: logging.StreamHandler | None = None
 
 
-def setup_logging(
-    level: str = "INFO", log_dir: str | None = None, log_file: str | None = None
-) -> logging.Logger:
+def setup_logging(level: str = "INFO", log_dir: str | None = None, log_file: str | None = None) -> logging.Logger:
     """
     Initialize the unified logging system.
     Configures the root logger to output to console and tiered log files.
@@ -302,9 +316,7 @@ def setup_logging(
 
     # Use Env vars if provided
     if not log_dir:
-        log_dir = os.getenv(
-            "ECHOSYNC_LOG_DIR", "data/logs"
-        )  # Default relative to cwd if not absolute
+        log_dir = os.getenv("ECHOSYNC_LOG_DIR", "data/logs")  # Default relative to cwd if not absolute
 
     root_logger = logging.getLogger()
     root_logger.setLevel(logging.NOTSET)  # Capture everything, handlers will filter
@@ -339,15 +351,15 @@ def setup_logging(
 
     # --- File Handlers (Tiered Strategy) ---
     try:
+        global _current_log_dir
         log_path = Path(log_dir)
         log_path.mkdir(parents=True, exist_ok=True)
+        _current_log_dir = log_path
 
         def add_file_handler(filename, level):
             handler = SafeRotatingFileHandler(
                 log_path / filename,
-                maxBytes=10
-                * 1024
-                * 1024,  # 10MB - larger files, less frequent rotation
+                maxBytes=10 * 1024 * 1024,  # 10MB - larger files, less frequent rotation
                 backupCount=3,  # Fewer backups to reduce rotation complexity
                 encoding="utf-8",
             )
@@ -363,8 +375,16 @@ def setup_logging(
         add_file_handler("app.log", logging.INFO)
         # Debug: DEBUG and up
         add_file_handler("debug.log", logging.DEBUG)
-        # Verbose: All
-        add_file_handler("verbose.log", logging.NOTSET)
+
+        # Verbose file logging is strictly on-demand.
+        # Check if enabled via configuration or environment at startup.
+        try:
+            from core.settings import config_manager
+
+            if config_manager.get("system.verbose_logging_enabled", False):
+                enable_verbose_file_logging(log_path)
+        except Exception:
+            pass
 
         # If the caller supplied an explicit log_file path (legacy config key), also
         # write to that exact file at DEBUG level.  External log viewers (e.g.
@@ -383,22 +403,25 @@ def setup_logging(
                 legacy_handler.setLevel(logging.DEBUG)
                 legacy_handler.addFilter(redaction_filter)
                 legacy_handler.setFormatter(
-                    SafeFormatter(
-                        fmt="%(asctime)s - %(name)s - %(levelname)s - %(funcName)s:%(lineno)d - %(message)s"
-                    )
+                    SafeFormatter(fmt="%(asctime)s - %(name)s - %(levelname)s - %(funcName)s:%(lineno)d - %(message)s")
                 )
                 root_logger.addHandler(legacy_handler)
             except Exception as _e:
                 print(f"Failed to setup legacy log file handler: {_e}")
 
-        root_logger.info(
-            f"Logging initialized. Console Level: {level}, Log Dir: {log_path}"
-        )
+        root_logger.info(f"Logging initialized. Console Level: {level}, Log Dir: {log_path}")
 
         # Silence Third-Party Noise
-        logging.getLogger("urllib3").setLevel(logging.WARNING)
-        logging.getLogger("plexapi").setLevel(logging.WARNING)
-        logging.getLogger("watchdog").setLevel(logging.WARNING)
+        for noisy_logger in (
+            "sse_starlette",
+            "sse_starlette.sse",
+            "uvicorn.access",
+            "urllib3",
+            "httpx",
+            "plexapi",
+            "watchdog",
+        ):
+            logging.getLogger(noisy_logger).setLevel(logging.WARNING)
 
     except Exception as e:
         print(f"Failed to setup file logging: {e}")
@@ -406,11 +429,88 @@ def setup_logging(
     return root_logger
 
 
-def get_logger(name: str) -> logging.Logger:
+# --- Dynamic On-Demand Verbose File Handler Management ---
+_verbose_file_handler: SafeRotatingFileHandler | None = None
+_current_log_dir: Path | None = None
+
+
+def enable_verbose_file_logging(log_dir: Path | str | None = None) -> bool:
+    """Dynamically attach on-demand rotating file handler for VERBOSE level (5)."""
+    global _verbose_file_handler, _current_log_dir
+    if _verbose_file_handler is not None:
+        return True
+
+    try:
+        if log_dir is not None:
+            target_dir = Path(log_dir)
+        elif _current_log_dir is not None:
+            target_dir = _current_log_dir
+        else:
+            target_dir = Path(os.getenv("ECHOSYNC_LOG_DIR", "data/logs"))
+
+        target_dir.mkdir(parents=True, exist_ok=True)
+        file_path = target_dir / "echosync-verbose.log"
+
+        handler = SafeRotatingFileHandler(
+            file_path,
+            maxBytes=10 * 1024 * 1024,  # 10MB
+            backupCount=3,
+            encoding="utf-8",
+        )
+        handler.setLevel(VERBOSE)
+        handler.addFilter(RedactionFilter())
+        handler.setFormatter(
+            SafeFormatter(fmt="%(asctime)s - %(name)s - %(levelname)s - %(funcName)s:%(lineno)d - %(message)s")
+        )
+
+        logging.getLogger().addHandler(handler)
+        _verbose_file_handler = handler
+        _current_log_dir = target_dir
+        logging.getLogger().info(f"On-demand verbose file logging enabled: {file_path}")
+        return True
+    except Exception as exc:
+        print(f"Failed to enable verbose file logging: {exc}", file=sys.stderr)
+        return False
+
+
+def disable_verbose_file_logging() -> bool:
+    """Dynamically flush, close, and detach the on-demand verbose file handler."""
+    global _verbose_file_handler
+    if _verbose_file_handler is not None:
+        try:
+            logging.getLogger().removeHandler(_verbose_file_handler)
+            _verbose_file_handler.flush()
+            _verbose_file_handler.close()
+            _verbose_file_handler = None
+            logging.getLogger().info("On-demand verbose file logging disabled.")
+            return True
+        except Exception as exc:
+            print(f"Failed to disable verbose file logging: {exc}", file=sys.stderr)
+            return False
+    return True
+
+
+def is_verbose_file_logging_enabled() -> bool:
+    """Return whether on-demand verbose file logging is currently active."""
+    return _verbose_file_handler is not None
+
+
+def get_logger(name: str, plugin_id: int | None = None) -> logging.Logger:
     """
     Factory to get a logger with automatic source tagging.
+    If plugin_id is provided, it must be an unsigned 32-bit integer (CRC32),
+    which attaches an origin taint tag [TAINT:<int_id>] to log messages.
     """
-    return SourceTagAdapter(logging.getLogger(name))
+    extra = {}
+    if plugin_id is not None:
+        if not isinstance(plugin_id, int) or isinstance(plugin_id, bool):
+            raise TypeError(
+                f"plugin_id must be an unsigned 32-bit integer (CRC32), got {type(plugin_id).__name__}: {plugin_id!r}"
+            )
+        if not (0 <= plugin_id <= 0xFFFFFFFF):
+            raise ValueError(f"plugin_id must be in range 0..4294967295 (uint32), got: {plugin_id}")
+        extra["plugin_id"] = plugin_id
+    return SourceTagAdapter(logging.getLogger(name), extra=extra)
 
 
 def set_log_level(level: str) -> bool:
@@ -423,9 +523,7 @@ def set_log_level(level: str) -> bool:
             # Fallback: scan handlers (e.g. if setup_logging hasn't run yet)
             root = logging.getLogger()
             for h in root.handlers:
-                if isinstance(h, logging.StreamHandler) and not isinstance(
-                    h, RotatingFileHandler
-                ):
+                if isinstance(h, logging.StreamHandler) and not isinstance(h, RotatingFileHandler):
                     h.setLevel(lvl)
         logging.getLogger().info(f"Console log level changed to: {level}")
         return True
@@ -439,9 +537,7 @@ def get_current_log_level() -> str:
         return logging.getLevelName(_active_console_handler.level)
     # Fallback: scan root handlers
     for h in logging.getLogger().handlers:
-        if isinstance(h, logging.StreamHandler) and not isinstance(
-            h, RotatingFileHandler
-        ):
+        if isinstance(h, logging.StreamHandler) and not isinstance(h, RotatingFileHandler):
             return logging.getLevelName(h.level)
     return "INFO"
 

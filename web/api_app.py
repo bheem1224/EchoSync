@@ -6,7 +6,6 @@ web_server.py UI and should be used as the backend for the Svelte frontend.
 
 import asyncio
 import os
-import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -19,7 +18,6 @@ from core.settings import config_manager
 from core.tiered_logger import get_logger
 
 logger = get_logger("api_app")
-from core.task_manager import register_all_system_jobs
 
 # Core routers that have been migrated to FastAPI
 from web.routes.accounts import router as accounts_bp
@@ -49,11 +47,15 @@ from web.routes.playlists import router as playlists_bp
 from web.routes.plugins import legacy_router as legacy_plugins_bp
 from web.routes.plugins import router as core_plugins_bp
 from web.routes.search import router as search_bp
+from web.routes.search import v1_router as search_v1_bp
+from web.routes.stream import router as stream_bp
 from web.routes.suggestions import router as suggestions_bp
 from web.routes.sync import router as sync_bp
 from web.routes.system import router as system_bp
+from web.routes.telemetry import router as telemetry_bp
 from web.routes.system_tasks import router as system_tasks_bp
 from web.routes.tracks import legacy_router as legacy_tracks_bp
+from web.routes.tracks import library_router as library_tracks_bp
 from web.routes.tracks import router as tracks_bp
 from web.routes.ui_registry import router as ui_registry_bp
 from web.routes.webhooks import router as webhooks_bp
@@ -64,14 +66,13 @@ from web.routes.webhooks import router as webhooks_bp
 # Actually, I should migrate them first. I'll just write the lifespan manager here without importing Batch 2 routers yet.
 
 _backend_started = False
-_backend_thread = None
-_backend_loop = None
+_backend_task: asyncio.Task | None = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan context manager for the ASGI application."""
-    global _backend_started, _backend_thread, _backend_loop
+    global _backend_started, _backend_task
 
     logger.info("Initializing application lifespan...")
 
@@ -93,6 +94,16 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Failed to initialize databases: {e}")
         raise
+
+    # On-demand verbose file logging check
+    try:
+        from core.settings import config_manager
+        from core.tiered_logger import enable_verbose_file_logging
+
+        if config_manager.get("system.verbose_logging_enabled", False):
+            enable_verbose_file_logging()
+    except Exception as log_err:
+        logger.warning(f"Could not initialize on-demand verbose logging: {log_err}")
 
     # Initialize Plugins
     try:
@@ -131,37 +142,85 @@ async def lifespan(app: FastAPI):
     # Uvicorn without workers (reload=False) means 1 worker.
     if not testing and not _backend_started:
         from core.backend_services import start_services
-        from core.job_queue import start_job_queue
+        from core.task_manager.models import OwnerType, ProcessCategory, ProcessOwner
+        from core.task_manager.supervisor import supervisor
+        from core.task_manager.system_jobs import register_all_system_jobs
+        from core.task_manager.task_queue import start_job_queue
+
+        # Register core task scheduler daemon
+        try:
+            import threading
+
+            supervisor.register_process(
+                ProcessOwner(
+                    owner_id="core.scheduler",
+                    owner_type=OwnerType.CORE,
+                    task_name="Task Scheduler Daemon",
+                    category=ProcessCategory.CORE_SYSTEM,
+                    is_killable=False,
+                    thread_id=threading.main_thread().ident,
+                )
+            )
+        except Exception:
+            pass
 
         # Ensure scheduled jobs are registered before starting the queue
         register_all_system_jobs()
         start_job_queue()
 
-        def run_backend_services():
-            global _backend_loop
-            _backend_loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(_backend_loop)
-            try:
-                _backend_loop.run_until_complete(start_services())
-            except Exception as e:
-                logger.error(f"Backend services failed: {e}")
-            finally:
-                _backend_loop.close()
-
-        _backend_thread = threading.Thread(
-            target=run_backend_services, daemon=True, name="BackendServices"
-        )
-        _backend_thread.start()
+        _backend_task = asyncio.create_task(start_services(), name="BackendServices")
         _backend_started = True
-        logger.info("Backend services thread started")
+
+        try:
+            supervisor.register_process(
+                ProcessOwner(
+                    owner_id="core.backend_services",
+                    owner_type=OwnerType.CORE,
+                    task_name="Backend Services Runner",
+                    category=ProcessCategory.CORE_SYSTEM,
+                    is_killable=True,
+                )
+            )
+        except Exception as reg_err:
+            logger.debug(f"Process supervisor registration notice: {reg_err}")
+
+        logger.info("Backend services async task started on ASGI event loop")
 
     yield  # This yields control back to the application while it runs
 
     logger.info("Shutting down application lifespan...")
-    # Shutdown logic
-    if _backend_thread and _backend_loop:
-        # We can stop the backend loop gracefully if needed
-        pass
+    # Clean shutdown sequence
+    from core.event_bus import event_bus
+    from core.task_manager.task_queue import stop_job_queue
+
+    try:
+        stop_job_queue()
+        logger.info("JobQueue stopped cleanly.")
+    except Exception as e:
+        logger.warning(f"Error stopping JobQueue during lifespan shutdown: {e}")
+
+    try:
+        event_bus.stop(timeout=5.0)
+        logger.info("EventBus stopped and drained cleanly.")
+    except Exception as e:
+        logger.warning(f"Error stopping EventBus during lifespan shutdown: {e}")
+
+    if _backend_task and not _backend_task.done():
+        _backend_task.cancel()
+        try:
+            await _backend_task
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.error(f"Error awaiting backend services task cancellation: {e}")
+        _backend_task = None
+
+    try:
+        from core.tiered_logger import disable_verbose_file_logging
+
+        disable_verbose_file_logging()
+    except Exception as log_err:
+        logger.warning(f"Error disabling verbose file logging on shutdown: {log_err}")
 
 
 def create_app(testing: bool = False) -> FastAPI:
@@ -230,13 +289,17 @@ def create_app(testing: bool = False) -> FastAPI:
     app.include_router(core_plugins_bp)
     app.include_router(legacy_plugins_bp)
     app.include_router(system_bp)
+    app.include_router(telemetry_bp)
     app.include_router(dashboard_bp)
     app.include_router(dashboards_bp)
     app.include_router(tracks_bp)
     app.include_router(legacy_tracks_bp)
+    app.include_router(library_tracks_bp)
     app.include_router(library_bp)
     app.include_router(media_bp)
+    app.include_router(stream_bp)
     app.include_router(search_bp)
+    app.include_router(search_v1_bp)
     app.include_router(jobs_bp)
     app.include_router(metadata_bp)
     app.include_router(metadata_review_bp)
@@ -262,11 +325,7 @@ def create_app(testing: bool = False) -> FastAPI:
     # SPA Support
     custom_ui_path = config_manager.get("custom_ui_path")
     ui_path = os.path.join(os.path.dirname(__file__), "../webui/build")
-    if (
-        custom_ui_path
-        and os.path.isdir(custom_ui_path)
-        and os.path.exists(os.path.join(custom_ui_path, "index.html"))
-    ):
+    if custom_ui_path and os.path.isdir(custom_ui_path) and os.path.exists(os.path.join(custom_ui_path, "index.html")):
         ui_path = custom_ui_path
 
     if os.path.exists(ui_path):
@@ -286,6 +345,4 @@ def create_app(testing: bool = False) -> FastAPI:
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(
-        "web.api_app:create_app", host="0.0.0.0", port=5000, reload=True, factory=True
-    )
+    uvicorn.run("web.api_app:create_app", host="0.0.0.0", port=5000, reload=True, factory=True)

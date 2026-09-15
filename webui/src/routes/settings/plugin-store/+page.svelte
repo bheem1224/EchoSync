@@ -1,25 +1,25 @@
 <script>
-  import { onMount } from 'svelte';
-  import apiClient from '../../../api/client';
-  import { feedback } from '../../../stores/feedback';
-  import ConfirmDialog from '../../../components/ConfirmDialog.svelte';
-  import PluginCard from './PluginCard.svelte';
-  import PluginConsentModal from '../../../lib/components/modals/PluginConsentModal.svelte';
+  import { onMount } from "svelte";
+  import apiClient from "../../../api/client";
+  import { feedback } from "../../../stores/feedback";
+  import ConfirmDialog from "../../../components/ConfirmDialog.svelte";
+  import PluginCard from "./PluginCard.svelte";
+  import PluginConsentModal from "../../../lib/components/modals/PluginConsentModal.svelte";
 
   let plugins = [];
   let repos = [];
-  let loadError = '';
+  let loadError = "";
   let isLoading = true;
   let downloading = null;
 
   let showReposModal = false;
-  let newRepoUrl = '';
+  let newRepoUrl = "";
   let showOverflowMenu = false;
   let betaOpt = false;
   let devMode = false;
   let showBetaWarning = false;
   let showBetaOptOutMessage = false;
-  import { systemStatus } from '../../../stores/systemStatus';
+  import { systemStatus } from "../../../stores/systemStatus";
 
   async function handleBetaToggle() {
     if (!betaOpt) {
@@ -34,7 +34,7 @@
     showBetaWarning = false;
     showOverflowMenu = false;
     await setUiBetaOpt(!betaOpt);
-    
+
     if (isOptingOut) {
       showBetaOptOutMessage = true;
     } else {
@@ -45,10 +45,10 @@
   async function loadStore() {
     isLoading = true;
     try {
-      const response = await apiClient.get('/system/plugins/store');
+      const response = await apiClient.get("/system/plugins/store");
       plugins = response.data?.plugins ?? [];
     } catch (err) {
-      loadError = 'Failed to load plugin store. Check backend connection.';
+      loadError = "Failed to load plugin store. Check backend connection.";
       console.error(err);
     } finally {
       isLoading = false;
@@ -57,10 +57,10 @@
 
   async function loadRepos() {
     try {
-      const response = await apiClient.get('/system/plugins/repos');
+      const response = await apiClient.get("/system/plugins/repos");
       repos = response.data?.repos ?? [];
     } catch (err) {
-      console.error('Failed to load repos:', err);
+      console.error("Failed to load repos:", err);
     }
   }
 
@@ -72,26 +72,31 @@
 
   async function loadUiBeta() {
     try {
-      const resp = await apiClient.get('/system/manager/ui-beta');
+      const resp = await apiClient.get("/system/manager/ui-beta");
       if (resp && resp.data) {
         betaOpt = !!resp.data.beta_opt_in;
         devMode = !!resp.data.dev_mode;
       }
     } catch (err) {
-      console.debug('Failed to load ui-beta opt state:', err);
+      console.debug("Failed to load ui-beta opt state:", err);
     }
   }
 
   async function setUiBetaOpt(val) {
     try {
-      const resp = await apiClient.post('/system/manager/ui-beta', { beta_opt_in: !!val });
+      const resp = await apiClient.post("/system/manager/ui-beta", {
+        beta_opt_in: !!val,
+      });
       if (resp && resp.data) {
         betaOpt = !!resp.data.beta_opt_in;
-        feedback.addToast(`Beta UI opt ${betaOpt ? 'enabled' : 'disabled'}`, 'success');
+        feedback.addToast(
+          `Beta UI opt ${betaOpt ? "enabled" : "disabled"}`,
+          "success",
+        );
       }
     } catch (err) {
-      feedback.addToast('Failed to update beta opt state', 'error');
-      console.error('Failed to set ui-beta:', err);
+      feedback.addToast("Failed to update beta opt state", "error");
+      console.error("Failed to set ui-beta:", err);
     }
   }
 
@@ -103,44 +108,72 @@
     const plugin = pluginDetail;
     const isUpdate = plugin.isUpdate || false;
     const isRollback = plugin.isRollback || false;
-    
-    console.log(`[PluginStore] installPlugin called for ${plugin.name} (ID: ${plugin.id}), isUpdate: ${isUpdate}, isRollback: ${isRollback}, forceConsent: ${forceConsent}`);
+
+    console.log(
+      `[PluginStore] installPlugin called for ${plugin.name} (ID: ${plugin.id}), isUpdate: ${isUpdate}, isRollback: ${isRollback}, forceConsent: ${forceConsent}`,
+    );
     downloading = plugin.id || plugin.name;
 
     try {
-      let endpoint = '/system/plugins/install';
-      if (isRollback) endpoint = '/system/plugins/rollback';
-      else if (isUpdate) endpoint = '/system/plugins/update';
-      
+      let endpoint = "/system/plugins/install";
+      if (isRollback) endpoint = "/system/plugins/rollback";
+      else if (isUpdate) endpoint = "/system/plugins/update";
+
       const url = forceConsent ? `${endpoint}?force_consent=true` : endpoint;
-      await apiClient.post(url, { 
-        plugin, 
-        channel: plugin.channel || 'release',
-        version: plugin.version
+      const targetChannel =
+        plugin.channel === "beta" ||
+        (plugin.version && plugin.version.includes("-beta"))
+          ? "beta"
+          : plugin.channel === "release" || plugin.channel === "stable"
+            ? "stable"
+            : plugin.channel || "stable";
+      await apiClient.post(url, {
+        plugin,
+        channel: targetChannel,
+        version: plugin.version,
       });
-      feedback.addToast(`Successfully ${isRollback ? 'rolled back' : (isUpdate ? 'updated' : 'installed')} ${plugin.name}.`, 'success');
-      
+      feedback.addToast(
+        `Successfully ${isRollback ? "rolled back" : isUpdate ? "updated" : "installed"} ${plugin.name}.`,
+        "success",
+      );
+
       // Mark as installed locally so UI updates
-      plugins = plugins.map(p =>
-        (p.id === plugin.id || p.name === plugin.name) ? { 
-          ...p, 
-          _installed: true, 
-          is_installed: true, 
-          update_available: false, 
-          installed_version: plugin.version || p.version,
-          installed_channel: plugin.channel || 'release'
-        } : p
+      plugins = plugins.map((p) =>
+        p.id === plugin.id || p.name === plugin.name
+          ? {
+              ...p,
+              _installed: true,
+              is_installed: true,
+              update_available: false,
+              installed_version: plugin.version || p.version,
+              installed_channel: plugin.channel || "release",
+            }
+          : p,
       );
       // Force status reload to show restart banner if hot-swap fallback occurred
       await systemStatus.load();
       showConsentModal = false;
     } catch (err) {
-      if (err.response?.status === 403 && err.response?.data?.requires_consent) {
-        escalationData = err.response.data.escalations;
+      if (
+        err.response?.status === 403 &&
+        (err.response?.data?.requires_consent ||
+          err.response?.data?.status === "consent_required" ||
+          err.response?.data?.escalated_scopes ||
+          err.response?.data?.scopes ||
+          err.response?.data?.escalations)
+      ) {
+        escalationData =
+          err.response.data.escalated_scopes ||
+          err.response.data.scopes ||
+          err.response.data.escalations ||
+          [];
         pluginAwaitingConsent = { ...plugin, isUpdate };
         showConsentModal = true;
       } else {
-        feedback.addToast(`Failed to ${isUpdate ? 'update' : 'install'} ${plugin.name}.`, 'error');
+        feedback.addToast(
+          `Failed to ${isUpdate ? "update" : "install"} ${plugin.name}.`,
+          "error",
+        );
         console.error(err);
       }
     } finally {
@@ -169,15 +202,36 @@
     if (!pluginToUninstall || uninstalling) return;
     uninstalling = true;
     try {
-      await apiClient.post('/system/plugins/uninstall', { id: pluginToUninstall.id || pluginToUninstall.name });
-      feedback.addToast(`Successfully uninstalled ${pluginToUninstall.name}. Restart required.`, 'success');
-      plugins = plugins.map(p =>
-        (p.id === pluginToUninstall.id || p.name === pluginToUninstall.name) ? { ...p, _installed: false, is_installed: false, update_available: false } : p
+      const targetId =
+        pluginToUninstall.plugin_id ||
+        pluginToUninstall.id ||
+        pluginToUninstall.name;
+      try {
+        await apiClient.delete(`/system/plugins/${targetId}`);
+      } catch (delErr) {
+        await apiClient.post("/system/plugins/uninstall", { id: targetId });
+      }
+      feedback.addToast(
+        `Successfully uninstalled ${pluginToUninstall.name}. Restart required.`,
+        "success",
+      );
+      plugins = plugins.map((p) =>
+        p.id === pluginToUninstall.id || p.name === pluginToUninstall.name
+          ? {
+              ...p,
+              _installed: false,
+              is_installed: false,
+              update_available: false,
+            }
+          : p,
       );
       // Force status reload to show restart banner immediately
       await systemStatus.load();
     } catch (err) {
-      feedback.addToast(`Failed to uninstall ${pluginToUninstall.name}.`, 'error');
+      feedback.addToast(
+        `Failed to uninstall ${pluginToUninstall.name}.`,
+        "error",
+      );
       console.error(err);
     } finally {
       uninstalling = false;
@@ -189,24 +243,24 @@
   async function addRepo() {
     if (!newRepoUrl.trim()) return;
     try {
-      await apiClient.post('/system/plugins/repos', { url: newRepoUrl.trim() });
-      newRepoUrl = '';
+      await apiClient.post("/system/plugins/repos", { url: newRepoUrl.trim() });
+      newRepoUrl = "";
       await loadRepos();
       await loadStore();
-      feedback.addToast('Repository added', 'success');
+      feedback.addToast("Repository added", "success");
     } catch (err) {
-      feedback.addToast('Failed to add repository', 'error');
+      feedback.addToast("Failed to add repository", "error");
     }
   }
 
   async function removeRepo(url) {
     try {
-      await apiClient.delete('/system/plugins/repos', { data: { url } });
+      await apiClient.delete("/system/plugins/repos", { data: { url } });
       await loadRepos();
       await loadStore();
-      feedback.addToast('Repository removed', 'success');
+      feedback.addToast("Repository removed", "success");
     } catch (err) {
-      feedback.addToast('Failed to remove repository', 'error');
+      feedback.addToast("Failed to remove repository", "error");
     }
   }
 </script>
@@ -220,25 +274,44 @@
     <div>
       <h1>Plugin Store</h1>
       <p class="subtitle">
-        Browse and install community and official plugins to extend Echosync's functionality.
+        Browse and install community and official plugins to extend Echosync's
+        functionality.
       </p>
     </div>
     <div class="header-actions">
-      <button class="btn-manage-repos active:scale-95 transition-all duration-200" on:click={() => showReposModal = !showReposModal}>
-        {showReposModal ? 'Close Repositories' : 'Manage Repositories'}
+      <button
+        class="btn-manage-repos active:scale-95 transition-all duration-200"
+        on:click={() => (showReposModal = !showReposModal)}
+      >
+        {showReposModal ? "Close Repositories" : "Manage Repositories"}
       </button>
 
       <div class="overflow-menu relative inline-block">
-        <button class="btn-ellipsis p-2 rounded-global" aria-haspopup="true" aria-expanded={showOverflowMenu} on:click={() => showOverflowMenu = !showOverflowMenu} title="More">
+        <button
+          class="btn-ellipsis p-2 rounded-global"
+          aria-haspopup="true"
+          aria-expanded={showOverflowMenu}
+          on:click={() => (showOverflowMenu = !showOverflowMenu)}
+          title="More"
+        >
           ⋯
         </button>
 
         {#if showOverflowMenu}
-          <div class="menu absolute right-0 mt-2 w-56 bg-surface border border-glass-border rounded-global shadow-lg z-40">
-            <button class="menu-item" on:click={() => { showReposModal = true; showOverflowMenu = false; }}>Manage Repositories</button>
+          <div
+            class="menu absolute right-0 mt-2 w-56 bg-surface border border-glass-border rounded-global shadow-lg z-40"
+          >
+            <button
+              class="menu-item"
+              on:click={() => {
+                showReposModal = true;
+                showOverflowMenu = false;
+              }}>Manage Repositories</button
+            >
             <div class="menu-divider"></div>
             <button class="menu-item" on:click={handleBetaToggle}>
-              {betaOpt ? 'Opt-out Beta Plugins' : 'Opt-in Beta Plugins'} {#if devMode}<span class="badge">dev</span>{/if}
+              {betaOpt ? "Opt-out Beta Plugins" : "Opt-in Beta Plugins"}
+              {#if devMode}<span class="badge">dev</span>{/if}
             </button>
           </div>
         {/if}
@@ -253,8 +326,11 @@
         {#each repos as repo}
           <li>
             <span class="repo-url">{repo}</span>
-            {#if repo !== 'https://github.com/bheem1224/EchoSync/tree/main/plugins'}
-              <button class="btn-remove active:scale-95 transition-all duration-200" on:click={() => removeRepo(repo)}>Remove</button>
+            {#if repo !== "https://github.com/bheem1224/EchoSync/tree/main/plugins"}
+              <button
+                class="btn-remove active:scale-95 transition-all duration-200"
+                on:click={() => removeRepo(repo)}>Remove</button
+              >
             {:else}
               <span class="default-badge">Official</span>
             {/if}
@@ -262,8 +338,14 @@
         {/each}
       </ul>
       <div class="add-repo">
-        <input type="text" placeholder="https://github.com/user/repo" bind:value={newRepoUrl} />
-        <button on:click={addRepo} disabled={!newRepoUrl.trim()}>Add Repository</button>
+        <input
+          type="text"
+          placeholder="https://github.com/user/repo"
+          bind:value={newRepoUrl}
+        />
+        <button on:click={addRepo} disabled={!newRepoUrl.trim()}
+          >Add Repository</button
+        >
       </div>
     </div>
   {/if}
@@ -283,10 +365,13 @@
   {:else}
     <div class="plugin-grid">
       {#each plugins as plugin, index (plugin.id || plugin.name || index)}
-        <PluginCard 
-          {plugin} 
-          globalBetaEnabled={betaOpt} 
-          downloading={downloading === (plugin.id || plugin.name) || downloading === 'error-' + (plugin.id || plugin.name) ? downloading : false}
+        <PluginCard
+          {plugin}
+          globalBetaEnabled={betaOpt}
+          downloading={downloading === (plugin.id || plugin.name) ||
+          downloading === "error-" + (plugin.id || plugin.name)
+            ? downloading
+            : false}
           on:install={(e) => installPlugin(e.detail)}
           on:uninstall={(e) => requestUninstall(e.detail)}
         />
@@ -296,62 +381,70 @@
 </section>
 
 {#if showBetaWarning}
-  <ConfirmDialog 
-      title="⚠️ Warning: Beta Plugins"
-      confirmText="OK"
-      cancelText="Cancel"
-      danger={true}
-      on:confirm={proceedWithBetaToggle}
-      on:cancel={() => showBetaWarning = false}
+  <ConfirmDialog
+    title="⚠️ Warning: Beta Plugins"
+    confirmText="OK"
+    cancelText="Cancel"
+    danger={true}
+    on:confirm={proceedWithBetaToggle}
+    on:cancel={() => (showBetaWarning = false)}
   >
-      <div class="text-sm mt-2">
-          Warning: You are opting into Beta Plugin builds. There is a 95% chance of this being broken and completely ruining your UI. Would not recommend. I am not a very good coder. Continue anyway?
-      </div>
+    <div class="text-sm mt-2">
+      Warning: You are opting into Beta Plugin builds. There is a 95% chance of
+      this being broken and completely ruining your UI. Would not recommend. I
+      am not a very good coder. Continue anyway?
+    </div>
   </ConfirmDialog>
 {/if}
 
 {#if showUninstallConfirm}
-  <ConfirmDialog 
-      title="🗑️ Uninstall Plugin"
-      confirmText={uninstalling ? 'Uninstalling...' : 'Uninstall'}
-      cancelText="Cancel"
-      danger={true}
-      on:confirm={executeUninstall}
-      on:cancel={() => showUninstallConfirm = false}
+  <ConfirmDialog
+    title="🗑️ Uninstall Plugin"
+    confirmText={uninstalling ? "Uninstalling..." : "Uninstall"}
+    cancelText="Cancel"
+    danger={true}
+    on:confirm={executeUninstall}
+    on:cancel={() => (showUninstallConfirm = false)}
   >
-      <div class="text-sm mt-2">
-          Are you sure you want to uninstall <strong>{pluginToUninstall?.name}</strong>? This will remove its files and may disable any functionality that relies on it.
-          <br/><br/>
-          <span class="text-red-400 font-bold">A restart of EchoSync will be required to complete the removal.</span>
-      </div>
+    <div class="text-sm mt-2">
+      Are you sure you want to uninstall <strong
+        >{pluginToUninstall?.name}</strong
+      >? This will remove its files and may disable any functionality that
+      relies on it.
+      <br /><br />
+      <span class="text-red-400 font-bold"
+        >A restart of EchoSync will be required to complete the removal.</span
+      >
+    </div>
   </ConfirmDialog>
 {/if}
 
 {#if showBetaOptOutMessage}
-  <ConfirmDialog 
-      title="🚀 Beta Opt-out"
-      confirmText="Restart Now"
-      cancelText="Later"
-      on:confirm={() => {
-        apiClient.post('/system/restart');
-        window.location.reload();
-      }}
-      on:cancel={() => showBetaOptOutMessage = false}
+  <ConfirmDialog
+    title="🚀 Beta Opt-out"
+    confirmText="Restart Now"
+    cancelText="Later"
+    on:confirm={() => {
+      apiClient.post("/system/restart");
+      window.location.reload();
+    }}
+    on:cancel={() => (showBetaOptOutMessage = false)}
   >
-      <div class="text-sm mt-2">
-          <span class="text-xl">😏</span> <strong>See I told you so.</strong>
-          <br/><br/>
-          You have opted out of the beta program. A restart is highly recommended to purge any unstable beta components and restore system stability.
-      </div>
+    <div class="text-sm mt-2">
+      <span class="text-xl">😏</span> <strong>See I told you so.</strong>
+      <br /><br />
+      You have opted out of the beta program. A restart is highly recommended to
+      purge any unstable beta components and restore system stability.
+    </div>
   </ConfirmDialog>
 {/if}
 
 <PluginConsentModal
   show={showConsentModal}
-  {pluginAwaitingConsent}
+  plugin={pluginAwaitingConsent}
   {escalationData}
   on:confirm={handleAcceptConsent}
-  on:cancel={() => showConsentModal = false}
+  on:cancel={() => (showConsentModal = false)}
 />
 
 <style>
@@ -429,13 +522,47 @@
     word-break: break-all;
   }
 
-  .header-actions { display:flex; gap:8px; align-items:flex-start; }
-  .btn-ellipsis { background: transparent; border: 1px solid transparent; color: var(--text); cursor: pointer; font-size: 20px; }
-  .menu { padding: 6px; }
-  .menu-item { display:block; width:100%; text-align:left; padding:8px 10px; background:transparent; border:none; color:var(--text); cursor:pointer; }
-  .menu-item:hover { background: rgba(255,255,255,0.03); }
-  .menu-divider { height:1px; background: rgba(255,255,255,0.03); margin:4px 0; }
-  .badge { margin-left:8px; padding:2px 6px; border-radius:6px; background:var(--accent); color:#000; font-size:12px; }
+  .header-actions {
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+  }
+  .btn-ellipsis {
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--text);
+    cursor: pointer;
+    font-size: 20px;
+  }
+  .menu {
+    padding: 6px;
+  }
+  .menu-item {
+    display: block;
+    width: 100%;
+    text-align: left;
+    padding: 8px 10px;
+    background: transparent;
+    border: none;
+    color: var(--text);
+    cursor: pointer;
+  }
+  .menu-item:hover {
+    background: rgba(255, 255, 255, 0.03);
+  }
+  .menu-divider {
+    height: 1px;
+    background: rgba(255, 255, 255, 0.03);
+    margin: 4px 0;
+  }
+  .badge {
+    margin-left: 8px;
+    padding: 2px 6px;
+    border-radius: 6px;
+    background: var(--accent);
+    color: #000;
+    font-size: 12px;
+  }
 
   .btn-remove {
     background: rgba(239, 68, 68, 0.2);
@@ -493,7 +620,8 @@
     cursor: not-allowed;
   }
 
-  .empty-state, .loading-state {
+  .empty-state,
+  .loading-state {
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -503,7 +631,8 @@
     text-align: center;
   }
 
-  .empty-icon, .loading-icon {
+  .empty-icon,
+  .loading-icon {
     font-size: 40px;
   }
 
@@ -512,7 +641,9 @@
   }
 
   @keyframes spin {
-    100% { transform: rotate(360deg); }
+    100% {
+      transform: rotate(360deg);
+    }
   }
 
   .plugin-grid {

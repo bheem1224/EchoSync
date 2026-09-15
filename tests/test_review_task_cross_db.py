@@ -21,9 +21,7 @@ def _setup_media_path(session, media_id, file_path):
     session.add(track)
     session.flush()
 
-    media = LocalMedia(
-        media_id=media_id, track_id=track.id, file_path=file_path, file_size_bytes=1000
-    )
+    media = LocalMedia(media_id=media_id, track_id=track.id, file_path=file_path, file_size_bytes=1000)
     session.add(media)
     session.commit()
 
@@ -62,9 +60,7 @@ def test_serialize_task(monkeypatch, mock_db):
     )
 
     # Mock _read_current_metadata to avoid actual file read
-    monkeypatch.setattr(
-        metadata_review, "_read_current_metadata", lambda t: {"title": "Existing Title"}
-    )
+    monkeypatch.setattr(metadata_review, "_read_current_metadata", lambda t: {"title": "Existing Title"})
 
     serialized = metadata_review._serialize_task(task)
     assert serialized["id"] == 456
@@ -124,6 +120,12 @@ def test_approve_review_queue_item(monkeypatch, mock_db, mock_work_db, tmp_path)
             self.func()
             executed_jobs.append(name)
 
+        from contextlib import contextmanager
+
+        @contextmanager
+        def db_write_lease(self, task_name="", timeout=30.0):
+            yield
+
     fake_job_queue = FakeJobQueue()
     import core.job_queue
 
@@ -134,9 +136,7 @@ def test_approve_review_queue_item(monkeypatch, mock_db, mock_work_db, tmp_path)
 
     res = metadata_review.approve_review_queue_item(
         1,
-        ApproveReviewQueueRequest(
-            metadata={"artist": "Artist", "album": "Album", "title": "New Title"}
-        ),
+        ApproveReviewQueueRequest(metadata={"artist": "Artist", "album": "Album", "title": "New Title"}),
     )
     if isinstance(res, tuple):
         response, status_code = res
@@ -157,9 +157,7 @@ def test_approve_review_queue_item(monkeypatch, mock_db, mock_work_db, tmp_path)
 
         media = (
             session.query(LocalMedia)
-            .filter(
-                LocalMedia.file_path == _canonicalize_path(str(expected_relocated_path))
-            )
+            .filter(LocalMedia.file_path == _canonicalize_path(str(expected_relocated_path)))
             .first()
         )
         assert media is not None

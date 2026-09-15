@@ -15,7 +15,9 @@ def is_generic_title(title: str | Path | None) -> bool:
     t_clean = re.sub(r"[\s\-_.]+", " ", t).strip()
     if not t_clean:
         return True
-    if re.fullmatch(r"^(?:track|audio|title|disc|side|cd|song|file)?\s*[a-z\d]*$", t_clean):
+    if re.fullmatch(r"^(?:track|audio|title|disc|side|cd|song|file)(?:\s*\d+)*$", t_clean) or re.fullmatch(
+        r"^\d+$", t_clean
+    ):
         return True
     generic_words = {
         "unknown",
@@ -58,6 +60,7 @@ def is_generic_title(title: str | Path | None) -> bool:
             "surround",
             "sound",
             "corrupted",
+            "isrc",
         }
     )
 
@@ -90,12 +93,34 @@ def sanitize_title_from_filename(filename: str | Path) -> str:
 clean_title_from_filename = sanitize_title_from_filename
 
 
+def should_bypass_filename_trust_gate(
+    acoustid_score: float,
+    duration_delta_sec: float,
+    has_signature: bool = False,
+    has_identifiable_tags: bool = False,
+) -> bool:
+    """Determines whether acoustic ground truth vetoes raw filename string baselines.
+
+    Rules:
+    - Rule A (Unsigned Files): When a file lacks ECHOSYNC_SIGNATURE, an AcoustID match
+      with acoustid_score >= 0.92 and duration_delta_sec <= 1.0s has absolute veto authority
+      over filename baselines, bypassing filename contradiction checks.
+    - Rule B (Signed Files): If has_signature is True, acoustic matches never bypass trust gates
+      or automatically overwrite curated files; divergences are routed to the Review Queue.
+    """
+    if has_signature:
+        return False
+
+    return acoustid_score >= 0.92 and duration_delta_sec <= 1.0
+
+
 def verify_title_trust_gate(
     candidate_title: str,
     baseline_title: str | None = None,
     filename: str | None = None,
     tag_title: str | None = None,
     min_similarity: float = 0.60,
+    bypass_filename_check: bool = False,
 ) -> bool:
     """Verify that a proposed candidate title is sufficiently similar to the baseline title.
 
@@ -106,10 +131,14 @@ def verify_title_trust_gate(
 
     Returns True if similarity >= min_similarity (default 0.60), False otherwise.
     If baseline_title contradicts an identifiable physical filename, the candidate MUST
-    confirm against the physical filename to prevent circular cache poisoning.
+    confirm against the physical filename to prevent circular cache poisoning, unless
+    bypass_filename_check is True (acoustically vetoed by indisputable AcoustID match).
     """
     if not candidate_title or not str(candidate_title).strip():
         return False
+
+    if bypass_filename_check:
+        return True
 
     clean_candidate = str(candidate_title).lower().strip()
     norm_candidate = normalize_title(clean_candidate)
@@ -158,7 +187,7 @@ def verify_title_trust_gate(
 
     ratios = []
 
-    if baseline_title and str(baseline_title).strip():
+    if baseline_title and str(baseline_title).strip() and not is_generic_title(baseline_title):
         clean_baseline = str(baseline_title).lower().strip()
         norm_baseline = normalize_title(clean_baseline)
         ratios.append(difflib.SequenceMatcher(None, clean_candidate, clean_baseline).ratio())

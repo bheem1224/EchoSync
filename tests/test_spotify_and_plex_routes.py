@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from plugins.EchoSync.plex.routes import router as plex_router
-from plugins.EchoSync.Spotify.routes import router as spotify_router
+from plugins.EchoSync.spotify.routes import router as spotify_router
 
 
 def test_plex_poll_route_syntax():

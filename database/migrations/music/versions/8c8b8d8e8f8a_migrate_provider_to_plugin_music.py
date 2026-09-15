@@ -19,23 +19,29 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    with op.batch_alter_table("external_identifiers", schema=None) as batch_op:
-        batch_op.alter_column(
-            "provider_source",
-            new_column_name="plugin_source",
-            existing_type=sa.String(),
-            nullable=False,
-        )
-        batch_op.alter_column(
-            "provider_item_id",
-            new_column_name="plugin_item_id",
-            existing_type=sa.String(),
-            nullable=False,
-        )
-        batch_op.drop_constraint("uq_provider_item", type_="unique")
-        batch_op.create_unique_constraint(
-            "uq_plugin_item", ["plugin_source", "plugin_item_id"]
-        )
+    conn = op.get_bind()
+    insp = sa.inspect(conn)
+    cols = [c["name"] for c in insp.get_columns("external_identifiers")]
+    if "provider_source" in cols:
+        with op.batch_alter_table("external_identifiers", schema=None) as batch_op:
+            batch_op.alter_column(
+                "provider_source",
+                new_column_name="plugin_source",
+                existing_type=sa.String(),
+                nullable=False,
+            )
+            if "provider_item_id" in cols:
+                batch_op.alter_column(
+                    "provider_item_id",
+                    new_column_name="plugin_item_id",
+                    existing_type=sa.String(),
+                    nullable=False,
+                )
+            try:
+                batch_op.drop_constraint("uq_provider_item", type_="unique")
+            except Exception:
+                pass
+            batch_op.create_unique_constraint("uq_plugin_item", ["plugin_source", "plugin_item_id"])
 
 
 def downgrade() -> None:
@@ -53,6 +59,4 @@ def downgrade() -> None:
             nullable=False,
         )
         batch_op.drop_constraint("uq_plugin_item", type_="unique")
-        batch_op.create_unique_constraint(
-            "uq_provider_item", ["provider_source", "provider_item_id"]
-        )
+        batch_op.create_unique_constraint("uq_provider_item", ["provider_source", "provider_item_id"])

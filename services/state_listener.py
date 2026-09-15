@@ -1,6 +1,7 @@
 from core.event_bus import event_bus as default_event_bus
 from core.suggestion_engine.consensus import calculate_consensus, stars_to_ten_point
 from core.suggestion_engine.deletion import apply_lifecycle_action
+from core.task_manager import db_write_lease
 from core.tiered_logger import get_logger
 from database.working_database import (
     Account,
@@ -29,11 +30,7 @@ class StateListenerService:
     def _resolve_account_id(self, session, provider_user_id, provider_name):
         provider_user_id = str(provider_user_id)
         user = (
-            session.query(Account)
-            .filter(
-                Account.remote_account_id == provider_user_id, Account.plugin_id == 1
-            )
-            .first()
+            session.query(Account).filter(Account.remote_account_id == provider_user_id, Account.plugin_id == 1).first()
         )
         if not user:
             user = Account(
@@ -55,11 +52,9 @@ class StateListenerService:
         if not sync_id or rating is None or not provider_user_id:
             return
 
-        with self.Session() as session:
+        with db_write_lease(task_name="handle_track_rated"), self.Session() as session:
             try:
-                internal_account_id = self._resolve_account_id(
-                    session, provider_user_id, provider_name
-                )
+                internal_account_id = self._resolve_account_id(session, provider_user_id, provider_name)
                 base_sync_id = sync_id.split("?")[0]
 
                 existing = (
@@ -89,16 +84,12 @@ class StateListenerService:
                 apply_lifecycle_action(base_sync_id, consensus)
 
                 # Sponsor action: if sponsor rated, remove from Suggestions for You playlist.
-                self._handle_sponsor_rating_action(
-                    session, base_sync_id, internal_account_id, float(rating)
-                )
+                self._handle_sponsor_rating_action(session, base_sync_id, internal_account_id, float(rating))
             except Exception as e:
                 logger.error(f"Error in handle_track_rated: {e}", exc_info=True)
                 session.rollback()
 
-    def _handle_sponsor_rating_action(
-        self, session, base_sync_id: str, account_id: int, rating_stars: float
-    ) -> None:
+    def _handle_sponsor_rating_action(self, session, base_sync_id: str, account_id: int, rating_stars: float) -> None:
         sponsor_state = (
             session.query(UserTrackState)
             .filter(
@@ -112,9 +103,10 @@ class StateListenerService:
             return
 
         # Mark as unlinked for sponsor-facing suggestion surfaces.
-        sponsor_state.is_unlinked = True
-        sponsor_state.updated_at = utc_now()
-        session.commit()
+        with db_write_lease(task_name="handle_sponsor_rating_action"):
+            sponsor_state.is_unlinked = True
+            sponsor_state.updated_at = utc_now()
+            session.commit()
 
         self.event_bus.publish(
             {

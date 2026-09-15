@@ -48,7 +48,18 @@ class ConflictResolveRequest(BaseModel):
     delete_ids: list[int] | None = None
     keep_media_id: str | None = None
     delete_media_ids: list[str] | None = None
+
+
+class RetagRequest(BaseModel):
     sync_id: str | None = None
+    media_id: str | None = None
+    tags: dict[str, Any] | None = None
+
+
+class RenameFileRequest(BaseModel):
+    sync_id: str | None = None
+    media_id: str | None = None
+    new_filename: str | None = None
 
 
 from pathlib import Path
@@ -1467,3 +1478,122 @@ def execute_pending_action(payload: ExecuteRequest, _=Depends(require_auth)):
     except Exception as e:
         logger.error(f"Error executing pending action for {sync_id}: {e}", exc_info=True)
         return {"error": "Failed to execute pending action"}
+
+
+@router.get("/track/{track_id}/stream")
+@router.get("/stream")
+def stream_manager_track(
+    track_id: str | None = None,
+    sync_id: str | None = Query(None),
+    media_id: str | None = Query(None),
+):
+    """Quality-sorted audio stream resolution.
+    If media_id is provided, stream that specific LocalMedia file.
+    If media_id is omitted, resolve track.local_media[0] (highest bitrate).
+    """
+    import os
+
+    from fastapi.responses import FileResponse
+
+    from core.database.repositories.track_repo import TrackRepository
+
+    m_id = str(media_id) if media_id and isinstance(media_id, str) else None
+    s_id = str(sync_id) if sync_id and isinstance(sync_id, str) else None
+    t_id = str(track_id) if track_id and isinstance(track_id, str) else None
+
+    target_ref = s_id or t_id
+    if not target_ref and not m_id:
+        raise HTTPException(status_code=400, detail="track_id, sync_id, or media_id is required")
+
+    db = get_database()
+    with db.session_scope() as session:
+        file_path = None
+        if m_id:
+            media = TrackRepository.get_media_by_media_id(session, m_id)
+            if media and media.file_path:
+                file_path = media.file_path
+        elif target_ref:
+            track = None
+            try:
+                t_int_id = int(target_ref)
+                track = session.query(Track).filter(Track.id == t_int_id).first()
+            except (ValueError, TypeError):
+                pass
+            if not track:
+                track = TrackRepository.get_track_by_sync_id(session, str(target_ref))
+
+            if track and track.local_media:
+                # Deterministic highest bitrate file
+                best_media = track.local_media[0]
+                file_path = best_media.file_path
+
+        if not file_path or not os.path.exists(file_path):
+            raise HTTPException(status_code=404, detail="Track file not found or media missing on disk")
+
+        return FileResponse(file_path)
+
+
+@router.post("/track/{track_id}/retag")
+@router.post("/track/retag")
+def retag_track(
+    track_id: str | None = None,
+    payload: RetagRequest | None = None,
+    _=Depends(require_auth),
+):
+    """Physical file retagging. Enforces explicit media_id in request payload."""
+    if not payload or not payload.media_id:
+        raise HTTPException(
+            status_code=400,
+            detail="media_id is required for physical file mutations",
+        )
+
+    import os
+
+    from core.database.repositories.track_repo import TrackRepository
+    from services.metadata_enhancer import get_metadata_enhancer
+
+    db = get_database()
+    with db.session_scope() as session:
+        media = TrackRepository.get_media_by_media_id(session, payload.media_id)
+        if not media or not media.file_path or not os.path.exists(media.file_path):
+            raise HTTPException(status_code=404, detail="Media file not found on disk")
+
+        if payload.tags:
+            enhancer = get_metadata_enhancer()
+            enhancer.tag_file_verified(Path(media.file_path), payload.tags)
+
+    return {"success": True, "media_id": payload.media_id}
+
+
+@router.post("/track/{track_id}/rename")
+@router.post("/track/rename")
+def rename_track(
+    track_id: str | None = None,
+    payload: RenameFileRequest | None = None,
+    _=Depends(require_auth),
+):
+    """Physical file rename. Enforces explicit media_id in request payload."""
+    if not payload or not payload.media_id:
+        raise HTTPException(
+            status_code=400,
+            detail="media_id is required for physical file mutations",
+        )
+
+    import os
+
+    from core.database.repositories.track_repo import TrackRepository
+
+    db = get_database()
+    with db.session_scope() as session:
+        media = TrackRepository.get_media_by_media_id(session, payload.media_id)
+        if not media or not media.file_path or not os.path.exists(media.file_path):
+            raise HTTPException(status_code=404, detail="Media file not found on disk")
+
+        if payload.new_filename:
+            old_path = Path(media.file_path)
+            new_path = old_path.parent / payload.new_filename
+            old_path.rename(new_path)
+            media.file_path = str(new_path)
+            session.flush()
+
+    return {"success": True, "media_id": payload.media_id}

@@ -2,9 +2,7 @@ import os
 import sys
 from logging.config import fileConfig
 
-sys.path.insert(
-    0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../"))
-)
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../")))
 
 from alembic import context
 
@@ -18,9 +16,7 @@ config = context.config
 # This line sets up loggers basically.
 # Guard: when invoked programmatically (e.g. run_auto_migrations), the caller
 # sets configure_logger=False to prevent Alembic wiping our tiered log setup.
-if config.config_file_name is not None and config.attributes.get(
-    "configure_logger", True
-):
+if config.config_file_name is not None and config.attributes.get("configure_logger", True):
     fileConfig(config.config_file_name)
 
 # add your model's MetaData object here
@@ -41,15 +37,18 @@ def run_migrations_offline() -> None:
 
     """
     db = get_database()
-    context.configure(
-        url=str(db.engine.url),
-        target_metadata=target_metadata,
-        literal_binds=True,
-        dialect_opts={"paramstyle": "named"},
-    )
+    from core.task_manager import db_write_lease
 
-    with context.begin_transaction():
-        context.run_migrations()
+    with db_write_lease(task_name="migration_music_offline"):
+        context.configure(
+            url=str(db.engine.url),
+            target_metadata=target_metadata,
+            literal_binds=True,
+            dialect_opts={"paramstyle": "named"},
+        )
+
+        with context.begin_transaction():
+            context.run_migrations()
 
 
 def run_migrations_online() -> None:
@@ -61,14 +60,14 @@ def run_migrations_online() -> None:
     """
     db = get_database()
     connectable = db.engine
+    from core.task_manager import db_write_lease
 
-    with connectable.connect() as connection:
-        context.configure(
-            connection=connection, target_metadata=target_metadata, render_as_batch=True
-        )
+    with db_write_lease(task_name="migration_music_online"):
+        with connectable.connect() as connection:
+            context.configure(connection=connection, target_metadata=target_metadata, render_as_batch=True)
 
-        with context.begin_transaction():
-            context.run_migrations()
+            with context.begin_transaction():
+                context.run_migrations()
 
 
 if context.is_offline_mode():

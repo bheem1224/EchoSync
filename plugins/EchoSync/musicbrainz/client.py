@@ -1032,8 +1032,23 @@ class MusicBrainzClient(PluginBase):
                 return None
 
             data = response.json() or {}
-            logger.debug(f"[MusicBrainz Client] get_metadata response JSON: {data}")
+            title = data.get("title") or "Unknown"
+            artist_credit = data.get("artist-credit") or []
+            artist_name = (
+                artist_credit[0].get("name") if artist_credit and isinstance(artist_credit[0], dict) else "Unknown"
+            )
             releases = data.get("releases") or []
+            duration_ms = data.get("length") or 0
+
+            # Concise single-line output for standard terminal stdout
+            logger.debug(
+                f"[MusicBrainz Client] MBID={mbid} resolved: '{title}' by '{artist_name}' "
+                f"({len(releases)} release groups, duration={duration_ms}ms)"
+            )
+
+            # Full raw dictionary dump routed strictly to VERBOSE level (5)
+            if logger.isEnabledFor(5):
+                logger.log(5, f"[MusicBrainz Client] Raw MBID={mbid} payload: {data}")
             result = {
                 "title": data.get("title"),
                 "disambiguation": data.get("disambiguation") or "",

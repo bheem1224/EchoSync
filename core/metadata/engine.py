@@ -26,6 +26,7 @@ from core.matching_engine.trust_gate import (
     is_cross_script,
     is_generic_title,
     sanitize_title_from_filename,
+    should_bypass_filename_trust_gate,
     verify_title_trust_gate,
 )
 from core.metadata.schemas import (
@@ -421,32 +422,33 @@ class MetadataResolutionEngine:
         except (ValueError, TypeError):
             channels = 2
 
-        chromaprint: str | None = None
-        if channels > 2:
-            logger.info(
-                "[resolution_engine] [acoustid-isolated] Multi-channel audio (%d ch) on %s; skipping Chromaprint.",
-                channels,
-                file_path.name,
-            )
-        else:
-            try:
-                chromaprint, fp_dur = FingerprintGenerator.generate_with_duration(str(file_path))
-                if fp_dur and duration_ms <= 0:
-                    duration_ms = round(float(fp_dur) * 1000)
-            except Exception as fp_err:
-                logger.warning(
-                    "[resolution_engine] [acoustid-isolated] Fingerprint generation failed for %s: %s",
-                    file_path.name,
-                    fp_err,
-                )
-
         if request.duration_ms and duration_ms <= 0:
             duration_ms = request.duration_ms
         elif request.duration and duration_ms <= 0:
             d_val = float(request.duration)
             duration_ms = round(d_val * 1000) if d_val < 10000 else round(d_val)
-        if request.chromaprint and not chromaprint:
-            chromaprint = request.chromaprint
+
+        chromaprint: str | None = request.chromaprint
+        if not chromaprint:
+            if channels > 2:
+                logger.info(
+                    "[resolution_engine] [acoustid-isolated] Multi-channel audio (%d ch) on %s; skipping Chromaprint.",
+                    channels,
+                    file_path.name,
+                )
+            else:
+                try:
+                    chromaprint, fp_dur = FingerprintGenerator.generate_with_duration(str(file_path))
+                    if fp_dur and duration_ms <= 0:
+                        duration_ms = round(float(fp_dur) * 1000)
+                    if chromaprint:
+                        request.chromaprint = chromaprint
+                except Exception as fp_err:
+                    logger.warning(
+                        "[resolution_engine] [acoustid-isolated] Fingerprint generation failed for %s: %s",
+                        file_path.name,
+                        fp_err,
+                    )
 
         # ── Stage 3: AcoustID (isolated) ─────────────────────────────────────
         acoustid_res: dict[str, Any] | None = None
@@ -469,6 +471,7 @@ class MetadataResolutionEngine:
                 tag_title=tag_title,
                 baseline_artist=baseline_artist or None,
                 baseline_album=baseline_album or None,
+                request=request,
             )
 
         # ── Result assembly ────────────────────────────────────────────────────
@@ -626,34 +629,35 @@ class MetadataResolutionEngine:
             except (ValueError, TypeError):
                 duration_ms = 0
 
-        # Invariant: Multi-channel audio (>2 channels) must skip fingerprinting until native downmixing
-        chromaprint: str | None = None
-        if channels > 2:
-            logger.info(
-                "[resolution_engine] Multi-channel audio detected (%d channels) for %s; skipping Chromaprint extraction.",
-                channels,
-                file_path.name,
-            )
-        else:
-            try:
-                chromaprint, fp_dur = FingerprintGenerator.generate_with_duration(str(file_path))
-                if fp_dur and (duration_ms <= 0):
-                    duration_ms = round(float(fp_dur) * 1000)
-            except Exception as fp_err:
-                logger.warning(
-                    "[resolution_engine] Fingerprint generation failed for %s: %s",
-                    file_path.name,
-                    fp_err,
-                )
-                chromaprint = None
-
         if request.duration_ms and duration_ms <= 0:
             duration_ms = request.duration_ms
         elif request.duration and duration_ms <= 0:
             d_val = float(request.duration)
             duration_ms = round(d_val * 1000) if d_val < 10000 else round(d_val)
-        if request.chromaprint and not chromaprint:
-            chromaprint = request.chromaprint
+
+        # Invariant: Multi-channel audio (>2 channels) must skip fingerprinting until native downmixing
+        chromaprint: str | None = request.chromaprint
+        if not chromaprint:
+            if channels > 2:
+                logger.info(
+                    "[resolution_engine] Multi-channel audio detected (%d channels) for %s; skipping Chromaprint extraction.",
+                    channels,
+                    file_path.name,
+                )
+            else:
+                try:
+                    chromaprint, fp_dur = FingerprintGenerator.generate_with_duration(str(file_path))
+                    if fp_dur and (duration_ms <= 0):
+                        duration_ms = round(float(fp_dur) * 1000)
+                    if chromaprint:
+                        request.chromaprint = chromaprint
+                except Exception as fp_err:
+                    logger.warning(
+                        "[resolution_engine] Fingerprint generation failed for %s: %s",
+                        file_path.name,
+                        fp_err,
+                    )
+                    chromaprint = None
 
         tag_title = raw_tags.get("title")
         tag_artist = raw_tags.get("artist") or raw_tags.get("artist_name")
@@ -713,41 +717,46 @@ class MetadataResolutionEngine:
                 filename_contradicts_baseline = True
 
         # ── Stage 0: Zero-Trust Signature Gate (ECHOSYNC_SIGNATURE) ───────────
-        sig_tag = raw_tags.get("echosync_signature")
-        if sig_tag and not request.ignore_cache and baseline_title and baseline_artist:
+        signature_valid: bool = False
+        sig_tag = raw_tags.get("echosync_signature") or raw_tags.get("ECHOSYNC_SIGNATURE")
+        if sig_tag and baseline_title and baseline_artist:
             try:
                 import echosync_core
 
                 if hasattr(echosync_core, "verify_audio_signature"):
-                    if echosync_core.verify_audio_signature(
-                        str(file_path), baseline_title, baseline_artist, str(sig_tag).strip()
-                    ):
-                        logger.info(
-                            "[resolution_engine] Stage 0 HIT (Verified ECHOSYNC_SIGNATURE): %s",
-                            file_path.name,
+                    signature_valid = bool(
+                        echosync_core.verify_audio_signature(
+                            str(file_path), str(baseline_title), str(baseline_artist), str(sig_tag).strip()
                         )
-                        return ResolutionResult(
-                            media_id=request.media_id,
-                            sync_id=request.sync_id,
-                            title=baseline_title,
-                            artist=baseline_artist,
-                            album=baseline_album or None,
-                            year=parsed_year,
-                            track_number=parsed_track_num,
-                            disc_number=parsed_disc_num,
-                            musicbrainz_track_id=raw_tags.get("musicbrainz_track_id")
-                            or raw_tags.get("musicbrainz_id")
-                            or raw_tags.get("mbid")
-                            or raw_tags.get("recording_id"),
-                            musicbrainz_release_id=raw_tags.get("musicbrainz_album_id")
-                            or raw_tags.get("musicbrainz_release_id"),
-                            acoustid_id=raw_tags.get("acoustid_id"),
-                            chromaprint=chromaprint,
-                            duration_ms=duration_ms,
-                            isrc=tag_isrc,
-                            confidence_score=1.0,
-                            resolution_method="signature_verified",
-                        )
+                    )
+                    if signature_valid:
+                        if not request.ignore_cache:
+                            logger.info(
+                                "[resolution_engine] Stage 0 HIT (Verified ECHOSYNC_SIGNATURE): %s",
+                                file_path.name,
+                            )
+                            return ResolutionResult(
+                                media_id=request.media_id,
+                                sync_id=request.sync_id,
+                                title=baseline_title,
+                                artist=baseline_artist,
+                                album=baseline_album or None,
+                                year=parsed_year,
+                                track_number=parsed_track_num,
+                                disc_number=parsed_disc_num,
+                                musicbrainz_track_id=raw_tags.get("musicbrainz_track_id")
+                                or raw_tags.get("musicbrainz_id")
+                                or raw_tags.get("mbid")
+                                or raw_tags.get("recording_id"),
+                                musicbrainz_release_id=raw_tags.get("musicbrainz_album_id")
+                                or raw_tags.get("musicbrainz_release_id"),
+                                acoustid_id=raw_tags.get("acoustid_id"),
+                                chromaprint=chromaprint,
+                                duration_ms=duration_ms,
+                                isrc=tag_isrc,
+                                confidence_score=1.0,
+                                resolution_method="signature_verified",
+                            )
                     else:
                         logger.warning(
                             "[resolution_engine] Stage 0 FAILED: ECHOSYNC_SIGNATURE mismatch/tampering detected on %s",
@@ -758,6 +767,7 @@ class MetadataResolutionEngine:
                     "[resolution_engine] Stage 0 signature verification error: %s",
                     sig_err,
                 )
+                signature_valid = False
 
         # ── Fast-Path: Embedded MusicBrainz ID in Tags ─────────────────────────
         embedded_mbid = (
@@ -766,93 +776,111 @@ class MetadataResolutionEngine:
             or raw_tags.get("recording_id")
             or raw_tags.get("musicbrainz_trackid")
         )
+        has_identifiable_tags = bool(
+            (tag_title and not is_generic_title(str(tag_title)))
+            and (tag_artist and not str(tag_artist).lower().strip().startswith("unknown"))
+        )
         if embedded_mbid and not request.ignore_embedded_mbid:
-            mb_plugin = self._get_mb_plugin()
-            if mb_plugin and hasattr(mb_plugin, "get_metadata"):
-                try:
-                    meta = mb_plugin.get_metadata(str(embedded_mbid).strip())
-                    if meta:
-                        c_title = meta.get("title") if isinstance(meta, dict) else getattr(meta, "title", None)
-                        baseline_check = request.baseline_title or baseline_title
+            if not has_identifiable_tags:
+                logger.info(
+                    "[resolution_engine] Skipping embedded MBID %s (tags missing/unknown); dropping straight to Chromaprint/AcoustID",
+                    embedded_mbid,
+                )
+            else:
+                mb_plugin = self._get_mb_plugin()
+                if mb_plugin and hasattr(mb_plugin, "get_metadata"):
+                    try:
+                        meta = mb_plugin.get_metadata(str(embedded_mbid).strip())
+                        if meta:
+                            c_title = meta.get("title") if isinstance(meta, dict) else getattr(meta, "title", None)
+                            baseline_check = request.baseline_title or baseline_title
 
-                        contradicts_filename = False
-                        if c_title and filename_contradicts_baseline:
-                            sim = difflib.SequenceMatcher(
-                                None,
-                                str(c_title).lower().strip(),
-                                sanitized_file_title.lower().strip(),
-                            ).ratio()
-                            if sim < 0.60:
-                                contradicts_filename = True
-                                logger.warning(
-                                    f"[resolution_engine] Candidate '{c_title}' contradicts physical filename "
-                                    f"'{sanitized_file_title}' (similarity={sim:.2f}). Rejecting embedded hit."
+                            contradicts_filename = False
+                            if c_title and filename_contradicts_baseline:
+                                sim = difflib.SequenceMatcher(
+                                    None,
+                                    str(c_title).lower().strip(),
+                                    sanitized_file_title.lower().strip(),
+                                ).ratio()
+                                if sim < 0.60:
+                                    contradicts_filename = True
+                                    logger.warning(
+                                        f"[resolution_engine] Candidate '{c_title}' contradicts physical filename "
+                                        f"'{sanitized_file_title}' (similarity={sim:.2f}). Rejecting embedded hit."
+                                    )
+
+                            if (
+                                not c_title
+                                or contradicts_filename
+                                or not verify_title_trust_gate(
+                                    candidate_title=c_title,
+                                    baseline_title=baseline_check,
+                                    filename=file_path.name,
+                                    tag_title=tag_title,
+                                    min_similarity=0.60,
                                 )
-
-                        if (
-                            not c_title
-                            or contradicts_filename
-                            or not verify_title_trust_gate(
-                                candidate_title=c_title,
-                                baseline_title=baseline_check,
-                                filename=file_path.name,
-                                tag_title=tag_title,
-                                min_similarity=0.60,
-                            )
-                        ):
-                            logger.warning(
-                                f"[resolution_engine] Embedded MBID {embedded_mbid} rejected by Trust Gate "
-                                f"(Candidate: '{c_title or ''}' vs Baseline: '{request.baseline_title}'). "
-                                "Falling through to AcoustID."
-                            )
+                            ):
+                                logger.warning(
+                                    f"[resolution_engine] Embedded MBID {embedded_mbid} rejected by Trust Gate "
+                                    f"(Candidate: '{c_title or ''}' vs Baseline: '{request.baseline_title}'). "
+                                    "Falling through to AcoustID."
+                                )
+                            else:
+                                c_artist = (
+                                    (meta.get("artist") or meta.get("artist_name"))
+                                    if isinstance(meta, dict)
+                                    else (getattr(meta, "artist_name", None) or getattr(meta, "artist", None))
+                                )
+                                c_album = (
+                                    (meta.get("album") or meta.get("album_title"))
+                                    if isinstance(meta, dict)
+                                    else (getattr(meta, "album_title", None) or getattr(meta, "album", None))
+                                )
+                                c_rel_id = (
+                                    meta.get("release_id")
+                                    if isinstance(meta, dict)
+                                    else getattr(meta, "mb_release_id", None)
+                                )
+                                c_year, c_track, c_disc = _extract_release_details(
+                                    meta,
+                                    recording_id=str(embedded_mbid).strip(),
+                                    fallback_year=parsed_year,
+                                    fallback_track=parsed_track_num,
+                                    fallback_disc=parsed_disc_num,
+                                )
+                                logger.info(
+                                    "[resolution_engine] Embedded MBID fast-path verified: %s → %s",
+                                    file_path.name,
+                                    embedded_mbid,
+                                )
+                                return ResolutionResult(
+                                    media_id=request.media_id,
+                                    sync_id=request.sync_id,
+                                    title=c_title or baseline_title,
+                                    artist=c_artist or baseline_artist,
+                                    album=c_album or baseline_album,
+                                    year=c_year,
+                                    track_number=c_track,
+                                    disc_number=c_disc,
+                                    musicbrainz_track_id=str(embedded_mbid).strip(),
+                                    musicbrainz_release_id=c_rel_id,
+                                    acoustid_id=raw_tags.get("acoustid_id"),
+                                    chromaprint=chromaprint,
+                                    duration_ms=duration_ms,
+                                    isrc=tag_isrc,
+                                    confidence_score=0.99,
+                                    resolution_method="embedded_mbid",
+                                )
                         else:
-                            c_artist = (
-                                (meta.get("artist") or meta.get("artist_name"))
-                                if isinstance(meta, dict)
-                                else (getattr(meta, "artist_name", None) or getattr(meta, "artist", None))
-                            )
-                            c_album = (
-                                (meta.get("album") or meta.get("album_title"))
-                                if isinstance(meta, dict)
-                                else (getattr(meta, "album_title", None) or getattr(meta, "album", None))
-                            )
-                            c_rel_id = (
-                                meta.get("release_id")
-                                if isinstance(meta, dict)
-                                else getattr(meta, "mb_release_id", None)
-                            )
-                            c_year, c_track, c_disc = _extract_release_details(
-                                meta,
-                                recording_id=str(embedded_mbid).strip(),
-                                fallback_year=parsed_year,
-                                fallback_track=parsed_track_num,
-                                fallback_disc=parsed_disc_num,
-                            )
                             logger.info(
-                                "[resolution_engine] Embedded MBID fast-path verified: %s → %s",
-                                file_path.name,
+                                "[resolution_engine] Embedded MBID %s returned no metadata; falling through to AcoustID.",
                                 embedded_mbid,
                             )
-                            return ResolutionResult(
-                                media_id=request.media_id,
-                                sync_id=request.sync_id,
-                                title=c_title or baseline_title,
-                                artist=c_artist or baseline_artist,
-                                album=c_album or baseline_album,
-                                year=c_year,
-                                track_number=c_track,
-                                disc_number=c_disc,
-                                musicbrainz_track_id=str(embedded_mbid).strip(),
-                                musicbrainz_release_id=c_rel_id,
-                                acoustid_id=raw_tags.get("acoustid_id"),
-                                chromaprint=chromaprint,
-                                duration_ms=duration_ms,
-                                isrc=tag_isrc,
-                                confidence_score=0.99,
-                                resolution_method="embedded_mbid",
-                            )
-                except Exception as e_mb:
-                    logger.debug("[resolution_engine] Embedded MBID lookup failed: %s", e_mb)
+                    except Exception as e_mb:
+                        logger.debug(
+                            "[resolution_engine] Embedded MBID lookup failed: %s; falling through to AcoustID.",
+                            e_mb,
+                        )
 
         # ── Stage 2: Local Chromaprint Cache ──────────────────────────────────
         if chromaprint and not request.ignore_cache:
@@ -929,13 +957,90 @@ class MetadataResolutionEngine:
                 tag_title=tag_title,
                 baseline_artist=baseline_artist,
                 baseline_album=baseline_album,
+                request=request,
+                has_signature=signature_valid,
+                has_identifiable_tags=has_identifiable_tags,
             )
             if acoustid_res:
+                # Rule B: Check for signed file divergence (valid cryptographic signatures only)
+                if signature_valid:
+                    cand_t = str(acoustid_res.get("title") or "").strip().lower()
+                    base_t = str(baseline_title or "").strip().lower()
+                    title_sim = difflib.SequenceMatcher(None, base_t, cand_t).ratio() if base_t and cand_t else 1.0
+                    if title_sim < 0.85:
+                        logger.warning(
+                            "[resolution_engine] Signed file %s diverged from AcoustID candidate "
+                            "('%s' vs '%s', sim=%.2f). Staging ReviewTask and preserving signed tags.",
+                            file_path.name,
+                            baseline_title,
+                            acoustid_res.get("title"),
+                            title_sim,
+                        )
+                        try:
+                            from database.repositories.task_repository import TaskRepository
+
+                            TaskRepository.create_review_task(
+                                file_path=str(file_path),
+                                action="RESOLVE_METADATA_CONFLICT",
+                                track_id=request.media_id,
+                                confidence_score=0.95,
+                                track_data={
+                                    "action": "RESOLVE_METADATA_CONFLICT",
+                                    "reason": "SIGNED_METADATA_DIVERGENCE",
+                                    "current_title": baseline_title,
+                                    "current_artist": baseline_artist,
+                                    "current_album": baseline_album,
+                                    "proposed_title": acoustid_res.get("title"),
+                                    "proposed_artist": acoustid_res.get("artist"),
+                                    "proposed_album": acoustid_res.get("album"),
+                                    "musicbrainz_track_id": acoustid_res.get("musicbrainz_track_id"),
+                                    "acoustid_id": acoustid_res.get("acoustid_id"),
+                                },
+                            )
+                        except Exception as e_task:
+                            logger.warning(
+                                "[resolution_engine] Failed to stage signed metadata divergence: %s",
+                                e_task,
+                            )
+
+                        return ResolutionResult(
+                            media_id=request.media_id,
+                            sync_id=request.sync_id,
+                            title=baseline_title,
+                            artist=baseline_artist,
+                            album=baseline_album or None,
+                            year=parsed_year,
+                            track_number=parsed_track_num,
+                            disc_number=parsed_disc_num,
+                            musicbrainz_track_id=raw_tags.get("musicbrainz_track_id")
+                            or raw_tags.get("musicbrainz_id")
+                            or raw_tags.get("mbid")
+                            or raw_tags.get("recording_id"),
+                            musicbrainz_release_id=raw_tags.get("musicbrainz_album_id")
+                            or raw_tags.get("musicbrainz_release_id"),
+                            acoustid_id=raw_tags.get("acoustid_id"),
+                            chromaprint=chromaprint,
+                            duration_ms=duration_ms,
+                            isrc=tag_isrc,
+                            confidence_score=1.0,
+                            resolution_method="signature_verified",
+                        )
+                elif bool(sig_tag) and (
+                    acoustid_res.get("candidate_score", 0.0) >= 0.92 or acoustid_res.get("acoustid_score", 0.0) >= 0.92
+                ):
+                    logger.info(
+                        "[resolution_engine] Overriding invalid/corrupted signature with AcoustID ground truth (score=%s) on %s",
+                        acoustid_res.get("candidate_score") or acoustid_res.get("acoustid_score", 0.0),
+                        file_path.name,
+                    )
+
+            if acoustid_res:
                 logger.info(
-                    "[resolution_engine] Stage 3 HIT (AcoustID): %s → MBID %s (score: %.1f)",
+                    "[resolution_engine] Stage 3 HIT (AcoustID): %s → MBID %s (score: %.1f, veto=%s)",
                     file_path.name,
                     acoustid_res["musicbrainz_track_id"],
                     acoustid_res["candidate_score"],
+                    acoustid_res.get("veto_applied", False),
                 )
                 return ResolutionResult(
                     media_id=request.media_id,
@@ -1121,13 +1226,16 @@ class MetadataResolutionEngine:
 
     def _resolve_acoustid(
         self,
-        chromaprint: str,
-        file_duration_ms: int,
-        baseline_title: str,
-        filename: str,
-        tag_title: str | None,
+        chromaprint: str | None = None,
+        file_duration_ms: int = 0,
+        baseline_title: str = "",
+        filename: str = "",
+        tag_title: str | None = None,
         baseline_artist: str | None = None,
         baseline_album: str | None = None,
+        request: ResolutionRequest | None = None,
+        has_signature: bool = False,
+        has_identifiable_tags: bool = False,
     ) -> dict[str, Any] | None:
         """Query AcoustID, pre-filter candidate recordings before network egress, and pick
         the highest scoring candidate using filename-first zero-trust title semantics.
@@ -1143,6 +1251,36 @@ class MetadataResolutionEngine:
         if not acoustid_plugin or not mb_plugin:
             return None
 
+        if request is not None:
+            if request.chromaprint:
+                chromaprint = request.chromaprint
+            elif not chromaprint and request.file_path:
+                try:
+                    chromaprint, fp_dur = FingerprintGenerator.generate_with_duration(str(request.file_path))
+                    if fp_dur and file_duration_ms <= 0:
+                        file_duration_ms = round(float(fp_dur) * 1000)
+                    if chromaprint:
+                        request.chromaprint = chromaprint
+                except Exception as fp_err:
+                    logger.warning("[resolution_engine] Fingerprint generation failed in _resolve_acoustid: %s", fp_err)
+
+            if not filename and request.file_path:
+                filename = Path(request.file_path).name
+            if not baseline_title and request.baseline_title:
+                baseline_title = request.baseline_title
+            if not baseline_artist and request.baseline_artist:
+                baseline_artist = request.baseline_artist
+            if not baseline_album and request.baseline_album:
+                baseline_album = request.baseline_album
+            if request.duration_ms and file_duration_ms <= 0:
+                file_duration_ms = request.duration_ms
+            elif request.duration and file_duration_ms <= 0:
+                d_val = float(request.duration)
+                file_duration_ms = round(d_val * 1000) if d_val < 10000 else round(d_val)
+
+        if not chromaprint:
+            return None
+
         # Derive zero-trust title target from physical filename (ignores embedded tags)
         filename_stem = extract_filename_title(filename) if filename else ""
         logger.info(
@@ -1150,11 +1288,14 @@ class MetadataResolutionEngine:
             filename_stem,
         )
 
-        file_duration_sec = file_duration_ms / 1000.0
+        file_duration_sec = file_duration_ms / 1000.0 if file_duration_ms > 0 else 0.0
         duration_sec = round(file_duration_sec)
 
         try:
-            details = acoustid_plugin.resolve_fingerprint_details(chromaprint, duration_sec)
+            try:
+                details = acoustid_plugin.resolve_fingerprint_details(fingerprint=chromaprint, duration=duration_sec)
+            except TypeError:
+                details = acoustid_plugin.resolve_fingerprint_details(chromaprint, duration_sec)
             if not isinstance(details, dict):
                 return None
             acoustid_id = details.get("acoustid_id")
@@ -1230,29 +1371,64 @@ class MetadataResolutionEngine:
                 else:
                     dur_delta_sec = 0.0  # Unknown duration — pass through
 
+                # Candidate AcoustID match score (normalized 0.0 - 1.0)
+                raw_score_val = rec_meta.get("score") if rec_meta.get("score") is not None else details.get("score")
+                if raw_score_val is None:
+                    cand_acoustid_score = 0.0
+                else:
+                    try:
+                        raw_score = float(raw_score_val)
+                        cand_acoustid_score = raw_score / 100.0 if raw_score > 1.0 else raw_score
+                    except (ValueError, TypeError):
+                        cand_acoustid_score = 0.0
+
+                # Veto authority evaluation (Rule A / B)
+                veto_applies = should_bypass_filename_trust_gate(
+                    acoustid_score=cand_acoustid_score,
+                    duration_delta_sec=dur_delta_sec,
+                    has_signature=has_signature,
+                    has_identifiable_tags=has_identifiable_tags,
+                )
+
                 # Step B: Artist token filter (pre-network)
+                # Skip filter if baseline_artist is missing, empty, or generic, OR if veto_applies
                 cand_artist = rec_meta.get("artist") or ""
-                if cand_artist and baseline_artist and str(baseline_artist).strip():
-                    b_art = str(baseline_artist).lower().strip()
-                    if b_art not in ("unknown", "unknown artist", "various artists", "va"):
-                        c_art = cand_artist.lower().strip()
-                        overlap = (
-                            c_art in b_art
-                            or b_art in c_art
-                            or bool(
-                                {w for w in re.findall(r"\w+", b_art) if len(w) > 2}
-                                & {w for w in re.findall(r"\w+", c_art) if len(w) > 2}
-                            )
-                            or difflib.SequenceMatcher(None, b_art, c_art).ratio() >= 0.50
+                b_art = str(baseline_artist).lower().strip() if baseline_artist else ""
+                generic_artists = {
+                    "unknown",
+                    "unknown artist",
+                    "various artists",
+                    "va",
+                    "various",
+                    "soundtrack",
+                    "ost",
+                    "various artist",
+                }
+                if (
+                    not veto_applies
+                    and cand_artist
+                    and b_art
+                    and b_art not in generic_artists
+                    and not is_generic_title(b_art)
+                ):
+                    c_art = cand_artist.lower().strip()
+                    overlap = (
+                        c_art in b_art
+                        or b_art in c_art
+                        or bool(
+                            {w for w in re.findall(r"\w+", b_art) if len(w) > 2}
+                            & {w for w in re.findall(r"\w+", c_art) if len(w) > 2}
                         )
-                        if not overlap:
-                            logger.debug(
-                                "[resolution_engine] Step B DROPPED MBID %s: artist '%s' disjoint from baseline '%s'",
-                                mbid_str,
-                                cand_artist,
-                                baseline_artist,
-                            )
-                            continue
+                        or difflib.SequenceMatcher(None, b_art, c_art).ratio() >= 0.50
+                    )
+                    if not overlap:
+                        logger.debug(
+                            "[resolution_engine] Step B DROPPED MBID %s: artist '%s' disjoint from baseline '%s'",
+                            mbid_str,
+                            cand_artist,
+                            baseline_artist,
+                        )
+                        continue
 
                 # Step C: Fast in-memory title check against filename stem
                 cand_title = str(rec_meta.get("title") or "").strip()
@@ -1266,14 +1442,24 @@ class MetadataResolutionEngine:
                     if fn_tokens and c_tokens:
                         common_tokens = fn_tokens & c_tokens
                         if not common_tokens:
-                            # Completely disjoint titles sharing no significant words
-                            sim = min(sim, 0.15)
+                            # Disjoint titles sharing no significant words:
+                            # If acoustic match has veto authority, give 0.65 floor.
+                            if veto_applies:
+                                sim = max(sim, 0.65)
+                            elif cand_acoustid_score >= 0.95 and dur_delta_sec <= 1.0:
+                                sim = max(sim, 0.65)
+                            else:
+                                sim = min(sim, 0.15)
                         else:
                             token_overlap = len(common_tokens) / max(len(fn_tokens), len(c_tokens))
                             sim = max(sim, token_overlap)
+                            if veto_applies:
+                                sim = max(sim, 0.65)
+                    elif veto_applies:
+                        sim = max(sim, 0.65)
 
-                    # Pruning Rule: Discard any candidate where title similarity < 0.35
-                    if sim < 0.35:
+                    # Pruning Rule: Discard any candidate where title similarity < 0.35 unless veto applies
+                    if sim < 0.35 and not veto_applies:
                         logger.debug(
                             "[resolution_engine] Title pre-filter DROPPED MBID %s '%s': "
                             "title similarity %.2f < 0.35 against filename '%s'",
@@ -1284,16 +1470,17 @@ class MetadataResolutionEngine:
                         )
                         continue
 
+                elif veto_applies:
+                    sim = 0.65
                 else:
                     sim = 0.50  # Neutral similarity for untagged candidates or generic filenames
 
                 # Ranking score: 80% title similarity + 20% AcoustID cluster score
-                cand_score = float(rec_meta.get("score") or 0.0)
-                if cand_score > 1.0:
-                    cand_score /= 100.0
-                pre_rank_score = (sim * 0.8) + (cand_score * 0.2)
+                pre_rank_score = (sim * 0.8) + (cand_acoustid_score * 0.2)
 
-                viable_candidates.append((mbid_str, pre_rank_score, dur_delta_sec, sim))
+                viable_candidates.append(
+                    (mbid_str, pre_rank_score, dur_delta_sec, sim, cand_acoustid_score, veto_applies)
+                )
 
             # Exit immediately if no candidates match
             if not viable_candidates:
@@ -1324,8 +1511,15 @@ class MetadataResolutionEngine:
             best_candidate: dict[str, Any] | None = None
             best_mbid: str | None = None
             best_score = 0.0
+            best_veto_applied = False
+            best_acoustid_score = 0.0
+            best_dur_delta = 0.0
 
-            for mbid_str in top_mbids:
+            for cand_info in top_candidates:
+                mbid_str = cand_info[0]
+                cand_sim = cand_info[3]
+                cand_acoustid_score = cand_info[4]
+                veto_applies = cand_info[5]
                 cand_meta = mb_plugin.get_metadata(mbid_str)
                 if not isinstance(cand_meta, dict):
                     continue
@@ -1356,8 +1550,11 @@ class MetadataResolutionEngine:
                 c_album = str(cand_meta.get("album") or cand_meta.get("album_title") or "")
                 cand_dur_ms = int(mb_dur_sec * 1000) if mb_dur_sec is not None else None
 
+                # Build query track: when veto applies, acoustic candidate title provides
+                # ground truth without passing raw unsanitized file stems into matcher
+                query_title = c_title if veto_applies else (filename_stem or c_title)
                 query_track = EchosyncTrack(
-                    raw_title=filename_stem or c_title,
+                    raw_title=query_title,
                     artist_name=baseline_artist or c_artist,
                     album_title=baseline_album or c_album,
                     duration=file_duration_ms if file_duration_ms > 0 else None,
@@ -1390,17 +1587,20 @@ class MetadataResolutionEngine:
                 else:
                     dur_weight = 1.0  # Unknown duration — no penalty
 
-                # Final score: 70% title (filename-based), 30% duration proximity + album bonus
+                # Final score: candidate scoring combines matcher score (70%), duration weight (30%), and album bonus
                 cand_score = (matcher_score * 0.7) + (dur_weight * 30.0) + album_bonus
+                if veto_applies:
+                    cand_sim = max(cand_sim, 0.65)
 
                 logger.debug(
                     "[resolution_engine] Stage 3 candidate MBID %s '%s': "
-                    "matcher=%.1f dur_weight=%.3f album_bonus=%.1f => score=%.2f",
+                    "matcher=%.1f dur_weight=%.3f album_bonus=%.1f veto=%s => score=%.2f",
                     mbid_str,
                     c_title,
                     matcher_score,
                     dur_weight,
                     album_bonus,
+                    veto_applies,
                     cand_score,
                 )
 
@@ -1408,6 +1608,22 @@ class MetadataResolutionEngine:
                     best_score = cand_score
                     best_candidate = cand_meta
                     best_mbid = mbid_str
+                    best_veto_applied = veto_applies
+                    best_acoustid_score = cand_acoustid_score
+                    best_dur_delta = dur_delta_sec
+
+                # Short-circuit on clear filename match to enforce HTTP request cap (<= 1 on clear match)
+                if matcher_score >= 80.0 and cand_sim >= 0.60:
+                    logger.info(
+                        "[resolution_engine] Clear filename match confirmed for MBID %s '%s' "
+                        "(matcher=%.1f, score=%.1f, sim=%.2f). Terminating candidate inspection.",
+                        mbid_str,
+                        c_title,
+                        matcher_score,
+                        cand_score,
+                        cand_sim,
+                    )
+                    break
 
             if best_candidate and best_mbid:
                 cand_year, cand_track, cand_disc = _extract_release_details(
@@ -1415,10 +1631,11 @@ class MetadataResolutionEngine:
                     recording_id=best_mbid,
                 )
                 logger.info(
-                    "[resolution_engine] Stage 3 WINNER MBID %s '%s' (score=%.2f, filename_stem='%s')",
+                    "[resolution_engine] Stage 3 WINNER MBID %s '%s' (score=%.2f, veto=%s, filename_stem='%s')",
                     best_mbid,
                     best_candidate.get("title"),
                     best_score,
+                    best_veto_applied,
                     filename_stem,
                 )
                 return {
@@ -1429,10 +1646,13 @@ class MetadataResolutionEngine:
                     "track_number": cand_track,
                     "disc_number": cand_disc,
                     "musicbrainz_track_id": best_mbid,
-                    "musicbrainz_release_id": best_candidate.get("release_id"),
+                    "musicbrainz_release_id": best_candidate.get("release_id") or best_candidate.get("mb_release_id"),
                     "acoustid_id": acoustid_id,
                     "isrc": best_candidate.get("isrc"),
                     "candidate_score": best_score,
+                    "acoustid_score": best_acoustid_score,
+                    "duration_delta_sec": best_dur_delta,
+                    "veto_applied": best_veto_applied,
                 }
         except Exception as exc:
             logger.warning("[resolution_engine] AcoustID resolution error: %s", exc)

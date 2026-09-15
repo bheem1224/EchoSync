@@ -1,5 +1,9 @@
 import inspect
+import logging
+import random
 import re
+import sqlite3
+import time
 from abc import ABC
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -11,6 +15,8 @@ from core.enums import Capability
 from core.matching_engine import text_utils
 from core.request_manager import RequestManager
 from time_utils import utc_now
+
+logger = logging.getLogger("core.nexus_framework.plugin_SDK")
 
 
 @dataclass
@@ -40,16 +46,64 @@ class _ConfigFacade:
         from database.config_database import get_config_database
 
         db = get_config_database()
-        svc_id = db.get_or_create_service_id(self.plugin_id)
-        val = db.get_service_config(svc_id, key)
-        return val if val is not None else default
+        max_retries = 5
+        base_delay = 0.05
+        for attempt in range(max_retries):
+            try:
+                svc_id = db.get_or_create_service_id(self.plugin_id)
+                val = db.get_service_config(svc_id, key)
+                return val if val is not None else default
+            except Exception as e:
+                err_msg = str(e).lower()
+                is_transient = isinstance(e, sqlite3.OperationalError) or any(
+                    tok in err_msg for tok in ("disk i/o error", "locked", "busy")
+                )
+                if is_transient and attempt < max_retries - 1:
+                    delay = min(1.0, base_delay * (2**attempt)) + random.uniform(0, 0.05)
+                    logger.warning(
+                        f"[PluginConfigSDK] Transient database error accessing config key '{key}' "
+                        f"for plugin '{self.plugin_id}' (attempt {attempt + 1}/{max_retries}): {e}. Backing off for {delay:.3f}s..."
+                    )
+                    time.sleep(delay)
+                    continue
+                logger.warning(
+                    f"[PluginConfigSDK] Error reading config key '{key}' for plugin '{self.plugin_id}': {e}. "
+                    f"Falling back to default value."
+                )
+                return default
+        return default
 
     def set(self, key: str, value: str):
         from database.config_database import get_config_database
 
         db = get_config_database()
-        svc_id = db.get_or_create_service_id(self.plugin_id)
-        db.set_service_config(svc_id, key, value, is_sensitive=False)
+        max_retries = 5
+        base_delay = 0.05
+        for attempt in range(max_retries):
+            try:
+                svc_id = db.get_or_create_service_id(self.plugin_id)
+                db.set_service_config(svc_id, key, value, is_sensitive=False)
+                return
+            except Exception as e:
+                err_msg = str(e).lower()
+                is_transient = isinstance(e, sqlite3.OperationalError) or any(
+                    tok in err_msg for tok in ("disk i/o error", "locked", "busy")
+                )
+                if is_transient and attempt < max_retries - 1:
+                    delay = min(1.0, base_delay * (2**attempt)) + random.uniform(0, 0.05)
+                    logger.warning(
+                        f"[PluginConfigSDK] Transient database error setting config key '{key}' "
+                        f"for plugin '{self.plugin_id}' (attempt {attempt + 1}/{max_retries}): {e}. Backing off for {delay:.3f}s..."
+                    )
+                    time.sleep(delay)
+                    continue
+                logger.warning(
+                    f"[PluginConfigSDK] Failed to set config key '{key}' for plugin '{self.plugin_id}': {e}."
+                )
+                return
+
+
+PluginConfigSDK = _ConfigFacade
 
 
 class _SecretsFacade:
@@ -61,16 +115,59 @@ class _SecretsFacade:
         from database.config_database import get_config_database
 
         db = get_config_database()
-        svc_id = db.get_or_create_service_id(self.plugin_id)
-        val = db.get_service_config(svc_id, key)
-        return val if val is not None else default
+        max_retries = 5
+        base_delay = 0.05
+        for attempt in range(max_retries):
+            try:
+                svc_id = db.get_or_create_service_id(self.plugin_id)
+                val = db.get_service_config(svc_id, key)
+                return val if val is not None else default
+            except Exception as e:
+                err_msg = str(e).lower()
+                is_transient = isinstance(e, sqlite3.OperationalError) or any(
+                    tok in err_msg for tok in ("disk i/o error", "locked", "busy")
+                )
+                if is_transient and attempt < max_retries - 1:
+                    delay = min(1.0, base_delay * (2**attempt)) + random.uniform(0, 0.05)
+                    logger.warning(
+                        f"[SecretsFacade] Transient database error accessing secret key '{key}' "
+                        f"for plugin '{self.plugin_id}' (attempt {attempt + 1}/{max_retries}): {e}. Backing off for {delay:.3f}s..."
+                    )
+                    time.sleep(delay)
+                    continue
+                logger.warning(
+                    f"[SecretsFacade] Error reading secret key '{key}' for plugin '{self.plugin_id}': {e}. "
+                    f"Falling back to default value."
+                )
+                return default
+        return default
 
     def set(self, key: str, value: str):
         from database.config_database import get_config_database
 
         db = get_config_database()
-        svc_id = db.get_or_create_service_id(self.plugin_id)
-        db.set_service_config(svc_id, key, value, is_sensitive=True)
+        max_retries = 5
+        base_delay = 0.05
+        for attempt in range(max_retries):
+            try:
+                svc_id = db.get_or_create_service_id(self.plugin_id)
+                db.set_service_config(svc_id, key, value, is_sensitive=True)
+                return
+            except Exception as e:
+                err_msg = str(e).lower()
+                is_transient = isinstance(e, sqlite3.OperationalError) or any(
+                    tok in err_msg for tok in ("disk i/o error", "locked", "busy")
+                )
+                if is_transient and attempt < max_retries - 1:
+                    delay = min(1.0, base_delay * (2**attempt)) + random.uniform(0, 0.05)
+                    logger.warning(
+                        f"[SecretsFacade] Transient database error setting secret key '{key}' "
+                        f"for plugin '{self.plugin_id}' (attempt {attempt + 1}/{max_retries}): {e}. Backing off for {delay:.3f}s..."
+                    )
+                    time.sleep(delay)
+                    continue
+                logger.warning(f"[SecretsFacade] Failed to set secret key '{key}' for plugin '{self.plugin_id}': {e}.")
+                return
 
 
 class _JobsSDKFacade:
@@ -92,9 +189,7 @@ class _JobsSDKFacade:
     ):
         from core.job_queue import job_queue
 
-        prefixed_name = (
-            f"{self.plugin_id}.{name}" if not name.startswith(self.plugin_id) else name
-        )
+        prefixed_name = f"{self.plugin_id}.{name}" if not name.startswith(self.plugin_id) else name
         job_queue.register_job(
             name=prefixed_name,
             func=func,
@@ -111,9 +206,7 @@ class _JobsSDKFacade:
     def dispatch_job(self, name: str) -> bool:
         from core.job_queue import job_queue
 
-        prefixed_name = (
-            f"{self.plugin_id}.{name}" if not name.startswith(self.plugin_id) else name
-        )
+        prefixed_name = f"{self.plugin_id}.{name}" if not name.startswith(self.plugin_id) else name
         return job_queue.execute_job_now(prefixed_name)
 
 
@@ -167,27 +260,15 @@ class _AccountsSDKFacade:
         try:
             import json
 
-            manifest_path = (
-                config_manager.get_plugins_dir() / caller_plugin_id / "manifest.json"
-            )
+            manifest_path = config_manager.get_plugins_dir() / caller_plugin_id / "manifest.json"
             if manifest_path.exists():
                 manifest = json.loads(manifest_path.read_text())
                 privileged = manifest.get("privileged", False)
         except Exception:
             pass
 
-        owner_lower = (
-            account_owner_plugin_id.lower()
-            .replace("echosync.", "")
-            .replace("echosync/", "")
-            .strip()
-        )
-        caller_lower = (
-            caller_plugin_id.lower()
-            .replace("echosync.", "")
-            .replace("echosync/", "")
-            .strip()
-        )
+        owner_lower = account_owner_plugin_id.lower().replace("echosync.", "").replace("echosync/", "").strip()
+        caller_lower = caller_plugin_id.lower().replace("echosync.", "").replace("echosync/", "").strip()
 
         if (
             caller_lower == owner_lower
@@ -214,9 +295,7 @@ class _AccountsSDKFacade:
     ):
         from database.config_database import get_config_database
 
-        get_config_database().save_account_token(
-            account_id, access_token, refresh_token, token_type, expires_at, scope
-        )
+        get_config_database().save_account_token(account_id, access_token, refresh_token, token_type, expires_at, scope)
 
     def get_all(self):
         """Return all accounts associated with the calling plugin."""
@@ -408,18 +487,14 @@ class _FileSDKFacade:
                         from core.tiered_logger import get_logger
 
                         logger = get_logger("plugin_SDK")
-                        logger.error(
-                            f"Security violation: Attempted soft delete outside music_dir: {p}"
-                        )
+                        logger.error(f"Security violation: Attempted soft delete outside music_dir: {p}")
                         return False
                 except AttributeError:
                     if not str(p).startswith(str(music_dir)):
                         from core.tiered_logger import get_logger
 
                         logger = get_logger("plugin_SDK")
-                        logger.error(
-                            f"Security violation: Attempted soft delete outside music_dir: {p}"
-                        )
+                        logger.error(f"Security violation: Attempted soft delete outside music_dir: {p}")
                         return False
             else:
                 music_dir = p.parent
@@ -432,9 +507,7 @@ class _FileSDKFacade:
             dest = trash_dir / p.name
             from core.io_gatekeeper import Gatekeeper
 
-            Gatekeeper.authorize_and_execute(
-                {"operation": "safe_move", "src": str(p), "dst": str(dest)}
-            )
+            Gatekeeper.authorize_and_execute({"operation": "safe_move", "src": str(p), "dst": str(dest)})
             return True
         except Exception as e:
             from core.tiered_logger import get_logger
@@ -498,16 +571,26 @@ class _NetworkSDKFacade:
             if self.plugin_id == "core" or self.plugin_id.startswith("core."):
                 return
 
-            manifest_path = (
-                config_manager.get_plugins_dir()
-                / self.plugin_id.replace("plugin.", "")
-                / "manifest.json"
-            )
+            manifest_path = config_manager.get_plugins_dir() / self.plugin_id.replace("plugin.", "") / "manifest.json"
             if not manifest_path.exists():
                 raise PermissionError(f"Plugin manifest not found for {self.plugin_id}")
 
             manifest = json.loads(manifest_path.read_text())
-            allowlist = manifest.get("network_domains", [])
+            if manifest.get("privileged") is True or manifest.get("privileged_mode") is True:
+                return
+            if (
+                isinstance(manifest.get("permissions"), dict)
+                and manifest.get("permissions", {}).get("privileged_mode") is True
+            ):
+                return
+
+            allowlist = manifest.get("network_domains")
+            if allowlist is None:
+                perms = manifest.get("permissions")
+                if isinstance(perms, dict):
+                    allowlist = perms.get("network_domains", [])
+                else:
+                    allowlist = []
 
             if "*" in allowlist:
                 return
@@ -523,9 +606,7 @@ class _NetworkSDKFacade:
                 elif domain == pattern:
                     return
 
-            raise PermissionError(
-                f"Network access to '{domain}' blocked. Domain not in 'network_domains' allowlist."
-            )
+            raise PermissionError(f"Network access to '{domain}' blocked. Domain not in 'network_domains' allowlist.")
         except Exception as e:
             if isinstance(e, PermissionError):
                 raise
@@ -607,9 +688,7 @@ class _HealthCheckSDKFacade:
                     return HealthCheckResult(
                         service_name=service_name,
                         status="healthy" if res else "unhealthy",
-                        message="Service check succeeded"
-                        if res
-                        else "Service check failed",
+                        message="Service check succeeded" if res else "Service check failed",
                     )
                 else:
                     return HealthCheckResult(
@@ -618,9 +697,7 @@ class _HealthCheckSDKFacade:
                         message=str(res),
                     )
             except Exception as e:
-                return HealthCheckResult(
-                    service_name=service_name, status="unhealthy", message=str(e)
-                )
+                return HealthCheckResult(service_name=service_name, status="unhealthy", message=str(e))
 
         health_check_registry.register_check_with_job(
             service_name=service_name,
@@ -630,9 +707,184 @@ class _HealthCheckSDKFacade:
         )
 
 
+def check_plugin_permission(plugin_id: str, scope: str) -> bool:
+    """Check whether a plugin has been granted a particular permission scope.
+
+    Supported scopes:
+      - "privileged_mode"
+      - "network_domains"
+      - "database.read_library"
+      - "database.mutate_aliases"
+      - "database.mutate_attributes"
+      - "database.mutate_working"
+      - "metadata.read"
+      - "wasm_fs_access"
+    """
+    if not plugin_id or plugin_id in ("core", "system") or plugin_id.startswith("core."):
+        return True
+
+    import json
+    from core.settings import config_manager
+    from database.config_database import get_config_database
+    from core.nexus_framework.permissions import SAFE_BASE_SCOPES
+
+    clean_scope = scope.strip()
+    is_base_scope = clean_scope in SAFE_BASE_SCOPES or clean_scope in (
+        "read_library",
+        "metadata",
+        "database.read_library",
+        "metadata.read",
+    )
+    canonical_scope = (
+        "database.read_library"
+        if clean_scope == "read_library"
+        else ("metadata.read" if clean_scope == "metadata" else clean_scope)
+    )
+
+    def _is_explicitly_denied(perms_obj: Any) -> bool:
+        if not isinstance(perms_obj, dict):
+            return False
+        if perms_obj.get(canonical_scope) is False or perms_obj.get(clean_scope) is False:
+            return True
+        if "." in canonical_scope:
+            cat, sub = canonical_scope.split(".", 1)
+            cat_obj = perms_obj.get(cat)
+            if isinstance(cat_obj, dict) and cat_obj.get(sub) is False:
+                return True
+            if perms_obj.get(sub) is False:
+                return True
+        else:
+            db_perms_map = perms_obj.get("database")
+            if isinstance(db_perms_map, dict) and db_perms_map.get(canonical_scope) is False:
+                return True
+        return False
+
+    db_perms = None
+    manifest_perms = None
+
+    # 1. Check services table in config.db first
+    try:
+        from core.plugins.sdk import compute_plugin_crc32
+
+        int_id = None
+        if isinstance(plugin_id, int) or (isinstance(plugin_id, str) and plugin_id.isdigit()):
+            int_id = int(plugin_id)
+        else:
+            int_id = compute_plugin_crc32(str(plugin_id))
+
+        clean_name = str(plugin_id).strip().lower()
+        short_name = clean_name.split(".")[-1]
+
+        db = get_config_database()
+        conn = db._open_connection()
+        try:
+            c = conn.cursor()
+            c.execute(
+                "SELECT permissions, privileged_mode FROM services WHERE plugin_id=? OR LOWER(name)=? OR LOWER(name)=?",
+                (int_id, clean_name, short_name),
+            )
+            row = c.fetchone()
+            if row:
+                if row[1]:  # privileged_mode flag enabled
+                    return True
+                if row[0]:
+                    try:
+                        db_perms = json.loads(row[0])
+                        if _is_explicitly_denied(db_perms):
+                            return False
+                        if isinstance(db_perms, list):
+                            if "privileged_mode" in db_perms or canonical_scope in db_perms or clean_scope in db_perms:
+                                return True
+                            if "." in canonical_scope:
+                                base_cat, sub_key = canonical_scope.split(".", 1)
+                                if sub_key in db_perms:
+                                    return True
+                        elif isinstance(db_perms, dict):
+                            if db_perms.get("privileged_mode"):
+                                return True
+                            if "." in canonical_scope:
+                                base_cat, sub_key = canonical_scope.split(".", 1)
+                                cat_perms = db_perms.get(base_cat, {})
+                                if isinstance(cat_perms, dict) and cat_perms.get(sub_key):
+                                    return True
+                                if db_perms.get(canonical_scope) or db_perms.get(sub_key):
+                                    return True
+                            elif (clean_scope in db_perms and db_perms[clean_scope]) or (
+                                canonical_scope in db_perms and db_perms[canonical_scope]
+                            ):
+                                return True
+                    except Exception:
+                        pass
+        finally:
+            conn.close()
+    except Exception:
+        pass
+
+    # 2. Check physical manifest.json
+    try:
+        clean_name = plugin_id.replace("plugin.", "").replace(".", "/")
+        manifest_path = config_manager.get_plugins_dir() / clean_name / "manifest.json"
+        if not manifest_path.exists():
+            clean_name = plugin_id.replace("plugin.", "")
+            manifest_path = config_manager.get_plugins_dir() / clean_name / "manifest.json"
+
+        if manifest_path.exists():
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            if manifest.get("privileged") is True or manifest.get("privileged_mode") is True:
+                return True
+            manifest_perms = manifest.get("permissions", {})
+            if _is_explicitly_denied(manifest_perms):
+                return False
+
+            if isinstance(manifest_perms, list):
+                if (
+                    "privileged_mode" in manifest_perms
+                    or canonical_scope in manifest_perms
+                    or clean_scope in manifest_perms
+                ):
+                    return True
+                if "." in canonical_scope:
+                    base_cat, sub_key = canonical_scope.split(".", 1)
+                    if sub_key in manifest_perms:
+                        return True
+            elif isinstance(manifest_perms, dict):
+                if manifest_perms.get("privileged_mode") is True:
+                    return True
+                if "." in canonical_scope:
+                    base_cat, sub_key = canonical_scope.split(".", 1)
+                    cat_perms = manifest_perms.get(base_cat, {})
+                    if isinstance(cat_perms, dict) and cat_perms.get(sub_key) is True:
+                        return True
+                    if manifest_perms.get(canonical_scope) is True or manifest_perms.get(sub_key) is True:
+                        return True
+                elif manifest_perms.get(clean_scope) or manifest_perms.get(canonical_scope):
+                    return True
+    except Exception:
+        pass
+
+    # 3. Auto-grant default base read scopes if not explicitly denied
+    if is_base_scope:
+        if not _is_explicitly_denied(db_perms) and not _is_explicitly_denied(manifest_perms):
+            return True
+
+    return False
+
+
 class _DatabaseFacade:
     def __init__(self, plugin_id: str):
         self.plugin_id = plugin_id
+
+    def check_permission(self, scope: str) -> bool:
+        return check_plugin_permission(self.plugin_id, scope)
+
+    def can_read_library(self) -> bool:
+        return check_plugin_permission(self.plugin_id, "database.read_library")
+
+    def can_mutate_aliases(self) -> bool:
+        return check_plugin_permission(self.plugin_id, "database.mutate_aliases")
+
+    def can_mutate_attributes(self) -> bool:
+        return check_plugin_permission(self.plugin_id, "database.mutate_attributes")
 
     def get_plugin_session(self):
         from database.working_database import get_working_database
@@ -640,6 +892,290 @@ class _DatabaseFacade:
         working_db = get_working_database()
         provider_storage = working_db.get_provider_storage(self.plugin_id)
         return provider_storage.session_scope()
+
+
+_ATTR_KEY_REGEX = re.compile(r"^[a-zA-Z0-9_.-]{1,100}$")
+
+
+def _validate_attribute_payload(key: str, value: Any) -> None:
+    """Validate attribute key format, JSON-serializability, recursion depth, and byte size."""
+    if not isinstance(key, str) or not _ATTR_KEY_REGEX.match(key):
+        raise ValueError(f"Invalid attribute key '{key}'. Must match pattern ^[a-zA-Z0-9_.-]{{1,100}}$.")
+
+    def _check_depth(v: Any, current_depth: int = 1) -> None:
+        if current_depth > 5:
+            raise ValueError("Attribute value exceeds maximum allowed recursion depth of 5.")
+        if isinstance(v, dict):
+            for sub_v in v.values():
+                _check_depth(sub_v, current_depth + 1)
+        elif isinstance(v, list):
+            for item in v:
+                _check_depth(item, current_depth + 1)
+
+    _check_depth(value)
+
+    try:
+        import json
+
+        serialized = json.dumps(value)
+    except (TypeError, ValueError) as e:
+        raise ValueError(f"Attribute value is not JSON-serializable: {e}") from e
+
+    if len(serialized.encode("utf-8")) > 65536:
+        raise ValueError("Attribute value payload exceeds 64 KB limit.")
+
+
+def _resolve_plugin_id_int(plugin_name: str) -> int:
+    import binascii
+
+    try:
+        from database.config_database import get_config_database
+
+        db = get_config_database()
+        int_id = db.get_service_id(plugin_name)
+        if int_id:
+            return int(int_id)
+    except Exception:
+        pass
+    return binascii.crc32(plugin_name.lower().encode("utf-8")) & 0xFFFFFFFF
+
+
+class _AliasBroker:
+    """Governed SDK broker for mutating track and artist aliases."""
+
+    def __init__(self, plugin_id_str: str):
+        self._plugin_id_str = plugin_id_str
+
+    @property
+    def _plugin_id_int(self) -> int:
+        return _resolve_plugin_id_int(self._plugin_id_str)
+
+    def upsert(
+        self,
+        entity_type: str,
+        entity_id: int | str | None,
+        proposals: list[dict | Any],
+        sync_id: str | None = None,
+        session: Any = None,
+    ) -> int:
+        if not check_plugin_permission(self._plugin_id_str, "database.mutate_aliases"):
+            raise PermissionError(
+                f"Plugin '{self._plugin_id_str}' lacks 'permissions.database.mutate_aliases' permission."
+            )
+        from core.database.repositories.track_repo import TrackRepository
+        from core.metadata.schemas import EntityAliasProposal
+        from database.music_database import get_database
+
+        norm_proposals: list[EntityAliasProposal] = []
+        for p in proposals:
+            if isinstance(p, EntityAliasProposal):
+                norm_proposals.append(p)
+            elif isinstance(p, dict):
+                norm_proposals.append(
+                    EntityAliasProposal(
+                        entity_type=p.get("entity_type", entity_type),
+                        entity_id=p.get("entity_id", entity_id),
+                        value=p.get("value") or p.get("name") or "",
+                        language=p.get("language") or p.get("locale"),
+                        script=p.get("script"),
+                        alias_type=p.get("alias_type"),
+                    )
+                )
+
+        if session:
+            return TrackRepository.upsert_entity_aliases(
+                session=session,
+                proposals=norm_proposals,
+                sync_id=sync_id,
+                plugin_id=self._plugin_id_int,
+                commit=False,
+            )
+        else:
+            music_db = get_database()
+            with music_db.get_session() as sess:
+                return TrackRepository.upsert_entity_aliases(
+                    session=sess,
+                    proposals=norm_proposals,
+                    sync_id=sync_id,
+                    plugin_id=self._plugin_id_int,
+                    commit=True,
+                )
+
+
+class _AttributeBroker:
+    """Governed SDK broker for reading and mutating namespaced entity KVS attributes."""
+
+    def __init__(self, plugin_id_str: str):
+        self._plugin_id_str = plugin_id_str
+
+    @property
+    def _plugin_id_int(self) -> int:
+        return _resolve_plugin_id_int(self._plugin_id_str)
+
+    def set(
+        self,
+        entity_type: str,
+        entity_id: int,
+        key: str,
+        value: Any,
+        session: Any = None,
+    ) -> bool:
+        if not check_plugin_permission(self._plugin_id_str, "database.mutate_attributes"):
+            raise PermissionError(
+                f"Plugin '{self._plugin_id_str}' lacks 'permissions.database.mutate_attributes' permission."
+            )
+        _validate_attribute_payload(key, value)
+        from core.database.repositories.track_repo import TrackRepository
+        from database.music_database import get_database
+
+        if session:
+            return TrackRepository.set_entity_attributes(
+                session=session,
+                entity_type=entity_type,
+                entity_id=entity_id,
+                plugin_id=self._plugin_id_int,
+                key=key,
+                value=value,
+                commit=False,
+            )
+        else:
+            music_db = get_database()
+            with music_db.get_session() as sess:
+                return TrackRepository.set_entity_attributes(
+                    session=sess,
+                    entity_type=entity_type,
+                    entity_id=entity_id,
+                    plugin_id=self._plugin_id_int,
+                    key=key,
+                    value=value,
+                    commit=True,
+                )
+
+    def get(
+        self,
+        entity_type: str,
+        entity_id: int,
+        key: str | None = None,
+        session: Any = None,
+    ) -> Any:
+        if not (
+            check_plugin_permission(self._plugin_id_str, "database.read_library")
+            or check_plugin_permission(self._plugin_id_str, "database.mutate_attributes")
+        ):
+            raise PermissionError(
+                f"Plugin '{self._plugin_id_str}' lacks 'permissions.database.read_library' or 'permissions.database.mutate_attributes' permission."
+            )
+        from core.database.repositories.track_repo import TrackRepository
+        from database.music_database import get_database
+
+        if session:
+            attrs = TrackRepository.get_entity_attributes(
+                session=session,
+                entity_type=entity_type,
+                entity_id=entity_id,
+                plugin_id=self._plugin_id_int,
+            )
+        else:
+            music_db = get_database()
+            with music_db.get_session() as sess:
+                attrs = TrackRepository.get_entity_attributes(
+                    session=sess,
+                    entity_type=entity_type,
+                    entity_id=entity_id,
+                    plugin_id=self._plugin_id_int,
+                )
+
+        if key is not None:
+            return attrs.get(key)
+        return attrs
+
+    def delete(
+        self,
+        entity_type: str,
+        entity_id: int,
+        key: str,
+        session: Any = None,
+    ) -> bool:
+        if not check_plugin_permission(self._plugin_id_str, "database.mutate_attributes"):
+            raise PermissionError(
+                f"Plugin '{self._plugin_id_str}' lacks 'permissions.database.mutate_attributes' permission."
+            )
+        from core.database.repositories.track_repo import TrackRepository
+        from database.music_database import get_database
+
+        if session:
+            return TrackRepository.delete_entity_attribute(
+                session=session,
+                entity_type=entity_type,
+                entity_id=entity_id,
+                plugin_id=self._plugin_id_int,
+                key=key,
+                commit=False,
+            )
+        else:
+            music_db = get_database()
+            with music_db.get_session() as sess:
+                return TrackRepository.delete_entity_attribute(
+                    session=sess,
+                    entity_type=entity_type,
+                    entity_id=entity_id,
+                    plugin_id=self._plugin_id_int,
+                    key=key,
+                    commit=True,
+                )
+
+
+class _OAuthSDKFacade:
+    """Governed SDK facade for Centralized HTTPS OAuth Token Broker integration."""
+
+    def __init__(self, plugin_id_str: str):
+        self._plugin_id_str = plugin_id_str
+
+    @property
+    def _plugin_id_int(self) -> int:
+        return _resolve_plugin_id_int(self._plugin_id_str)
+
+    def get_redirect_uri(self, provider_or_slug: str | None = None) -> str:
+        """Derive the canonical centralized HTTPS redirect URI on port 5001."""
+        from core.network_utils import get_lan_ip
+
+        slug = provider_or_slug or self._plugin_id_str.split(".")[-1]
+        lan_ip = get_lan_ip()
+        return f"https://{lan_ip}:5001/api/oauth/callback/plugins/{slug}"
+
+    def create_session(
+        self,
+        provider: str,
+        auth_url: str,
+        token_url: str,
+        client_id: str,
+        client_secret: str | None = None,
+        scopes: str | list[str] | None = None,
+        use_pkce: bool = True,
+        account_id: int | None = None,
+        on_token: Any = None,
+        on_error: Any = None,
+        extra_auth_params: dict[str, Any] | None = None,
+        ttl_seconds: int = 600,
+    ):
+        """Register an OAuth flow with the centralized token broker on port 5001."""
+        from core.oauth.sidecar import register_oauth_session
+
+        return register_oauth_session(
+            plugin_id=self._plugin_id_int,
+            provider=provider,
+            auth_url=auth_url,
+            token_url=token_url,
+            client_id=client_id,
+            client_secret=client_secret,
+            scopes=scopes,
+            use_pkce=use_pkce,
+            account_id=account_id,
+            on_token=on_token,
+            on_error=on_error,
+            extra_auth_params=extra_auth_params,
+            ttl_seconds=ttl_seconds,
+        )
 
 
 class _SDK:
@@ -673,6 +1209,14 @@ class _SDK:
         return _DatabaseFacade(self._get_plugin_id())
 
     @property
+    def aliases(self):
+        return _AliasBroker(self._get_plugin_id())
+
+    @property
+    def attributes(self):
+        return _AttributeBroker(self._get_plugin_id())
+
+    @property
     def accounts(self):
         return self._accounts
 
@@ -690,6 +1234,10 @@ class _SDK:
 
         return _WebhooksSDKFacade(self._get_plugin_id())
 
+    @property
+    def oauth(self):
+        return _OAuthSDKFacade(self._get_plugin_id())
+
     def _get_plugin_id(self):
         import inspect
 
@@ -699,9 +1247,7 @@ class _SDK:
         while frame:
             mod = frame.f_globals.get("__name__", "")
             if mod and not mod.startswith("core.nexus_framework"):
-                if not mod.startswith("importlib") and not mod.startswith(
-                    "_frozen_importlib"
-                ):
+                if not mod.startswith("importlib") and not mod.startswith("_frozen_importlib"):
                     if mod.startswith("plugins."):
                         caller_mod = mod
                         break
@@ -718,9 +1264,7 @@ class _SDK:
             # parts[0] is 'plugins', parts[1] is author, parts[2] is plugin_name
             if len(parts) >= 3:
                 return f"{parts[1]}.{parts[2]}"
-            return (
-                parts[1] if len(parts) > 1 else caller_mod
-            )  # fallback for single-part names
+            return parts[1] if len(parts) > 1 else caller_mod  # fallback for single-part names
 
         # Handle core.providers.{name}
         if caller_mod.startswith("core.providers."):
@@ -728,7 +1272,14 @@ class _SDK:
 
         return caller_mod.replace("plugins.", "").replace("core.", "").split(".")[0]
 
-    def get_database_connection(self, write_access: bool = False):
+    def get_plugin_data_dir(self) -> str:
+        """Return private persistent storage for the calling plugin."""
+        import os
+
+        plugin_name = self._get_plugin_id()
+        return os.path.join("/data/plugins_data", plugin_name)
+
+    def get_database_connection(self, write_access: bool = False, require_library: bool = True):
         """
         Returns an SQLAlchemy engine connected to the calling plugin's isolated SQLite database.
         It also securely mounts the core databases (music_library.db, working.db) as attached databases.
@@ -741,19 +1292,24 @@ class _SDK:
         from database.config_database import get_config_database
 
         plugin_name = self._get_plugin_id()
+        if require_library and not check_plugin_permission(plugin_name, "database.read_library"):
+            raise PermissionError(f"Plugin '{plugin_name}' lacks 'permissions.database.read_library' permission.")
+        if write_access and not (
+            check_plugin_permission(plugin_name, "database.mutate_working")
+            or check_plugin_permission(plugin_name, "privileged_mode")
+        ):
+            raise PermissionError(
+                f"Plugin '{plugin_name}' lacks 'permissions.database.mutate_working' or 'privileged_mode' permission for write access."
+            )
         db = get_config_database()
         plugin_id_int = db.get_service_id(plugin_name)
         if not plugin_id_int:
             import binascii
 
-            plugin_id_int = (
-                binascii.crc32(plugin_name.lower().encode("utf-8")) & 0xFFFFFFFF
-            )
+            plugin_id_int = binascii.crc32(plugin_name.lower().encode("utf-8")) & 0xFFFFFFFF
 
         channel = config_manager.get_plugin_channel(plugin_name) or "stable"
-        db_file_name = (
-            f"{plugin_id_int}@beta.db" if channel == "beta" else f"{plugin_id_int}.db"
-        )
+        db_file_name = f"{plugin_id_int}@beta.db" if channel == "beta" else f"{plugin_id_int}.db"
 
         plugin_data_dir = "/data/plugins/data/"
         os.makedirs(plugin_data_dir, exist_ok=True)
@@ -766,14 +1322,10 @@ class _SDK:
             cursor = dbapi_connection.cursor()
             try:
                 if os.path.exists("/data/music.db"):
-                    cursor.execute(
-                        "ATTACH DATABASE 'file:/data/music.db?mode=ro' AS music_lib"
-                    )
+                    cursor.execute("ATTACH DATABASE 'file:/data/music.db?mode=ro' AS music_lib")
                 working_mode = "rw" if write_access else "ro"
                 if os.path.exists("/data/working.db"):
-                    cursor.execute(
-                        f"ATTACH DATABASE 'file:/data/working.db?mode={working_mode}' AS working"
-                    )
+                    cursor.execute(f"ATTACH DATABASE 'file:/data/working.db?mode={working_mode}' AS working")
             except Exception:
                 pass
             finally:
@@ -848,9 +1400,7 @@ class WasmPluginWrapper:
         except Exception as e:
             from core.tiered_logger import get_logger
 
-            get_logger("wasm_sandbox").error(
-                f"Failed to instantiate WASM runtime sandbox for {self.wasm_path}: {e}"
-            )
+            get_logger("wasm_sandbox").error(f"Failed to instantiate WASM runtime sandbox for {self.wasm_path}: {e}")
 
 
 def _verify_caller(expected_plugin_id: str):
@@ -861,19 +1411,12 @@ def _verify_caller(expected_plugin_id: str):
         filename = frame_info.filename.replace("\\", "/")
 
         # If the execution frame originates from the trusted system directories or tests, grant absolute authority
-        if (
-            "/app/core/" in filename
-            or "/app/web/" in filename
-            or "/tests/" in filename
-            or "tests/" in filename
-        ):
+        if "/app/core/" in filename or "/app/web/" in filename or "/tests/" in filename or "tests/" in filename:
             return  # The Core and tests are omnipotent; allow bypass
 
         # Once we hit a plugin boundary in the stack, we stop looking for a core bypass
         # and proceed to the standard plugin-to-plugin isolation checks below.
-        if "/plugins/" in filename and (
-            "/data/plugins/" in filename or "/app/plugins/" in filename
-        ):
+        if "/plugins/" in filename and ("/data/plugins/" in filename or "/app/plugins/" in filename):
             break
 
     frame = inspect.currentframe()
@@ -911,9 +1454,7 @@ def _verify_caller(expected_plugin_id: str):
     base_expected = norm_expected.split(".")[-1]
 
     if caller_id.lower() != base_expected and caller_id.lower() != norm_expected:
-        raise PermissionError(
-            f"Namespace Isolation Violation: {caller_mod} attempted to access {expected_plugin_id}"
-        )
+        raise PermissionError(f"Namespace Isolation Violation: {caller_mod} attempted to access {expected_plugin_id}")
 
 
 # KVS class removed
@@ -952,9 +1493,7 @@ class StateKVS:
             from sqlalchemy.sql import text
 
             res = session.execute(
-                text(
-                    "SELECT value FROM plugin_state_kvs WHERE plugin_id=:ns AND key=:k"
-                ),
+                text("SELECT value FROM plugin_state_kvs WHERE plugin_id=:ns AND key=:k"),
                 {"ns": self.plugin_id, "k": key},
             ).fetchone()
             if res:
@@ -969,9 +1508,7 @@ class StateKVS:
             from sqlalchemy.sql import text
 
             session.execute(
-                text(
-                    "INSERT OR REPLACE INTO plugin_state_kvs (plugin_id, key, value) VALUES (:ns, :k, :v)"
-                ),
+                text("INSERT OR REPLACE INTO plugin_state_kvs (plugin_id, key, value) VALUES (:ns, :k, :v)"),
                 {"ns": self.plugin_id, "k": key, "v": value},
             )
 
@@ -1039,15 +1576,11 @@ class PluginBase(ABC):
     """
 
     name: str  # Unique provider name (e.g., 'spotify', 'tidal', 'plex')
-    category: str = (
-        "provider"  # 'provider' (bundled, stable) or 'plugin' (community, unstable)
-    )
+    category: str = "provider"  # 'provider' (bundled, stable) or 'plugin' (community, unstable)
     supports_downloads: bool = False  # Indicates if provider supports downloads
     enabled: bool = True  # Flag to enable/disable provider without deleting files
     version: str = "Unknown"  # Version string for the provider/plugin
-    metadata_quality_score: int = (
-        50  # Quality score of metadata from this provider (0-100)
-    )
+    metadata_quality_score: int = 50  # Quality score of metadata from this provider (0-100)
 
     # Set to True in providers that can resolve metadata by ISRC code.
     # Providers that set this to True MUST implement search_by_isrc().
@@ -1084,13 +1617,16 @@ class PluginBase(ABC):
         self.file = _FileSDKFacade()
         self.kvs = StateKVS(self.name)
 
+        self.aliases = _AliasBroker(self.name)
+        self.attributes = _AttributeBroker(self.name)
+        self.db = _DatabaseFacade(self.name)
         self.models = _PluginModelFacade()
 
     async def _async_cancel_download(self, provider_id: str) -> bool:
         """Cancel an active or queued download transfer on the provider. Returns True if cancelled."""
         return False
 
-    def get_database_connection(self, write_access: bool = False):
+    def get_database_connection(self, write_access: bool = False, require_library: bool = True):
         """
         Returns an SQLAlchemy engine connected to the plugin's isolated SQLite database.
         It also securely mounts the core databases (music_library.db, working.db) as attached databases.
@@ -1103,6 +1639,16 @@ class PluginBase(ABC):
         from core.settings import config_manager
         from database.config_database import get_config_database
 
+        if require_library and not check_plugin_permission(self.name, "database.read_library"):
+            raise PermissionError(f"Plugin '{self.name}' lacks 'permissions.database.read_library' permission.")
+        if write_access and not (
+            check_plugin_permission(self.name, "database.mutate_working")
+            or check_plugin_permission(self.name, "privileged_mode")
+        ):
+            raise PermissionError(
+                f"Plugin '{self.name}' lacks 'permissions.database.mutate_working' or 'privileged_mode' permission for write access."
+            )
+
         # Resolve the strict plugin_id integer
         db = get_config_database()
         plugin_id_int = db.get_service_id(self.name)
@@ -1110,14 +1656,10 @@ class PluginBase(ABC):
             # Fallback to crc32 of name if not yet registered during boot
             import binascii
 
-            plugin_id_int = (
-                binascii.crc32(self.name.lower().encode("utf-8")) & 0xFFFFFFFF
-            )
+            plugin_id_int = binascii.crc32(self.name.lower().encode("utf-8")) & 0xFFFFFFFF
 
         channel = config_manager.get_plugin_channel(self.name) or "stable"
-        db_file_name = (
-            f"{plugin_id_int}@beta.db" if channel == "beta" else f"{plugin_id_int}.db"
-        )
+        db_file_name = f"{plugin_id_int}@beta.db" if channel == "beta" else f"{plugin_id_int}.db"
 
         # Ensure directory exists
         plugin_data_dir = "/data/plugins/data/"
@@ -1132,16 +1674,12 @@ class PluginBase(ABC):
 
             # Attach core databases
             try:
-                cursor.execute(
-                    "ATTACH DATABASE 'file:/data/music.db?mode=ro' AS music_lib"
-                )
+                cursor.execute("ATTACH DATABASE 'file:/data/music.db?mode=ro' AS music_lib")
 
                 working_mode = "rw" if write_access else "ro"
                 if working_mode not in ("ro", "rw", "rwc"):
                     raise ValueError(f"Invalid attach database mode: {working_mode}")
-                cursor.execute(
-                    f"ATTACH DATABASE 'file:/data/working.db?mode={working_mode}' AS working"
-                )
+                cursor.execute(f"ATTACH DATABASE 'file:/data/working.db?mode={working_mode}' AS working")
             except Exception:
                 pass
             cursor.close()
@@ -1207,9 +1745,7 @@ class PluginBase(ABC):
         Returns:
             A Flask response (string, tuple, or redirect)
         """
-        raise NotImplementedError(
-            "This provider does not implement handle_oauth_callback"
-        )
+        raise NotImplementedError("This provider does not implement handle_oauth_callback")
 
     def authenticate(self, **kwargs) -> bool:
         """Authenticate the provider (OAuth, API key, etc.)."""
@@ -1257,9 +1793,7 @@ class PluginBase(ABC):
     def get_playlist_tracks(self, playlist_id: str) -> list[EchosyncTrack]:
         """Fetch tracks for a playlist. Must return List[EchosyncTrack]."""
 
-    def add_tracks_to_playlist(
-        self, playlist_id: str, provider_track_ids: list[str]
-    ) -> bool:
+    def add_tracks_to_playlist(self, playlist_id: str, provider_track_ids: list[str]) -> bool:
         """Add tracks to a playlist using provider-specific IDs (e.g., Plex ratingKeys, Spotify URIs).
 
         This is the RECOMMENDED method for adding tracks to playlists.
@@ -1273,13 +1807,9 @@ class PluginBase(ABC):
             True if successful, False otherwise
         """
         # Default implementation: not supported by this provider
-        raise NotImplementedError(
-            f"add_tracks_to_playlist not implemented for {self.name} provider"
-        )
+        raise NotImplementedError(f"add_tracks_to_playlist not implemented for {self.name} provider")
 
-    def remove_tracks_from_playlist(
-        self, playlist_id: str, provider_track_ids: list[str]
-    ) -> bool:
+    def remove_tracks_from_playlist(self, playlist_id: str, provider_track_ids: list[str]) -> bool:
         """Remove tracks from a playlist using provider-specific IDs.
 
         Args:
@@ -1289,9 +1819,7 @@ class PluginBase(ABC):
         Returns:
             True if successful, False otherwise
         """
-        raise NotImplementedError(
-            f"remove_tracks_from_playlist not implemented for {self.name} provider"
-        )
+        raise NotImplementedError(f"remove_tracks_from_playlist not implemented for {self.name} provider")
 
     def is_configured(self) -> bool:
         """Return True if provider is configured and ready to use."""
@@ -1408,17 +1936,11 @@ class PluginBase(ABC):
         album_str = _coerce_to_str(album)
 
         # Extract edition info from title (remaster, live, remix, etc.)
-        clean_title, edition = (
-            text_utils.extract_edition(title_str) if title_str else (None, None)
-        )
+        clean_title, edition = text_utils.extract_edition(title_str) if title_str else (None, None)
 
         # Normalize text fields (handle None inputs)
-        normalized_title = (
-            text_utils.normalize_title(clean_title) if clean_title else None
-        )
-        normalized_artist = (
-            text_utils.normalize_artist(artist_str) if artist_str else None
-        )
+        normalized_title = text_utils.normalize_title(clean_title) if clean_title else None
+        normalized_artist = text_utils.normalize_artist(artist_str) if artist_str else None
         normalized_album = text_utils.normalize_album(album_str) if album_str else None
 
         # Validate required fields after normalization

@@ -9,7 +9,7 @@ function createHealthStore() {
   });
 
   let loading = false;
-  let pollInterval = null;
+  let eventSource = null;
 
   async function load() {
     if (loading) return;
@@ -35,18 +35,30 @@ function createHealthStore() {
     }
   }
 
-  function poll(interval = 30000) {
-    if (pollInterval) return pollInterval;
-
+  function poll() {
     load();
-    pollInterval = setInterval(load, interval);
-    return pollInterval;
+    if (eventSource) eventSource.close();
+    eventSource = new EventSource('/api/v1/system/telemetry/stream', { withCredentials: true });
+    eventSource.addEventListener('system_health', (event) => {
+      try {
+        const payload = JSON.parse(event.data);
+        set({
+          status: payload.status || 'unknown',
+          services: payload.results || {},
+          summary: payload.summary || { total: 0, operational: 0 },
+          lastUpdated: new Date(),
+        });
+      } catch (error) {
+        console.error('Failed to parse health SSE event:', error);
+      }
+    });
+    return eventSource;
   }
 
   function stop() {
-    if (pollInterval) {
-      clearInterval(pollInterval);
-      pollInterval = null;
+    if (eventSource) {
+      eventSource.close();
+      eventSource = null;
     }
   }
 

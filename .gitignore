@@ -81,5 +81,4 @@ Cargo.lock
 
 #graphify
 graphify-out/
-.agents/
 data/working.db

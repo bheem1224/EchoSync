@@ -54,6 +54,7 @@ dependencies = [
     "pykakasi>=2.3.0",
     "hangul-romanize>=0.1.0",
     "fastapi[standard]>=0.136.1",
+    "sse-starlette>=3.4.11",
 ]
 
 [dependency-groups]

@@ -11,6 +11,7 @@ from sqlalchemy import update
 from sqlalchemy.orm import Session
 
 from core.database.models.working import DownloadIntent, DownloadQueue, DownloadStatus
+from core.task_manager.task_queue import db_write_lease
 from database.working_database import get_working_database
 from time_utils import utc_now
 
@@ -24,9 +25,7 @@ class DownloadRepository:
     to avoid worker collisions.
     """
 
-    def __init__(
-        self, session: Session | None = None, work_db: Any | None = None
-    ) -> None:
+    def __init__(self, session: Session | None = None, work_db: Any | None = None) -> None:
         self.session = session
         self.work_db = work_db
 
@@ -81,11 +80,7 @@ class DownloadRepository:
     def get_by_sync_id(self, sync_id: str) -> list[DownloadQueue]:
         """Fetch DownloadQueue items associated with a canonical NanoID sync_id."""
         with self._get_session() as session:
-            return (
-                session.query(DownloadQueue)
-                .filter(DownloadQueue.sync_id == sync_id)
-                .all()
-            )
+            return session.query(DownloadQueue).filter(DownloadQueue.sync_id == sync_id).all()
 
     def get_actionable_queue(self, limit: int = 30) -> list[DownloadQueue]:
         """Fetch actionable items ready for search/dispatch (QUEUED or RETRYING).
@@ -141,15 +136,8 @@ class DownloadRepository:
 
         Returns True if row was matched and transitioned, False otherwise.
         """
-        from_vals = [
-            s.value if isinstance(s, DownloadStatus) else str(s).upper()
-            for s in from_statuses
-        ]
-        to_val = (
-            to_status.value
-            if isinstance(to_status, DownloadStatus)
-            else str(to_status).upper()
-        )
+        from_vals = [s.value if isinstance(s, DownloadStatus) else str(s).upper() for s in from_statuses]
+        to_val = to_status.value if isinstance(to_status, DownloadStatus) else str(to_status).upper()
 
         update_values: dict[str, Any] = {"status": to_val, "updated_at": utc_now()}
         update_values.update(updates)
@@ -222,14 +210,13 @@ class DownloadRepository:
         with self._get_session() as session:
             item = session.get(DownloadQueue, item_id)
             if not item:
-                logger.warning(
-                    f"DownloadQueue item {item_id} not found for candidate rotation"
-                )
+                logger.warning(f"DownloadQueue item {item_id} not found for candidate rotation")
                 return False
 
             rotated = item.rotate_candidate(reason)
             item.updated_at = utc_now()
-            session.commit()
+            with db_write_lease(task_name="transition_to_retrying_or_failed"):
+                session.commit()
             return rotated
 
     def transition_to_failed(self, item_id: int, error_reason: str) -> bool:
@@ -241,7 +228,8 @@ class DownloadRepository:
             item.status = DownloadStatus.FAILED.value
             item.error_reason = error_reason
             item.updated_at = utc_now()
-            session.commit()
+            with db_write_lease(task_name="transition_to_failed"):
+                session.commit()
             return True
 
 

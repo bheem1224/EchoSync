@@ -54,11 +54,7 @@ def verify_plex_candidate(plex_item: Any, local_meta: EchosyncTrack | None) -> f
 
     # 1. Mandatory Duration Gate: Reject candidate if delta exceeds 3000ms
     plex_dur = getattr(plex_item, "duration", 0) or 0
-    local_dur = (
-        getattr(local_meta, "duration_ms", None)
-        or getattr(local_meta, "duration", 0)
-        or 0
-    )
+    local_dur = getattr(local_meta, "duration_ms", None) or getattr(local_meta, "duration", 0) or 0
     if local_dur and plex_dur:
         if abs(plex_dur - local_dur) > 3000:
             return 0.0
@@ -77,11 +73,7 @@ def verify_plex_candidate(plex_item: Any, local_meta: EchosyncTrack | None) -> f
                     break
 
     # 3. Artist Similarity Check
-    plex_artist = (
-        getattr(plex_item, "grandparentTitle", "")
-        or getattr(plex_item, "originalTitle", "")
-        or ""
-    )
+    plex_artist = getattr(plex_item, "grandparentTitle", "") or getattr(plex_item, "originalTitle", "") or ""
     if not plex_artist and hasattr(plex_item, "artist"):
         try:
             art_obj = plex_item.artist()
@@ -89,15 +81,9 @@ def verify_plex_candidate(plex_item: Any, local_meta: EchosyncTrack | None) -> f
         except Exception:
             pass
 
-    local_artist = (
-        getattr(local_meta, "artist", "")
-        or getattr(local_meta, "artist_name", "")
-        or ""
-    )
+    local_artist = getattr(local_meta, "artist", "") or getattr(local_meta, "artist_name", "") or ""
     if plex_artist and local_artist:
-        artist_sim = SequenceMatcher(
-            None, plex_artist.lower().strip(), local_artist.lower().strip()
-        ).ratio()
+        artist_sim = SequenceMatcher(None, plex_artist.lower().strip(), local_artist.lower().strip()).ratio()
         if artist_sim >= 0.85:
             score += 30.0
         elif artist_sim >= 0.70:
@@ -117,9 +103,7 @@ class PlexClient(MediaServerProvider):
     capabilities = ProviderCapabilities(
         name="EchoSync.plex",
         supports_playlists=PlaylistSupport.READ_WRITE,
-        search=SearchCapabilities(
-            tracks=True, artists=True, albums=True, playlists=False
-        ),
+        search=SearchCapabilities(tracks=True, artists=True, albums=True, playlists=False),
         metadata=MetadataRichness.HIGH,
         supports_cover_art=True,
         supports_lyrics=False,
@@ -165,15 +149,7 @@ class PlexClient(MediaServerProvider):
         self._last_connection_attempt = 0
         self._connection_check_interval = 30
 
-        # Auto-detect active account if not provided or if provided account has no token
-        if account_id is not None:
-            try:
-                token_data = self.accounts.get_token(account_id)
-                if not token_data or not token_data.get("access_token"):
-                    account_id = None
-            except Exception:
-                account_id = None
-
+        # Auto-detect active account if not provided
         if account_id is None:
             try:
                 accounts = self.accounts.get_all()
@@ -182,8 +158,7 @@ class PlexClient(MediaServerProvider):
                         (
                             account
                             for account in accounts
-                            if account.get("id")
-                            and self.accounts.get_token(account.get("id"))
+                            if account.get("id") and self.accounts.get_token(account.get("id"))
                         ),
                         None,
                     )
@@ -204,11 +179,7 @@ class PlexClient(MediaServerProvider):
             try:
                 connected = self.ensure_connection()
                 status = "healthy" if connected else "unhealthy"
-                message = (
-                    "Plex server is reachable"
-                    if connected
-                    else "Plex server connection failed"
-                )
+                message = "Plex server is reachable" if connected else "Plex server connection failed"
                 return HealthCheckResult(
                     service_name="plex",
                     status=status,
@@ -290,9 +261,7 @@ class PlexClient(MediaServerProvider):
             logger.error(f"Error updating Plex playlist '{name}': {e}")
             return False
 
-    def add_tracks_to_playlist(
-        self, playlist_id: str, provider_track_ids: list[str]
-    ) -> bool:
+    def add_tracks_to_playlist(self, playlist_id: str, provider_track_ids: list[str]) -> bool:
         """Add tracks to a Plex playlist using ratingKeys (provider-specific track IDs).
 
         NEW INTERFACE: Accepts only track IDs (ratingKeys), not full track objects.
@@ -336,31 +305,23 @@ class PlexClient(MediaServerProvider):
                     if item:
                         items.append(item)
                     else:
-                        logger.warning(
-                            f"Track with ratingKey {rk} not found on Plex server"
-                        )
+                        logger.warning(f"Track with ratingKey {rk} not found on Plex server")
                 except (ValueError, TypeError):
                     logger.warning(f"Invalid ratingKey format: {rk}")
                 except Exception as e:
                     logger.warning(f"Error fetching track {rk}: {e}")
 
             if not items:
-                logger.error(
-                    f"No valid Plex items found for ratingKeys: {provider_track_ids}"
-                )
+                logger.error(f"No valid Plex items found for ratingKeys: {provider_track_ids}")
                 return False
 
             # Add items to playlist
             try:
                 playlist.addItems(items)
-                logger.info(
-                    f"Successfully added {len(items)} tracks to Plex playlist '{playlist_id}'"
-                )
+                logger.info(f"Successfully added {len(items)} tracks to Plex playlist '{playlist_id}'")
                 return True
             except Exception as e:
-                logger.error(
-                    f"Error adding items to Plex playlist '{playlist_id}': {e}"
-                )
+                logger.error(f"Error adding items to Plex playlist '{playlist_id}': {e}")
                 return False
 
         except Exception as e:
@@ -370,18 +331,14 @@ class PlexClient(MediaServerProvider):
             )
             return False
 
-    def remove_tracks_from_playlist(
-        self, playlist_id: str, provider_track_ids: list[str]
-    ) -> bool:
+    def remove_tracks_from_playlist(self, playlist_id: str, provider_track_ids: list[str]) -> bool:
         """Remove tracks from a Plex playlist using ratingKeys."""
         if not self.ensure_connection() or not self.server:
             logger.error("Plex not connected for remove_tracks_from_playlist")
             return False
 
         if not provider_track_ids:
-            logger.info(
-                "remove_tracks_from_playlist called with empty track list; nothing to do"
-            )
+            logger.info("remove_tracks_from_playlist called with empty track list; nothing to do")
             return True
 
         try:
@@ -400,22 +357,14 @@ class PlexClient(MediaServerProvider):
 
             removal_keys = {str(rk) for rk in provider_track_ids}
             existing_items = list(playlist.items())
-            to_remove = [
-                item
-                for item in existing_items
-                if str(_safe_getattr(item, "ratingKey", "")) in removal_keys
-            ]
+            to_remove = [item for item in existing_items if str(_safe_getattr(item, "ratingKey", "")) in removal_keys]
 
             if not to_remove:
-                logger.info(
-                    f"No matching tracks found to remove from Plex playlist '{playlist_id}'"
-                )
+                logger.info(f"No matching tracks found to remove from Plex playlist '{playlist_id}'")
                 return True
 
             playlist.removeItems(to_remove)
-            logger.info(
-                f"Removed {len(to_remove)} track(s) from Plex playlist '{playlist_id}'"
-            )
+            logger.info(f"Removed {len(to_remove)} track(s) from Plex playlist '{playlist_id}'")
             return True
         except Exception as e:
             logger.error(
@@ -427,9 +376,7 @@ class PlexClient(MediaServerProvider):
     def delete_track(self, rating_key: str) -> bool:
         """Delete a track from Plex server by ratingKey."""
         base_url = self.config.get("base_url") or self.config.get("server_url")
-        token = self.secrets.get("token") or self.accounts.get_metadata(
-            self.account_id, "token"
-        )
+        token = self.secrets.get("token") or self.accounts.get_metadata(self.account_id, "token")
 
         if not base_url or not token:
             logger.error("Plex not configured, cannot delete track")
@@ -449,17 +396,13 @@ class PlexClient(MediaServerProvider):
                 logger.info(f"Successfully deleted track {rating_key} from Plex")
                 return True
             elif response.status_code == 403:
-                logger.warning(
-                    f"Plex server does not allow file deletion (403 Forbidden) for track {rating_key}"
-                )
+                logger.warning(f"Plex server does not allow file deletion (403 Forbidden) for track {rating_key}")
                 return False
             elif response.status_code == 404:
                 logger.warning(f"Track {rating_key} not found on Plex (404)")
                 return False
             else:
-                logger.error(
-                    f"Failed to delete track {rating_key}: {response.status_code} {response.reason}"
-                )
+                logger.error(f"Failed to delete track {rating_key}: {response.status_code} {response.reason}")
                 return False
         except Exception as e:
             logger.error(f"Exception deleting track {rating_key}: {e}")
@@ -531,9 +474,7 @@ class PlexClient(MediaServerProvider):
         except Exception:
             return False
 
-    def _resolve_managed_user(
-        self, target_user_id: str | None = None, source_account_name: str | None = None
-    ):
+    def _resolve_managed_user(self, target_user_id: str | None = None, source_account_name: str | None = None):
         """Resolve a Plex managed user using stored IDs first, then explicit config.db mappings, then token-boundary fallbacks."""
         if not self.server:
             return None
@@ -541,9 +482,7 @@ class PlexClient(MediaServerProvider):
         try:
             myplex_account = self.server.myPlexAccount()
         except Exception as e:
-            logger.warning(
-                f"Failed to load MyPlex account while resolving managed user: {e}"
-            )
+            logger.warning(f"Failed to load MyPlex account while resolving managed user: {e}")
             return None
 
         normalized_target_id = self._normalize_plex_identity(target_user_id)
@@ -552,21 +491,11 @@ class PlexClient(MediaServerProvider):
         admin_ids = {
             normalized
             for normalized in [
-                self._normalize_plex_identity(
-                    _safe_getattr(myplex_account, "uuid", None)
-                ),
-                self._normalize_plex_identity(
-                    _safe_getattr(myplex_account, "id", None)
-                ),
-                self._normalize_plex_identity(
-                    _safe_getattr(myplex_account, "username", None)
-                ),
-                self._normalize_plex_identity(
-                    _safe_getattr(myplex_account, "title", None)
-                ),
-                self._normalize_plex_identity(
-                    _safe_getattr(myplex_account, "email", None)
-                ),
+                self._normalize_plex_identity(_safe_getattr(myplex_account, "uuid", None)),
+                self._normalize_plex_identity(_safe_getattr(myplex_account, "id", None)),
+                self._normalize_plex_identity(_safe_getattr(myplex_account, "username", None)),
+                self._normalize_plex_identity(_safe_getattr(myplex_account, "title", None)),
+                self._normalize_plex_identity(_safe_getattr(myplex_account, "email", None)),
             ]
             if normalized
         }
@@ -586,18 +515,10 @@ class PlexClient(MediaServerProvider):
                     normalized
                     for normalized in [
                         self._normalize_plex_identity(_safe_getattr(user, "id", None)),
-                        self._normalize_plex_identity(
-                            _safe_getattr(user, "uuid", None)
-                        ),
-                        self._normalize_plex_identity(
-                            _safe_getattr(user, "username", None)
-                        ),
-                        self._normalize_plex_identity(
-                            _safe_getattr(user, "title", None)
-                        ),
-                        self._normalize_plex_identity(
-                            _safe_getattr(user, "email", None)
-                        ),
+                        self._normalize_plex_identity(_safe_getattr(user, "uuid", None)),
+                        self._normalize_plex_identity(_safe_getattr(user, "username", None)),
+                        self._normalize_plex_identity(_safe_getattr(user, "title", None)),
+                        self._normalize_plex_identity(_safe_getattr(user, "email", None)),
                     ]
                     if normalized
                 }
@@ -623,24 +544,15 @@ class PlexClient(MediaServerProvider):
                                 source_account_ids.append(acc["id"])
 
                     for s_id in source_account_ids:
-                        mappings = config_db.get_account_mappings(
-                            source_account_id=s_id
-                        )
+                        mappings = config_db.get_account_mappings(source_account_id=s_id)
                         for m in mappings:
                             mapped_acc = config_db.get_account(m["mapped_account_id"])
-                            if (
-                                mapped_acc
-                                and mapped_acc.get("service_id") == plex_service_id
-                            ):
-                                mapped_uid = self._normalize_plex_identity(
-                                    mapped_acc.get("user_id")
-                                )
+                            if mapped_acc and mapped_acc.get("service_id") == plex_service_id:
+                                mapped_uid = self._normalize_plex_identity(mapped_acc.get("user_id"))
                                 if mapped_uid:
                                     for user in users:
                                         u_identities = {
-                                            self._normalize_plex_identity(
-                                                _safe_getattr(user, attr, None)
-                                            )
+                                            self._normalize_plex_identity(_safe_getattr(user, attr, None))
                                             for attr in (
                                                 "id",
                                                 "uuid",
@@ -655,9 +567,7 @@ class PlexClient(MediaServerProvider):
                                             )
                                             return user
             except Exception as map_err:
-                logger.debug(
-                    f"Error querying config.db explicit account mappings: {map_err}"
-                )
+                logger.debug(f"Error querying config.db explicit account mappings: {map_err}")
 
         # Step 3: Heuristic fallback using exact token boundary matching
         if normalized_source_name:
@@ -665,15 +575,9 @@ class PlexClient(MediaServerProvider):
                 display_candidates = [
                     normalized
                     for normalized in [
-                        self._normalize_plex_identity(
-                            _safe_getattr(user, "username", None)
-                        ),
-                        self._normalize_plex_identity(
-                            _safe_getattr(user, "title", None)
-                        ),
-                        self._normalize_plex_identity(
-                            _safe_getattr(user, "email", None)
-                        ),
+                        self._normalize_plex_identity(_safe_getattr(user, "username", None)),
+                        self._normalize_plex_identity(_safe_getattr(user, "title", None)),
+                        self._normalize_plex_identity(_safe_getattr(user, "email", None)),
                     ]
                     if normalized
                 ]
@@ -707,9 +611,7 @@ class PlexClient(MediaServerProvider):
             try:
                 switched = self.server.switchUser(candidate)
                 if switched:
-                    logger.info(
-                        f"Switched Plex context using managed-user key '{candidate}'"
-                    )
+                    logger.info(f"Switched Plex context using managed-user key '{candidate}'")
                     return switched
             except Exception as e:
                 last_error = e
@@ -778,9 +680,7 @@ class PlexClient(MediaServerProvider):
             # Update server reference for the rest of the method
             # We also need to re-find the playlist and library on the target_server
             self.server = target_server
-            playlist = self._find_managed_playlist(
-                playlist_name, marker=marker, management_tag=management_tag
-            )
+            playlist = self._find_managed_playlist(playlist_name, marker=marker, management_tag=management_tag)
 
             items = []
             # Deduplicate rating keys while preserving order to avoid redundant fetches
@@ -808,18 +708,12 @@ class PlexClient(MediaServerProvider):
                         continue
 
                     item = self.server.fetchItem(rk_int)
-                    logger.debug(
-                        f"fetchItem({rk_int}) returned: {type(item).__name__} - {item}"
-                    )
+                    logger.debug(f"fetchItem({rk_int}) returned: {type(item).__name__} - {item}")
                     if item:
                         items.append(item)
-                        logger.debug(
-                            f"Added item to list, total items now: {len(items)}"
-                        )
+                        logger.debug(f"Added item to list, total items now: {len(items)}")
                     else:
-                        logger.warning(
-                            f"fetchItem returned None or falsy value for ratingKey {rk_int}"
-                        )
+                        logger.warning(f"fetchItem returned None or falsy value for ratingKey {rk_int}")
                 except Exception as fe:
                     logger.error(
                         f"Exception fetching item for ratingKey {rk}: {fe}",
@@ -840,40 +734,26 @@ class PlexClient(MediaServerProvider):
                     f"Playlist not found, creating new one. Items list type: {type(items)}, length: {len(items)}"
                 )
                 if items:
-                    logger.debug(
-                        f"First item type: {type(items[0])}, value: {items[0]}"
-                    )
+                    logger.debug(f"First item type: {type(items[0])}, value: {items[0]}")
 
                 from plexapi.playlist import Playlist
 
                 try:
-                    logger.debug(
-                        f"About to call Playlist.create with {len(items)} items"
-                    )
-                    created_playlist = Playlist.create(
-                        self.server, create_name, items=items
-                    )
-                    logger.info(
-                        f"Playlist.create() succeeded, returned: {created_playlist}"
-                    )
+                    logger.debug(f"About to call Playlist.create with {len(items)} items")
+                    created_playlist = Playlist.create(self.server, create_name, items=items)
+                    logger.info(f"Playlist.create() succeeded, returned: {created_playlist}")
                     try:
                         if hasattr(created_playlist, "editSummary"):
                             created_playlist.editSummary(management_tag)
                     except Exception as tag_err:
                         logger.debug(f"Failed to add management tag: {tag_err}")
                 except Exception as create_err:
-                    logger.error(
-                        f"Playlist.create() failed: {create_err}", exc_info=True
-                    )
+                    logger.error(f"Playlist.create() failed: {create_err}", exc_info=True)
                     raise
                 # Verify created playlist contents against requested rating keys
                 try:
-                    created_items = (
-                        list(created_playlist.items()) if created_playlist else []
-                    )
-                    created_rks = set(
-                        str(_safe_getattr(i, "ratingKey", "")) for i in created_items
-                    )
+                    created_items = list(created_playlist.items()) if created_playlist else []
+                    created_rks = set(str(_safe_getattr(i, "ratingKey", "")) for i in created_items)
                     requested_rks = set(str(rk) for rk in deduped_rating_keys)
                     missing = requested_rks - created_rks
                     if missing:
@@ -885,9 +765,7 @@ class PlexClient(MediaServerProvider):
                         f"Created Plex playlist '{create_name}' with {len(created_items)} tracks (requested {len(deduped_rating_keys)})"
                     )
                 except Exception as verify_err:
-                    logger.debug(
-                        f"Failed to verify created playlist contents: {verify_err}"
-                    )
+                    logger.debug(f"Failed to verify created playlist contents: {verify_err}")
                 return True
 
             if overwrite:
@@ -896,14 +774,10 @@ class PlexClient(MediaServerProvider):
                     if existing_items:
                         playlist.removeItems(existing_items)
                 except Exception as clear_err:
-                    logger.debug(
-                        f"Failed to clear playlist '{playlist.title}': {clear_err}"
-                    )
+                    logger.debug(f"Failed to clear playlist '{playlist.title}': {clear_err}")
 
             playlist.addItems(items)
-            logger.info(
-                f"Updated Plex playlist '{playlist.title}' with {len(items)} tracks (overwrite={overwrite})"
-            )
+            logger.info(f"Updated Plex playlist '{playlist.title}' with {len(items)} tracks (overwrite={overwrite})")
             try:
                 if hasattr(playlist, "editSummary"):
                     playlist.editSummary(management_tag)
@@ -913,9 +787,7 @@ class PlexClient(MediaServerProvider):
             try:
                 refreshed = self.server.playlist(playlist.title)
                 refreshed_items = list(refreshed.items()) if refreshed else []
-                refreshed_rks = set(
-                    str(_safe_getattr(i, "ratingKey", "")) for i in refreshed_items
-                )
+                refreshed_rks = set(str(_safe_getattr(i, "ratingKey", "")) for i in refreshed_items)
                 requested_rks = set(str(rk) for rk in deduped_rating_keys)
                 missing = requested_rks - refreshed_rks
                 if missing:
@@ -924,9 +796,7 @@ class PlexClient(MediaServerProvider):
                         f"After update, {len(missing)} requested items are missing from Plex playlist (showing up to 10): {sample_missing}"
                     )
             except Exception as verify_err:
-                logger.debug(
-                    f"Failed to verify updated playlist contents: {verify_err}"
-                )
+                logger.debug(f"Failed to verify updated playlist contents: {verify_err}")
             return True
         except Exception as e:
             logger.error(f"Error syncing Plex playlist '{playlist_name}': {e}")
@@ -937,9 +807,7 @@ class PlexClient(MediaServerProvider):
 
     # ===== CORE METHODS =====
 
-    def search(
-        self, query: str, type: str = "track", limit: int = 10
-    ) -> list[EchosyncTrack]:
+    def search(self, query: str, type: str = "track", limit: int = 10) -> list[EchosyncTrack]:
         """Search for tracks in Plex library."""
         if not self.ensure_connection() or not self.music_library:
             logger.warning("Plex not connected or no music library")
@@ -988,29 +856,19 @@ class PlexClient(MediaServerProvider):
         if not track_meta or not self.music_library:
             return None, False
 
-        title = getattr(track_meta, "title", None) or getattr(
-            track_meta, "raw_title", None
-        )
-        artist = getattr(track_meta, "artist", None) or getattr(
-            track_meta, "artist_name", None
-        )
+        title = getattr(track_meta, "title", None) or getattr(track_meta, "raw_title", None)
+        artist = getattr(track_meta, "artist", None) or getattr(track_meta, "artist_name", None)
 
         candidates = []
         if title:
             try:
-                candidates = (
-                    self.music_library.search(title, libtype="track", maxresults=50)
-                    or []
-                )
+                candidates = self.music_library.search(title, libtype="track", maxresults=50) or []
             except Exception as se:
                 logger.debug(f"Plex search by title '{title}' failed: {se}")
 
         if not candidates and artist:
             try:
-                candidates = (
-                    self.music_library.search(artist, libtype="track", maxresults=50)
-                    or []
-                )
+                candidates = self.music_library.search(artist, libtype="track", maxresults=50) or []
             except Exception as se:
                 logger.debug(f"Plex search by artist '{artist}' failed: {se}")
 
@@ -1048,9 +906,7 @@ class PlexClient(MediaServerProvider):
         try:
             rk_int = int(track_id)
         except (ValueError, TypeError):
-            logger.warning(
-                f"get_track: '{track_id}' is not a valid Plex ratingKey (expected integer string)"
-            )
+            logger.warning(f"get_track: '{track_id}' is not a valid Plex ratingKey (expected integer string)")
             return None
 
         try:
@@ -1188,13 +1044,9 @@ class PlexClient(MediaServerProvider):
         while offset < max_limit:
             current_limit = min(chunk_size, max_limit - offset)
             try:
-                chunk_tracks = self.music_library.searchTracks(
-                    container_start=offset, container_size=current_limit
-                )
+                chunk_tracks = self.music_library.searchTracks(container_start=offset, container_size=current_limit)
             except Exception as e:
-                logger.error(
-                    f"get_identifier_mappings: Plex searchTracks failed at offset={offset}: {e}"
-                )
+                logger.error(f"get_identifier_mappings: Plex searchTracks failed at offset={offset}: {e}")
                 break
 
             if not chunk_tracks:
@@ -1218,9 +1070,9 @@ class PlexClient(MediaServerProvider):
                         file_path = PathMapper.to_local(file_path)
 
                     title = _safe_getattr(raw_track, "title", None)
-                    artist = _safe_getattr(
-                        raw_track, "grandparentTitle", None
-                    ) or _safe_getattr(raw_track, "originalTitle", None)
+                    artist = _safe_getattr(raw_track, "grandparentTitle", None) or _safe_getattr(
+                        raw_track, "originalTitle", None
+                    )
 
                     yield {
                         "file_path": file_path,
@@ -1249,12 +1101,8 @@ class PlexClient(MediaServerProvider):
 
             while offset < max_limit:
                 current_limit = min(chunk_size, max_limit - offset)
-                logger.info(
-                    f"Calling Plex searchTracks container_start={offset} container_size={current_limit}"
-                )
-                chunk_tracks = self.music_library.searchTracks(
-                    container_start=offset, container_size=current_limit
-                )
+                logger.info(f"Calling Plex searchTracks container_start={offset} container_size={current_limit}")
+                chunk_tracks = self.music_library.searchTracks(container_start=offset, container_size=current_limit)
 
                 if not chunk_tracks:
                     break
@@ -1266,9 +1114,7 @@ class PlexClient(MediaServerProvider):
                             # /metadata/{artistKey} and /metadata/{albumKey}.
                             # We rely on the cheap XML attributes already in
                             # the batch payload (grandparentTitle, parentTitle).
-                            track = self._convert_track_to_echosync(
-                                raw_track, deep=False
-                            )
+                            track = self._convert_track_to_echosync(raw_track, deep=False)
                             if track:
                                 yield track
                         except Exception as e:
@@ -1308,9 +1154,7 @@ class PlexClient(MediaServerProvider):
 
         try:
             return {
-                "total_tracks": self.music_library.totalSize
-                if hasattr(self.music_library, "totalSize")
-                else 0,
+                "total_tracks": self.music_library.totalSize if hasattr(self.music_library, "totalSize") else 0,
                 "albums": len(self.music_library.searchAlbums(limit=99999)),
                 "artists": len(self.music_library.searchArtists(limit=99999)),
             }
@@ -1344,11 +1188,7 @@ class PlexClient(MediaServerProvider):
         if not self.ensure_connection() or not self.music_library:
             return {"scanning": False, "progress": 0.0}
         try:
-            refreshing = (
-                self.music_library.refreshing
-                if hasattr(self.music_library, "refreshing")
-                else False
-            )
+            refreshing = self.music_library.refreshing if hasattr(self.music_library, "refreshing") else False
             return {
                 "scanning": refreshing,
                 "progress": 0.5 if refreshing else 0.0,
@@ -1427,9 +1267,7 @@ class PlexClient(MediaServerProvider):
 
         return text, None
 
-    def _convert_track_to_echosync(
-        self, plex_track: PlexTrack, deep: bool = False
-    ) -> EchosyncTrack | None:
+    def _convert_track_to_echosync(self, plex_track: PlexTrack, deep: bool = False) -> EchosyncTrack | None:
         """Convert Plex track to EchosyncTrack.
 
         Args:
@@ -1471,13 +1309,9 @@ class PlexClient(MediaServerProvider):
                 # Deep mode: HTTP round-trip to /metadata/{artistKey}
                 try:
                     artist_obj = plex_track.artist()
-                    album_artist = (
-                        _safe_getattr(artist_obj, "title", None) if artist_obj else None
-                    )
+                    album_artist = _safe_getattr(artist_obj, "title", None) if artist_obj else None
                 except (NotFound, AttributeError, Exception) as e:
-                    logger.debug(
-                        f"Failed to get artist via plex_track.artist() for '{title}': {e}"
-                    )
+                    logger.debug(f"Failed to get artist via plex_track.artist() for '{title}': {e}")
 
             # Step 3: cheap XML attribute (always available in batch payload)
             if not album_artist:
@@ -1505,9 +1339,7 @@ class PlexClient(MediaServerProvider):
                 return None
 
             if not artist:
-                logger.warning(
-                    f"Skipping track '{title}' - missing artist (both artist() and grandparentTitle failed)"
-                )
+                logger.warning(f"Skipping track '{title}' - missing artist (both artist() and grandparentTitle failed)")
                 return None
 
             # Remove version suffix from title if it matches album version
@@ -1516,11 +1348,7 @@ class PlexClient(MediaServerProvider):
             title_base, title_version = self._extract_version_suffix(title)
             album_base, album_version = self._extract_version_suffix(album)
 
-            if (
-                title_version
-                and album_version
-                and title_version.lower() == album_version.lower()
-            ):
+            if title_version and album_version and title_version.lower() == album_version.lower():
                 title = title_base
             elif album and title.lower().endswith(f"({album.lower()})"):
                 title = title[: -(len(album) + 2)].strip()  # Remove " (Album Name)"
@@ -1551,9 +1379,7 @@ class PlexClient(MediaServerProvider):
 
             # Filter out rogue mount entries from becoming local media
             if file_path and not file_path.startswith("virtual://"):
-                sanctioned_prefixes = tuple(
-                    config_manager.get("SANCTIONED_PATH_PREFIXES", ["/data/library/"])
-                )
+                sanctioned_prefixes = tuple(config_manager.get("SANCTIONED_PATH_PREFIXES", ["/data/library/"]))
                 if not file_path.startswith(sanctioned_prefixes):
                     file_path = None
 
@@ -1561,9 +1387,7 @@ class PlexClient(MediaServerProvider):
             plex_track_id = str(_safe_getattr(plex_track, "ratingKey", None))
 
             if not plex_track_id or plex_track_id == "None":
-                logger.warning(
-                    f"Track '{title}' by '{artist}' has no ratingKey - cannot save to database"
-                )
+                logger.warning(f"Track '{title}' by '{artist}' has no ratingKey - cannot save to database")
                 return None
 
             # Direct instantiation of EchosyncTrack
@@ -1581,12 +1405,8 @@ class PlexClient(MediaServerProvider):
                     if hasattr(part, "streams") and part.streams:
                         for stream in part.streams:
                             # streamType 2 is typically audio
-                            if _safe_getattr(
-                                stream, "streamType", None
-                            ) == 2 or _safe_getattr(stream, "codec", None):
-                                sample_rate = _safe_getattr(
-                                    stream, "samplingRate", None
-                                )
+                            if _safe_getattr(stream, "streamType", None) == 2 or _safe_getattr(stream, "codec", None):
+                                sample_rate = _safe_getattr(stream, "samplingRate", None)
                                 bit_depth = _safe_getattr(stream, "bitDepth", None)
                                 break
 
@@ -1634,9 +1454,7 @@ class PlexClient(MediaServerProvider):
                 album_title=album,
                 # Optional fields
                 sort_title=_safe_getattr(plex_track, "titleSort", None),
-                artist_sort_name=_safe_getattr(
-                    plex_track, "grandparentSortTitle", None
-                ),
+                artist_sort_name=_safe_getattr(plex_track, "grandparentSortTitle", None),
                 album_sort_title=_safe_getattr(plex_track, "parentSortTitle", None),
                 duration=duration_ms,
                 track_number=track_number,
@@ -1655,9 +1473,7 @@ class PlexClient(MediaServerProvider):
                     track.identifiers,
                 )
             else:
-                logger.warning(
-                    f"create_echo_sync_track returned None for '{title}' by '{artist}'"
-                )
+                logger.warning(f"create_echo_sync_track returned None for '{title}' by '{artist}'")
 
             return track
 
@@ -1685,9 +1501,7 @@ class PlexClient(MediaServerProvider):
 
         # Back off if recent attempt failed
         now = time.time()
-        if self._connection_attempted and (
-            now - self._last_connection_attempt < self._connection_check_interval
-        ):
+        if self._connection_attempted and (now - self._last_connection_attempt < self._connection_check_interval):
             return self.server is not None
 
         self._is_connecting = True
@@ -1719,9 +1533,7 @@ class PlexClient(MediaServerProvider):
                     if t and t.get("access_token"):
                         token_data = t
                         self.account_id = acc.get("id")
-                        logger.info(
-                            f"Fallback to token-backed Plex account {self.account_id}"
-                        )
+                        logger.info(f"Fallback to token-backed Plex account {self.account_id}")
                         break
             except Exception as e:
                 logger.warning(f"Failed searching Plex accounts for token: {e}")
@@ -1736,9 +1548,7 @@ class PlexClient(MediaServerProvider):
 
         if not token:
             # Fallback to service config / secrets / legacy storage
-            token = self.config.get("token") or (
-                hasattr(self, "secrets") and self.secrets.get("token")
-            )
+            token = self.config.get("token") or (hasattr(self, "secrets") and self.secrets.get("token"))
             if not token:
                 from core.file_handling.storage import get_storage_service
 
@@ -1757,18 +1567,16 @@ class PlexClient(MediaServerProvider):
 
         base_url = plex_config.get("base_url") or plex_config.get("server_url")
         if not base_url:
-            base_url = _safe_getattr(self, "kvs", None) and (
-                self.kvs.get("base_url") or self.kvs.get("server_url")
-            )
+            base_url = _safe_getattr(self, "kvs", None) and (self.kvs.get("base_url") or self.kvs.get("server_url"))
 
         if not base_url:
             from core.file_handling.storage import get_storage_service
 
             try:
                 storage = get_storage_service()
-                base_url = storage.get_service_config(
-                    "plex", "base_url"
-                ) or storage.get_service_config("plex", "server_url")
+                base_url = storage.get_service_config("plex", "base_url") or storage.get_service_config(
+                    "plex", "server_url"
+                )
             except Exception:
                 pass
 
@@ -1789,16 +1597,12 @@ class PlexClient(MediaServerProvider):
     def import_managed_users(self) -> list[dict[str, Any]]:
         """Import the Plex admin account and managed users into settings database account rows."""
         if not self.ensure_connection() or not self.server:
-            logger.error(
-                "Cannot import Plex managed users without an active Plex connection"
-            )
+            logger.error("Cannot import Plex managed users without an active Plex connection")
             return []
 
         from core.nexus_framework.plugin_SDK import sdk
 
-        token_data = (
-            self.accounts.get_token(self.account_id) if self.account_id else None
-        )
+        token_data = self.accounts.get_token(self.account_id) if self.account_id else None
 
         try:
             myplex_account = self.server.myPlexAccount()
@@ -1849,17 +1653,9 @@ class PlexClient(MediaServerProvider):
             logger.warning(f"Failed to enumerate Plex managed users: {e}")
 
         for user in users:
-            user_id = _safe_getattr(user, "id", None) or _safe_getattr(
-                user, "uuid", None
-            )
-            username = _safe_getattr(user, "username", None) or _safe_getattr(
-                user, "title", None
-            )
-            display_name = (
-                _safe_getattr(user, "title", None)
-                or _safe_getattr(user, "username", None)
-                or username
-            )
+            user_id = _safe_getattr(user, "id", None) or _safe_getattr(user, "uuid", None)
+            username = _safe_getattr(user, "username", None) or _safe_getattr(user, "title", None)
+            display_name = _safe_getattr(user, "title", None) or _safe_getattr(user, "username", None) or username
             email = _safe_getattr(user, "email", None)
 
             managed_account_id = self.accounts.upsert_account(
@@ -1873,12 +1669,8 @@ class PlexClient(MediaServerProvider):
                 imported_ids.append(int(managed_account_id))
 
         accounts = self.accounts.get_all() or []
-        imported = [
-            account for account in accounts if account.get("id") in set(imported_ids)
-        ]
-        logger.info(
-            f"Imported {len(imported)} Plex account rows (admin + managed users)"
-        )
+        imported = [account for account in accounts if account.get("id") in set(imported_ids)]
+        logger.info(f"Imported {len(imported)} Plex account rows (admin + managed users)")
         return imported
 
     def _find_music_library(self):
@@ -1896,9 +1688,7 @@ class PlexClient(MediaServerProvider):
 
     def _find_music_library_for_server(self, server: PlexServer) -> MusicSection | None:
         """Find the preferred music library for a specific Plex server context."""
-        music_sections = [
-            section for section in server.library.sections() if section.type == "artist"
-        ]
+        music_sections = [section for section in server.library.sections() if section.type == "artist"]
 
         if not music_sections:
             logger.warning("No music library found on Plex server")
@@ -1930,20 +1720,14 @@ class PlexClient(MediaServerProvider):
             return None, None, None
 
         accounts = self.accounts.get_all() or []
-        account = next(
-            (item for item in accounts if item.get("id") == account_id), None
-        )
+        account = next((item for item in accounts if item.get("id") == account_id), None)
         if not account:
-            logger.warning(
-                f"No Plex account found for history sync account_id={account_id}"
-            )
+            logger.warning(f"No Plex account found for history sync account_id={account_id}")
             return None, None, None
 
         target_user_id = account.get("user_id")
         if not target_user_id:
-            logger.warning(
-                f"Account account_id={account_id} has no Plex user_id — cannot scope history"
-            )
+            logger.warning(f"Account account_id={account_id} has no Plex user_id — cannot scope history")
             return None, None, None
 
         try:
@@ -1952,9 +1736,7 @@ class PlexClient(MediaServerProvider):
             # Resolve admin's numeric Plex ID for the accountID filter.
             raw_admin_id = _safe_getattr(myplex_account, "id", None)
             try:
-                admin_plex_id_int: int | None = (
-                    int(raw_admin_id) if raw_admin_id is not None else None
-                )
+                admin_plex_id_int: int | None = int(raw_admin_id) if raw_admin_id is not None else None
             except (TypeError, ValueError):
                 admin_plex_id_int = None
 
@@ -1971,16 +1753,10 @@ class PlexClient(MediaServerProvider):
                 return target_server, target_library, admin_plex_id_int
 
             for user in myplex_account.users() or []:
-                candidate_id = _safe_getattr(user, "id", None) or _safe_getattr(
-                    user, "uuid", None
-                )
-                if candidate_id is not None and str(candidate_id) == str(
-                    target_user_id
-                ):
+                candidate_id = _safe_getattr(user, "id", None) or _safe_getattr(user, "uuid", None)
+                if candidate_id is not None and str(candidate_id) == str(target_user_id):
                     switched_server = self.server.switchUser(user.title)
-                    switched_library = self._find_music_library_for_server(
-                        switched_server
-                    )
+                    switched_library = self._find_music_library_for_server(switched_server)
                     try:
                         managed_plex_id_int: int | None = int(candidate_id)
                     except (TypeError, ValueError):
@@ -1991,9 +1767,7 @@ class PlexClient(MediaServerProvider):
                     )
                     return switched_server, switched_library, managed_plex_id_int
         except Exception as e:
-            logger.warning(
-                f"Failed to resolve Plex history context for account_id={account_id}: {e}"
-            )
+            logger.warning(f"Failed to resolve Plex history context for account_id={account_id}: {e}")
 
         # Could not resolve — return (None, None, None) so the caller refuses to
         # execute an unscoped history() that would leak the admin's global history.
@@ -2058,9 +1832,7 @@ class PlexClient(MediaServerProvider):
             if interaction.rating is not None:
                 continue
 
-            provider_item_id = str(
-                _safe_getattr(interaction, "plugin_item_id", "") or ""
-            ).strip()
+            provider_item_id = str(_safe_getattr(interaction, "plugin_item_id", "") or "").strip()
             if not provider_item_id:
                 continue
 
@@ -2076,16 +1848,12 @@ class PlexClient(MediaServerProvider):
                 try:
                     item = target_server.fetchItem(int(provider_item_id))
                 except Exception:
-                    item = target_server.fetchItem(
-                        f"/library/metadata/{provider_item_id}"
-                    )
+                    item = target_server.fetchItem(f"/library/metadata/{provider_item_id}")
 
                 if item is not None:
                     resolved_rating = self._extract_user_rating(item)
             except Exception as exc:
-                logger.debug(
-                    f"Could not enrich rating for Plex item {provider_item_id}: {exc}"
-                )
+                logger.debug(f"Could not enrich rating for Plex item {provider_item_id}: {exc}")
 
             rating_cache[provider_item_id] = resolved_rating
             if resolved_rating is not None:
@@ -2093,9 +1861,7 @@ class PlexClient(MediaServerProvider):
                 enriched_count += 1
 
         if enriched_count:
-            logger.info(
-                f"Enriched {enriched_count} Plex history interactions with user ratings"
-            )
+            logger.info(f"Enriched {enriched_count} Plex history interactions with user ratings")
 
     def _track_to_interaction(self, plex_track: Any) -> UserTrackInteraction | None:
         """Convert a Plex history or library item into a standardized interaction."""
@@ -2103,16 +1869,10 @@ class PlexClient(MediaServerProvider):
         if not converted:
             return None
 
-        provider_item_id = str(
-            _safe_getattr(plex_track, "ratingKey", None)
-            or converted.identifiers.get("plex")
-            or ""
-        )
+        provider_item_id = str(_safe_getattr(plex_track, "ratingKey", None) or converted.identifiers.get("plex") or "")
         play_count = int(_safe_getattr(plex_track, "viewCount", 0) or 0)
         rating = self._extract_user_rating(plex_track)
-        last_played_at = self._coerce_datetime(
-            _safe_getattr(plex_track, "lastViewedAt", None)
-        )
+        last_played_at = self._coerce_datetime(_safe_getattr(plex_track, "lastViewedAt", None))
 
         return UserTrackInteraction(
             plugin_item_id=provider_item_id,
@@ -2123,16 +1883,12 @@ class PlexClient(MediaServerProvider):
             last_played_at=last_played_at,
         )
 
-    def fetch_user_history(
-        self, account_id: int | None = None, limit: int = 100
-    ) -> list[UserTrackInteraction]:
+    def fetch_user_history(self, account_id: int | None = None, limit: int = 100) -> list[UserTrackInteraction]:
         """Fetch account-specific listening history from Plex using exact managed-user context when available."""
         # Guard 1: an explicit account_id is mandatory — an unscoped history() call
         # silently returns the admin's global history and would contaminate the database.
         if not account_id:
-            logger.warning(
-                "fetch_user_history: account_id is required; refusing unscoped history fetch"
-            )
+            logger.warning("fetch_user_history: account_id is required; refusing unscoped history fetch")
             return []
 
         # Guard 2: enforce int — PlexAPI silently drops the accountID filter when it
@@ -2146,9 +1902,7 @@ class PlexClient(MediaServerProvider):
             )
             return []
 
-        target_server, target_library, plex_account_id = self._resolve_history_context(
-            account_id_int
-        )
+        target_server, target_library, plex_account_id = self._resolve_history_context(account_id_int)
         if not target_server or not target_library or plex_account_id is None:
             logger.warning(
                 f"fetch_user_history: could not resolve a scoped Plex context for "
@@ -2163,9 +1917,7 @@ class PlexClient(MediaServerProvider):
                 logger.debug(
                     f"Fetching Plex play history for account_id={account_id_int} plex_id={plex_account_id} (limit={limit})"
                 )
-                history_items = target_server.history(
-                    maxresults=limit, accountID=plex_account_id
-                )
+                history_items = target_server.history(maxresults=limit, accountID=plex_account_id)
                 for item in history_items or []:
                     # Strictly filter for audio tracks to avoid crashing on photos/extras
                     if _safe_getattr(item, "type", None) != "track":
@@ -2179,21 +1931,15 @@ class PlexClient(MediaServerProvider):
                         interactions.append(interaction)
 
                 if interactions:
-                    self._enrich_interactions_with_user_ratings(
-                        interactions, target_server
-                    )
-                    logger.info(
-                        f"Fetched {len(interactions)} Plex history interactions for account_id={account_id}"
-                    )
+                    self._enrich_interactions_with_user_ratings(interactions, target_server)
+                    logger.info(f"Fetched {len(interactions)} Plex history interactions for account_id={account_id}")
                     return interactions[:limit]
             except Exception as e:
                 logger.warning(
                     f"Failed to fetch Plex history for account_id={account_id}: {e}. Falling back to lastViewedAt library query."
                 )
 
-            recent_tracks = target_library.searchTracks(
-                maxresults=limit, sort="lastViewedAt:desc"
-            )
+            recent_tracks = target_library.searchTracks(maxresults=limit, sort="lastViewedAt:desc")
             for item in recent_tracks or []:
                 interaction = self._track_to_interaction(item)
                 if interaction:
@@ -2201,9 +1947,7 @@ class PlexClient(MediaServerProvider):
 
             self._enrich_interactions_with_user_ratings(interactions, target_server)
 
-            logger.info(
-                f"Fetched {len(interactions)} fallback Plex history interactions for account_id={account_id}"
-            )
+            logger.info(f"Fetched {len(interactions)} fallback Plex history interactions for account_id={account_id}")
             return interactions[:limit]
 
         except Exception as e:

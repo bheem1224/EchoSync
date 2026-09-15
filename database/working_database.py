@@ -9,6 +9,7 @@ from collections.abc import Generator
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from sqlalchemy import (
     JSON,
@@ -199,6 +200,23 @@ class ReviewTask(WorkingBase):
     @media_id.setter
     def media_id(self, val: str):
         self.file_path = val
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize ReviewTask to dictionary representation including proposed_metadata."""
+        return {
+            "id": self.id,
+            "file_path": self.file_path,
+            "media_id": self.media_id,
+            "track_data": self.track_data,
+            "status": self.status,
+            "confidence_score": self.confidence_score,
+            "retry_count": self.retry_count,
+            "last_checked_at": self.last_checked_at.isoformat() if self.last_checked_at else None,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+            "detected_metadata": self.detected_metadata,
+            "proposed_metadata": self.proposed_metadata,
+        }
 
 
 class UserTrackState(WorkingBase):
@@ -401,7 +419,10 @@ class PluginDatabaseFactory:
         session = self.SessionLocal()
         try:
             yield session
-            session.commit()
+            from core.task_manager import db_write_lease
+
+            with db_write_lease(task_name=f"plugin_db_{self.plugin_id}"):
+                session.commit()
         except Exception:
             session.rollback()
             raise
@@ -458,7 +479,10 @@ class WorkingDatabase:
         session = self.SessionLocal()
         try:
             yield session
-            session.commit()
+            from core.task_manager import db_write_lease
+
+            with db_write_lease(task_name="working_database_session"):
+                session.commit()
         except Exception:
             session.rollback()
             raise
@@ -472,7 +496,9 @@ class WorkingDatabase:
 
     def get_system_user_id(self) -> int:
         """Get or create the system user ID for automated flags."""
-        with self.session_scope() as session:
+        from core.task_manager import db_write_lease
+
+        with db_write_lease(task_name="working_system_user"), self.session_scope() as session:
             account = session.query(Account).filter(Account.username == "Echosync System").first()
             if account:
                 return account.id

@@ -145,9 +145,7 @@ def suggest_from_library(user_id: str, limit: int = 50) -> list[dict]:
 
             distance = 0.0
             if vibe_signature:
-                base_sync_id = (
-                    f"ss:track:meta:{generate_deterministic_id(t.artist.name, t.title)}"
-                )
+                base_sync_id = f"ss:track:meta:{generate_deterministic_id(t.artist.name, t.title)}"
                 track_features = features_dict.get(base_sync_id)
                 if track_features:
                     distance = calculate_vibe_distance(vibe_signature, track_features)
@@ -218,30 +216,24 @@ def discover_new_tracks(user_id: str) -> list[dict]:
         with music_db.session_scope() as session:
             discover_identifiers = (
                 session.query(ExternalIdentifier)
-                .filter(
-                    ExternalIdentifier.provider_item_id.in_(list(pid_counts.keys()))
-                )
+                .filter(ExternalIdentifier.provider_item_id.in_(list(pid_counts.keys())))
                 .all()
             )
             for identifier in discover_identifiers:
                 if identifier.track and identifier.track.artist:
                     artist_name = identifier.track.artist.name
-                    recent_artists_counts[artist_name] = recent_artists_counts.get(
-                        artist_name, 0
-                    ) + pid_counts.get(identifier.provider_item_id, 0)
+                    recent_artists_counts[artist_name] = recent_artists_counts.get(artist_name, 0) + pid_counts.get(
+                        identifier.provider_item_id, 0
+                    )
 
     # Sort artists by play count
-    sorted_artists = sorted(
-        recent_artists_counts.items(), key=lambda x: x[1], reverse=True
-    )
+    sorted_artists = sorted(recent_artists_counts.items(), key=lambda x: x[1], reverse=True)
     top_3_artists = [artist for artist, count in sorted_artists[:3]]
 
     if not top_3_artists:
         import logging
 
-        logging.getLogger("discovery_engine").debug(
-            "No top artists found to base discovery on."
-        )
+        logging.getLogger("discovery_engine").debug("No top artists found to base discovery on.")
         return []
 
     # 2. Get similar artists/tracks from ListenBrainz
@@ -259,9 +251,7 @@ def discover_new_tracks(user_id: str) -> list[dict]:
     if not hasattr(lb_plugin, "get_similar_artists"):
         import logging
 
-        logging.getLogger("discovery_engine").error(
-            "ListenBrainz plugin does not support get_similar_artists."
-        )
+        logging.getLogger("discovery_engine").error("ListenBrainz plugin does not support get_similar_artists.")
         return []
 
     discovered_tracks = lb_plugin.get_similar_artists(top_3_artists)
@@ -285,27 +275,15 @@ def discover_new_tracks(user_id: str) -> list[dict]:
             tasks = []
             for track in chunk_list:
                 mbid = (
-                    track.get("musicbrainz_id")
-                    if isinstance(track, dict)
-                    else getattr(track, "musicbrainz_id", None)
+                    track.get("musicbrainz_id") if isinstance(track, dict) else getattr(track, "musicbrainz_id", None)
                 )
                 if not mbid:
-                    title = (
-                        track.get("title")
-                        if isinstance(track, dict)
-                        else getattr(track, "title", None)
-                    )
+                    title = track.get("title") if isinstance(track, dict) else getattr(track, "title", None)
                     artist_name = (
-                        track.get("artist_name")
-                        if isinstance(track, dict)
-                        else getattr(track, "artist_name", None)
+                        track.get("artist_name") if isinstance(track, dict) else getattr(track, "artist_name", None)
                     )
                     if title and artist_name:
-                        tasks.append(
-                            mb_plugin.search_recording_strict(
-                                artist_name, title, immediate=False
-                            )
-                        )
+                        tasks.append(mb_plugin.search_recording_strict(artist_name, title, immediate=False))
                     else:
                         tasks.append(asyncio.sleep(0, result=[]))
                 else:
@@ -313,9 +291,7 @@ def discover_new_tracks(user_id: str) -> list[dict]:
 
             return await asyncio.gather(*tasks, return_exceptions=True)
 
-        mb_results_batch = (
-            asyncio.run(fetch_mbids(chunk)) if mb_plugin else [[] for _ in chunk]
-        )
+        mb_results_batch = asyncio.run(fetch_mbids(chunk)) if mb_plugin else [[] for _ in chunk]
 
         with music_db.session_scope() as session:
             from sqlalchemy import and_, or_
@@ -329,9 +305,7 @@ def discover_new_tracks(user_id: str) -> list[dict]:
 
             for track, mb_results in zip(chunk, mb_results_batch):
                 mbid = (
-                    track.get("musicbrainz_id")
-                    if isinstance(track, dict)
-                    else getattr(track, "musicbrainz_id", None)
+                    track.get("musicbrainz_id") if isinstance(track, dict) else getattr(track, "musicbrainz_id", None)
                 )
 
                 if not mbid and not isinstance(mb_results, Exception) and mb_results:
@@ -342,15 +316,9 @@ def discover_new_tracks(user_id: str) -> list[dict]:
                     else:
                         track.musicbrainz_id = mbid
 
-                title = (
-                    track.get("title")
-                    if isinstance(track, dict)
-                    else getattr(track, "title", None)
-                )
+                title = track.get("title") if isinstance(track, dict) else getattr(track, "title", None)
                 artist_name = (
-                    track.get("artist_name")
-                    if isinstance(track, dict)
-                    else getattr(track, "artist_name", None)
+                    track.get("artist_name") if isinstance(track, dict) else getattr(track, "artist_name", None)
                 )
 
                 if mbid:
@@ -374,11 +342,7 @@ def discover_new_tracks(user_id: str) -> list[dict]:
                 mbids_list = list(mbids_to_check)
                 for i in range(0, len(mbids_list), 500):
                     batch = mbids_list[i : i + 500]
-                    found = (
-                        session.query(Track.musicbrainz_id)
-                        .filter(Track.musicbrainz_id.in_(batch))
-                        .all()
-                    )
+                    found = session.query(Track.musicbrainz_id).filter(Track.musicbrainz_id.in_(batch)).all()
                     existing_mbids.update([row[0] for row in found])
 
             existing_pairs = set()
@@ -386,15 +350,8 @@ def discover_new_tracks(user_id: str) -> list[dict]:
                 pairs_list = list(pairs_to_check)
                 for i in range(0, len(pairs_list), 250):  # 250 pairs = 500 expressions
                     batch = pairs_list[i : i + 250]
-                    or_conditions = [
-                        and_(Track.title == t, Artist.name == a) for t, a in batch
-                    ]
-                    found = (
-                        session.query(Track.title, Artist.name)
-                        .join(Artist)
-                        .filter(or_(*or_conditions))
-                        .all()
-                    )
+                    or_conditions = [and_(Track.title == t, Artist.name == a) for t, a in batch]
+                    found = session.query(Track.title, Artist.name).join(Artist).filter(or_(*or_conditions)).all()
                     existing_pairs.update([(row[0], row[1]) for row in found])
 
             # 3. Filter tracks using the pre-populated sets (O(1) lookup)
@@ -414,9 +371,7 @@ def discover_new_tracks(user_id: str) -> list[dict]:
                     track_dict = {
                         "title": getattr(original_track, "title", None),
                         "artist_name": getattr(original_track, "artist_name", None),
-                        "musicbrainz_id": getattr(
-                            original_track, "musicbrainz_id", None
-                        ),
+                        "musicbrainz_id": getattr(original_track, "musicbrainz_id", None),
                     }
                     new_tracks.append(track_dict)
                 else:
@@ -553,10 +508,10 @@ def mine_cached_playlists(user_id: str, limit: int = 20) -> int:
     import logging
     from itertools import islice
 
-    from plugins.spotify.cache_manager import SpotifyCacheManager
     from sqlalchemy import and_, or_
     from sqlalchemy.exc import IntegrityError
 
+    from core.nexus_framework.plugin_loader import PluginRegistry
     from database.music_database import Track
     from database.music_database import get_database as get_music_database
     from database.working_database import (
@@ -570,7 +525,21 @@ def mine_cached_playlists(user_id: str, limit: int = 20) -> int:
     # Download statuses that mean the track is already being handled.
     ACTIVE_STATUSES = {"queued", "searching", "downloading"}
 
-    cm = SpotifyCacheManager()
+    # Retrieve the cache manager from the already-initialized SpotifyClient
+    # (which owns the sdk-backed SpotifyCacheManager) rather than constructing
+    # one directly — SpotifyCacheManager requires an SDK instance and must not
+    # be instantiated without one.
+    try:
+        spotify_client = PluginRegistry.get_plugin("EchoSync.spotify")
+        cm = getattr(spotify_client, "cache_manager", None)
+    except Exception:
+        spotify_client = None
+        cm = None
+
+    if cm is None:
+        logger.debug("mine_cached_playlists: Spotify plugin not initialized or cache_manager unavailable.")
+        return 0
+
     cached_playlists = cm.list_cached_playlists()
     if not cached_playlists:
         logger.debug("mine_cached_playlists: no cached Spotify playlists found.")
@@ -601,18 +570,14 @@ def mine_cached_playlists(user_id: str, limit: int = 20) -> int:
             sync_ids = set()
 
             for track in chunk:
-                title = getattr(track, "title", None) or getattr(
-                    track, "raw_title", None
-                )
+                title = getattr(track, "title", None) or getattr(track, "raw_title", None)
                 artist_name = getattr(track, "artist_name", None)
                 isrc = getattr(track, "isrc", None)
 
                 if not title or not artist_name:
                     continue
 
-                sync_id = (
-                    f"ss:track:meta:{generate_deterministic_id(artist_name, title)}"
-                )
+                sync_id = f"ss:track:meta:{generate_deterministic_id(artist_name, title)}"
 
                 batch_data.append(
                     {
@@ -665,12 +630,7 @@ def mine_cached_playlists(user_id: str, limit: int = 20) -> int:
         # Needs to join Artist
         for chunk in chunked_iterable(all_pairs, 500):
             conditions = [and_(Track.title == t, Artist.name == a) for t, a in chunk]
-            found = (
-                m_session.query(Track.title, Artist.name)
-                .join(Artist)
-                .filter(or_(*conditions))
-                .all()
-            )
+            found = m_session.query(Track.title, Artist.name).join(Artist).filter(or_(*conditions)).all()
             existing_pairs.update([(r[0], r[1]) for r in found])
 
     # 3. Gate 2: Batch Process Working Database (Active Downloads & Staging Queue)
@@ -680,9 +640,7 @@ def mine_cached_playlists(user_id: str, limit: int = 20) -> int:
         for chunk in chunked_iterable(all_sync_ids, 500):
             found = (
                 w_session.query(Download.sync_id)
-                .filter(
-                    Download.sync_id.in_(chunk), Download.status.in_(ACTIVE_STATUSES)
-                )
+                .filter(Download.sync_id.in_(chunk), Download.status.in_(ACTIVE_STATUSES))
                 .all()
             )
             active_sync_ids.update([r[0] for r in found])

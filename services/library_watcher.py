@@ -58,6 +58,7 @@ from watchdog.observers import Observer  # type: ignore[import-untyped]
 from core.db.echo_sync_track import EchosyncMedia, EchosyncTrack
 from core.event_bus import event_bus
 from core.settings import config_manager
+from core.task_manager.task_queue import db_write_lease
 from core.tiered_logger import get_logger
 from database.music_database import get_database
 
@@ -118,9 +119,7 @@ def suppress_path(path: str) -> Generator[None, None, None]:
 _TEMP_EXTENSIONS: tuple[str, ...] = (".tmp", ".part", ".crdownload")
 
 
-def _is_path_ignored(
-    file_path: str, ignored_directories: set[str] | None = None
-) -> bool:
+def _is_path_ignored(file_path: str, ignored_directories: set[str] | None = None) -> bool:
     """Check if a file path belongs to an ignored directory or temp pattern."""
     if ignored_directories is None:
         ignored_directories = {"poor_metadata", "incomplete"}
@@ -130,9 +129,7 @@ def _is_path_ignored(
         if bool(parts_lower.intersection(ignored_directories)):
             return True
         name_lower = p.name.lower()
-        if name_lower.endswith(_TEMP_EXTENSIONS) or any(
-            part.lower().endswith(_TEMP_EXTENSIONS) for part in p.parts
-        ):
+        if name_lower.endswith(_TEMP_EXTENSIONS) or any(part.lower().endswith(_TEMP_EXTENSIONS) for part in p.parts):
             return True
     except Exception:
         pass
@@ -242,9 +239,7 @@ def _process_new_file(path: Path) -> None:
         try:
             tags = echosync_core.extract_metadata(str(path))
         except Exception as tag_err:
-            logger.warning(
-                "Watcher: tag extraction failed for %s: %s", path.name, tag_err
-            )
+            logger.warning("Watcher: tag extraction failed for %s: %s", path.name, tag_err)
 
         title: str = tags.get("title") or path.stem
         artist_name: str = tags.get("artist") or "Unknown Artist"
@@ -291,10 +286,9 @@ def _process_new_file(path: Path) -> None:
             with db.session_factory() as session:
                 repo = TrackRepository(session)
                 repo.bulk_upsert_tracks([track_obj])
-                session.commit()
-            logger.info(
-                "Watcher: DB upsert complete for '%s' by '%s'", title, artist_name
-            )
+                with db_write_lease(task_name="library_watcher"):
+                    session.commit()
+            logger.info("Watcher: DB upsert complete for '%s' by '%s'", title, artist_name)
         except Exception as db_err:
             logger.error("Watcher: DB upsert failed for %s: %s", path.name, db_err)
 
@@ -351,32 +345,30 @@ class LibraryWatcherService:
 
     def start(self) -> None:
         """
-        Resolve the library directory from config and start the OS watcher.
+        Resolve the intake/downloads directory from config and start the OS watcher.
 
-        If the library directory is not configured or does not exist, the
-        watcher is not started and a warning is logged.  This allows the app
-        to boot cleanly even before a user has pointed it at a library.
+        Architectural Invariant:
+        library_watcher must exclusively monitor the intake/downloads directory
+        (/data/downloads), NEVER the main music library directory (/data/library).
+        The main library directory is synchronized via the scheduled 6-hour
+        incremental rolling scan using mtime checks to prevent feedback storms.
         """
         if self._started:
-            logger.warning(
-                "LibraryWatcherService.start() called more than once — ignoring"
-            )
+            logger.warning("LibraryWatcherService.start() called more than once — ignoring")
             return
 
-        library_dir = config_manager.get("storage.library_dir") or config_manager.get(
-            "library_dir"
-        )
-        if not library_dir:
-            logger.warning(
-                "LibraryWatcherService: library directory is not configured — watcher disabled"
-            )
+        downloads_path = config_manager.get_downloads_dir()
+        if not downloads_path:
+            logger.warning("LibraryWatcherService: downloads directory is not configured — watcher disabled")
             return
 
-        library_path = Path(library_dir)
-        if not library_path.exists():
+        try:
+            downloads_path.mkdir(parents=True, exist_ok=True)
+        except Exception as mk_err:
             logger.warning(
-                "LibraryWatcherService: library directory does not exist (%s) — watcher disabled",
-                library_path,
+                "LibraryWatcherService: failed to create downloads directory (%s): %s — watcher disabled",
+                downloads_path,
+                mk_err,
             )
             return
 
@@ -385,7 +377,7 @@ class LibraryWatcherService:
         assert self._observer is not None
         self._observer.schedule(
             self._handler,
-            str(library_path),
+            str(downloads_path),
             recursive=True,
         )
         self._observer.start()
@@ -402,7 +394,7 @@ class LibraryWatcherService:
                 ProcessOwner(
                     owner_id="core.library_watcher",
                     owner_type=OwnerType.CORE,
-                    task_name="Library File Watcher",
+                    task_name="Downloads File Watcher",
                     category=ProcessCategory.WORKER_THREAD,
                     is_killable=True,
                     thread_id=getattr(self._observer, "ident", None),
@@ -411,8 +403,8 @@ class LibraryWatcherService:
         except Exception:
             pass
         logger.info(
-            "LibraryWatcherService started — monitoring '%s' (recursive)",
-            library_path,
+            "LibraryWatcherService started — monitoring intake directory '%s' (recursive)",
+            downloads_path,
         )
 
     def stop(self) -> None:
@@ -437,9 +429,7 @@ class LibraryWatcherService:
             try:
                 self._observer.join(timeout=5)
             except Exception as exc:
-                logger.warning(
-                    "LibraryWatcherService: error joining observer thread: %s", exc
-                )
+                logger.warning("LibraryWatcherService: error joining observer thread: %s", exc)
 
         self._started = False
         logger.info("LibraryWatcherService stopped")
