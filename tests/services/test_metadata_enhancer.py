@@ -1450,4 +1450,3 @@ def test_enhance_track_delegates_to_metadata_resolution_engine_and_persists_atom
         assert db_fp.chromaprint == dummy_cp
         assert db_fp.acoustid_id == "acoustid_m83_win"
 
-

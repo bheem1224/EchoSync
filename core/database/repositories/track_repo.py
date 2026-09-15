@@ -200,6 +200,15 @@ class TrackRepository:
             joinedload(Track.album),
         )
 
+        default_artist = session.query(Artist).filter(Artist.name.in_(["Unknown Artist", "Unknown"])).first()
+        default_artist_id = default_artist.id if default_artist else 1533
+        default_album = session.query(Album).filter(Album.title.in_(["Unknown Album", "Unknown"])).first()
+        default_album_id = default_album.id if default_album else 1804
+        placeholder_track = or_(
+            Track.artist_id == default_artist_id,
+            Track.album_id == default_album_id,
+        )
+
         # Multi-tiered priority order:
         # 1. Unknown Artist / Missing Artist
         # 2. Unknown Album / Missing Album
@@ -295,9 +304,9 @@ class TrackRepository:
                     Track.musicbrainz_track_id.is_(None),
                     Track.musicbrainz_id.is_(None),
                 )
-                unenhanced_filter = or_(base_unenhanced, missing_sig, missing_mbid)
+                unenhanced_filter = or_(base_unenhanced, missing_sig, missing_mbid, placeholder_track)
             else:
-                unenhanced_filter = base_unenhanced
+                unenhanced_filter = or_(base_unenhanced, placeholder_track)
 
             query = query.filter(unenhanced_filter).filter(
                 not_(
@@ -377,6 +386,7 @@ class TrackRepository:
                         == 0,
                     )
                 )
+                conditions.append(placeholder_track)
 
                 query = query.filter(or_(*conditions))
 

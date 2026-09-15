@@ -1897,6 +1897,7 @@ class RetroactiveEnhancer:
         from core.utils import PathMapper
         from database.music_database import (
             AudioFingerprint,
+            Album,
             Track,
             get_database,
         )
@@ -1924,11 +1925,16 @@ class RetroactiveEnhancer:
             track_items = []
 
             default_artist_id: int | None = None
+            default_album_id: int | None = None
             with db.session_scope() as session:
                 try:
                     from core.database.repositories.track_repo import TrackRepository
 
                     default_artist_id = TrackRepository.get_or_create_default_artist(session)
+                    default_album = (
+                        session.query(Album).filter(Album.title.in_(["Unknown Album", "Unknown"])).first()
+                    )
+                    default_album_id = default_album.id if default_album else 1804
                     candidates = TrackRepository.get_tracks_for_enhancement(
                         session,
                         current_batch_size,
@@ -2192,9 +2198,12 @@ class RetroactiveEnhancer:
                     missing_fields = [key for key in required_keys if not item["metadata_status"].get(key)]
 
                     track_artist_id = getattr(t_track, "artist_id", None)
+                    track_album_id = getattr(t_track, "album_id", None)
                     is_default_artist = default_artist_id is not None and track_artist_id == default_artist_id
+                    is_default_album = default_album_id is not None and track_album_id == default_album_id
+                    is_placeholder_track = is_default_artist or is_default_album
                     has_identifiable_tags = bool(
-                        not is_default_artist
+                        not is_placeholder_track
                         and t_track.title
                         and not is_generic_title(str(t_track.title))
                         and t_track.artist_name
@@ -2205,10 +2214,12 @@ class RetroactiveEnhancer:
                     # must NEVER use targeted MBID fetch and drop straight into bucket_heavy (Chromaprint/AcoustID waterfall)
                     if (
                         not has_identifiable_tags
-                        or is_default_artist
+                        or is_placeholder_track
                         or not t_track.artist_name
                         or is_generic_title(str(t_track.title))
                     ):
+                        if is_placeholder_track:
+                            item["ignore_embedded_mbid"] = True
                         bucket_heavy.append((item, valid_media_paths, all_file_tags))
                     elif t_track.musicbrainz_id and t_track.musicbrainz_id != "NOT_FOUND":
                         if (
