@@ -95,6 +95,16 @@ async def lifespan(app: FastAPI):
         logger.error(f"Failed to initialize databases: {e}")
         raise
 
+    # On-demand verbose file logging check
+    try:
+        from core.settings import config_manager
+        from core.tiered_logger import enable_verbose_file_logging
+
+        if config_manager.get("system.verbose_logging_enabled", False):
+            enable_verbose_file_logging()
+    except Exception as log_err:
+        logger.warning(f"Could not initialize on-demand verbose logging: {log_err}")
+
     # Initialize Plugins
     try:
         from core.nexus_framework.plugin_loader import PluginLoader, PluginRegistry
@@ -204,6 +214,13 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.error(f"Error awaiting backend services task cancellation: {e}")
         _backend_task = None
+
+    try:
+        from core.tiered_logger import disable_verbose_file_logging
+
+        disable_verbose_file_logging()
+    except Exception as log_err:
+        logger.warning(f"Error disabling verbose file logging on shutdown: {log_err}")
 
 
 def create_app(testing: bool = False) -> FastAPI:

@@ -238,9 +238,11 @@ def get_settings():
             data["log_level"] = "DEBUG"
         else:
             try:
-                from core.tiered_logger import get_current_log_level
+                from core.tiered_logger import get_current_log_level, is_verbose_file_logging_enabled
 
                 data["log_level"] = get_current_log_level()
+                data["system.verbose_logging_enabled"] = is_verbose_file_logging_enabled()
+                data["verbose_logging_enabled"] = is_verbose_file_logging_enabled()
             except Exception:
                 pass
         return {
@@ -307,6 +309,8 @@ def acknowledge_migration():
 _SETTINGS_ALLOWLIST: frozenset = frozenset(
     {
         "log_level",
+        "system.verbose_logging_enabled",
+        "verbose_logging_enabled",
         "active_media_server",
         "active_download_client",
         "metadata_enhancement",
@@ -533,6 +537,24 @@ async def update_settings(request: Request):
         except Exception:
             pass
 
+    # Handle dynamic on-demand verbose file logging toggle
+    verbose_setting = None
+    if "system.verbose_logging_enabled" in payload:
+        verbose_setting = bool(payload["system.verbose_logging_enabled"])
+    elif "verbose_logging_enabled" in payload:
+        verbose_setting = bool(payload["verbose_logging_enabled"])
+
+    if verbose_setting is not None:
+        try:
+            from core.tiered_logger import disable_verbose_file_logging, enable_verbose_file_logging
+
+            if verbose_setting:
+                enable_verbose_file_logging()
+            else:
+                disable_verbose_file_logging()
+        except Exception as log_err:
+            logger.warning(f"Could not adjust verbose file logging: {log_err}")
+
     # Handle custom_ui_path validation
     restart_warning = False
     if "custom_ui_path" in payload:
@@ -561,8 +583,11 @@ async def update_settings(request: Request):
         restart_warning = True
 
     try:
-        for key, value in payload.items():
-            config_manager.set(key, value)
+        from core.task_manager.task_queue import db_write_lease
+
+        with db_write_lease(task_name="update_system_settings"):
+            for key, value in payload.items():
+                config_manager.set(key, value)
 
         try:
             from core.event_bus import event_bus

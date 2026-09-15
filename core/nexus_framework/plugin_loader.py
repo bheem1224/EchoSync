@@ -79,6 +79,64 @@ def generate_plugin_id(name: str) -> int:
     return compute_plugin_crc32(str(name))
 
 
+def resolve_plugin_directory(
+    name: str,
+    channel_preference: str = "inherit",
+    absolute_install_path: str | None = None,
+) -> tuple[Path, str]:
+    """Resolve the canonical plugin directory path and effective channel."""
+    effective_channel = (
+        config_manager.get("system.channel_preference", "stable")
+        if channel_preference == "inherit"
+        else channel_preference
+    )
+    if not effective_channel:
+        effective_channel = "stable"
+
+    # Resolve base plugin root cleanly by stripping existing trailing channel leaves
+    base_dir = None
+    if absolute_install_path:
+        p = Path(absolute_install_path)
+        if p.name in ("beta", "stable"):
+            base_dir = p.parent
+        else:
+            base_dir = p
+    else:
+        try:
+            p_dir = Path(config_manager.get_plugins_dir())
+        except Exception:
+            p_dir = Path("/data/plugins/EchoSync")
+        if "." in name and not (p_dir / name).exists():
+            parts = name.split(".", 1)
+            candidate_base = p_dir / parts[0] / parts[1]
+            if candidate_base.exists():
+                base_dir = candidate_base
+            else:
+                base_dir = p_dir / name
+        elif not (p_dir / name).exists() and (p_dir / "EchoSync" / name).exists():
+            base_dir = p_dir / "EchoSync" / name
+        else:
+            base_dir = p_dir / name
+
+    # Check targeted channel candidate first
+    candidate = base_dir / effective_channel
+    if candidate.exists() and (
+        (candidate / "plugin.json").exists()
+        or (candidate / "manifest.json").exists()
+        or (candidate / "__init__.py").exists()
+    ):
+        return candidate, effective_channel
+
+    # Fallback to root or stable
+    if (
+        (base_dir / "plugin.json").exists()
+        or (base_dir / "manifest.json").exists()
+        or (base_dir / "__init__.py").exists()
+    ):
+        return base_dir, "stable"
+    return base_dir / "stable", "stable"
+
+
 def get_relative_entry_path(url_or_path: str) -> str:
     """
     Extracts the relative path within the plugin's install directory from
@@ -559,25 +617,42 @@ class PluginLoader:
 
         conn = db._open_connection()
         try:
+            conn.row_factory = sqlite3.Row
             c = conn.cursor()
-            c.execute(
-                "SELECT absolute_install_path, name, beta_opt_in FROM services WHERE plugin_id=?",
-                (plugin_id,),
-            )
-            row = c.fetchone()
-            if row and row[0]:
-                plugin_dir = Path(row[0])
-                base_ns = row[1]
-                is_beta = bool(row[2])
-            else:
-                raise ValueError(
-                    f"Plugin ID {plugin_id} not found in database for reload or missing absolute_install_path"
+            try:
+                c.execute(
+                    "SELECT absolute_install_path, name, channel_preference, beta_opt_in FROM services WHERE plugin_id=?",
+                    (plugin_id,),
                 )
+            except sqlite3.OperationalError:
+                c.execute(
+                    "SELECT absolute_install_path, name, beta_opt_in FROM services WHERE plugin_id=?",
+                    (plugin_id,),
+                )
+            row = c.fetchone()
+            if row and row["name"]:
+                install_path = row["absolute_install_path"]
+                base_ns = row["name"]
+                row_keys = row.keys() if hasattr(row, "keys") else []
+                pref = (
+                    row["channel_preference"]
+                    if "channel_preference" in row_keys and row["channel_preference"]
+                    else None
+                )
+                if not pref:
+                    beta_opt = row["beta_opt_in"] if "beta_opt_in" in row_keys else None
+                    pref = "beta" if beta_opt == 1 else "stable" if beta_opt == 0 else "inherit"
+            else:
+                raise ValueError(f"Plugin ID {plugin_id} not found in database for reload or missing name/path")
         finally:
             conn.close()
 
         clean_ns = base_ns.split("@")[0]
-        channel = "beta" if is_beta else "stable"
+        plugin_dir, channel = resolve_plugin_directory(
+            name=clean_ns,
+            channel_preference=pref,
+            absolute_install_path=install_path,
+        )
 
         if not plugin_dir.exists():
             raise ValueError(f"Plugin directory {plugin_dir} does not exist.")
@@ -662,7 +737,12 @@ class PluginLoader:
             disabled = config_manager.get_disabled_plugins()
             is_disabled = clean_ns in disabled or str(plugin_id) in disabled
 
-            success = self._load_plugin_package(plugin_id, is_beta=(channel == "beta"), is_disabled=is_disabled)
+            success = self._load_plugin_package(
+                plugin_id,
+                is_beta=(channel == "beta"),
+                is_disabled=is_disabled,
+                absolute_install_path=str(plugin_dir.absolute()),
+            )
             if success is False:
                 raise Exception(f"Live-swap failed to load module for {plugin_id}")
             from core.task_manager import PluginLifecycleState, plugin_state_manager
@@ -1044,15 +1124,19 @@ class PluginLoader:
             try:
                 conn.row_factory = sqlite3.Row
                 c = conn.cursor()
-                c.execute(
-                    "SELECT name, plugin_id, absolute_install_path, loaded_modules, beta_opt_in FROM services WHERE is_active = 1"
-                )
+                try:
+                    c.execute(
+                        "SELECT name, plugin_id, absolute_install_path, loaded_modules, channel_preference, beta_opt_in FROM services WHERE is_active = 1"
+                    )
+                except sqlite3.OperationalError:
+                    c.execute(
+                        "SELECT name, plugin_id, absolute_install_path, loaded_modules, beta_opt_in FROM services WHERE is_active = 1"
+                    )
                 active_services = c.fetchall()
             finally:
                 conn.close()
         except Exception as e:
             logger.error("Failed to query active services from the database.")
-            logger.debug(f"Raw exception data: {e}", exc_info=True)
             logger.debug(f"Raw exception data: {e}", exc_info=True)
             return
 
@@ -1060,19 +1144,26 @@ class PluginLoader:
             p_id = row["plugin_id"]
             name = row["name"]
             install_path = row["absolute_install_path"]
-            beta_opt_in = row["beta_opt_in"]
+
+            row_keys = row.keys() if hasattr(row, "keys") else []
+            pref = row["channel_preference"] if "channel_preference" in row_keys and row["channel_preference"] else None
+            if not pref:
+                beta_opt = row["beta_opt_in"] if "beta_opt_in" in row_keys else None
+                pref = "beta" if beta_opt == 1 else "stable" if beta_opt == 0 else "inherit"
 
             # Skip core/built-in services (only 'system' is core now, others are community)
             if name.lower() in {"system"}:
                 continue
 
-            # Determine plugin channel directly from database record
-            channel = "beta" if beta_opt_in == 1 else "stable"
+            # Determine plugin directory and channel via canonical resolution
+            plugin_dir, channel = resolve_plugin_directory(
+                name=name,
+                channel_preference=pref,
+                absolute_install_path=install_path,
+            )
 
-            if install_path and os.path.exists(install_path):
-                plugin_dir = Path(install_path)
-            else:
-                logger.error(f"Plugin directory not specified or does not exist for {name}: {install_path}")
+            if not plugin_dir.exists():
+                logger.error(f"Plugin directory not specified or does not exist for {name}: {plugin_dir}")
                 continue
 
             manifest_file = plugin_dir / "manifest.json"
@@ -1700,16 +1791,30 @@ def get_all_plugins() -> list:
         c = conn.cursor()
         try:
             c.execute(
-                "SELECT name, plugin_id, absolute_install_path, description, version, is_active, capabilities, beta_opt_in FROM services"
+                "SELECT name, plugin_id, absolute_install_path, description, version, is_active, capabilities, channel_preference, beta_opt_in FROM services"
             )
             rows = c.fetchall()
-        except sqlite3.OperationalError as oe:
-            err_msg = str(oe).lower()
-            if any(token in err_msg for token in ("disk i/o error", "locked", "busy")):
-                raise
-            logging.getLogger("plugin_loader").error("Database query failed: Unable to fetch plugin registry state.")
-            logging.getLogger("plugin_loader").debug(f"Raw exception data: {oe}", exc_info=True)
-            return []
+        except sqlite3.OperationalError:
+            try:
+                c.execute(
+                    "SELECT name, plugin_id, absolute_install_path, description, version, is_active, capabilities, beta_opt_in FROM services"
+                )
+                rows = c.fetchall()
+            except sqlite3.OperationalError as oe:
+                err_msg = str(oe).lower()
+                if any(token in err_msg for token in ("disk i/o error", "locked", "busy")):
+                    raise
+                logging.getLogger("plugin_loader").error(
+                    "Database query failed: Unable to fetch plugin registry state."
+                )
+                logging.getLogger("plugin_loader").debug(f"Raw exception data: {oe}", exc_info=True)
+                return []
+            except Exception as e:
+                logging.getLogger("plugin_loader").error(
+                    "Database query failed: Unable to fetch plugin registry state."
+                )
+                logging.getLogger("plugin_loader").debug(f"Raw exception data: {e}", exc_info=True)
+                return []
         except Exception as e:
             logging.getLogger("plugin_loader").error("Database query failed: Unable to fetch plugin registry state.")
             logging.getLogger("plugin_loader").debug(f"Raw exception data: {e}", exc_info=True)
@@ -1731,11 +1836,12 @@ def get_all_plugins() -> list:
                 or str(row["absolute_install_path"]).endswith(os.sep + "core")
             )
 
-            channel_preference = (
-                "beta" if row["beta_opt_in"] == 1
-                else "stable" if row["beta_opt_in"] == 0
-                else "inherit"
-            )
+            row_keys = row.keys() if hasattr(row, "keys") else []
+            pref = row["channel_preference"] if "channel_preference" in row_keys and row["channel_preference"] else None
+            if not pref:
+                beta_val = row["beta_opt_in"] if "beta_opt_in" in row_keys else None
+                pref = "beta" if beta_val == 1 else "stable" if beta_val == 0 else "inherit"
+            channel_preference = pref
             plugin_info = {
                 "id": name,
                 "plugin_id": row["plugin_id"],

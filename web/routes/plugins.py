@@ -68,33 +68,38 @@ class ChannelPreference(str, Enum):
     STABLE = "stable"
 
 
-def _channel_value(preference: ChannelPreference | str | bool | int | None) -> int | None:
+def _channel_value(preference: ChannelPreference | str | bool | int | None) -> tuple[str, int | None]:
     if preference is None or preference == ChannelPreference.INHERIT or preference == "inherit":
-        return None
+        return "inherit", None
     if preference is True or preference == 1 or preference == ChannelPreference.BETA or preference == "beta":
-        return 1
+        return "beta", 1
     if preference is False or preference == 0 or preference == ChannelPreference.STABLE or preference == "stable":
-        return 0
+        return "stable", 0
     raise ValueError(f"Unsupported channel preference: {preference}")
 
 
-def set_plugin_channel_preference(plugin_id: int, preference: ChannelPreference | str | bool | int | None) -> None:
+def set_plugin_channel_preference(
+    plugin_id: int,
+    preference: ChannelPreference | str | bool | int | None,
+) -> dict[str, Any]:
     """Persist one plugin's tri-state channel preference without touching siblings."""
     from core.task_manager import db_write_lease
     from database.config_database import get_config_database
 
-    target_val = _channel_value(preference)
+    canonical_pref, beta_opt_val = _channel_value(preference)
     db = get_config_database()
     with db_write_lease(task_name=f"set_plugin_channel_preference_{plugin_id}"):
         with db._open_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
-                "UPDATE services SET beta_opt_in=? WHERE plugin_id=?",
-                (target_val, plugin_id),
+                "UPDATE services SET channel_preference=?, beta_opt_in=? WHERE plugin_id=?",
+                (canonical_pref, beta_opt_val, plugin_id),
             )
             if cursor.rowcount == 0:
                 raise HTTPException(status_code=404, detail=f"Plugin {plugin_id} not found")
             conn.commit()
+
+    return {"plugin_id": plugin_id, "channel_preference": canonical_pref}
 
 
 class PluginsListResponse(BaseModel):
@@ -563,6 +568,72 @@ def set_plugin_beta_opt(plugin_id: str, data: BetaOptRequest):
     except Exception as e:
         logger.error(f"Error setting beta opt for {plugin_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to set beta opt-in")
+
+
+class ChannelPreferenceRequest(BaseModel):
+    channel_preference: ChannelPreference | str | bool | int | None = None
+
+
+class ChannelPreferenceResponse(BaseModel):
+    plugin_id: int
+    channel_preference: str
+    model_config = ConfigDict(from_attributes=True)
+
+
+@router.post(
+    "/{plugin_id}/channel-preference",
+    response_model=ChannelPreferenceResponse,
+    dependencies=[Depends(require_auth)],
+)
+def set_channel_preference_route(plugin_id: str, data: ChannelPreferenceRequest):
+    try:
+        from database.config_database import get_config_database
+
+        db = get_config_database()
+
+        plugin_id_int = db.get_service_id(plugin_id)
+        if not plugin_id_int:
+            try:
+                plugin_id_int = int(plugin_id)
+            except (ValueError, TypeError):
+                pass
+
+        db_plugin_id = None
+        if plugin_id_int is not None:
+            with config_db_connection() as conn:
+                c = conn.cursor()
+                c.execute(
+                    "SELECT plugin_id FROM services WHERE id=? OR plugin_id=?",
+                    (plugin_id_int, plugin_id_int),
+                )
+                row = c.fetchone()
+                if row:
+                    db_plugin_id = row["plugin_id"]
+
+        if not db_plugin_id:
+            raise HTTPException(status_code=404, detail=f"Plugin {plugin_id} not found")
+
+        result = set_plugin_channel_preference(db_plugin_id, data.channel_preference)
+
+        try:
+            from core.nexus_framework.plugin_loader import PluginLoader
+
+            app_root = Path(__file__).parent.parent.parent
+            loader = PluginLoader(app_root)
+            loader.reload_plugin(db_plugin_id)
+            logger.info(f"Hot-reloaded plugin {db_plugin_id} after channel-preference change")
+        except Exception as re:
+            logger.warning(f"Failed to hot-reload plugin {db_plugin_id} after channel-preference change: {re}")
+
+        return ChannelPreferenceResponse(
+            plugin_id=result["plugin_id"],
+            channel_preference=result["channel_preference"],
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error setting channel preference for {plugin_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to set channel preference")
 
 
 class UninstallPluginRequest(BaseModel):

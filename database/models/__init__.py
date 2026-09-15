@@ -13,6 +13,8 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import declarative_base, relationship
 
+from sqlalchemy.ext.hybrid import hybrid_property
+
 Base = declarative_base()
 
 
@@ -33,18 +35,36 @@ class Service(Base):
     created_at = Column(Integer, default=current_epoch)
     updated_at = Column(Integer, default=current_epoch, onupdate=current_epoch)
     is_active = Column(Boolean, default=True)
-    beta_opt_in = Column(Boolean, nullable=True, default=None)
+    channel_preference = Column(String(16), nullable=False, default="inherit", server_default="inherit")
+    _beta_opt_in = Column("beta_opt_in", Integer, nullable=True)
+
+    @hybrid_property
+    def beta_opt_in(self) -> int | None:
+        if self.channel_preference == "beta":
+            return 1
+        elif self.channel_preference == "stable":
+            return 0
+        return None
+
+    @beta_opt_in.setter
+    def beta_opt_in(self, value: int | bool | str | None):
+        if value in (1, True, "beta"):
+            self.channel_preference = "beta"
+            self._beta_opt_in = 1
+        elif value in (0, False, "stable"):
+            self.channel_preference = "stable"
+            self._beta_opt_in = 0
+        else:
+            self.channel_preference = "inherit"
+            self._beta_opt_in = None
+
     previous_version_path = Column(String, nullable=True)
     verified_source = Column(Boolean, default=False, server_default="0")
     privileged_mode = Column(Boolean, default=False, server_default="0")
     permissions = Column(String, default="[]", server_default="[]")
 
-    configs = relationship(
-        "ServiceConfig", back_populates="service", cascade="all, delete-orphan"
-    )
-    accounts = relationship(
-        "Account", back_populates="service", cascade="all, delete-orphan"
-    )
+    configs = relationship("ServiceConfig", back_populates="service", cascade="all, delete-orphan")
+    accounts = relationship("Account", back_populates="service", cascade="all, delete-orphan")
     ui_components = relationship(
         "UIComponent",
         back_populates="service",
@@ -56,9 +76,7 @@ class Service(Base):
 class ServiceConfig(Base):
     __tablename__ = "service_config"
     id = Column(Integer, primary_key=True, autoincrement=True)
-    service_id = Column(
-        Integer, ForeignKey("services.id", ondelete="CASCADE"), nullable=False
-    )
+    service_id = Column(Integer, ForeignKey("services.id", ondelete="CASCADE"), nullable=False)
     config_key = Column(String, nullable=False)
     config_value = Column(Text)
     is_sensitive = Column(Boolean, default=False)
@@ -71,9 +89,7 @@ class ServiceConfig(Base):
 class Account(Base):
     __tablename__ = "accounts"
     id = Column(Integer, primary_key=True, autoincrement=True)
-    service_id = Column(
-        Integer, ForeignKey("services.id", ondelete="CASCADE"), nullable=False
-    )
+    service_id = Column(Integer, ForeignKey("services.id", ondelete="CASCADE"), nullable=False)
     account_name = Column(String)
     display_name = Column(String)
     user_id = Column(String)
@@ -126,17 +142,13 @@ class QualityProfile(Base):
     name = Column(String)
     prefer_max_quality = Column(Boolean, default=False)
 
-    steps = relationship(
-        "QualityProfileStep", back_populates="profile", cascade="all, delete-orphan"
-    )
+    steps = relationship("QualityProfileStep", back_populates="profile", cascade="all, delete-orphan")
 
 
 class QualityProfileStep(Base):
     __tablename__ = "quality_profile_steps"
     id = Column(Integer, primary_key=True, autoincrement=True)
-    profile_id = Column(
-        String, ForeignKey("quality_profiles.id", ondelete="CASCADE"), nullable=False
-    )
+    profile_id = Column(String, ForeignKey("quality_profiles.id", ondelete="CASCADE"), nullable=False)
     priority = Column(Integer, nullable=False)
     rules = Column(JSON)
 
@@ -147,9 +159,7 @@ class PKCESession(Base):
     __tablename__ = "pkce_sessions"
     pkce_id = Column(String, primary_key=True)
     service = Column(String, nullable=False)
-    account_id = Column(
-        Integer, ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False
-    )
+    account_id = Column(Integer, ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False)
     code_verifier = Column(String, nullable=False)
     code_challenge = Column(String, nullable=False)
     redirect_uri = Column(String, nullable=False)
@@ -163,12 +173,8 @@ class AccountMapping(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
 
     # 1. Generic Pointers: Both columns point directly to the accounts table
-    source_account_id = Column(
-        Integer, ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False
-    )
-    mapped_account_id = Column(
-        Integer, ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False
-    )
+    source_account_id = Column(Integer, ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False)
+    mapped_account_id = Column(Integer, ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False)
 
     created_at = Column(Integer, default=current_epoch)
     updated_at = Column(Integer, default=current_epoch, onupdate=current_epoch)
@@ -176,13 +182,9 @@ class AccountMapping(Base):
     # 2. Database-Level Deduplication & Safety Rules
     __table_args__ = (
         # Rule A: Prevent exact duplicate mappings (cannot map 5 to 6 twice)
-        UniqueConstraint(
-            "source_account_id", "mapped_account_id", name="uq_account_mapping"
-        ),
+        UniqueConstraint("source_account_id", "mapped_account_id", name="uq_account_mapping"),
         # Rule B: Prevent an account from mapping to itself (cannot map 5 to 5)
-        CheckConstraint(
-            "source_account_id != mapped_account_id", name="chk_no_self_mapping"
-        ),
+        CheckConstraint("source_account_id != mapped_account_id", name="chk_no_self_mapping"),
     )
 
     # 3. Optional ORM Relationships (makes querying in Python much easier)
@@ -208,13 +210,9 @@ class UIComponent(Base):
 
     __tablename__ = "ui_components"
     id = Column(Integer, primary_key=True, autoincrement=True)
-    plugin_id = Column(
-        Integer, nullable=True, index=True
-    )  # CRC32 integer; nullable for core components
+    plugin_id = Column(Integer, nullable=True, index=True)  # CRC32 integer; nullable for core components
     tag_name = Column(String, unique=True, nullable=False)  # e.g. es-spotify-card
-    component_type = Column(
-        String, nullable=False, index=True
-    )  # card, page, settings, theme
+    component_type = Column(String, nullable=False, index=True)  # card, page, settings, theme
     entry_path = Column(String, nullable=False)  # static route path to compiled .js
     is_core = Column(Boolean, default=False, server_default="0")
     created_at = Column(Integer, default=current_epoch)

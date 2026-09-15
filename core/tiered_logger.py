@@ -17,6 +17,18 @@ import time
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
+# --- Custom Verbose Log Level (Below DEBUG=10) ---
+VERBOSE = 5
+logging.addLevelName(VERBOSE, "VERBOSE")
+
+
+def _verbose_log(self, message, *args, **kws):
+    if self.isEnabledFor(VERBOSE):
+        self._log(VERBOSE, message, args, **kws)
+
+
+logging.Logger.verbose = _verbose_log
+
 # --- Custom Windows-Safe Rotating File Handler ---
 
 
@@ -271,6 +283,10 @@ class SourceTagAdapter(logging.LoggerAdapter):
         # Prepend tag to message
         return f"{self.tag} - {msg}", kwargs
 
+    def verbose(self, msg, *args, **kwargs):
+        """Delegate verbose-level log call (level 5)."""
+        self.log(VERBOSE, msg, *args, **kwargs)
+
 
 # --- Global Setup ---
 
@@ -335,8 +351,10 @@ def setup_logging(level: str = "INFO", log_dir: str | None = None, log_file: str
 
     # --- File Handlers (Tiered Strategy) ---
     try:
+        global _current_log_dir
         log_path = Path(log_dir)
         log_path.mkdir(parents=True, exist_ok=True)
+        _current_log_dir = log_path
 
         def add_file_handler(filename, level):
             handler = SafeRotatingFileHandler(
@@ -357,8 +375,16 @@ def setup_logging(level: str = "INFO", log_dir: str | None = None, log_file: str
         add_file_handler("app.log", logging.INFO)
         # Debug: DEBUG and up
         add_file_handler("debug.log", logging.DEBUG)
-        # Verbose: All
-        add_file_handler("verbose.log", logging.NOTSET)
+
+        # Verbose file logging is strictly on-demand.
+        # Check if enabled via configuration or environment at startup.
+        try:
+            from core.settings import config_manager
+
+            if config_manager.get("system.verbose_logging_enabled", False):
+                enable_verbose_file_logging(log_path)
+        except Exception:
+            pass
 
         # If the caller supplied an explicit log_file path (legacy config key), also
         # write to that exact file at DEBUG level.  External log viewers (e.g.
@@ -386,14 +412,87 @@ def setup_logging(level: str = "INFO", log_dir: str | None = None, log_file: str
         root_logger.info(f"Logging initialized. Console Level: {level}, Log Dir: {log_path}")
 
         # Silence Third-Party Noise
-        logging.getLogger("urllib3").setLevel(logging.WARNING)
-        logging.getLogger("plexapi").setLevel(logging.WARNING)
-        logging.getLogger("watchdog").setLevel(logging.WARNING)
+        for noisy_logger in (
+            "sse_starlette",
+            "sse_starlette.sse",
+            "uvicorn.access",
+            "urllib3",
+            "httpx",
+            "plexapi",
+            "watchdog",
+        ):
+            logging.getLogger(noisy_logger).setLevel(logging.WARNING)
 
     except Exception as e:
         print(f"Failed to setup file logging: {e}")
 
     return root_logger
+
+
+# --- Dynamic On-Demand Verbose File Handler Management ---
+_verbose_file_handler: SafeRotatingFileHandler | None = None
+_current_log_dir: Path | None = None
+
+
+def enable_verbose_file_logging(log_dir: Path | str | None = None) -> bool:
+    """Dynamically attach on-demand rotating file handler for VERBOSE level (5)."""
+    global _verbose_file_handler, _current_log_dir
+    if _verbose_file_handler is not None:
+        return True
+
+    try:
+        if log_dir is not None:
+            target_dir = Path(log_dir)
+        elif _current_log_dir is not None:
+            target_dir = _current_log_dir
+        else:
+            target_dir = Path(os.getenv("ECHOSYNC_LOG_DIR", "data/logs"))
+
+        target_dir.mkdir(parents=True, exist_ok=True)
+        file_path = target_dir / "echosync-verbose.log"
+
+        handler = SafeRotatingFileHandler(
+            file_path,
+            maxBytes=10 * 1024 * 1024,  # 10MB
+            backupCount=3,
+            encoding="utf-8",
+        )
+        handler.setLevel(VERBOSE)
+        handler.addFilter(RedactionFilter())
+        handler.setFormatter(
+            SafeFormatter(fmt="%(asctime)s - %(name)s - %(levelname)s - %(funcName)s:%(lineno)d - %(message)s")
+        )
+
+        logging.getLogger().addHandler(handler)
+        _verbose_file_handler = handler
+        _current_log_dir = target_dir
+        logging.getLogger().info(f"On-demand verbose file logging enabled: {file_path}")
+        return True
+    except Exception as exc:
+        print(f"Failed to enable verbose file logging: {exc}", file=sys.stderr)
+        return False
+
+
+def disable_verbose_file_logging() -> bool:
+    """Dynamically flush, close, and detach the on-demand verbose file handler."""
+    global _verbose_file_handler
+    if _verbose_file_handler is not None:
+        try:
+            logging.getLogger().removeHandler(_verbose_file_handler)
+            _verbose_file_handler.flush()
+            _verbose_file_handler.close()
+            _verbose_file_handler = None
+            logging.getLogger().info("On-demand verbose file logging disabled.")
+            return True
+        except Exception as exc:
+            print(f"Failed to disable verbose file logging: {exc}", file=sys.stderr)
+            return False
+    return True
+
+
+def is_verbose_file_logging_enabled() -> bool:
+    """Return whether on-demand verbose file logging is currently active."""
+    return _verbose_file_handler is not None
 
 
 def get_logger(name: str, plugin_id: int | None = None) -> logging.Logger:

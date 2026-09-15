@@ -251,6 +251,7 @@ class ConfigDatabase:
                                 description TEXT,
                                 is_active INTEGER DEFAULT 1,
                                 beta_opt_in INTEGER,
+                                channel_preference TEXT DEFAULT 'inherit',
                                 previous_version_path TEXT,
                                 verified_source INTEGER DEFAULT 0,
                                 privileged_mode INTEGER DEFAULT 0,
@@ -263,13 +264,14 @@ class ConfigDatabase:
                         cursor.execute("""
                             INSERT INTO services (
                                 id, name, plugin_id, absolute_install_path, loaded_modules, 
-                                version, service_type, description, is_active, beta_opt_in, 
+                                version, service_type, description, is_active, beta_opt_in, channel_preference,
                                 previous_version_path, verified_source, privileged_mode, permissions, 
                                 capabilities, created_at, updated_at
                             )
                             SELECT 
                                 id, name, plugin_id, absolute_install_path, loaded_modules, 
                                 version, service_type, description, is_active, beta_opt_in, 
+                                CASE WHEN beta_opt_in = 1 THEN 'beta' WHEN beta_opt_in = 0 THEN 'stable' ELSE 'inherit' END,
                                 previous_version_path, verified_source, privileged_mode, permissions, 
                                 '{}', created_at, updated_at
                             FROM services_old
@@ -306,6 +308,7 @@ class ConfigDatabase:
                         description TEXT,
                         is_active INTEGER DEFAULT 1,
                         beta_opt_in INTEGER,
+                        channel_preference TEXT DEFAULT 'inherit',
                         previous_version_path TEXT,
                         verified_source INTEGER DEFAULT 0,
                         privileged_mode INTEGER DEFAULT 0,
@@ -461,6 +464,8 @@ class ConfigDatabase:
                     cursor.execute("ALTER TABLE services ADD COLUMN version TEXT")
                 if "capabilities" not in columns:
                     cursor.execute("ALTER TABLE services ADD COLUMN capabilities TEXT DEFAULT '{}'")
+                if "channel_preference" not in columns:
+                    cursor.execute("ALTER TABLE services ADD COLUMN channel_preference TEXT DEFAULT 'inherit'")
 
                 # Cleanup: Drop deprecated tables
                 cursor.execute("DROP TABLE IF EXISTS accounts_metadata")
