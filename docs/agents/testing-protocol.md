@@ -43,3 +43,6 @@ After making code changes, agents must execute these verification routines:
 
 - Do NOT write mock scripts, standalone test harnesses, or benchmarking code to prove Big-O performance gains.
 - Telemetry state must be tracked using ephemeral thread-safe in-memory singletons backed by `threading.Lock` (`ScanStateManager`), avoiding SQLite for telemetry state.
+
+---
+*Part of the EchoSync Wiki Documentation Suite.*

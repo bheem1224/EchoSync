@@ -74,3 +74,6 @@ Plugins must store internal data and settings using `PluginStorageBox` API:
 - `self.sdk.get_setting("api_key")`: Fetch plugin setting.
 - `self.sdk.set_setting("api_key", value)`: Persist setting.
 - `self.sdk.get_storage_path()`: Returns isolated plugin data folder.
+
+---
+*Part of the EchoSync Wiki Documentation Suite.*
