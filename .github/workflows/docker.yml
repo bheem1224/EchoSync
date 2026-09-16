@@ -9,6 +9,12 @@ on:
         description: "Force build without cache"
         required: false
         type: boolean
+        default: false
+      tag_as_latest:
+        description: "Tag as latest in addition to beta"
+        required: false
+        type: boolean
+        default: true
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -22,10 +28,16 @@ jobs:
     runs-on: [self-hosted, linux, x64]
 
     steps:
-      - name: Checkout repository
+      - name: Checkout repository (Clean Workspace)
         uses: actions/checkout@v4
+        with:
+          clean: true
+          fetch-depth: 1
 
-      - name: Log in to the Container registry
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -34,48 +46,30 @@ jobs:
 
       - name: Determine Docker Tags & Version
         id: extract_tags
-        env:
-          COMMIT_MSG: ${{ github.event.head_commit.message }}
         run: |
           BASE_IMAGE="ghcr.io/${{ github.repository_owner }}/echosync"
-
-          # Check for version string securely using the env var
+          
+          # Handle commit message safely across push and workflow_dispatch
+          COMMIT_MSG=$(git log -1 --pretty=%B)
+          
           if echo "$COMMIT_MSG" | grep -qiE 'version:\s*v[0-9]+\.[0-9]+\.[0-9]+'; then
             EXTRACTED_VERSION=$(echo "$COMMIT_MSG" | grep -ioE 'version:\s*v[0-9]+\.[0-9]+\.[0-9]+' | head -n 1 | sed -E 's/version:\s*//i')
-            
-            TAGS="$BASE_IMAGE:$EXTRACTED_VERSION,$BASE_IMAGE:latest"
-            echo "🚀 Global Release detected: $EXTRACTED_VERSION. Tagging as $EXTRACTED_VERSION and latest."
-            
-            # --- RELEASE NOTES PARSING ---
-            # Extract Line 2 as the Title
-            RELEASE_TITLE=$(echo "$COMMIT_MSG" | awk 'NR==2')
-            
-            # If Line 2 is accidentally left blank, fallback to standard naming
-            if [ -z "$(echo "$RELEASE_TITLE" | tr -d '[:space:]')" ]; then
-              RELEASE_TITLE="Release $EXTRACTED_VERSION"
-            fi
-            
-            # Extract Line 3 and everything after it as the Body
-            RELEASE_BODY=$(echo "$COMMIT_MSG" | awk 'NR>2')
-            
+            TAGS="$BASE_IMAGE:$EXTRACTED_VERSION,$BASE_IMAGE:latest,$BASE_IMAGE:beta"
             echo "version=$EXTRACTED_VERSION" >> $GITHUB_OUTPUT
-            echo "title=$RELEASE_TITLE" >> $GITHUB_OUTPUT
-            
-            # Safely pass multi-line string to GitHub outputs
-            echo "body<<EOF" >> $GITHUB_OUTPUT
-            echo "$RELEASE_BODY" >> $GITHUB_OUTPUT
-            echo "EOF" >> $GITHUB_OUTPUT
           else
-            TAGS="$BASE_IMAGE:beta"
-            echo "🔍 No explicit version found. Building 'beta' only."
+            if [ "${{ github.event.inputs.tag_as_latest }}" == "true" ]; then
+              TAGS="$BASE_IMAGE:beta,$BASE_IMAGE:latest"
+            else
+              TAGS="$BASE_IMAGE:beta"
+            fi
+            echo "version=" >> $GITHUB_OUTPUT
           fi
 
           echo "tags=$TAGS" >> $GITHUB_OUTPUT
 
-          # --- NO-CACHE DETECTION ---
+          # Detect no-cache condition
           if echo "$COMMIT_MSG" | grep -qi '\[no-cache\]' || [ "${{ github.event.inputs.no_cache }}" == "true" ]; then
             echo "no_cache=true" >> $GITHUB_OUTPUT
-            echo "🚨 No-cache flag detected! Forcing a clean Docker build."
           else
             echo "no_cache=false" >> $GITHUB_OUTPUT
           fi
@@ -88,14 +82,6 @@ jobs:
           tags: ${{ steps.extract_tags.outputs.tags }}
           no-cache: ${{ steps.extract_tags.outputs.no_cache == 'true' }}
 
-      - name: Create GitHub Release
-        if: steps.extract_tags.outputs.version != ''
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.extract_tags.outputs.version }}
-          name: ${{ steps.extract_tags.outputs.title }} # 👈 Injects Line 2
-          body: ${{ steps.extract_tags.outputs.body }} # 👈 Injects Line 3+
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: Smart Clean Docker Build Cache
+      - name: Clean Docker Build Cache
+        if: always()
         run: docker builder prune --keep-storage 5GB -f
