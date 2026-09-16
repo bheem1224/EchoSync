@@ -28,6 +28,10 @@ jobs:
         with:
           clean: true
           fetch-depth: 1
+          
+      - name: Purge Zombie Buildx Containers
+        run: docker buildx rm -a || true
+        continue-on-error: true
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
