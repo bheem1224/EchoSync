@@ -10,11 +10,6 @@ on:
         required: false
         type: boolean
         default: false
-      tag_as_latest:
-        description: "Tag as latest in addition to beta"
-        required: false
-        type: boolean
-        default: true
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -28,7 +23,7 @@ jobs:
     runs-on: [self-hosted, linux, x64]
 
     steps:
-      - name: Checkout repository (Clean Workspace)
+      - name: Checkout repository
         uses: actions/checkout@v4
         with:
           clean: true
@@ -37,7 +32,7 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Log in to GitHub Container Registry
+      - name: Log in to the Container registry
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -48,28 +43,41 @@ jobs:
         id: extract_tags
         run: |
           BASE_IMAGE="ghcr.io/${{ github.repository_owner }}/echosync"
-          
-          # Handle commit message safely across push and workflow_dispatch
+
+          # FIX: Safely retrieve the commit message even during manual workflow_dispatch
           COMMIT_MSG=$(git log -1 --pretty=%B)
-          
+
           if echo "$COMMIT_MSG" | grep -qiE 'version:\s*v[0-9]+\.[0-9]+\.[0-9]+'; then
             EXTRACTED_VERSION=$(echo "$COMMIT_MSG" | grep -ioE 'version:\s*v[0-9]+\.[0-9]+\.[0-9]+' | head -n 1 | sed -E 's/version:\s*//i')
+            
             TAGS="$BASE_IMAGE:$EXTRACTED_VERSION,$BASE_IMAGE:latest,$BASE_IMAGE:beta"
-            echo "version=$EXTRACTED_VERSION" >> $GITHUB_OUTPUT
-          else
-            if [ "${{ github.event.inputs.tag_as_latest }}" == "true" ]; then
-              TAGS="$BASE_IMAGE:beta,$BASE_IMAGE:latest"
-            else
-              TAGS="$BASE_IMAGE:beta"
+            echo "🚀 Global Release detected: $EXTRACTED_VERSION."
+            
+            RELEASE_TITLE=$(echo "$COMMIT_MSG" | awk 'NR==2')
+            if [ -z "$(echo "$RELEASE_TITLE" | tr -d '[:space:]')" ]; then
+              RELEASE_TITLE="Release $EXTRACTED_VERSION"
             fi
+            
+            RELEASE_BODY=$(echo "$COMMIT_MSG" | awk 'NR>2')
+            
+            echo "version=$EXTRACTED_VERSION" >> $GITHUB_OUTPUT
+            echo "title=$RELEASE_TITLE" >> $GITHUB_OUTPUT
+            
+            echo "body<<EOF" >> $GITHUB_OUTPUT
+            echo "$RELEASE_BODY" >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+          else
+            TAGS="$BASE_IMAGE:beta"
+            echo "🔍 No explicit version found. Building 'beta' only."
             echo "version=" >> $GITHUB_OUTPUT
           fi
 
           echo "tags=$TAGS" >> $GITHUB_OUTPUT
 
-          # Detect no-cache condition
+          # FIX: Evaluate no-cache request reliably
           if echo "$COMMIT_MSG" | grep -qi '\[no-cache\]' || [ "${{ github.event.inputs.no_cache }}" == "true" ]; then
             echo "no_cache=true" >> $GITHUB_OUTPUT
+            echo "🚨 No-cache flag detected! Forcing a clean Docker build."
           else
             echo "no_cache=false" >> $GITHUB_OUTPUT
           fi
@@ -80,8 +88,16 @@ jobs:
           context: .
           push: true
           tags: ${{ steps.extract_tags.outputs.tags }}
+          # FIX: Force BuildKit to ignore all layer caches and pull fresh base images
           no-cache: ${{ steps.extract_tags.outputs.no_cache == 'true' }}
+          pull: ${{ steps.extract_tags.outputs.no_cache == 'true' }}
 
-      - name: Clean Docker Build Cache
-        if: always()
-        run: docker builder prune --keep-storage 5GB -f
+      - name: Create GitHub Release
+        if: steps.extract_tags.outputs.version != ''
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.extract_tags.outputs.version }}
+          name: ${{ steps.extract_tags.outputs.title }}
+          body: ${{ steps.extract_tags.outputs.body }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
