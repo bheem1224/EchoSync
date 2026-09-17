@@ -2,6 +2,7 @@ import os
 from typing import Any
 
 from sqlalchemy import func
+from sqlalchemy.orm import joinedload
 
 from core.db.echo_sync_track import EchosyncTrack
 from core.settings import config_manager
@@ -772,9 +773,7 @@ class DuplicateHygieneService:
                 # Resolve to sync_id
                 sync_id = track.sync_id
 
-                states = (
-                    work_session.query(UserTrackState).filter(UserTrackState.sync_id == sync_id).yield_per(1000)
-                )
+                states = work_session.query(UserTrackState).filter(UserTrackState.sync_id == sync_id).yield_per(1000)
 
                 for state in states:
                     # Only mark stale if it's not already staged for deletion/upgrade or exempt

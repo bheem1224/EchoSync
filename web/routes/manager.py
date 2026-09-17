@@ -42,6 +42,10 @@ class ExecuteRequest(BaseModel):
     quality_profile_id: str | None = None
 
 
+class ForceUpgradeRequest(BaseModel):
+    quality_profile_id: str | None = None
+
+
 class ConflictResolveRequest(BaseModel):
     resolution: str | None = None
     keep_id: int | None = None
@@ -79,6 +83,7 @@ from database.config_database import get_config_database
 from database.music_database import Artist, Track, get_database
 from database.working_database import (
     Account,
+    Account as User,
     SuggestionBlacklist,
     SuggestionStagingQueue,
     UserTrackState,
@@ -643,7 +648,7 @@ def force_delete_track(track_id: int, _=Depends(require_auth)):
 
 
 @router.post("/track/{track_id}/force_upgrade")
-def force_upgrade_track(track_id: int, _=Depends(require_auth)):
+def force_upgrade_track(track_id: int, payload: ForceUpgradeRequest | None = None, _=Depends(require_auth)):
     """Force immediate lifecycle upgrade execution for a track, bypassing timers."""
     from core.event_bus import event_bus
 

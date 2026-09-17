@@ -2,7 +2,12 @@
 
 from typing import Any
 
-from database.music_database import MusicDatabase
+from database.music_database import (
+    Album as DatabaseAlbum,
+    Artist as DatabaseArtist,
+    MusicDatabase,
+    Track as DatabaseTrack,
+)
 
 WatchlistArtist = Any
 SimilarArtist = Any
@@ -26,9 +31,7 @@ class MusicDatabaseWrapper:
     def get_track(self, track_id: str) -> DatabaseTrack | None:
         return self._db.get_track(track_id)
 
-    def find_track_by_provider_ref(
-        self, provider: str, provider_id: str
-    ) -> DatabaseTrack | None:
+    def find_track_by_provider_ref(self, provider: str, provider_id: str) -> DatabaseTrack | None:
         return self._db.find_track_by_provider_ref(provider, provider_id)
 
     def find_track_by_isrc(self, isrc: str) -> DatabaseTrack | None:
@@ -67,9 +70,7 @@ class MusicDatabaseWrapper:
     def insert_or_update_artist(self, plex_artist) -> bool:
         return self._db.insert_or_update_artist(plex_artist)
 
-    def insert_or_update_media_artist(
-        self, artist_obj, server_source: str = "plex"
-    ) -> bool:
+    def insert_or_update_media_artist(self, artist_obj, server_source: str = "plex") -> bool:
         return self._db.insert_or_update_media_artist(artist_obj, server_source)
 
     def get_artist(self, artist_id: int) -> DatabaseArtist | None:
@@ -82,12 +83,8 @@ class MusicDatabaseWrapper:
     def insert_or_update_album(self, plex_album, artist_id: int) -> bool:
         return self._db.insert_or_update_album(plex_album, artist_id)
 
-    def insert_or_update_media_album(
-        self, album_obj, artist_id: str, server_source: str = "plex"
-    ) -> bool:
-        return self._db.insert_or_update_media_album(
-            album_obj, artist_id, server_source
-        )
+    def insert_or_update_media_album(self, album_obj, artist_id: str, server_source: str = "plex") -> bool:
+        return self._db.insert_or_update_media_album(album_obj, artist_id, server_source)
 
     def get_albums_by_artist(self, artist_id: int) -> list[DatabaseAlbum]:
         return self._db.get_albums_by_artist(artist_id)
@@ -106,9 +103,7 @@ class MusicDatabaseWrapper:
     ) -> tuple[DatabaseAlbum | None, float]:
         return self._db.check_album_exists(title, artist, confidence_threshold)
 
-    def check_album_completeness(
-        self, album_id: int, expected_track_count: int | None = None
-    ) -> tuple[int, int, bool]:
+    def check_album_completeness(self, album_id: int, expected_track_count: int | None = None) -> tuple[int, int, bool]:
         return self._db.check_album_completeness(album_id, expected_track_count)
 
     def check_album_exists_with_completeness(
@@ -147,9 +142,7 @@ class MusicDatabaseWrapper:
         server_source: str = "plex",
     ) -> bool:
         """New primary method - pass through to underlying database"""
-        return self._db.insert_or_update_echo_sync_track(
-            echo_sync_track, album_id, artist_id, server_source
-        )
+        return self._db.insert_or_update_echo_sync_track(echo_sync_track, album_id, artist_id, server_source)
 
     def insert_or_update_track(self, plex_track, album_id: int, artist_id: int) -> bool:
         """DEPRECATED: use insert_or_update_echo_sync_track instead"""
@@ -204,9 +197,7 @@ class MusicDatabaseWrapper:
         confidence_threshold: float = 0.8,
         server_source: str = None,
     ) -> tuple[DatabaseTrack | None, float]:
-        return self._db.check_track_exists(
-            title, artist, confidence_threshold, server_source
-        )
+        return self._db.check_track_exists(title, artist, confidence_threshold, server_source)
 
     # === Metadata & Preferences ===
     def set_metadata(self, key: str, value: str):
@@ -242,9 +233,7 @@ class MusicDatabaseWrapper:
     def get_wishlist_tracks(self, limit: int | None = None) -> list[dict[str, Any]]:
         return self._db.get_wishlist_tracks(limit)
 
-    def update_wishlist_retry(
-        self, spotify_track_id: str, success: bool, error_message: str = None
-    ) -> bool:
+    def update_wishlist_retry(self, spotify_track_id: str, success: bool, error_message: str = None) -> bool:
         return self._db.update_wishlist_retry(spotify_track_id, success, error_message)
 
     def get_wishlist_count(self) -> int:
@@ -272,9 +261,7 @@ class MusicDatabaseWrapper:
     def get_watchlist_count(self) -> int:
         return self._db.get_watchlist_count()
 
-    def update_watchlist_artist_image(
-        self, spotify_artist_id: str, image_url: str
-    ) -> bool:
+    def update_watchlist_artist_image(self, spotify_artist_id: str, image_url: str) -> bool:
         return self._db.update_watchlist_artist_image(spotify_artist_id, image_url)
 
     # === Similar Artists ===
@@ -284,16 +271,12 @@ class MusicDatabaseWrapper:
         similar_artist_spotify_id: str,
         similar_artist_name: str,
     ) -> bool:
-        return self._db.add_or_update_similar_artist(
-            source_artist_id, similar_artist_spotify_id, similar_artist_name
-        )
+        return self._db.add_or_update_similar_artist(source_artist_id, similar_artist_spotify_id, similar_artist_name)
 
     def get_similar_artists_for_source(self, source_artist_id: str) -> list[Any]:
         return self._db.get_similar_artists_for_source(source_artist_id)
 
-    def has_fresh_similar_artists(
-        self, source_artist_id: str, days_threshold: int = 30
-    ) -> bool:
+    def has_fresh_similar_artists(self, source_artist_id: str, days_threshold: int = 30) -> bool:
         return self._db.has_fresh_similar_artists(source_artist_id, days_threshold)
 
     def get_top_similar_artists(self, limit: int = 50) -> list[Any]:
@@ -306,9 +289,7 @@ class MusicDatabaseWrapper:
     def rotate_discovery_pool(self, max_tracks: int = 2000, remove_count: int = 500):
         return self._db.rotate_discovery_pool(max_tracks, remove_count)
 
-    def get_discovery_pool_tracks(
-        self, limit: int = 100, new_releases_only: bool = False
-    ) -> list[Any]:
+    def get_discovery_pool_tracks(self, limit: int = 100, new_releases_only: bool = False) -> list[Any]:
         return self._db.get_discovery_pool_tracks(limit, new_releases_only)
 
     def should_populate_discovery_pool(self, hours_threshold: int = 24) -> bool:
@@ -321,9 +302,7 @@ class MusicDatabaseWrapper:
         return self._db.cleanup_old_discovery_tracks(days_threshold)
 
     # === Recent Releases ===
-    def add_recent_release(
-        self, watchlist_artist_id: int, album_data: dict[str, Any]
-    ) -> bool:
+    def add_recent_release(self, watchlist_artist_id: int, album_data: dict[str, Any]) -> bool:
         return self._db.add_recent_release(watchlist_artist_id, album_data)
 
     def get_recent_releases(self, limit: int = 50) -> list[Any]:

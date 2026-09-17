@@ -940,6 +940,7 @@ class DownloadManager:
                     try:
                         from core.task_manager.supervisor import supervisor as _sup
 
+                        reg_id = getattr(self, "reg_id", None)
                         is_cancelled = _sup.is_process_cancelled(reg_id) if _sup else False
                     except Exception:
                         is_cancelled = False

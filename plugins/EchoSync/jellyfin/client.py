@@ -102,9 +102,7 @@ class JellyfinAlbum:
         self.title = jellyfin_data.get("Name", "Unknown Album")
         self.addedAt = self._parse_date(jellyfin_data.get("DateCreated"))
         self._artist_id = (
-            jellyfin_data.get("AlbumArtists", [{}])[0].get("Id", "")
-            if jellyfin_data.get("AlbumArtists")
-            else ""
+            jellyfin_data.get("AlbumArtists", [{}])[0].get("Id", "") if jellyfin_data.get("AlbumArtists") else ""
         )
 
     def _parse_date(self, date_str: str | None) -> datetime | None:
@@ -134,18 +132,14 @@ class JellyfinTrack:
         self._client = client
         self.ratingKey = jellyfin_data.get("Id", "")
         self.title = jellyfin_data.get("Name", "Unknown Track")
-        self.duration = (
-            jellyfin_data.get("RunTimeTicks", 0) // 10000
-        )  # Convert from ticks to milliseconds
+        self.duration = jellyfin_data.get("RunTimeTicks", 0) // 10000  # Convert from ticks to milliseconds
         self.trackNumber = jellyfin_data.get("IndexNumber")
         self.year = jellyfin_data.get("ProductionYear")
         self.userRating = jellyfin_data.get("UserData", {}).get("Rating")
         self.addedAt = self._parse_date(jellyfin_data.get("DateCreated"))
 
         self._album_id = jellyfin_data.get("AlbumId", "")
-        self._artist_ids = [
-            artist.get("Id", "") for artist in jellyfin_data.get("ArtistItems", [])
-        ]
+        self._artist_ids = [artist.get("Id", "") for artist in jellyfin_data.get("ArtistItems", [])]
 
     def _parse_date(self, date_str: str | None) -> datetime | None:
         if not date_str:
@@ -176,9 +170,7 @@ class JellyfinClient(MediaServerProvider):
     capabilities = ProviderCapabilities(
         name="jellyfin",
         supports_playlists=PlaylistSupport.READ_WRITE,
-        search=SearchCapabilities(
-            tracks=True, artists=True, albums=True, playlists=False
-        ),
+        search=SearchCapabilities(tracks=True, artists=True, albums=True, playlists=False),
         metadata=MetadataRichness.MEDIUM,
         supports_cover_art=True,
         supports_lyrics=False,
@@ -206,11 +198,7 @@ class JellyfinClient(MediaServerProvider):
             for t in tracks
             if self._is_valid_guid(_safe_getattr(t, "ratingKey", None))
         ]
-        invalid_tracks = [
-            t
-            for t in tracks
-            if not self._is_valid_guid(_safe_getattr(t, "ratingKey", None))
-        ]
+        invalid_tracks = [t for t in tracks if not self._is_valid_guid(_safe_getattr(t, "ratingKey", None))]
         if not track_ids:
             logger.error(f"No valid track IDs provided for playlist '{name}'")
             return False
@@ -222,16 +210,12 @@ class JellyfinClient(MediaServerProvider):
         # Step 1: Create empty playlist
         response = self._http.post(url, json=data, headers=headers)
         if response.status_code >= 400:
-            logger.error(
-                f"Jellyfin API error: {response.status_code} - {response.text}"
-            )
+            logger.error(f"Jellyfin API error: {response.status_code} - {response.text}")
             return False
         result = response.json()
         playlist_id = result.get("Id") if result else None
         if not playlist_id:
-            logger.error(
-                f"Failed to create Jellyfin playlist '{name}': No playlist ID returned"
-            )
+            logger.error(f"Failed to create Jellyfin playlist '{name}': No playlist ID returned")
             return False
 
         # Step 2: Add tracks in a batch
@@ -239,9 +223,7 @@ class JellyfinClient(MediaServerProvider):
         add_params = {"Ids": ",".join(track_ids), "UserId": self.user_id}
         add_response = self._http.post(add_url, params=add_params, headers=headers)
         if add_response.status_code not in [200, 204]:
-            logger.error(
-                f"Failed to add tracks to playlist '{name}': {add_response.status_code} - {add_response.text}"
-            )
+            logger.error(f"Failed to add tracks to playlist '{name}': {add_response.status_code} - {add_response.text}")
             return False
         logger.info(
             f"✅ Created Jellyfin playlist '{name}' with {len(track_ids)} tracks (filtered {len(invalid_tracks)} invalid)"
@@ -355,11 +337,7 @@ class JellyfinClient(MediaServerProvider):
             try:
                 connected = self.ensure_connection()
                 status = "healthy" if connected else "unhealthy"
-                message = (
-                    "Jellyfin server is reachable"
-                    if connected
-                    else "Jellyfin server connection failed"
-                )
+                message = "Jellyfin server is reachable" if connected else "Jellyfin server connection failed"
                 return HealthCheckResult(
                     service_name="jellyfin",
                     status=status,
@@ -448,31 +426,23 @@ class JellyfinClient(MediaServerProvider):
 
                     try:
                         # Check this specific user's views (libraries)
-                        views_response = self._make_request(
-                            f"/Users/{candidate_id}/Views"
-                        )
+                        views_response = self._make_request(f"/Users/{candidate_id}/Views")
 
                         if views_response:
                             for view in views_response.get("Items", []):
                                 # Check if they have a 'music' collection (case-insensitive safe check)
-                                collection_type = (
-                                    view.get("CollectionType") or ""
-                                ).lower()
+                                collection_type = (view.get("CollectionType") or "").lower()
 
                                 if collection_type == "music":
                                     # Found a winner! Set the class variables.
                                     self.user_id = candidate_id
                                     self.music_library_id = view["Id"]
-                                    logger.info(
-                                        f"Using user: {candidate_name} (Music Library: {view.get('Name')})"
-                                    )
+                                    logger.info(f"Using user: {candidate_name} (Music Library: {view.get('Name')})")
                                     valid_user_found = True
                                     break
                     except Exception as e:
                         # If this user fails (e.g. permission error), just log it and try the next user
-                        logger.debug(
-                            f"Skipping user {candidate_name} due to error: {e}"
-                        )
+                        logger.debug(f"Skipping user {candidate_name} due to error: {e}")
                         continue
 
                     # If we found a valid user, stop looping
@@ -480,9 +450,7 @@ class JellyfinClient(MediaServerProvider):
                         break
 
                 if not valid_user_found:
-                    logger.error(
-                        "Connected to Jellyfin, but could not find any user with access to a Music library"
-                    )
+                    logger.error("Connected to Jellyfin, but could not find any user with access to a Music library")
 
         except Exception as e:
             logger.error(f"Failed to connect to Jellyfin server: {e}")
@@ -525,9 +493,7 @@ class JellyfinClient(MediaServerProvider):
             for view in views_response.get("Items", []):
                 collection_type = (view.get("CollectionType") or "").lower()
                 if collection_type == "music":
-                    music_libraries.append(
-                        {"title": view.get("Name", "Music"), "key": str(view["Id"])}
-                    )
+                    music_libraries.append({"title": view.get("Name", "Music"), "key": str(view["Id"])})
 
             logger.debug(f"Found {len(music_libraries)} music libraries")
             return music_libraries
@@ -564,9 +530,7 @@ class JellyfinClient(MediaServerProvider):
             logger.error(f"Error setting music library: {e}")
             return False
 
-    def _make_request(
-        self, endpoint: str, params: dict[str, Any] | None = None
-    ) -> dict[str, Any] | None:
+    def _make_request(self, endpoint: str, params: dict[str, Any] | None = None) -> dict[str, Any] | None:
         """Make authenticated request to Jellyfin API"""
         # If tests/mock patched ensure_connection but didn't populate base_url/api_key,
         # try to read them from the config manager as a fallback for test fixtures.
@@ -587,9 +551,7 @@ class JellyfinClient(MediaServerProvider):
         timeout = 30 if is_bulk_operation else 5
 
         try:
-            response = self._http.get(
-                url, headers=headers, params=params, timeout=timeout
-            )
+            response = self._http.get(url, headers=headers, params=params, timeout=timeout)
             response.raise_for_status()
             return response.json()
         except HttpError as e:
@@ -610,9 +572,7 @@ class JellyfinClient(MediaServerProvider):
             self._cache_populated = True
             return
 
-        logger.info(
-            "🚀 Starting aggressive Jellyfin cache population to eliminate slow individual API calls..."
-        )
+        logger.info("🚀 Starting aggressive Jellyfin cache population to eliminate slow individual API calls...")
         if self._progress_callback:
             self._progress_callback("Fetching all tracks in bulk...")
 
@@ -646,9 +606,7 @@ class JellyfinClient(MediaServerProvider):
                         has_more_tracks = False
                     elif limit > 1000:
                         limit = limit // 2
-                        logger.warning(
-                            f"⚠️ Track fetch timeout - reducing batch size to {limit}"
-                        )
+                        logger.warning(f"⚠️ Track fetch timeout - reducing batch size to {limit}")
                     else:
                         has_more_tracks = False
                     continue
@@ -679,13 +637,9 @@ class JellyfinClient(MediaServerProvider):
                         self._track_cache[album_id] = []
                     self._track_cache[album_id].append(JellyfinTrack(track_data, self))
 
-            logger.info(
-                f"✅ Cached {len(all_tracks)} tracks for {len(self._track_cache)} albums"
-            )
+            logger.info(f"✅ Cached {len(all_tracks)} tracks for {len(self._track_cache)} albums")
             if self._progress_callback:
-                self._progress_callback(
-                    f"Cached {len(all_tracks)} tracks. Now fetching albums..."
-                )
+                self._progress_callback(f"Cached {len(all_tracks)} tracks. Now fetching albums...")
 
             # STEP 2: Fetch all albums in bulk (same proven pattern)
             logger.info("📀 Fetching all albums in bulk...")
@@ -716,9 +670,7 @@ class JellyfinClient(MediaServerProvider):
                         has_more_albums = False
                     elif limit > 1000:
                         limit = limit // 2
-                        logger.warning(
-                            f"⚠️ Album fetch timeout - reducing batch size to {limit}"
-                        )
+                        logger.warning(f"⚠️ Album fetch timeout - reducing batch size to {limit}")
                     else:
                         has_more_albums = False
                     continue
@@ -749,18 +701,12 @@ class JellyfinClient(MediaServerProvider):
                     if artist_id:
                         if artist_id not in self._album_cache:
                             self._album_cache[artist_id] = []
-                        self._album_cache[artist_id].append(
-                            JellyfinAlbum(album_data, self)
-                        )
+                        self._album_cache[artist_id].append(JellyfinAlbum(album_data, self))
 
-            logger.info(
-                f"✅ Cached {len(all_albums)} albums for {len(self._album_cache)} artists"
-            )
+            logger.info(f"✅ Cached {len(all_albums)} albums for {len(self._album_cache)} artists")
 
             self._cache_populated = True
-            logger.info(
-                "🎯 AGGRESSIVE CACHE COMPLETE! All subsequent album/track lookups will be INSTANT!"
-            )
+            logger.info("🎯 AGGRESSIVE CACHE COMPLETE! All subsequent album/track lookups will be INSTANT!")
             if self._progress_callback:
                 self._progress_callback("Cache complete! Now processing artists...")
 
@@ -773,13 +719,9 @@ class JellyfinClient(MediaServerProvider):
         if not albums:
             return
 
-        logger.info(
-            f"🎯 Starting targeted Jellyfin cache for {len(albums)} recent albums..."
-        )
+        logger.info(f"🎯 Starting targeted Jellyfin cache for {len(albums)} recent albums...")
         if self._progress_callback:
-            self._progress_callback(
-                f"Caching tracks for {len(albums)} recent albums..."
-            )
+            self._progress_callback(f"Caching tracks for {len(albums)} recent albums...")
 
         try:
             album_ids = [album.ratingKey for album in albums]
@@ -799,9 +741,7 @@ class JellyfinClient(MediaServerProvider):
                         "Limit": 200,  # Most albums won't have more than 200 tracks
                     }
 
-                    response = self._make_request(
-                        f"/Users/{self.user_id}/Items", params
-                    )
+                    response = self._make_request(f"/Users/{self.user_id}/Items", params)
                     if response:
                         album_tracks = response.get("Items", [])
 
@@ -809,9 +749,7 @@ class JellyfinClient(MediaServerProvider):
                         if album_tracks:
                             self._track_cache[album_id] = []
                             for track_data in album_tracks:
-                                self._track_cache[album_id].append(
-                                    JellyfinTrack(track_data, self)
-                                )
+                                self._track_cache[album_id].append(JellyfinTrack(track_data, self))
                                 cached_tracks += 1
 
                 except Exception as e:
@@ -820,9 +758,7 @@ class JellyfinClient(MediaServerProvider):
 
                 # Progress update every 50 albums
                 if (i + 1) % 50 == 0 or i == len(album_ids) - 1:
-                    progress_msg = (
-                        f"Cached {cached_tracks} tracks from {i + 1} albums..."
-                    )
+                    progress_msg = f"Cached {cached_tracks} tracks from {i + 1} albums..."
                     logger.info(f"   🎯 {progress_msg}")
                     if self._progress_callback:
                         self._progress_callback(progress_msg)
@@ -831,9 +767,7 @@ class JellyfinClient(MediaServerProvider):
                 f"✅ Targeted cache complete: {cached_tracks} tracks cached for {len(self._track_cache)} albums"
             )
             if self._progress_callback:
-                self._progress_callback(
-                    "Targeted cache complete! Now checking for new tracks..."
-                )
+                self._progress_callback("Targeted cache complete! Now checking for new tracks...")
 
         except Exception as e:
             logger.error(f"Error in targeted cache population: {e}")
@@ -1057,9 +991,7 @@ class JellyfinClient(MediaServerProvider):
             logger.error(f"Error getting recently added albums: {e}")
             return []
 
-    def get_recently_updated_albums(
-        self, max_results: int = 400
-    ) -> list[JellyfinAlbum]:
+    def get_recently_updated_albums(self, max_results: int = 400) -> list[JellyfinAlbum]:
         """Get recently updated albums - used for incremental updates"""
         if not self.ensure_connection() or not self.music_library_id:
             return []
@@ -1082,9 +1014,7 @@ class JellyfinClient(MediaServerProvider):
             for item in response.get("Items", []):
                 albums.append(JellyfinAlbum(item, self))
 
-            logger.info(
-                f"Retrieved {len(albums)} recently updated albums from Jellyfin"
-            )
+            logger.info(f"Retrieved {len(albums)} recently updated albums from Jellyfin")
             return albums
 
         except Exception as e:
@@ -1122,9 +1052,7 @@ class JellyfinClient(MediaServerProvider):
             logger.error(f"Error getting recently added tracks: {e}")
             return []
 
-    def get_recently_updated_tracks(
-        self, max_results: int = 5000
-    ) -> list[JellyfinTrack]:
+    def get_recently_updated_tracks(self, max_results: int = 5000) -> list[JellyfinTrack]:
         """Get recently updated tracks directly - much faster for incremental updates"""
         if not self.ensure_connection() or not self.music_library_id:
             return []
@@ -1148,9 +1076,7 @@ class JellyfinClient(MediaServerProvider):
             for item in response.get("Items", []):
                 tracks.append(JellyfinTrack(item, self))
 
-            logger.info(
-                f"Retrieved {len(tracks)} recently updated tracks from Jellyfin"
-            )
+            logger.info(f"Retrieved {len(tracks)} recently updated tracks from Jellyfin")
             return tracks
 
         except Exception as e:
@@ -1223,12 +1149,8 @@ class JellyfinClient(MediaServerProvider):
                 "IncludeItemTypes": "MusicArtist",
                 "Recursive": True,
             }
-            artists_response = self._make_request(
-                f"/Users/{self.user_id}/Items", artists_params
-            )
-            stats["artists"] = (
-                artists_response.get("TotalRecordCount", 0) if artists_response else 0
-            )
+            artists_response = self._make_request(f"/Users/{self.user_id}/Items", artists_params)
+            stats["artists"] = artists_response.get("TotalRecordCount", 0) if artists_response else 0
 
             # Get album count
             albums_params = {
@@ -1236,12 +1158,8 @@ class JellyfinClient(MediaServerProvider):
                 "IncludeItemTypes": "MusicAlbum",
                 "Recursive": True,
             }
-            albums_response = self._make_request(
-                f"/Users/{self.user_id}/Items", albums_params
-            )
-            stats["albums"] = (
-                albums_response.get("TotalRecordCount", 0) if albums_response else 0
-            )
+            albums_response = self._make_request(f"/Users/{self.user_id}/Items", albums_params)
+            stats["albums"] = albums_response.get("TotalRecordCount", 0) if albums_response else 0
 
             # Get track count
             tracks_params = {
@@ -1249,12 +1167,8 @@ class JellyfinClient(MediaServerProvider):
                 "IncludeItemTypes": "Audio",
                 "Recursive": True,
             }
-            tracks_response = self._make_request(
-                f"/Users/{self.user_id}/Items", tracks_params
-            )
-            stats["tracks"] = (
-                tracks_response.get("TotalRecordCount", 0) if tracks_response else 0
-            )
+            tracks_response = self._make_request(f"/Users/{self.user_id}/Items", tracks_params)
+            stats["tracks"] = tracks_response.get("TotalRecordCount", 0) if tracks_response else 0
 
             return stats
 
@@ -1324,32 +1238,39 @@ class JellyfinClient(MediaServerProvider):
         playlists = self.get_all_playlists()
         for playlist in playlists:
             if playlist.title.lower() == name.lower():
-                name = "jellyfin"
+                return playlist
+        return None
 
-                def authenticate(self, **kwargs) -> bool:
-                    return self.ensure_connection()
+    def create_playlist(self, name: str, tracks) -> bool:
+        """Create a new playlist with given tracks"""
+        if not self.ensure_connection():
+            return False
 
-                def search(self, query: str, limit: int = 10) -> list:
-                    if not self.ensure_connection():
-                        return []
-                    results = []
-                    for album_tracks in self._track_cache.values():
-                        for track in album_tracks:
-                            if query.lower() in track.title.lower():
-                                results.append(track)
-                                if len(results) >= limit:
-                                    return results
-                    return results
+        try:
+            # Convert tracks to Jellyfin/Emby track IDs
+            track_ids = []
+            invalid_tracks = []
 
-                def get_track(self, track_id: str) -> dict:
-                    return None
+            for track in tracks:
+                track_id = None
+                if hasattr(track, "ratingKey"):
+                    track_id = str(track.ratingKey)
+                elif hasattr(track, "id"):
+                    track_id = str(track.id)
 
-                def get_album(self, album_id: str) -> dict:
-                    return None
+                # Validate that track_id is a properly formatted GUID
+                if track_id and self._is_valid_guid(track_id):
+                    track_ids.append(track_id.strip())
+                else:
+                    invalid_tracks.append(track)
+                    if track_id:
+                        logger.debug(f"Rejected invalid GUID format: '{track_id}'")
 
-                def get_artist(self, artist_id: str) -> dict:
-                    return None
+            if invalid_tracks:
+                logger.warning(f"Found {len(invalid_tracks)} tracks with invalid/empty IDs - these will be skipped")
 
+            if not track_ids:
+                logger.warning(f"No valid tracks provided for playlist '{name}'")
                 return False
 
             logger.info(
@@ -1373,27 +1294,20 @@ class JellyfinClient(MediaServerProvider):
             response = self._http.post(url, json=data, headers=headers)
 
             # Log response details for debugging
-            logger.debug(
-                f"Jellyfin playlist creation response: Status {response.status_code}"
-            )
+            logger.debug(f"Jellyfin playlist creation response: Status {response.status_code}")
             if response.status_code >= 400:
-                logger.error(
-                    f"Jellyfin API error: {response.status_code} - {response.text}"
-                )
+                logger.error(f"Jellyfin API error: {response.status_code} - {response.text}")
 
             response.raise_for_status()
 
             result = response.json()
             if result and "Id" in result:
-                logger.info(
-                    f"✅ Created Jellyfin playlist '{name}' with {len(track_ids)} tracks"
-                )
+                logger.info(f"✅ Created Jellyfin playlist '{name}' with {len(track_ids)} tracks")
                 return True
             else:
-                logger.error(
-                    f"Failed to create Jellyfin playlist '{name}': No playlist ID returned"
-                )
-                return False
+                logger.error(f"Failed to create Jellyfin playlist '{name}': No playlist ID returned")
+        except Exception as e:
+            logger.error(f"Error creating Jellyfin playlist '{name}': {e}")
             return False
 
     def get_playlist_tracks(self, playlist_id: str) -> list:
@@ -1470,9 +1384,7 @@ class JellyfinClient(MediaServerProvider):
             logger.error(f"Error updating Jellyfin playlist '{playlist_name}': {e}")
             return False
 
-    def add_tracks_to_playlist(
-        self, playlist_id: str, provider_track_ids: list[str]
-    ) -> bool:
+    def add_tracks_to_playlist(self, playlist_id: str, provider_track_ids: list[str]) -> bool:
         """
         Add tracks to an existing Jellyfin playlist using provider-specific track IDs (Jellyfin GUIDs).
 
@@ -1496,9 +1408,7 @@ class JellyfinClient(MediaServerProvider):
             invalid_count = len(provider_track_ids) - len(valid_ids)
 
             if invalid_count > 0:
-                logger.warning(
-                    f"Filtering {invalid_count} invalid track IDs from add_tracks_to_playlist request"
-                )
+                logger.warning(f"Filtering {invalid_count} invalid track IDs from add_tracks_to_playlist request")
 
             if not valid_ids:
                 logger.error("No valid Jellyfin track IDs provided for playlist")
@@ -1515,31 +1425,24 @@ class JellyfinClient(MediaServerProvider):
 
             if response.status_code not in [200, 204]:
                 logger.error(
-                    f"Failed to add tracks to Jellyfin playlist {playlist_id}: "
-                    f"{response.status_code} - {response.text}"
+                    f"Failed to add tracks to Jellyfin playlist {playlist_id}: {response.status_code} - {response.text}"
                 )
                 return False
 
-            logger.info(
-                f"✅ Added {len(valid_ids)} tracks to Jellyfin playlist {playlist_id}"
-            )
+            logger.info(f"✅ Added {len(valid_ids)} tracks to Jellyfin playlist {playlist_id}")
             return True
 
         except Exception as e:
             logger.error(f"Error adding tracks to Jellyfin playlist {playlist_id}: {e}")
             return False
 
-    def remove_tracks_from_playlist(
-        self, playlist_id: str, provider_track_ids: list[str]
-    ) -> bool:
+    def remove_tracks_from_playlist(self, playlist_id: str, provider_track_ids: list[str]) -> bool:
         """Remove tracks from an existing Jellyfin playlist using Jellyfin track IDs (GUIDs)."""
         if not self.ensure_connection():
             return False
 
         if not provider_track_ids:
-            logger.info(
-                "remove_tracks_from_playlist called with empty track list; nothing to do"
-            )
+            logger.info("remove_tracks_from_playlist called with empty track list; nothing to do")
             return True
 
         try:
@@ -1571,18 +1474,12 @@ class JellyfinClient(MediaServerProvider):
             headers = {"X-Emby-Token": self.api_key, "Content-Type": "application/json"}
             remove_params = {"Ids": ",".join(valid_ids), "UserId": self.user_id}
 
-            response = self._http.delete(
-                remove_url, params=remove_params, headers=headers
-            )
+            response = self._http.delete(remove_url, params=remove_params, headers=headers)
             if response.status_code in [200, 204]:
-                logger.info(
-                    f"✅ Removed {len(valid_ids)} track(s) from Jellyfin playlist {playlist_obj.id}"
-                )
+                logger.info(f"✅ Removed {len(valid_ids)} track(s) from Jellyfin playlist {playlist_obj.id}")
                 return True
 
-            logger.warning(
-                f"Direct Jellyfin remove failed ({response.status_code}); rebuilding playlist as fallback"
-            )
+            logger.warning(f"Direct Jellyfin remove failed ({response.status_code}); rebuilding playlist as fallback")
 
             # Fallback: rebuild playlist with remaining tracks if API variant rejects removal request.
             current_tracks = self.get_playlist_tracks(playlist_obj.id)
@@ -1595,13 +1492,9 @@ class JellyfinClient(MediaServerProvider):
 
             # Delete old playlist
             delete_url = f"{self.base_url}/Items/{playlist_obj.id}"
-            delete_resp = self._http.delete(
-                delete_url, headers={"X-Emby-Token": self.api_key}
-            )
+            delete_resp = self._http.delete(delete_url, headers={"X-Emby-Token": self.api_key})
             if delete_resp.status_code not in [200, 204]:
-                logger.error(
-                    f"Fallback failed: unable to delete playlist {playlist_obj.id}"
-                )
+                logger.error(f"Fallback failed: unable to delete playlist {playlist_obj.id}")
                 return False
 
             # Recreate playlist with remaining IDs.
@@ -1617,13 +1510,9 @@ class JellyfinClient(MediaServerProvider):
                     headers=headers,
                 )
                 if create_resp.status_code >= 400:
-                    logger.error(
-                        f"Failed to recreate empty playlist '{playlist_obj.title}' after removal"
-                    )
+                    logger.error(f"Failed to recreate empty playlist '{playlist_obj.title}' after removal")
                     return False
-                logger.info(
-                    f"✅ Removed all requested tracks by rebuilding playlist '{playlist_obj.title}'"
-                )
+                logger.info(f"✅ Removed all requested tracks by rebuilding playlist '{playlist_obj.title}'")
                 return True
 
             create_resp = self._http.post(
@@ -1636,9 +1525,7 @@ class JellyfinClient(MediaServerProvider):
                 headers=headers,
             )
             if create_resp.status_code >= 400:
-                logger.error(
-                    f"Failed to recreate playlist '{playlist_obj.title}' after removal"
-                )
+                logger.error(f"Failed to recreate playlist '{playlist_obj.title}' after removal")
                 return False
 
             created_payload = create_resp.json() if create_resp.content else {}
@@ -1653,19 +1540,13 @@ class JellyfinClient(MediaServerProvider):
                 headers=headers,
             )
             if add_resp.status_code not in [200, 204]:
-                logger.error(
-                    f"Failed to restore remaining tracks after rebuild: {add_resp.status_code}"
-                )
+                logger.error(f"Failed to restore remaining tracks after rebuild: {add_resp.status_code}")
                 return False
 
-            logger.info(
-                f"✅ Removed requested tracks by rebuilding Jellyfin playlist '{playlist_obj.title}'"
-            )
+            logger.info(f"✅ Removed requested tracks by rebuilding Jellyfin playlist '{playlist_obj.title}'")
             return True
         except Exception as e:
-            logger.error(
-                f"Error removing tracks from Jellyfin playlist {playlist_id}: {e}"
-            )
+            logger.error(f"Error removing tracks from Jellyfin playlist {playlist_id}: {e}")
             return False
 
     def trigger_library_scan(self, library_name: str = "Music") -> bool:
@@ -1682,10 +1563,7 @@ class JellyfinClient(MediaServerProvider):
 
             target_library_id = None
             for library in libraries_response.get("Items", []):
-                if (
-                    library.get("CollectionType") == "music"
-                    and library_name.lower() in library.get("Name", "").lower()
-                ):
+                if library.get("CollectionType") == "music" and library_name.lower() in library.get("Name", "").lower():
                     target_library_id = library["Id"]
                     break
 
@@ -1734,10 +1612,7 @@ class JellyfinClient(MediaServerProvider):
 
             target_library_id = None
             for library in libraries_response.get("Items", []):
-                if (
-                    library.get("CollectionType") == "music"
-                    and library_name.lower() in library.get("Name", "").lower()
-                ):
+                if library.get("CollectionType") == "music" and library_name.lower() in library.get("Name", "").lower():
                     target_library_id = library["Id"]
                     break
 
@@ -1765,9 +1640,7 @@ class JellyfinClient(MediaServerProvider):
             return True
 
         except Exception as e:
-            logger.error(
-                f"Failed to trigger Jellyfin library scan for '{library_name}': {e}"
-            )
+            logger.error(f"Failed to trigger Jellyfin library scan for '{library_name}': {e}")
             return False
 
     def _get_scan_status_api(self) -> dict[str, Any]:
@@ -1794,11 +1667,7 @@ class JellyfinClient(MediaServerProvider):
                 task_state = task.get("State", "Idle")
 
                 # Look for library scan related tasks that are running
-                if (
-                    "scan" in task_name
-                    or "refresh" in task_name
-                    or "library" in task_name
-                ):
+                if "scan" in task_name or "refresh" in task_name or "library" in task_name:
                     if task_state in ["Running", "Cancelling"]:
                         return {
                             "scanning": True,
@@ -1865,18 +1734,12 @@ class JellyfinClient(MediaServerProvider):
             try:
                 recent_updated_tracks = self.get_recently_updated_tracks(400)
                 # Remove duplicates
-                added_ids = {
-                    _safe_getattr(t, "ratingKey", None) for t in all_recent_tracks
-                }
+                added_ids = {_safe_getattr(t, "ratingKey", None) for t in all_recent_tracks}
                 unique_updated = [
-                    t
-                    for t in recent_updated_tracks
-                    if _safe_getattr(t, "ratingKey", None) not in added_ids
+                    t for t in recent_updated_tracks if _safe_getattr(t, "ratingKey", None) not in added_ids
                 ]
                 all_recent_tracks.extend(unique_updated)
-                logger.info(
-                    f"Found {len(unique_updated)} additional recently updated tracks"
-                )
+                logger.info(f"Found {len(unique_updated)} additional recently updated tracks")
             except Exception as e:
                 logger.warning(f"Could not get recently updated tracks: {e}")
 
@@ -1972,15 +1835,11 @@ class JellyfinClient(MediaServerProvider):
             headers = {"X-Emby-Token": self.api_key, "Content-Type": "image/jpeg"}
 
             try:
-                logger.debug(
-                    f"Uploading {len(image_data)} bytes (base64 encoded) for {artist.title}"
-                )
+                logger.debug(f"Uploading {len(image_data)} bytes (base64 encoded) for {artist.title}")
 
                 response = self._http.post(url, data=encoded_data, headers=headers)
                 response.raise_for_status()
-                logger.info(
-                    f"Updated poster for {artist.title} - HTTP {response.status_code}"
-                )
+                logger.info(f"Updated poster for {artist.title} - HTTP {response.status_code}")
                 return True
 
             except Exception as e:
@@ -2029,9 +1888,7 @@ class JellyfinClient(MediaServerProvider):
             # Method 3: Try with different endpoint structure
             try:
                 alt_url = f"{self.base_url}/Items/{album_id}/Images/Primary/0"
-                response = self._http.post(
-                    alt_url, data=image_data, headers=headers_raw
-                )
+                response = self._http.post(alt_url, data=image_data, headers=headers_raw)
                 response.raise_for_status()
                 logger.info(f"Updated poster for album '{album.title}' (method 3)")
                 return True
@@ -2096,9 +1953,7 @@ class JellyfinClient(MediaServerProvider):
         try:
             self._metadata_only_mode = enabled
             if enabled:
-                logger.info(
-                    "Metadata-only mode enabled - will skip expensive track caching"
-                )
+                logger.info("Metadata-only mode enabled - will skip expensive track caching")
             else:
                 logger.info("Metadata-only mode disabled")
             return True
@@ -2141,9 +1996,7 @@ class JellyfinClient(MediaServerProvider):
                         echo_sync_tracks.append(echo_track)
                     else:
                         failed_count += 1
-                        logger.warning(
-                            f"Converter returned None for Jellyfin track at album {album_id}"
-                        )
+                        logger.warning(f"Converter returned None for Jellyfin track at album {album_id}")
                 except Exception as track_err:
                     failed_count += 1
                     logger.error(f"Error converting Jellyfin track: {track_err}")

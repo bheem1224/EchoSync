@@ -16,6 +16,7 @@ from core.nexus_framework.plugin_SDK import (
     ProviderCapabilities,
     SearchCapabilities,
 )
+from core.path_formatter import get_prefer_canonical_studio_album
 from core.request_manager import HttpError, RateLimitConfig, RetryConfig
 from core.tiered_logger import get_logger
 
@@ -1092,8 +1093,6 @@ class MusicBrainzClient(PluginBase):
                 result["artist"] = "".join(name_parts).strip()
                 if isinstance(credits[0], dict) and isinstance(credits[0].get("artist"), dict):
                     result["artist_id"] = credits[0]["artist"].get("id") or ""
-
-            from core.path_formatter import get_prefer_canonical_studio_album
 
             if get_prefer_canonical_studio_album():
                 canonical_release = self.resolve_canonical_studio_release(releases)

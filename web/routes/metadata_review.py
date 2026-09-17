@@ -336,6 +336,7 @@ def _musicbrainz_text_search(metadata_provider, track: Any) -> EchosyncTrack | N
 
     # Fallback to direct MusicBrainz WS/2 query using provider HTTP client.
     try:
+        query = f'artist:"{artist}" AND recording:"{title}"'
         response = metadata_provider.http.get(
             "https://musicbrainz.org/ws/2/recording",
             params={"fmt": "json", "query": query, "limit": 5},
