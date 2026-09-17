@@ -427,6 +427,22 @@ pub fn fingerprint_audio<'py>(
     }
 }
 
+/// Generate Chromaprint fingerprint, duration, and BLAKE3 PCM hash in a single pass.
+#[pyfunction]
+#[pyo3(signature = (path, trim_silence=true))]
+pub fn fingerprint_and_hash_audio<'py>(
+    py: Python<'py>,
+    path: String,
+    trim_silence: bool,
+) -> PyResult<(String, f64, String)> {
+    let result =
+        py.allow_threads(|| audio::fingerprint::fingerprint_and_hash_audio(&path, trim_silence));
+    match result {
+        Ok((fp, dur, hash)) => Ok((fp, dur, hash)),
+        Err(err) => Err(pyo3::exceptions::PyRuntimeError::new_err(err)),
+    }
+}
+
 /// Compute deterministic BLAKE3 hash strictly over raw decoded PCM audio frames.
 #[pyfunction]
 pub fn hash_pcm_stream(py: Python<'_>, file_path: String) -> PyResult<String> {
@@ -434,18 +450,22 @@ pub fn hash_pcm_stream(py: Python<'_>, file_path: String) -> PyResult<String> {
     result.map_err(|err| pyo3::exceptions::PyValueError::new_err(err))
 }
 
-/// Generate content-addressed acoustic proof ECHOSYNC_SIGNATURE for an audio file.
 #[pyfunction]
+#[pyo3(signature = (file_path, title, artist, pcm_hash=None))]
 pub fn generate_audio_signature(
     py: Python<'_>,
     file_path: String,
     title: String,
     artist: String,
+    pcm_hash: Option<String>,
 ) -> PyResult<String> {
     let result = py.allow_threads(|| {
-        let pcm_hash = audio::signature::hash_pcm_stream(&file_path)?;
+        let hash_val = match pcm_hash {
+            Some(h) => h,
+            None => audio::signature::hash_pcm_stream(&file_path)?,
+        };
         Ok(audio::signature::derive_signature(
-            &pcm_hash, &title, &artist,
+            &hash_val, &title, &artist,
         ))
     });
     result.map_err(|err: String| pyo3::exceptions::PyValueError::new_err(err))
@@ -514,6 +534,7 @@ fn echosync_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(copy_file, m)?)?;
     m.add_function(wrap_pyfunction!(delete_file, m)?)?;
     m.add_function(wrap_pyfunction!(fingerprint_audio, m)?)?;
+    m.add_function(wrap_pyfunction!(fingerprint_and_hash_audio, m)?)?;
     m.add_function(wrap_pyfunction!(hash_pcm_stream, m)?)?;
     m.add_function(wrap_pyfunction!(generate_audio_signature, m)?)?;
     m.add_function(wrap_pyfunction!(verify_audio_signature, m)?)?;

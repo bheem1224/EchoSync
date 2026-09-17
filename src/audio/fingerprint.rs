@@ -110,14 +110,18 @@ pub fn generate_fingerprint(file_path: &str, trim_silence: bool) -> Result<(Stri
     // Full track duration derived from total decoded samples (unaffected by fingerprint window)
     let duration_seconds = (samples.len() as f64) / (original_sample_rate as f64);
 
+    let trimmed_f32: Vec<f32> = processed_samples.to_vec();
+    drop(samples); // Free ~52 MiB monolithic decode buffer before next allocation
+
     // Convert f32 PCM to 16-bit signed integer samples for Chromaprint
-    let i16_samples: Vec<i16> = processed_samples
+    let i16_samples: Vec<i16> = trimmed_f32
         .iter()
         .map(|&s| {
             let clamped = s.clamp(-1.0, 1.0);
             (clamped * 32767.0) as i16
         })
         .collect();
+    drop(trimmed_f32); // Free intermediate window buffer
 
     // AcoustID / fpcalc standard: fingerprint only the first 120 seconds of audio.
     // Feeding more samples produces a hash that diverges from the AcoustID cluster index.
@@ -303,4 +307,167 @@ fn base64_encode(data: &[u8]) -> String {
     }
 
     result
+}
+
+pub fn fingerprint_and_hash_audio(
+    file_path: &str,
+    trim_silence: bool,
+) -> Result<(String, f64, String), String> {
+    let path = Path::new(file_path);
+    let src = File::open(path).map_err(|e| format!("Failed to open file: {e}"))?;
+    let mss = MediaSourceStream::new(Box::new(src), Default::default());
+
+    let mut hint = Hint::new();
+    if let Some(extension) = path.extension().and_then(|ext| ext.to_str()) {
+        hint.with_extension(extension);
+    }
+
+    let meta_opts: MetadataOptions = Default::default();
+    let fmt_opts: FormatOptions = Default::default();
+
+    let probed = symphonia::default::get_probe()
+        .format(&hint, mss, &fmt_opts, &meta_opts)
+        .map_err(|e| format!("Unsupported format or probe failure: {e}"))?;
+
+    let mut format = probed.format;
+    let track = format
+        .tracks()
+        .iter()
+        .find(|t| t.codec_params.codec != CODEC_TYPE_NULL)
+        .ok_or_else(|| "No supported audio track found in file".to_string())?;
+
+    let dec_opts: DecoderOptions = Default::default();
+    let mut decoder = symphonia::default::get_codecs()
+        .make(&track.codec_params, &dec_opts)
+        .map_err(|e| format!("Unsupported codec: {e}"))?;
+
+    let track_id = track.id;
+    let original_sample_rate = track
+        .codec_params
+        .sample_rate
+        .ok_or_else(|| "Unknown sample rate".to_string())?;
+
+    let mut samples: Vec<f32> = Vec::new();
+    let mut hasher = blake3::Hasher::new();
+    let mut hash_sample_count = 0usize;
+
+    loop {
+        let packet = match format.next_packet() {
+            Ok(packet) => packet,
+            Err(SymphoniaError::IoError(ref err))
+                if err.kind() == std::io::ErrorKind::UnexpectedEof =>
+            {
+                break;
+            }
+            Err(SymphoniaError::ResetRequired) => {
+                decoder.reset();
+                continue;
+            }
+            Err(_) => {
+                break;
+            }
+        };
+
+        if packet.track_id() != track_id {
+            continue;
+        }
+
+        match decoder.decode(&packet) {
+            Ok(decoded) => {
+                append_mono_samples(&decoded, &mut samples);
+
+                let spec = *decoded.spec();
+                let mut sample_buf = symphonia::core::audio::SampleBuffer::<f32>::new(
+                    decoded.capacity() as u64,
+                    spec,
+                );
+                sample_buf.copy_interleaved_ref(decoded);
+                for sample in sample_buf.samples() {
+                    hasher.update(&sample.to_le_bytes());
+                    hash_sample_count += 1;
+                }
+            }
+            Err(SymphoniaError::IoError(_)) => break,
+            Err(SymphoniaError::DecodeError(_)) => continue,
+            Err(_) => break,
+        }
+    }
+
+    if samples.is_empty() {
+        return Err("No audio samples decoded".to_string());
+    }
+
+    if hash_sample_count == 0 {
+        return Err("No audio samples decoded for PCM hashing".to_string());
+    }
+
+    let pcm_hash = hasher.finalize().to_hex().to_string();
+
+    // Silence trimming (< -60 dBFS = amplitude < 0.001)
+    let processed_samples = if trim_silence {
+        let silence_threshold = 0.001f32;
+        let start = samples
+            .iter()
+            .position(|&s| s.abs() >= silence_threshold)
+            .unwrap_or(0);
+        let end = samples
+            .iter()
+            .rposition(|&s| s.abs() >= silence_threshold)
+            .map(|idx| idx + 1)
+            .unwrap_or(samples.len());
+
+        if start < end {
+            &samples[start..end]
+        } else {
+            &samples[..]
+        }
+    } else {
+        &samples[..]
+    };
+
+    if processed_samples.is_empty() {
+        return Err("Audio is completely silent".to_string());
+    }
+
+    // Full track duration derived from total decoded samples (unaffected by fingerprint window)
+    let duration_seconds = (samples.len() as f64) / (original_sample_rate as f64);
+
+    let trimmed_f32: Vec<f32> = processed_samples.to_vec();
+    drop(samples); // Free ~52 MiB monolithic decode buffer before next allocation
+
+    // Convert f32 PCM to 16-bit signed integer samples for Chromaprint
+    let i16_samples: Vec<i16> = trimmed_f32
+        .iter()
+        .map(|&s| {
+            let clamped = s.clamp(-1.0, 1.0);
+            (clamped * 32767.0) as i16
+        })
+        .collect();
+    drop(trimmed_f32); // Free intermediate window buffer
+
+    // AcoustID / fpcalc standard: fingerprint only the first 120 seconds of audio.
+    // Feeding more samples produces a hash that diverges from the AcoustID cluster index.
+    const CHROMAPRINT_MAX_SECONDS: f64 = 120.0;
+    let max_samples = (CHROMAPRINT_MAX_SECONDS * original_sample_rate as f64) as usize;
+    let fingerprint_window: &[i16] = if i16_samples.len() > max_samples {
+        &i16_samples[..max_samples]
+    } else {
+        &i16_samples[..]
+    };
+
+    let config = Configuration::preset_test2();
+    let mut printer = Fingerprinter::new(&config);
+    printer
+        .start(original_sample_rate, 1)
+        .map_err(|e| format!("Failed to start fingerprinter: {e:?}"))?;
+
+    printer.consume(fingerprint_window);
+    printer.finish();
+
+    let raw_fp = printer.fingerprint();
+    let compressor = rusty_chromaprint::FingerprintCompressor::from(&config);
+    let compressed = compressor.compress(raw_fp);
+    let encoded_fingerprint = base64_encode(&compressed);
+
+    Ok((encoded_fingerprint, duration_seconds, pcm_hash))
 }

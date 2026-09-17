@@ -170,9 +170,7 @@ class EchosyncTrack:
 
     # Plugin-private scratch space — populated by pre_normalize_title hooks.
     # Excluded from equality / repr so it doesn't affect matching identity checks.
-    plugin_context: dict[str, Any] = field(
-        default_factory=dict, compare=False, repr=False
-    )
+    plugin_context: dict[str, Any] = field(default_factory=dict, compare=False, repr=False)
 
     # External Provider Links
     identifiers: dict[str, Any] = field(default_factory=dict)
@@ -226,9 +224,7 @@ class EchosyncTrack:
         #     into plugin_context BEFORE the subsequent cleaning strips those brackets.
         from core.hook_manager import hook_manager as _hm
 
-        _hm.apply_filters(
-            "pre_normalize_title", self.raw_title, plugin_context=self.plugin_context
-        )
+        _hm.apply_filters("pre_normalize_title", self.raw_title, plugin_context=self.plugin_context)
 
         # 0. Handle legacy identifiers (List[Dict]) -> Dict[str, str]
         if isinstance(self.identifiers, list):
@@ -248,9 +244,7 @@ class EchosyncTrack:
         if isinstance(self.original_release_date, str):
             try:
                 # Attempt to parse ISO format string to date object
-                self.original_release_date = date.fromisoformat(
-                    self.original_release_date
-                )
+                self.original_release_date = date.fromisoformat(self.original_release_date)
             except ValueError:
                 pass
 
@@ -268,10 +262,7 @@ class EchosyncTrack:
         if self.mb_release_id:
             if isinstance(self.identifiers, dict):
                 self.identifiers["musicbrainz_release_id"] = self.mb_release_id
-        elif (
-            isinstance(self.identifiers, dict)
-            and "musicbrainz_release_id" in self.identifiers
-        ):
+        elif isinstance(self.identifiers, dict) and "musicbrainz_release_id" in self.identifiers:
             self.mb_release_id = self.identifiers["musicbrainz_release_id"]
 
         # 2. acoustid_id
@@ -406,9 +397,7 @@ class EchosyncTrack:
             "acoustid": self.acoustid_id,
             "acoustid_id": self.acoustid_id,
             "mb_release_id": self.mb_release_id,
-            "original_release_date": self.original_release_date.isoformat()
-            if self.original_release_date
-            else None,
+            "original_release_date": self.original_release_date.isoformat() if self.original_release_date else None,
             "fingerprint": self.fingerprint,
             "quality_tags": self.quality_tags,
             "is_compilation": self.is_compilation,
@@ -429,9 +418,7 @@ class EchosyncTrack:
         original_release_date = data.get("original_release_date")
 
         # Handle backward compatibility where raw_title might be missing
-        raw_title = data.get(
-            "raw_title", data.get("display_title", data.get("title", "Unknown Title"))
-        )
+        raw_title = data.get("raw_title", data.get("display_title", data.get("title", "Unknown Title")))
 
         # Handle identifiers: Ensure it's passed.
         identifiers = data.get("identifiers", {})
@@ -452,11 +439,7 @@ class EchosyncTrack:
         if raw_media_list:
             media_list = [EchosyncMedia.from_dict(m) for m in raw_media_list]
         elif data.get("media_ids"):
-            media_list = [
-                EchosyncMedia(media_id=str(mid))
-                for mid in data.get("media_ids", [])
-                if mid
-            ]
+            media_list = [EchosyncMedia(media_id=str(mid)) for mid in data.get("media_ids", []) if mid]
         else:
             media_list = []
 
@@ -492,7 +475,7 @@ class EchosyncTrack:
         return track
 
     @classmethod
-    def from_orm(cls, track: Any) -> "EchosyncTrack":
+    def from_orm(cls, track: Any, preloaded_fingerprint: str | None = None) -> "EchosyncTrack":
         """
         Construct a full EchosyncTrack domain model from a SQLAlchemy Track ORM entity,
         including nested EchosyncMedia objects for all associated LocalMedia rows.
@@ -516,22 +499,11 @@ class EchosyncTrack:
                     )
                 )
 
-        artist_name = (
-            track.artist.name if getattr(track, "artist", None) else "Unknown Artist"
-        )
-        album_title = (
-            track.album.title if getattr(track, "album", None) else "Unknown Album"
-        )
+        artist_name = track.artist.name if getattr(track, "artist", None) else "Unknown Artist"
+        album_title = track.album.title if getattr(track, "album", None) else "Unknown Album"
 
         acoustid_id = None
-        chromaprint = None
-        if hasattr(track, "media_files") and track.media_files:
-            for lm in track.media_files:
-                if hasattr(lm, "audio_fingerprints") and lm.audio_fingerprints:
-                    fp = lm.audio_fingerprints[0]
-                    chromaprint = getattr(fp, "chromaprint", None)
-                    acoustid_id = getattr(fp, "acoustid_id", None)
-                    break
+        chromaprint = preloaded_fingerprint
 
         return cls(
             sync_id=getattr(track, "sync_id", None),

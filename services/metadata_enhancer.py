@@ -2270,7 +2270,10 @@ class RetroactiveEnhancer:
                                 import echosync_core
 
                                 sig = echosync_core.generate_audio_signature(
-                                    str(first_path), t_track.title, t_track.artist_name
+                                    str(first_path),
+                                    t_track.title,
+                                    t_track.artist_name,
+                                    item["metadata_status"].get("pcm_hash"),
                                 )
                                 if sig:
                                     item["metadata_status"]["echosync_signature"] = sig
@@ -2410,7 +2413,10 @@ class RetroactiveEnhancer:
                                         first_path = valid_media_paths[0][1] if valid_media_paths else None
                                         if first_path and t_track.title and t_track.artist_name:
                                             sig = echosync_core.generate_audio_signature(
-                                                str(first_path), t_track.title, t_track.artist_name
+                                                str(first_path),
+                                                t_track.title,
+                                                t_track.artist_name,
+                                                item["metadata_status"].get("pcm_hash"),
                                             )
                                             if sig:
                                                 item["metadata_status"]["echosync_signature"] = sig
@@ -2486,19 +2492,26 @@ class RetroactiveEnhancer:
                         existing_fp = item["fingerprints"].get(mid, {}).get("chromaprint")
                         if not existing_fp:
                             try:
-                                cp, dur_sec = FingerprintGenerator.generate_with_duration(str(local_path))
-                                if cp:
-                                    item["new_fingerprints"][mid] = {
-                                        "chromaprint": cp,
-                                        "acoustid_id": None,
-                                    }
-                                    if not t_track.fingerprint:
-                                        t_track.fingerprint = cp
-                                if (not duration or duration <= 0) and dur_sec:
-                                    duration = round(float(dur_sec) * 1000)
-                                    t_track.duration = duration
+                                import echosync_core
+
+                                cp, dur_sec, pcm_hash = echosync_core.fingerprint_and_hash_audio(
+                                    str(local_path), trim_silence=True
+                                )
+                                item["metadata_status"]["pcm_hash"] = pcm_hash
                             except Exception as fp_err:
-                                logger.debug(f"Fingerprint generation failed for {local_path.name}: {fp_err}")
+                                logger.debug(f"Native hash/fingerprint failed for {local_path.name}: {fp_err}")
+                                cp, dur_sec = FingerprintGenerator.generate_with_duration(str(local_path))
+
+                            if cp:
+                                item["new_fingerprints"][mid] = {
+                                    "chromaprint": cp,
+                                    "acoustid_id": None,
+                                }
+                                if not t_track.fingerprint:
+                                    t_track.fingerprint = cp
+                            if (not duration or duration <= 0) and dur_sec:
+                                duration = round(float(dur_sec) * 1000)
+                                t_track.duration = duration
                         else:
                             if not t_track.fingerprint:
                                 t_track.fingerprint = existing_fp
@@ -2708,7 +2721,10 @@ class RetroactiveEnhancer:
                                 import echosync_core
 
                                 sig = echosync_core.generate_audio_signature(
-                                    str(first_path), t_track.title, t_track.artist_name
+                                    str(first_path),
+                                    t_track.title,
+                                    t_track.artist_name,
+                                    item["metadata_status"].get("pcm_hash"),
                                 )
                                 if sig:
                                     item["metadata_status"]["echosync_signature"] = sig
@@ -2775,6 +2791,11 @@ class RetroactiveEnhancer:
                             t_track.musicbrainz_id = None
 
                     results_to_commit.append(item)
+
+            # Clear transient references before committing
+            for bucket in (bucket_trust, bucket_target, bucket_heavy):
+                for _, _, all_file_tags in bucket:
+                    all_file_tags.clear()
 
             # Step 6: Commit the batch updates in a new short session
             with db.session_scope() as session:

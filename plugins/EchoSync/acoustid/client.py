@@ -264,7 +264,6 @@ class AcoustIDProvider(PluginBase):
                                 "artists": artist_names,
                                 "duration": duration_val,
                                 "score": score,
-                                "releasegroups": rec.get("releasegroups", []) or [],
                             }
                         )
 

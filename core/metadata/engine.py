@@ -203,7 +203,9 @@ class MetadataResolutionEngine:
         self._metadata_provider = metadata_provider
         self._spotify_provider = spotify_provider
         self._hook_manager = hook_manager
-        self._chromaprint_cache: dict[str, dict[str, Any]] = {}
+        import collections
+
+        self._chromaprint_cache: collections.OrderedDict[str, dict[str, Any]] = collections.OrderedDict()
         self.matcher = WeightedMatchingEngine(PROFILE_EXACT_SYNC)
 
     def invalidate_cache(self, chromaprint: str | None = None) -> None:
@@ -1218,7 +1220,10 @@ class MetadataResolutionEngine:
                     "disc_number": peer_track.disc_number,
                     "duration_ms": peer_track.duration,
                 }
-                self._chromaprint_cache[chromaprint] = res
+                if res:
+                    if len(self._chromaprint_cache) >= 200:
+                        self._chromaprint_cache.popitem(last=False)
+                    self._chromaprint_cache[chromaprint] = res
                 return res
         except Exception as exc:
             logger.debug("[resolution_engine] Local chromaprint DB lookup failed: %s", exc)
