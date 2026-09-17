@@ -17,9 +17,7 @@ _OST_PATTERNS = [
         r"\s*[\(\[]\s*original\s+motion\s+picture\s+soundtrack\s*[\)\]]",
         flags=re.IGNORECASE,
     ),
-    re.compile(
-        r"\s*[\(\[]\s*motion\s+picture\s+soundtrack\s*[\)\]]", flags=re.IGNORECASE
-    ),
+    re.compile(r"\s*[\(\[]\s*motion\s+picture\s+soundtrack\s*[\)\]]", flags=re.IGNORECASE),
     re.compile(r'\s*[\(\[]\s*from\s+"[^"]*"\s*[\)\]]', flags=re.IGNORECASE),
     re.compile(r"\s*[\(\[]\s*from\s+[^\)\]]+[\)\]]", flags=re.IGNORECASE),
     re.compile(r"\s*[\(\[]\s*ost\s+[^\)\]]*[\)\]]", flags=re.IGNORECASE),
@@ -134,9 +132,7 @@ _NORM_BRACKETS_QUOTE_RE = re.compile(r"\s*「[^」]*」")
 _NORM_BRACKETS_QUOTE2_RE = re.compile(r"\s*『[^』]*』")
 _NORM_BRACKETS_FULL_PAREN_RE = re.compile(r"\s*（[^）]*）")
 _NORM_TRAILING_AMP_RE = re.compile(r"\s+&\s+\S+.*$")
-_NORM_TRAILING_FEAT_RE = re.compile(
-    r"\s+(feat\.?|featuring|with)\b.*$", flags=re.IGNORECASE
-)
+_NORM_TRAILING_FEAT_RE = re.compile(r"\s+(feat\.?|featuring|with)\b.*$", flags=re.IGNORECASE)
 _NORM_ALPHANUM_RE = re.compile(r"[^\w\s\-\'\"]")
 _NORM_MULTIPLE_AMP_RE = re.compile(r"\s*&\s*")
 _NORM_AUDIO_TERMS_PATTERN = r"\s*[-~]?\s*(?:\b|\()(?:official\s+(?:music\s+|lyric\s+)?video|official\s+audio|audio|video|lyric\s+video|lyrics?)(?:\b|\))"
@@ -151,17 +147,66 @@ _NORM_VERSION_DASH_RE = re.compile(
 )
 
 _OST_SAFE_WORDS = {
-    "电视剧", "网剧", "影视剧", "影視劇", "电影",
-    "片头曲", "片尾曲", "主题曲", "插曲", "推广曲",
-    "原声带", "原声", "配乐",
-    "ost", "theme", "opening", "ending", "soundtrack", "original",
-    "remastered", "remaster", "acoustic", "live",
-    "radio", "single", "extended", "club",
-    "version", "edit", "mix", "remix", "bootleg",
-    "official", "song", "shanty", "sea", "uefa", "euro", "anthem", "from", "la",
-    "deluxe", "pt", "part", "vol", "volume",
-    "viii", "vii", "iii", "iv", "vi", "ix", "ii", "i", "x", "v",
-    "gabry", "ponte", "ice", "pop",
+    "电视剧",
+    "网剧",
+    "影视剧",
+    "影視劇",
+    "电影",
+    "片头曲",
+    "片尾曲",
+    "主题曲",
+    "插曲",
+    "推广曲",
+    "原声带",
+    "原声",
+    "配乐",
+    "ost",
+    "theme",
+    "opening",
+    "ending",
+    "soundtrack",
+    "original",
+    "remastered",
+    "remaster",
+    "acoustic",
+    "live",
+    "radio",
+    "single",
+    "extended",
+    "club",
+    "version",
+    "edit",
+    "mix",
+    "remix",
+    "bootleg",
+    "official",
+    "song",
+    "shanty",
+    "sea",
+    "uefa",
+    "euro",
+    "anthem",
+    "from",
+    "la",
+    "deluxe",
+    "pt",
+    "part",
+    "vol",
+    "volume",
+    "viii",
+    "vii",
+    "iii",
+    "iv",
+    "vi",
+    "ix",
+    "ii",
+    "i",
+    "x",
+    "v",
+    "gabry",
+    "ponte",
+    "ice",
+    "pop",
 }
 
 
@@ -215,12 +260,8 @@ def _cmp_titles(
     # ── Semantic Substring Failsafe ───────────────────────────────────────────
     if ratio < 0.90 and (context_score >= 0.80 or drama_ctx):
         shorter, longer = (a_n, b_n) if len(a_n) <= len(b_n) else (b_n, a_n)
-        if len(shorter) >= 3 and re.search(
-            r"(?<![\w])" + re.escape(shorter) + r"(?![\w])", longer
-        ):
-            delta_raw = re.sub(
-                r"(?<![\w])" + re.escape(shorter) + r"(?![\w])", "", longer, count=1
-            )
+        if len(shorter) >= 3 and re.search(r"(?<![\w])" + re.escape(shorter) + r"(?![\w])", longer):
+            delta_raw = re.sub(r"(?<![\w])" + re.escape(shorter) + r"(?![\w])", "", longer, count=1)
             delta_words = re.sub(r"[^\w]", "", delta_raw, flags=re.UNICODE)
             if not delta_words or _OST_SAFE_RE.match(delta_words):
                 ratio = 0.95
@@ -293,15 +334,11 @@ def _cmp_artists(a: str, b: str) -> float:
     ratio = SequenceMatcher(None, a_n, b_n).ratio()
     if a_n in b_n or b_n in a_n:
         shorter, longer = (a_n, b_n) if len(a_n) < len(b_n) else (b_n, a_n)
-        delta = re.sub(
-            r"(?<![\w])" + re.escape(shorter) + r"(?![\w])", "", longer
-        ).strip()
+        delta = re.sub(r"(?<![\w])" + re.escape(shorter) + r"(?![\w])", "", longer).strip()
         delta_lower = delta.lower()
         delta_tokens = set(re.findall(r"\b\w+\b", delta_lower))
 
-        has_tribute = any(
-            t in delta_lower or t in delta_tokens for t in _TRIBUTE_DELTA_TOKENS
-        )
+        has_tribute = any(t in delta_lower or t in delta_tokens for t in _TRIBUTE_DELTA_TOKENS)
         if not has_tribute:
             return max(ratio, 0.95)
 
@@ -428,16 +465,10 @@ def remove_accents(text: str) -> str:
     """Remove diacritical marks from text."""
     import unicodedata
 
-    return "".join(
-        c
-        for c in unicodedata.normalize("NFKD", text)
-        if unicodedata.category(c) != "Mn"
-    )
+    return "".join(c for c in unicodedata.normalize("NFKD", text) if unicodedata.category(c) != "Mn")
 
 
-def normalize_title(
-    title: str | None, plugin_context: dict[str, Any] | None = None
-) -> str:
+def normalize_title(title: str | None, plugin_context: dict[str, Any] | None = None) -> str:
     """
     Normalize track title for matching.
 
@@ -457,6 +488,9 @@ def normalize_title(
     if not title:
         return ""
 
+    # Strip duplicate copy numbers e.g. " (2)", " [1]" from filename-derived stems
+    title = re.sub(r"\s*[\(\[]\d+[\)\]]$", "", title).strip()
+
     # STEP 1: Replace underscores and periods with spaces BEFORE other normalization
     # This helps with filenames like "Artist_Name-Song.Title.mp3"
     title = title.replace("_", " ").replace(".", " ")
@@ -468,9 +502,7 @@ def normalize_title(
     if plugin_context is not None:
         from core.hook_manager import hook_manager
 
-        hook_manager.apply_filters(
-            "pre_normalize_title", title, plugin_context=plugin_context
-        )
+        hook_manager.apply_filters("pre_normalize_title", title, plugin_context=plugin_context)
 
     normalized = normalize_text(title)
 
@@ -575,9 +607,7 @@ _COLLAB_SPLIT_PATTERN = re.compile(
     r"(?:\s+&\s+|\s*[/,+]\s*|\s*[\u00d7\u0445\u2715\u2716×✕✖]\s*|\s+\bx\b\s+|\s+\bfeat\.?\s*|\s+\bft\.?\s*|\s+\bfeaturing\s*|\s+\bwith\s*|\s+\band\s+)",
     flags=re.IGNORECASE,
 )
-_WIRE_SANITIZE_PATTERN = re.compile(
-    r"[\&\\\/\!\'\"\+\#\@\[\]\(\)\{\}\*\^\$\:\;\,\.\?\~]"
-)
+_WIRE_SANITIZE_PATTERN = re.compile(r"[\&\\\/\!\'\"\+\#\@\[\]\(\)\{\}\*\^\$\:\;\,\.\?\~]")
 
 
 def split_artist_collaborators(artist: str | None) -> tuple[str, list[str]]:
@@ -592,9 +622,7 @@ def split_artist_collaborators(artist: str | None) -> tuple[str, list[str]]:
         return "", []
 
     raw_cleaned = normalize_chars(artist)
-    parts = [
-        p.strip() for p in _COLLAB_SPLIT_PATTERN.split(raw_cleaned) if p and p.strip()
-    ]
+    parts = [p.strip() for p in _COLLAB_SPLIT_PATTERN.split(raw_cleaned) if p and p.strip()]
     if not parts:
         return "", []
 
@@ -685,9 +713,7 @@ def extract_version_info(title: str | None) -> tuple[str, str | None]:
     return title, None
 
 
-_BRACKET_EXTRACTION_RE = re.compile(
-    r"[\(\[\{《【]([^\(\)\[\]\{\}《》【】]+)[\)\]\}》】]"
-)
+_BRACKET_EXTRACTION_RE = re.compile(r"[\(\[\{《【]([^\(\)\[\]\{\}《》【】]+)[\)\]\}》】]")
 
 
 def decompose_complex_title(raw_title: str | None) -> dict:
@@ -726,9 +752,7 @@ def decompose_complex_title(raw_title: str | None) -> dict:
         span = match.span()
 
         # Check for featured collaborators
-        if re.search(
-            r"^(?:feat|ft)\.?\s*|^(?:featuring|with)\s+", bracket_content, re.IGNORECASE
-        ):
+        if re.search(r"^(?:feat|ft)\.?\s*|^(?:featuring|with)\s+", bracket_content, re.IGNORECASE):
             collab_raw = (
                 re.sub(
                     r"^(?:feat|ft)\.?\s*|^(?:featuring|with)\s+",
@@ -747,13 +771,10 @@ def decompose_complex_title(raw_title: str | None) -> dict:
         # Check for Soundtrack / OST annotations
         elif (
             any(
-                ost_pat.search(f"({bracket_content})")
-                or ost_pat.search(f"[{bracket_content}]")
+                ost_pat.search(f"({bracket_content})") or ost_pat.search(f"[{bracket_content}]")
                 for ost_pat in _OST_PATTERNS
             )
-            or re.search(
-                r"\b(soundtrack|ost|motion picture)\b", bracket_content, re.IGNORECASE
-            )
+            or re.search(r"\b(soundtrack|ost|motion picture)\b", bracket_content, re.IGNORECASE)
             or bracket_content.lower().startswith("from ")
         ):
             soundtrack = bracket_content
@@ -780,9 +801,7 @@ def decompose_complex_title(raw_title: str | None) -> dict:
         clean_parts = [dash_parts[0]]
         for part in dash_parts[1:]:
             part_str = part.strip()
-            if re.search(
-                r"^(?:feat|ft)\.?\s*|^(?:featuring|with)\s+", part_str, re.IGNORECASE
-            ):
+            if re.search(r"^(?:feat|ft)\.?\s*|^(?:featuring|with)\s+", part_str, re.IGNORECASE):
                 collab_raw = (
                     re.sub(
                         r"^(?:feat|ft)\.?\s*|^(?:featuring|with)\s+",
@@ -798,9 +817,9 @@ def decompose_complex_title(raw_title: str | None) -> dict:
                     p_clean = p.strip()
                     if p_clean and p_clean not in collaborators:
                         collaborators.append(p_clean)
-            elif any(
-                ost_pat.search(f" - {part_str}") for ost_pat in _OST_PATTERNS
-            ) or part_str.lower().startswith("from "):
+            elif any(ost_pat.search(f" - {part_str}") for ost_pat in _OST_PATTERNS) or part_str.lower().startswith(
+                "from "
+            ):
                 soundtrack = part_str
             elif any(ed_pat.search(part_str) for ed_pat, _ in _EDITION_PATTERNS):
                 version = part_str
@@ -927,9 +946,7 @@ def extract_edition(title: str | None) -> tuple[str, str | None]:
 
     # Clean up the title: remove extra spaces, parentheses, brackets, dashes
     cleaned_title = _EDITION_CLEAN_BRACKETS_RE.sub(" ", cleaned_title)  # Empty brackets
-    cleaned_title = _EDITION_CLEAN_TRAIL_DASH_RE.sub(
-        "", cleaned_title
-    )  # Trailing dashes
+    cleaned_title = _EDITION_CLEAN_TRAIL_DASH_RE.sub("", cleaned_title)  # Trailing dashes
     cleaned_title = _EDITION_CLEAN_LEAD_DASH_RE.sub("", cleaned_title)  # Leading dashes
     cleaned_title = _EDITION_CLEAN_SPACES_RE.sub(" ", cleaned_title).strip()
 
@@ -964,9 +981,7 @@ _ARTIST_SPLIT_PATTERN = re.compile(
     flags=re.IGNORECASE,
 )
 _YEAR_RE = re.compile(r"\b(19\d\d|20\d\d)\b")
-_PREFIX_STRIP_RE = re.compile(
-    r"^(?:cd|disc|track|trk|t|d)\s*#?\s*", flags=re.IGNORECASE
-)
+_PREFIX_STRIP_RE = re.compile(r"^(?:cd|disc|track|trk|t|d)\s*#?\s*", flags=re.IGNORECASE)
 
 
 def sanitize_string(val: Any) -> str | None:
@@ -1076,18 +1091,14 @@ def parse_int_safe(val: Any) -> int | None:
     return None
 
 
-FEATURE_ARTIST_REGEX = re.compile(
-    r"\s+(?:feat\.?|ft\.?|featuring|with)\s+.+", re.IGNORECASE
-)
+FEATURE_ARTIST_REGEX = re.compile(r"\s+(?:feat\.?|ft\.?|featuring|with)\s+.+", re.IGNORECASE)
 VERSION_TAG_REGEX = re.compile(
     r"\s*[\(\[](?:radio edit|remastered|remaster|deluxe|version|edit|bonus track)[\)\]]",
     re.IGNORECASE,
 )
 
 
-def normalize_track_comparison_fields(
-    title: str | None, artist: str | None
-) -> tuple[str, str]:
+def normalize_track_comparison_fields(title: str | None, artist: str | None) -> tuple[str, str]:
     """
     Standardize edition/version and featured artist noise from title and artist fields.
     Extracts/cleans version tags and featured collaborators without destroying the core strings.

@@ -379,6 +379,20 @@ class TestTrackParserIntegration:
         assert "jonas blue" in track.artist_name.lower()
         assert "by your side" in track.title.lower()
 
+    def test_strip_duplicate_copy_suffix(self):
+        """Test duplicate copy suffixes like (2) or [1] are cleanly stripped from titles"""
+        track1 = self.parser.parse_filename("01 - To Let You Win (2).flac")
+        assert track1 is not None
+        assert track1.raw_title == "To Let You Win"
+
+        track2 = self.parser.parse_filename("Artist - To Let You Win (2).flac")
+        assert track2 is not None
+        assert track2.raw_title == "To Let You Win"
+
+        track3 = self.parser.parse_filename("Artist - Song Title [1].mp3")
+        assert track3 is not None
+        assert track3.raw_title == "Song Title"
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

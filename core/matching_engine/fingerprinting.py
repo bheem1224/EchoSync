@@ -105,7 +105,7 @@ class FingerprintGenerator:
             logger.debug(f"Native Rust fingerprinting fallback to pyacoustid for {file_path}: {e}")
 
         try:
-            raw_duration, fingerprint = acoustid.fingerprint_file(file_path)
+            raw_duration, fingerprint = acoustid.fingerprint_file(file_path, maxlength=120)
 
             if isinstance(fingerprint, bytes):
                 fingerprint = fingerprint.decode("utf-8", errors="ignore")

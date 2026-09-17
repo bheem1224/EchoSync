@@ -1556,11 +1556,18 @@ class MetadataResolutionEngine:
                         if 0 < mb_dur_val < 10000:
                             mb_dur_val *= 1000.0  # seconds → ms
                         mb_dur_sec = mb_dur_val / 1000.0
-                        if abs(mb_dur_sec - file_duration_sec) > 2.0:
-                            logger.debug(
-                                "[resolution_engine] Step D DROPPED MBID %s: MB duration delta %.2fs > 2.0s",
+                        dur_delta = abs(mb_dur_sec - file_duration_sec)
+                        if dur_delta > 2.0:
+                            logger.info(
+                                "[resolution_engine] Step D duration veto DROPPED MBID %s ('%s' by '%s'): "
+                                "candidate_duration=%.2fs, file_duration=%.2fs, delta=%.2fs > 2.0s threshold. "
+                                "Falling back to subsequent candidates/methods.",
                                 mbid_str,
-                                abs(mb_dur_sec - file_duration_sec),
+                                cand_meta.get("title") or "Unknown Title",
+                                cand_meta.get("artist") or cand_meta.get("artist_name") or "Unknown Artist",
+                                mb_dur_sec,
+                                file_duration_sec,
+                                dur_delta,
                             )
                             continue
                     except (ValueError, TypeError):
@@ -1685,6 +1692,12 @@ class MetadataResolutionEngine:
                 top_candidates = None
                 best_candidate = None
                 return result_payload
+
+            logger.info(
+                "[resolution_engine] All AcoustID candidate(s) for '%s' were rejected by duration/similarity gates. "
+                "Falling back to subsequent resolution stages.",
+                filename_stem or filename or "(none)",
+            )
         except Exception as exc:
             logger.warning("[resolution_engine] AcoustID resolution error: %s", exc)
 

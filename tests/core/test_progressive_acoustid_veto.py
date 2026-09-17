@@ -498,3 +498,72 @@ def test_tag_file_verified_strips_unknown_placeholders(tmp_path, monkeypatch):
     )
     assert res == {}
     assert len(written_tags) == 0
+
+
+def test_step_d_duration_veto_rejects_mismatch_and_logs(tmp_path, monkeypatch, caplog):
+    """Verify that Step D strictly rejects candidates where MB duration delta > 2.0s and logs diagnostics."""
+    import logging
+    file_dur_ms = 180000  # 180.0s
+    audio_file = tmp_path / "01 - Test Song.flac"
+    audio_file.write_bytes(b"dummy audio content")
+
+    dummy_chromaprint = "D" * 60
+    monkeypatch.setattr(
+        FingerprintGenerator,
+        "generate_with_duration",
+        lambda p: (dummy_chromaprint, file_dur_ms / 1000.0),
+    )
+    monkeypatch.setattr(echosync_core, "read_metadata", lambda p: {})
+
+    # AcoustID pre-filters pass (cand duration ~ 180.0s)
+    mock_acoustid = MagicMock()
+    mock_acoustid.resolve_fingerprint_details.return_value = {
+        "acoustid_id": "acoustid-dur-test",
+        "score": 0.95,
+        "recordings": [
+            {
+                "id": "mbid-mismatch-1",
+                "title": "Test Song",
+                "artist": "Test Artist",
+                "duration": file_dur_ms / 1000.0,
+                "score": 0.95,
+            }
+        ],
+        "mbids": ["mbid-mismatch-1"],
+    }
+
+    # But MusicBrainz detailed metadata returns 195s (delta 15s > 2.0s veto)
+    mock_mb = MagicMock()
+    mock_mb.get_metadata.return_value = {
+        "title": "Test Song",
+        "artist": "Test Artist",
+        "album": "Test Album",
+        "duration_ms": 195000,
+        "release_id": "rel-1",
+        "release_group": {"primary_type": "Album"},
+    }
+
+    engine = MetadataResolutionEngine(
+        acoustid_provider=mock_acoustid,
+        metadata_provider=mock_mb,
+    )
+
+    req = ResolutionRequest(
+        media_id="media_dur_1",
+        file_path=audio_file,
+        baseline_title="Test Song",
+        baseline_artist="Test Artist",
+        ignore_cache=True,
+    )
+
+    with caplog.at_level(logging.INFO):
+        result = engine.resolve_track(req)
+
+    # Step D duration veto should reject candidate and log clear diagnostics
+    assert any("Step D duration veto DROPPED MBID mbid-mismatch-1" in rec.message for rec in caplog.records)
+    assert any("delta=15.00s > 2.0s threshold" in rec.message for rec in caplog.records)
+    assert any("All AcoustID candidate(s)" in rec.message for rec in caplog.records)
+    # Result must not be from acoustid
+    if result:
+        assert result.resolution_method != "acoustid"
+

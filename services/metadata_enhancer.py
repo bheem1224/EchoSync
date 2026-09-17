@@ -1129,6 +1129,13 @@ class RetroactiveEnhancer:
                 if (existing_fp and existing_fp.chromaprint)
                 else getattr(track, "fingerprint", None)
             )
+            if chromaprint and len(chromaprint) > 1400:
+                logger.info(
+                    "[enhancer] Discarding stale unclamped fingerprint (len=%d > 1400) for media %s",
+                    len(chromaprint),
+                    first_media.media_id if first_media else track_id,
+                )
+                chromaprint = None
 
             duration_sec = None
             if not chromaprint:
@@ -2024,9 +2031,10 @@ class RetroactiveEnhancer:
                     if media_ids:
                         fp_rows = session.query(AudioFingerprint).filter(AudioFingerprint.media_id.in_(media_ids)).all()
                         for fp in fp_rows:
+                            valid_cp = fp.chromaprint if (fp.chromaprint and len(fp.chromaprint) <= 1400) else None
                             fps_map[fp.media_id] = {
-                                "chromaprint": fp.chromaprint,
-                                "acoustid_id": fp.acoustid_id,
+                                "chromaprint": valid_cp,
+                                "acoustid_id": fp.acoustid_id if valid_cp else None,
                             }
 
                     track_items.append(
@@ -2508,6 +2516,8 @@ class RetroactiveEnhancer:
                     for media, local_path in valid_media_paths:
                         mid = media.media_id
                         existing_fp = item["fingerprints"].get(mid, {}).get("chromaprint")
+                        if existing_fp and len(existing_fp) > 1400:
+                            existing_fp = None
                         if not existing_fp:
                             try:
                                 import echosync_core

@@ -39,12 +39,8 @@ class TrackParser:
 
     # Regex patterns for common filename formats
     PATTERNS = {
-        "extension_strip": re.compile(
-            r"\.(mp3|flac|m4a|aac|ogg|wav|wma)$", re.IGNORECASE
-        ),
-        "quality_marker_strip": re.compile(
-            r"\b(?:FLAC|MP3|AAC|OGG|ALAC|Opus|WMA)\b", re.IGNORECASE
-        ),
+        "extension_strip": re.compile(r"\.(mp3|flac|m4a|aac|ogg|wav|wma)$", re.IGNORECASE),
+        "quality_marker_strip": re.compile(r"\b(?:FLAC|MP3|AAC|OGG|ALAC|Opus|WMA)\b", re.IGNORECASE),
         "bitrate_marker_strip": re.compile(
             r"\b(?:24[-_]?bit|16[-_]?bit|lossless|320kbps|256kbps|192kbps|320k|256k|192k)\b",
             re.IGNORECASE,
@@ -55,19 +51,11 @@ class TrackParser:
         "angle_brackets_clean": re.compile(r"<.*?>"),
         "underscores_clean": re.compile(r"_+"),
         "tildes_clean": re.compile(r"~.*?~"),
-        "junk_extensions_clean": re.compile(
-            r"\s*(?:www\d+|320|192|256)[\.\s]*$", re.IGNORECASE
-        ),
-        "file_extensions_clean": re.compile(
-            r"\b(?:mp3|flac|m4a|aac|ogg|wav|wma)$", re.IGNORECASE
-        ),
+        "junk_extensions_clean": re.compile(r"\s*(?:www\d+|320|192|256)[\.\s]*$", re.IGNORECASE),
+        "file_extensions_clean": re.compile(r"\b(?:mp3|flac|m4a|aac|ogg|wav|wma)$", re.IGNORECASE),
         "whitespace_clean": re.compile(r"\s+"),
-        "extension_strip": re.compile(
-            r"\.(mp3|flac|m4a|aac|ogg|wav|wma)$", re.IGNORECASE
-        ),
-        "quality_marker_strip": re.compile(
-            r"(?:FLAC|MP3|AAC|OGG|ALAC|Opus|WMA)", re.IGNORECASE
-        ),
+        "extension_strip": re.compile(r"\.(mp3|flac|m4a|aac|ogg|wav|wma)$", re.IGNORECASE),
+        "quality_marker_strip": re.compile(r"(?:FLAC|MP3|AAC|OGG|ALAC|Opus|WMA)", re.IGNORECASE),
         "bitrate_marker_strip": re.compile(
             r"(?:24[-_]?bit|16[-_]?bit|lossless|320kbps|256kbps|192kbps|320k|256k|192k)",
             re.IGNORECASE,
@@ -78,12 +66,8 @@ class TrackParser:
         "angle_brackets_clean": re.compile(r"<.*?>"),
         "underscores_clean": re.compile(r"_+"),
         "tildes_clean": re.compile(r"~.*?~"),
-        "junk_extensions_clean": re.compile(
-            r"\s*(?:www\d+|320|192|256)[\.\s]*$", re.IGNORECASE
-        ),
-        "file_extensions_clean": re.compile(
-            r"(?:mp3|flac|m4a|aac|ogg|wav|wma)$", re.IGNORECASE
-        ),
+        "junk_extensions_clean": re.compile(r"\s*(?:www\d+|320|192|256)[\.\s]*$", re.IGNORECASE),
+        "file_extensions_clean": re.compile(r"(?:mp3|flac|m4a|aac|ogg|wav|wma)$", re.IGNORECASE),
         "whitespace_clean": re.compile(r"\s+"),
         # Artist - Title format (most common)
         "artist_title": re.compile(
@@ -111,21 +95,11 @@ class TrackParser:
             re.IGNORECASE,
         ),
         # Quality tag patterns
-        "quality_flac": re.compile(
-            r"\bFLAC\b|\b(?:24[-_]?bit|16[-_]?bit|lossless)\b", re.IGNORECASE
-        ),
-        "quality_mp3_320": re.compile(
-            r"\b(?:320|MP3[-_]?320|320kbps|320k)\b", re.IGNORECASE
-        ),
-        "quality_mp3_256": re.compile(
-            r"\b(?:256|MP3[-_]?256|256kbps|256k)\b", re.IGNORECASE
-        ),
-        "quality_mp3_192": re.compile(
-            r"\b(?:192|MP3[-_]?192|192kbps|192k)\b", re.IGNORECASE
-        ),
-        "quality_aac": re.compile(
-            r"\b(?:AAC|M4A|iTunes|256 AAC|AAC[-_]?256)\b", re.IGNORECASE
-        ),
+        "quality_flac": re.compile(r"\bFLAC\b|\b(?:24[-_]?bit|16[-_]?bit|lossless)\b", re.IGNORECASE),
+        "quality_mp3_320": re.compile(r"\b(?:320|MP3[-_]?320|320kbps|320k)\b", re.IGNORECASE),
+        "quality_mp3_256": re.compile(r"\b(?:256|MP3[-_]?256|256kbps|256k)\b", re.IGNORECASE),
+        "quality_mp3_192": re.compile(r"\b(?:192|MP3[-_]?192|192kbps|192k)\b", re.IGNORECASE),
+        "quality_aac": re.compile(r"\b(?:AAC|M4A|iTunes|256 AAC|AAC[-_]?256)\b", re.IGNORECASE),
         "quality_alac": re.compile(r"\bALAC\b", re.IGNORECASE),
         "quality_ogg": re.compile(r"\b(?:OGG|Vorbis|OGG[-_]?V)\b", re.IGNORECASE),
         "quality_opus": re.compile(r"\bOpus\b", re.IGNORECASE),
@@ -145,13 +119,9 @@ class TrackParser:
             re.IGNORECASE,
         ),
         # Artist aliases (e.g., "Feat." variations)
-        "feat_separators": re.compile(
-            r"\s+(?:featuring|feat\.?|ft\.?|with|feat|f\.?)\s+", re.IGNORECASE
-        ),
+        "feat_separators": re.compile(r"\s+(?:featuring|feat\.?|ft\.?|with|feat|f\.?)\s+", re.IGNORECASE),
         # Disk/Track number patterns
-        "track_number": re.compile(
-            r"^(?:(?P<disc>\d+)[.-])?(?P<track>\d{1,2})[\s.-]", re.IGNORECASE
-        ),
+        "track_number": re.compile(r"^(?:(?P<disc>\d+)[.-])?(?P<track>\d{1,2})[\s.-]", re.IGNORECASE),
         # Year patterns
         "year": re.compile(
             r"\((?P<year>19\d{2}|20\d{2})\)|\[(?P<year_bracket>19\d{2}|20\d{2})\]",
@@ -170,9 +140,7 @@ class TrackParser:
         """Set the database path for fingerprint caching"""
         self.fingerprint_cache = FingerprintCache(database_path)
 
-    def parse_filename(
-        self_or_raw: Any, raw_string: str | None = None
-    ) -> EchosyncTrack | None:
+    def parse_filename(self_or_raw: Any, raw_string: str | None = None) -> EchosyncTrack | None:
         """
         Parse a raw filename or hierarchical path into a EchosyncTrack object.
         Supports being called as TrackParser.parse_filename(path) or parser.parse_filename(path).
@@ -223,9 +191,7 @@ class TrackParser:
         working_string = filename_part
 
         # Extract year early (check filename first, then directory album)
-        year = self._extract_year(working_string) or (
-            self._extract_year(dir_album) if dir_album else None
-        )
+        year = self._extract_year(working_string) or (self._extract_year(dir_album) if dir_album else None)
 
         # Extract track/disk numbers
         track_number, disc_number = self._extract_track_numbers(working_string)
@@ -249,9 +215,7 @@ class TrackParser:
             working_string = self._remove_parenthetical_versions(working_string)
 
         # Remove leading track number prefixes (e.g. "04 - ", "01. ", "00 - ", "1-05 ", "01 ")
-        clean_filename_part = re.sub(
-            r"^(?:(?:\d+[.-])?\d{1,2}[\s\-_.]+)", "", working_string
-        ).strip()
+        clean_filename_part = re.sub(r"^(?:(?:\d+[.-])?\d{1,2}[\s\-_.]+)", "", working_string).strip()
 
         # Try different parsing patterns on clean_filename_part first
         parsed_data = self._try_parse_patterns(clean_filename_part)
@@ -259,11 +223,8 @@ class TrackParser:
         # If clean_filename_part didn't have artist-title pattern (e.g. title-only like "01 - Title.flac"),
         # use clean_title and dir_artist or fallback "Unknown Artist"
         if not parsed_data:
-            clean_title = (
-                self.PATTERNS["extension_strip"]
-                .sub("", clean_filename_part or working_string)
-                .strip()
-            )
+            clean_title = self.PATTERNS["extension_strip"].sub("", clean_filename_part or working_string).strip()
+            clean_title = re.sub(r"\s*[\(\[]\d+[\)\]]$", "", clean_title).strip()
             if clean_title:
                 parsed_data = {
                     "artist": dir_artist or "Unknown Artist",
@@ -276,6 +237,8 @@ class TrackParser:
             parsed_data = self._try_parse_patterns(working_string)
 
         if parsed_data:
+            if parsed_data.get("title"):
+                parsed_data["title"] = re.sub(r"\s*[\(\[]\d+[\)\]]$", "", parsed_data["title"]).strip()
             # If the parsed artist is purely digits (e.g. leftover track number), fallback to dir_artist
             parsed_artist = (parsed_data.get("artist") or "").strip()
             if re.match(r"^\d+$", parsed_artist) or not parsed_artist:
@@ -470,9 +433,7 @@ class TrackParser:
         text = self.PATTERNS["brackets_clean"].sub("", text)  # [brackets]
         text = self.PATTERNS["braces_clean"].sub("", text)  # {braces}
         text = self.PATTERNS["angle_brackets_clean"].sub("", text)  # <angle brackets>
-        text = self.PATTERNS["underscores_clean"].sub(
-            " ", text
-        )  # underscores to spaces
+        text = self.PATTERNS["underscores_clean"].sub(" ", text)  # underscores to spaces
         text = self.PATTERNS["tildes_clean"].sub("", text)  # ~tildes~
 
         # Remove common extensions/markers at end
@@ -487,22 +448,18 @@ class TrackParser:
         """Normalize parsed data (case, whitespace, etc.)"""
         for key in ("artist", "title", "album", "version"):
             if data.get(key):
+                if key == "title":
+                    data[key] = re.sub(r"\s*[\(\[]\d+[\)\]]$", "", data[key]).strip()
                 # Normalize whitespace
                 data[key] = " ".join(data[key].split())
                 # Title case for artist and album, keep title as-is
                 if key == "artist" or key == "album":
-                    data[key] = (
-                        data[key].title()
-                        if not self.config.case_sensitive
-                        else data[key]
-                    )
+                    data[key] = data[key].title() if not self.config.case_sensitive else data[key]
 
         return data
 
 
-def parse_track(
-    raw_string: str, config: ParseConfig | None = None
-) -> EchosyncTrack | None:
+def parse_track(raw_string: str, config: ParseConfig | None = None) -> EchosyncTrack | None:
     """Convenience function to parse a track with default settings"""
     parser = TrackParser(config)
     return parser.parse_filename(raw_string)
@@ -534,8 +491,6 @@ def parse_file(
         fingerprint = FingerprintGenerator.generate(file_path)
         if fingerprint:
             track.fingerprint = fingerprint
-            track.fingerprint_confidence = (
-                1.0  # Assume full confidence if generation succeeds
-            )
+            track.fingerprint_confidence = 1.0  # Assume full confidence if generation succeeds
 
     return track
