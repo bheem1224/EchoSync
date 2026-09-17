@@ -1,7 +1,8 @@
 <svelte:options customElement="echosync-system-overview" />
+
 <script>
-  import apiClient from '../../api/client';
-  import { onMount, onDestroy } from 'svelte';
+  import apiClient from "../../api/client";
+  import { onMount, onDestroy } from "svelte";
 
   /**
    * @type {string} apiBase - Included for future-proofing as a Web Component.
@@ -14,17 +15,17 @@
   let updateStatus = null;
   let loading = true;
   let updatingDb = false;
-  let updateMode = 'incremental';
+  let updateMode = "incremental";
   let error = null;
   let pollTimer = null;
 
   onMount(async () => {
     // Normalize apiBase
     apiBase = apiBase ? apiBase.replace(/\/$/, "") : "";
-    
+
     await loadAll();
     loading = false;
-    pollTimer = setInterval(loadAll, 10000); // Faster polling for dashboard
+    pollTimer = setInterval(loadAll, 300000); // 5-minute periodic refresh for dashboard
   });
 
   onDestroy(() => {
@@ -36,39 +37,47 @@
       loadSystemStatus(),
       loadJobsSummary(),
       loadLibraryStats(),
-      loadUpdateStatus()
+      loadUpdateStatus(),
     ]);
   }
 
   async function loadSystemStatus() {
     try {
-      const resp = await apiClient.get('/system/health');
+      const resp = await apiClient.get("/system/health");
       if (resp.status === 200) systemStatus = resp.data;
-    } catch (e) { /* ignore */ }
+    } catch (e) {
+      /* ignore */
+    }
   }
 
   async function loadJobsSummary() {
     try {
-      const resp = await apiClient.get('/system/jobs/summary');
+      const resp = await apiClient.get("/system/jobs/summary");
       if (resp.status === 200) jobsSummary = resp.data;
-    } catch (e) { /* ignore */ }
+    } catch (e) {
+      /* ignore */
+    }
   }
 
   async function loadLibraryStats() {
     try {
-      const resp = await apiClient.get('/core/library/');
+      const resp = await apiClient.get("/core/library/");
       if (resp.status === 200) libraryStats = resp.data;
-    } catch (e) { /* ignore */ }
+    } catch (e) {
+      /* ignore */
+    }
   }
 
   async function loadUpdateStatus() {
     try {
-      const resp = await apiClient.get('/core/library/update-status');
+      const resp = await apiClient.get("/core/library/update-status");
       if (resp.status === 200) {
         updateStatus = resp.data;
         updatingDb = updateStatus?.running || false;
       }
-    } catch (e) { /* ignore */ }
+    } catch (e) {
+      /* ignore */
+    }
   }
 
   async function triggerUpdate() {
@@ -76,10 +85,12 @@
     updatingDb = true;
     error = null;
     try {
-      const resp = await apiClient.post(`/core/library/update-database?mode=${updateMode}`);
+      const resp = await apiClient.post(
+        `/core/library/update-database?mode=${updateMode}`,
+      );
       const data = resp.data;
       if (resp.status !== 200) {
-        error = data.error || 'Failed to start update';
+        error = data.error || "Failed to start update";
         updatingDb = false;
       }
     } catch (e) {
@@ -93,15 +104,18 @@
       await apiClient.post(`/core/library/update-cancel`);
       updatingDb = false;
       await loadUpdateStatus();
-    } catch (e) { /* ignore */ }
+    } catch (e) {
+      /* ignore */
+    }
   }
 
   function formatNumber(n) {
-    if (n == null) return '0';
+    if (n == null) return "0";
     return n.toLocaleString();
   }
-  $: isHealthy = systemStatus?.status === 'online' || systemStatus?.status === 'healthy';
-  $: isDegraded = systemStatus?.status === 'degraded';
+  $: isHealthy =
+    systemStatus?.status === "online" || systemStatus?.status === "healthy";
+  $: isDegraded = systemStatus?.status === "degraded";
 </script>
 
 <section class="so-container">
@@ -117,13 +131,17 @@
         <h2 class="so-title">Overview</h2>
         <p class="so-subtitle">Real-time database and service health</p>
       </div>
-      <div 
-        class="so-status-badge" 
+      <div
+        class="so-status-badge"
         class:online={isHealthy}
         class:degraded={isDegraded}
       >
         <div class="status-dot"></div>
-        {isHealthy ? 'All Systems Nominal' : isDegraded ? 'System degraded' : 'System offline'}
+        {isHealthy
+          ? "All Systems Nominal"
+          : isDegraded
+            ? "System degraded"
+            : "System offline"}
       </div>
     </header>
 
@@ -131,30 +149,88 @@
     <div class="so-stats-grid">
       <div class="so-card stat-card">
         <div class="stat-icon tracks">
-          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></svg>
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            ><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"
+            ></circle><circle cx="18" cy="16" r="3"></circle></svg
+          >
         </div>
         <div class="stat-content">
-          <div class="stat-value">{formatNumber(libraryStats?.stats?.total_tracks ?? libraryStats?.total_tracks ?? 0)}</div>
+          <div class="stat-value">
+            {formatNumber(
+              libraryStats?.stats?.total_tracks ??
+                libraryStats?.total_tracks ??
+                0,
+            )}
+          </div>
           <div class="stat-label">Tracks</div>
         </div>
       </div>
 
       <div class="so-card stat-card">
         <div class="stat-icon albums">
-          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="20" rx="5" ry="5"></rect><path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"></path><line x1="17.5" y1="6.5" x2="17.51" y2="6.5"></line></svg>
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            ><rect x="2" y="2" width="20" height="20" rx="5" ry="5"></rect><path
+              d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"
+            ></path><line x1="17.5" y1="6.5" x2="17.51" y2="6.5"></line></svg
+          >
         </div>
         <div class="stat-content">
-          <div class="stat-value">{formatNumber(libraryStats?.stats?.total_albums ?? libraryStats?.total_albums ?? 0)}</div>
+          <div class="stat-value">
+            {formatNumber(
+              libraryStats?.stats?.total_albums ??
+                libraryStats?.total_albums ??
+                0,
+            )}
+          </div>
           <div class="stat-label">Albums</div>
         </div>
       </div>
 
       <div class="so-card stat-card">
         <div class="stat-icon artists">
-          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            ><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle
+              cx="12"
+              cy="7"
+              r="4"
+            ></circle></svg
+          >
         </div>
         <div class="stat-content">
-          <div class="stat-value">{formatNumber(libraryStats?.stats?.total_artists ?? libraryStats?.total_artists ?? 0)}</div>
+          <div class="stat-value">
+            {formatNumber(
+              libraryStats?.stats?.total_artists ??
+                libraryStats?.total_artists ??
+                0,
+            )}
+          </div>
           <div class="stat-label">Artists</div>
         </div>
       </div>
@@ -167,7 +243,7 @@
         <div class="card-header">
           <h3 class="card-title">Database Lifecycle</h3>
           {#if updatingDb}
-             <span class="pulse-label">Scanning...</span>
+            <span class="pulse-label">Scanning...</span>
           {/if}
         </div>
 
@@ -179,18 +255,26 @@
             <div class="progress-details">
               <div class="detail-item">
                 <span class="detail-label">Tracks</span>
-                <span class="detail-value">{updateStatus?.progress?.tracks ?? 0}</span>
+                <span class="detail-value"
+                  >{updateStatus?.progress?.tracks ?? 0}</span
+                >
               </div>
               <div class="detail-item">
                 <span class="detail-label">Albums</span>
-                <span class="detail-value">{updateStatus?.progress?.albums ?? 0}</span>
+                <span class="detail-value"
+                  >{updateStatus?.progress?.albums ?? 0}</span
+                >
               </div>
               <div class="detail-item">
                 <span class="detail-label">Artists</span>
-                <span class="detail-value">{updateStatus?.progress?.artists ?? 0}</span>
+                <span class="detail-value"
+                  >{updateStatus?.progress?.artists ?? 0}</span
+                >
               </div>
             </div>
-            <button class="btn-cancel" on:click={cancelUpdate}>Abort Sync</button>
+            <button class="btn-cancel" on:click={cancelUpdate}
+              >Abort Sync</button
+            >
           </div>
         {:else}
           <div class="update-controls">
@@ -211,7 +295,7 @@
 <style>
   .so-container {
     padding: 32px;
-    font-family: 'Inter', sans-serif;
+    font-family: "Inter", sans-serif;
     color: var(--text-primary);
   }
 
@@ -234,7 +318,11 @@
     border-radius: 50%;
     animation: spin 0.8s cubic-bezier(0.5, 0, 0.5, 1) infinite;
   }
-  @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
 
   /* ── Header ──────────────────────────────────────────────────────── */
   .so-header {
@@ -302,8 +390,15 @@
   }
 
   @keyframes pulse {
-    0%, 100% { opacity: 1; transform: scale(1); }
-    50% { opacity: 0.4; transform: scale(0.7); }
+    0%,
+    100% {
+      opacity: 1;
+      transform: scale(1);
+    }
+    50% {
+      opacity: 0.4;
+      transform: scale(0.7);
+    }
   }
 
   /* ── Stats Grid ──────────────────────────────────────────────────── */
@@ -352,10 +447,22 @@
     transform: scale(1.1) rotate(-5deg);
   }
 
-  .stat-icon.tracks { color: #8b5cf6; background: rgba(139, 92, 246, 0.1); }
-  .stat-icon.albums { color: #ec4899; background: rgba(236, 72, 153, 0.1); }
-  .stat-icon.artists { color: #3b82f6; background: rgba(59, 130, 246, 0.1); }
-  .stat-icon.jobs { color: #10b981; background: rgba(16, 185, 129, 0.1); }
+  .stat-icon.tracks {
+    color: #8b5cf6;
+    background: rgba(139, 92, 246, 0.1);
+  }
+  .stat-icon.albums {
+    color: #ec4899;
+    background: rgba(236, 72, 153, 0.1);
+  }
+  .stat-icon.artists {
+    color: #3b82f6;
+    background: rgba(59, 130, 246, 0.1);
+  }
+  .stat-icon.jobs {
+    color: #10b981;
+    background: rgba(16, 185, 129, 0.1);
+  }
 
   .stat-value {
     font-size: 24px;
@@ -382,7 +489,9 @@
   }
 
   @media (max-width: 1024px) {
-    .so-content-row { grid-template-columns: 1fr; }
+    .so-content-row {
+      grid-template-columns: 1fr;
+    }
   }
 
   .card-header {
@@ -412,8 +521,15 @@
   }
 
   @keyframes blink {
-    0%, 100% { opacity: 1; transform: scale(1); }
-    50% { opacity: 0.5; transform: scale(0.95); }
+    0%,
+    100% {
+      opacity: 1;
+      transform: scale(1);
+    }
+    50% {
+      opacity: 0.5;
+      transform: scale(0.95);
+    }
   }
 
   /* ── Database Ops ────────────────────────────────────────────────── */
@@ -425,7 +541,7 @@
 
   .mode-toggle {
     display: flex;
-    background: rgba(0,0,0,0.3);
+    background: rgba(0, 0, 0, 0.3);
     padding: 6px;
     border-radius: 14px;
     width: fit-content;
@@ -510,8 +626,12 @@
   }
 
   @keyframes shimmer {
-    0% { background-position: -200% 0; }
-    100% { background-position: 200% 0; }
+    0% {
+      background-position: -200% 0;
+    }
+    100% {
+      background-position: 200% 0;
+    }
   }
 
   .progress-details {
@@ -621,7 +741,6 @@
   }
 
   .error-banner::before {
-    content: '⚠️';
+    content: "⚠️";
   }
 </style>
-

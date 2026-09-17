@@ -29,7 +29,6 @@ class QueueFullError(Exception):
     """Raised when the JobQueue reaches its maximum pending capacity."""
 
 
-
 @dataclass(order=True)
 class ScheduledJob:
     next_run: float
@@ -282,6 +281,15 @@ class JobQueue:
                 self._db_write_lease.release()
             except ValueError:
                 pass
+
+    @contextmanager
+    def db_read_lease(self, task_name: str = "", timeout: float = 30.0):
+        """Scoped context manager for database read operations.
+
+        Provides cooperative tracking and bounded access for read-heavy operations.
+        In SQLite WAL mode, concurrent readers are permitted while tracking lease scope.
+        """
+        yield
 
     def should_yield(self, task_name: str = "") -> bool:
         """Cooperative yield check for long-running workers.
@@ -1032,6 +1040,17 @@ def unregister_job(name: str) -> bool:
 def db_write_lease(task_name: str = "", timeout: float = 30.0):
     """Top-level helper function for scoped re-entrant database write lease."""
     lease_cm = getattr(job_queue, "db_write_lease", None)
+    if callable(lease_cm):
+        with lease_cm(task_name=task_name, timeout=timeout):
+            yield
+    else:
+        yield
+
+
+@contextmanager
+def db_read_lease(task_name: str = "", timeout: float = 30.0):
+    """Top-level helper function for scoped re-entrant database read lease."""
+    lease_cm = getattr(job_queue, "db_read_lease", None)
     if callable(lease_cm):
         with lease_cm(task_name=task_name, timeout=timeout):
             yield

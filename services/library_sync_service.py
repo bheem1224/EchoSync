@@ -368,4 +368,19 @@ class LibrarySyncService:
             except Exception:
                 pass
 
+            # Invalidate cached library statistics and publish sync completion event
+            try:
+                from services.library_service import invalidate_stats_cache
+
+                invalidate_stats_cache()
+            except Exception as e:
+                logger.debug(f"Failed to invalidate library stats cache: {e}")
+
+            try:
+                from core.event_bus import event_bus
+
+                event_bus.publish({"event": "library_synced"})
+            except Exception as e:
+                logger.debug(f"Failed to publish library_synced event: {e}")
+
             logger.info("Library sync complete.")

@@ -163,7 +163,7 @@ class PlexClient(MediaServerProvider):
                         None,
                     )
                     account_id = (token_backed_account or accounts[0]).get("id")
-                    logger.info(f"Plex account resolved to: {account_id}")
+                    logger.debug(f"[system] - Plex account resolved to: {account_id}")
             except Exception as e:
                 logger.warning(f"Failed to auto-detect Plex account: {e}")
 
