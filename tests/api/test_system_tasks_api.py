@@ -98,3 +98,24 @@ def test_get_unified_system_health_api(client):
     assert model.status in ("healthy", "degraded", "error")
     assert "echosync.health_test" in model.plugin_states
     assert model.plugin_states["echosync.health_test"]["state"] == "ready"
+
+
+def test_stream_tasks_overview_api(client):
+    """Test GET /api/v1/system/tasks/stream returns SSE stream with unified payload."""
+    import json
+
+    with client.stream("GET", "/api/v1/system/tasks/stream?max_events=1") as response:
+        assert response.status_code == 200
+        assert "text/event-stream" in response.headers["content-type"]
+
+        # Read the first event chunk
+        for line in response.iter_lines():
+            if line.startswith("data:"):
+                payload_str = line[len("data:") :].strip()
+                payload = json.loads(payload_str)
+                assert "queue" in payload
+                assert "health" in payload
+                assert "system" in payload
+                assert "stats" in payload["queue"]
+                assert payload["system"]["status"] == "online"
+                break

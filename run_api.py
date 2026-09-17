@@ -39,9 +39,7 @@ lock_file = config_manager.config_dir / "booting.lock"
 safe_mode = False
 
 if lock_file.exists():
-    logger.critical(
-        "FATAL LOOP DETECTED: 'booting.lock' found from a previous crashed startup."
-    )
+    logger.critical("FATAL LOOP DETECTED: 'booting.lock' found from a previous crashed startup.")
     logger.critical("Booting into SAFE MODE. All community plugins will be disabled.")
     safe_mode = True
 else:
@@ -99,9 +97,7 @@ if __name__ == "__main__":
         try:
             lock_file.unlink()
             if safe_mode:
-                logger.info(
-                    "Safe Mode boot complete. Removed boot lock file — next boot will be normal."
-                )
+                logger.info("Safe Mode boot complete. Removed boot lock file — next boot will be normal.")
             else:
                 logger.info("Boot successful. Removed boot lock file.")
         except Exception as e:
@@ -113,4 +109,5 @@ if __name__ == "__main__":
     # triggers a mid-request server restart, causing SQLite disk I/O errors and port conflicts.
     import uvicorn
 
-    uvicorn.run(app, host="0.0.0.0", port=5000, reload=False)
+    # Disable access_log to prevent raw GET polling and SSE ping spam from flooding terminal stdout
+    uvicorn.run(app, host="0.0.0.0", port=5000, reload=False, access_log=False)

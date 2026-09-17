@@ -1,6 +1,6 @@
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from typing import Any
@@ -84,6 +84,125 @@ def get_active_processes():
     except Exception as e:
         logger.error(f"Error listing active processes: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to retrieve active processes: {e!s}")
+
+
+@router.get("/stream")
+async def stream_tasks_overview(request: Request, max_events: int | None = None):
+    """
+    GET /api/v1/system/tasks/stream
+    Unified SSE stream pushing live system health, task queue status, and system runtime info.
+    Emits updates when state changes, with keepalive heartbeats every 15 seconds.
+    Optional max_events parameter enables deterministic termination (e.g. for testing).
+    """
+
+    async def event_generator():
+        import asyncio
+        import json
+        import platform
+        import sys
+        import time
+
+        from core.state import system_state
+
+        last_state = None
+        last_heartbeat = asyncio.get_event_loop().time()
+        HEARTBEAT_INTERVAL = 15.0
+        events_emitted = 0
+
+        try:
+            while not await request.is_disconnected():
+                now = asyncio.get_event_loop().time()
+
+                # 1. Fetch queue state
+                raw_queue_state = job_queue.get_queue_state()
+                queue_data = {
+                    "stats": raw_queue_state.get("stats", {}),
+                    "running_jobs": raw_queue_state.get("running_jobs", []),
+                    "pending_jobs": raw_queue_state.get("pending_jobs", []),
+                    "blocked_jobs": raw_queue_state.get("blocked_jobs", []),
+                }
+
+                # 2. Fetch unified health
+                health_raw = get_system_health()
+                with plugin_state_manager._lock:
+                    plugin_states = {
+                        p_id: status.model_dump()
+                        for p_id, status in plugin_state_manager._states.items()
+                        if status.state != PluginLifecycleState.UNCONFIGURED
+                    }
+
+                raw_status = health_raw.get("status", "healthy").lower()
+                if raw_status == "error" or any(
+                    s.get("state") == PluginLifecycleState.ERROR for s in plugin_states.values()
+                ):
+                    overall_status = "error"
+                elif raw_status == "degraded" or any(
+                    s.get("state") == PluginLifecycleState.DEGRADED for s in plugin_states.values()
+                ):
+                    overall_status = "degraded"
+                else:
+                    overall_status = "healthy"
+
+                health_data = {
+                    "status": overall_status,
+                    "timestamp": datetime.now(UTC).isoformat(),
+                    "health_checks": health_raw,
+                    "plugin_states": plugin_states,
+                }
+
+                # 3. System runtime status
+                uptime_seconds = int(time.time() - system_state.start_time)
+                system_data = {
+                    "status": "online",
+                    "platform": sys.platform,
+                    "python_version": platform.python_version(),
+                    "uptime": uptime_seconds,
+                    "restart_pending": getattr(system_state, "restart_pending", False),
+                }
+
+                payload = {
+                    "queue": queue_data,
+                    "health": health_data,
+                    "system": system_data,
+                }
+
+                # State diff comparison without timestamp/uptime variance triggering false-positive sends
+                diffable_state = {
+                    "queue": queue_data,
+                    "health_status": overall_status,
+                    "health_checks": health_raw,
+                    "plugin_states": plugin_states,
+                    "restart_pending": system_data["restart_pending"],
+                }
+                state_str = json.dumps(diffable_state, sort_keys=True, default=str)
+
+                if state_str != last_state:
+                    full_payload_str = json.dumps(payload, sort_keys=True, default=str)
+                    yield f"data: {full_payload_str}\n\n"
+                    last_state = state_str
+                    last_heartbeat = now
+                    events_emitted += 1
+                    if max_events is not None and events_emitted >= max_events:
+                        break
+                elif now - last_heartbeat >= HEARTBEAT_INTERVAL:
+                    yield ": keepalive\n\n"
+                    last_heartbeat = now
+
+                await asyncio.sleep(2.0)
+        except GeneratorExit:
+            logger.debug("SSE tasks overview stream client disconnected cleanly.")
+        except Exception as e:
+            logger.debug(f"SSE tasks overview stream error: {e}")
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
 
 
 @router.get("/processes/stream")

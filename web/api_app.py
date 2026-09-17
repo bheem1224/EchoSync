@@ -97,8 +97,14 @@ async def lifespan(app: FastAPI):
 
     # On-demand verbose file logging check
     try:
+        import logging
+
         from core.settings import config_manager
         from core.tiered_logger import enable_verbose_file_logging
+
+        # Silence third-party stream and access noise during ASGI runtime
+        for noisy in ("uvicorn.access", "sse_starlette", "sse_starlette.sse"):
+            logging.getLogger(noisy).setLevel(logging.WARNING)
 
         if config_manager.get("system.verbose_logging_enabled", False):
             enable_verbose_file_logging()
