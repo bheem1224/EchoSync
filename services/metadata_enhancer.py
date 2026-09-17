@@ -1928,7 +1928,6 @@ class RetroactiveEnhancer:
         force_refresh: bool = False,
         require_signature: bool = False,
     ) -> None:
-        import gc
         from pathlib import Path
 
         import echosync_core
