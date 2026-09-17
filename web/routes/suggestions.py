@@ -242,7 +242,7 @@ def get_suggestion_accounts(request: Request):
 
 
 @router.get("/pending/{account_id}")
-def get_pending_suggestions(account_id: int):
+def get_pending_suggestions(account_id: int, request: Request):
     """
     Returns 10-20 highly scored tracks recommended for this account
     that have not been downloaded yet.
@@ -270,7 +270,6 @@ def get_pending_suggestions(account_id: int):
 
         config_db = get_config_database()
         working_db = get_working_database()
-        music_db = get_music_database()
 
         # Verify account exists
         accounts = config_db.get_accounts()
@@ -407,7 +406,6 @@ def get_suggestion_audit(request: Request):
         )
 
         working_db = get_working_database()
-        config_db = get_config_database()
 
         # Get DownloadQueue records as audit history
         audit_history = []

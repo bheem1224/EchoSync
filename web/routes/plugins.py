@@ -14,6 +14,7 @@ from core.nexus_framework.plugin_store import plugin_store
 from core.settings import config_manager
 from core.tiered_logger import get_logger
 from web.auth import require_auth
+from web.services.plugin_registry import get_plugin, get_plugins_for_capability
 
 logger = get_logger("plugins_route")
 router = APIRouter(prefix="/api/v1/system/plugins", tags=["Plugins"])
@@ -759,12 +760,10 @@ def toggle_plugin(plugin_id: str, data: TogglePluginRequest | None = None):
     from core.nexus_framework.plugin_loader import PluginLoader, PluginRegistry
     from core.settings import config_manager
     from core.state import system_state
-    from database.config_database import get_config_database
 
     enabled_val = data.enabled if data is not None else None
 
     # 1. Resolve DB records for this plugin
-    db = get_config_database()
     db_id = None
     db_name = None
     db_plugin_id = None
@@ -1082,7 +1081,7 @@ def set_active_download_client(data: ActivateClientRequest):
 
 
 @router.post("/{plugin_id}/rollback", dependencies=[Depends(require_auth)])
-def rollback_plugin(plugin_id: str):
+def rollback_plugin_by_path(plugin_id: str):
     """Roll back a plugin to its previous stable version and state."""
     try:
         from core.nexus_framework.plugin_store import plugin_store
@@ -1106,10 +1105,8 @@ def get_plugin_accounts(plugin_id: str):
     try:
         from core.nexus_framework.plugin_loader import PluginRegistry
         from database.config_database import get_config_database
-        from services.storage_service import get_storage_service
 
         config_db = get_config_database()
-        storage = get_storage_service()
 
         plugin_cls = PluginRegistry.get_plugin_class(plugin_id)
         short_name = (
@@ -1307,7 +1304,7 @@ def get_plugin_playlists(plugin_id: str):
             else:
                 try:
                     serialized.append({"id": getattr(p, "id", ""), "name": getattr(p, "name", str(p))})
-                except:
+                except Exception:
                     serialized.append({"name": str(p)})
 
         return {"plugin": plugin_id, "items": serialized, "total": len(serialized)}
@@ -1562,7 +1559,7 @@ def get_plugins_by_capability(capability: str):
         plugins = get_plugins_for_capability(capability)
         return {
             "capability": capability,
-            "plugins": [p.to_dict() for p in plugins],
+            "plugins": [p.to_dict() if hasattr(p, "to_dict") else p for p in plugins],
             "total": len(plugins),
         }
     except Exception as e:

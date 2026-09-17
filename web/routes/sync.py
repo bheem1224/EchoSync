@@ -109,7 +109,7 @@ def build_sync_status():
                         PlaylistSupport.READ_WRITE,
                     ):
                         active_sync_providers += 1
-                except:
+                except Exception:
                     pass
 
         return {

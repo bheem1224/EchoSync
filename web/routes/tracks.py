@@ -6,7 +6,7 @@ Responses include media_ids for UUID-based media telemetry lookups via /api/medi
 Physical file telemetry is NOT nested in track responses — use /api/media/<media_id>.
 """
 
-from typing import Generic, TypeVar, Union
+from typing import Any, Generic, TypeVar, Union
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
