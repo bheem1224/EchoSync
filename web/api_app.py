@@ -31,7 +31,6 @@ from web.routes.jobs import router as jobs_bp
 from web.routes.library import router as library_bp
 from web.routes.local_metadata import library_router as system_library_bp
 from web.routes.local_metadata import router as local_metadata_bp
-
 from web.routes.local_server import router as local_server_bp
 from web.routes.manager import router as manager_bp
 from web.routes.media import router as media_bp
@@ -52,8 +51,8 @@ from web.routes.stream import router as stream_bp
 from web.routes.suggestions import router as suggestions_bp
 from web.routes.sync import router as sync_bp
 from web.routes.system import router as system_bp
-from web.routes.telemetry import router as telemetry_bp
 from web.routes.system_tasks import router as system_tasks_bp
+from web.routes.telemetry import router as telemetry_bp
 from web.routes.tracks import legacy_router as legacy_tracks_bp
 from web.routes.tracks import library_router as library_tracks_bp
 from web.routes.tracks import router as tracks_bp
@@ -140,8 +139,7 @@ async def lifespan(app: FastAPI):
         logger.warning(f"Failed to load scheduled syncs: {e}")
 
     # Start backend services
-    dev_mode = os.getenv("DEV_MODE", "false").lower() in ("true", "1", "yes")
-    testing = getattr(app, "testing", False)
+    testing = getattr(app.state, "testing", False) or getattr(app, "testing", False)
 
     # Uvicorn runs workers, we don't have WERKZEUG_RUN_MAIN anymore.
     # In ASGI, lifespan runs once per worker. If we have multiple workers, they all run it.
@@ -237,7 +235,7 @@ def create_app(testing: bool = False) -> FastAPI:
         redoc_url="/redoc",
         lifespan=lifespan,
     )
-    app.testing = testing
+    app.state.testing = testing
 
     dev_mode = os.getenv("DEV_MODE", "false").lower() in ("true", "1", "yes")
 

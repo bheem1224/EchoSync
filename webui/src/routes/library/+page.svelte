@@ -331,7 +331,7 @@
     </div>
 
     <div class="artist-grid">
-      {#each visibleArtists as artist (artist.id)}
+      {#each visibleArtists as artist, index (artist.id ?? `${artist.name}_${index}`)}
         <div
           class="card artist-card"
           on:click={() => selectArtist(artist)}
@@ -398,7 +398,7 @@
       </div>
 
       <div class="space-y-8 mt-8">
-        {#each selectedArtist.albums as album (album.id)}
+        {#each selectedArtist.albums as album, aIndex (album.id ?? `${album.title}_${aIndex}`)}
           <div class="card album-card-container" id="album-{album.id}">
             <div class="album-header">
               <div class="album-cover-container">
@@ -419,7 +419,7 @@
             </div>
 
             <div class="tracks-list">
-              {#each album.tracks as track}
+              {#each album.tracks as track, tIndex (track.sync_id ?? track.id ?? `${track.title}_${tIndex}`)}
                 <div id="track-{track.id}">
                   <TrackRow
                     {track}

@@ -20,9 +20,7 @@ def list_jobs(request: Request):
     """Return raw job queue listing (plain array for Svelte)."""
     try:
         items = jq_list_jobs()
-        return JSONResponse(
-            content={"total": len(items), "items": items}, status_code=200
-        )
+        return JSONResponse(content={"total": len(items), "items": items}, status_code=200)
     except Exception as e:
         logger.error(f"Error listing jobs: {e}")
         payload = {"total": 0, "items": []}
@@ -50,12 +48,7 @@ def jobs_summary(request: Request):
         queued_jobs = sum(1 for j in items if j.get("enabled") and not j.get("running"))
         errors = [j["name"] for j in items if j.get("last_error")]
         # Compute last_run from last_finished or last_success
-        timestamps = [
-            t
-            for j in items
-            for t in (j.get("last_finished"), j.get("last_success"))
-            if t
-        ]
+        timestamps = [t for j in items for t in (j.get("last_finished"), j.get("last_success")) if t]
         last_run = max(timestamps) if timestamps else None
 
         from datetime import datetime
@@ -75,16 +68,8 @@ def jobs_summary(request: Request):
             elif not nr_float:
                 nr_float = datetime.now(UTC).timestamp() + interval
 
-            lr_iso = (
-                datetime.fromtimestamp(lr_float, tz=UTC).isoformat()
-                if lr_float
-                else None
-            )
-            nr_iso = (
-                datetime.fromtimestamp(nr_float, tz=UTC).isoformat()
-                if nr_float
-                else None
-            )
+            lr_iso = datetime.fromtimestamp(lr_float, tz=UTC).isoformat() if lr_float else None
+            nr_iso = datetime.fromtimestamp(nr_float, tz=UTC).isoformat() if nr_float else None
 
             upcoming_jobs.append(
                 {
@@ -145,9 +130,7 @@ async def run_job(request: Request, payload: JobRunRequest = None):
         job = next((j for j in items if j.get("name") == job_name), None)
 
         if not job:
-            raise HTTPException(
-                status_code=404, detail={"error": f"job '{job_name}' not found"}
-            )
+            raise HTTPException(status_code=404, detail={"error": f"job '{job_name}' not found"})
 
         # Check if job is already running
         if job.get("running"):
@@ -190,9 +173,7 @@ def get_job(job_name: str):
         items = jq_list_jobs()
         job = next((j for j in items if j.get("name") == job_name), None)
         if not job:
-            raise HTTPException(
-                status_code=404, detail={"error": f"job '{job_name}' not found"}
-            )
+            raise HTTPException(status_code=404, detail={"error": f"job '{job_name}' not found"})
         return job
     except Exception as e:
         logger.error(f"Error fetching job {job_name}: {e}")
@@ -216,9 +197,7 @@ async def update_job_interval_route(job_name: str, payload: JobIntervalRequest):
         success = update_job_interval(job_name, float(new_interval))
 
         if not success:
-            raise HTTPException(
-                status_code=404, detail={"error": "job not found or update failed"}
-            )
+            raise HTTPException(status_code=404, detail={"error": "job not found or update failed"})
 
         return {"accepted": True, "job": job_name, "interval": new_interval}
     except Exception as e:

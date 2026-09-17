@@ -1098,7 +1098,7 @@
                 </div>
 
                 <div class="section-items space-y-1">
-                  {#each expandedProviders.has(group.key) ? group.items : group.items.slice(0, 3) as item (item.id || item.uri || item.title)}
+                  {#each expandedProviders.has(group.key) ? group.items : group.items.slice(0, 3) as item, itemIndex (item.id ?? item.uri ?? `${group.key}_${item.title || item.name || "item"}_${itemIndex}`)}
                     <div class="result-card">
                       <div class="result-info">
                         <div class="result-main">
@@ -1634,7 +1634,7 @@
                                 : "matches"}</span
                             >
                           </div>
-                          {#each expandedProviders.has(group.key) ? group.items : group.items.slice(0, 3) as ext (ext.id || ext.uri || ext.title)}
+                          {#each expandedProviders.has(group.key) ? group.items : group.items.slice(0, 3) as ext, extIndex (ext.id ?? ext.uri ?? `${group.key}_${ext.title || ext.name || "ext"}_${extIndex}`)}
                             <div
                               class="w-full text-left px-5 py-3 text-sm text-slate-200 hover:bg-white/10 transition-colors border-none bg-transparent flex items-center justify-between group"
                               class:active-item={flattenedResults[
@@ -2012,7 +2012,7 @@
                       {group.items.length === 1 ? "match" : "matches"}</span
                     >
                   </div>
-                  {#each expandedProviders.has(group.key) ? group.items : group.items.slice(0, 3) as ext (ext.id || ext.uri || ext.title)}
+                  {#each expandedProviders.has(group.key) ? group.items : group.items.slice(0, 3) as ext, extIndex (ext.id ?? ext.uri ?? `${group.key}_${ext.title || ext.name || "ext"}_${extIndex}`)}
                     <div
                       class="w-full text-left px-4 py-2 text-sm text-slate-200 hover:bg-white/10 transition-colors border-none bg-transparent flex items-center justify-between"
                     >

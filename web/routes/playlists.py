@@ -88,17 +88,66 @@ double_v1_router = APIRouter(prefix="/api/v1/v1/core/playlists", tags=["Playlist
 # awarded.  Any unrecognised token (e.g. 'Part 2', 'Remix', 'Live') causes the
 # substring boost to be withheld, preventing false-positive Swap Cases.
 _OST_SAFE_WORDS = {
-    "电视剧", "网剧", "影视剧", "影視劇", "电影",
-    "片头曲", "片尾曲", "主题曲", "插曲", "推广曲",
-    "原声带", "原声", "配乐",
-    "ost", "theme", "opening", "ending", "soundtrack", "original",
-    "remastered", "remaster", "acoustic", "live",
-    "radio", "single", "extended", "club",
-    "version", "edit", "mix", "remix", "bootleg",
-    "official", "song", "shanty", "sea", "uefa", "euro", "anthem", "from", "la",
-    "deluxe", "pt", "part", "vol", "volume",
-    "viii", "vii", "iii", "iv", "vi", "ix", "ii", "i", "x", "v",
-    "gabry", "ponte", "ice", "pop",
+    "电视剧",
+    "网剧",
+    "影视剧",
+    "影視劇",
+    "电影",
+    "片头曲",
+    "片尾曲",
+    "主题曲",
+    "插曲",
+    "推广曲",
+    "原声带",
+    "原声",
+    "配乐",
+    "ost",
+    "theme",
+    "opening",
+    "ending",
+    "soundtrack",
+    "original",
+    "remastered",
+    "remaster",
+    "acoustic",
+    "live",
+    "radio",
+    "single",
+    "extended",
+    "club",
+    "version",
+    "edit",
+    "mix",
+    "remix",
+    "bootleg",
+    "official",
+    "song",
+    "shanty",
+    "sea",
+    "uefa",
+    "euro",
+    "anthem",
+    "from",
+    "la",
+    "deluxe",
+    "pt",
+    "part",
+    "vol",
+    "volume",
+    "viii",
+    "vii",
+    "iii",
+    "iv",
+    "vi",
+    "ix",
+    "ii",
+    "i",
+    "x",
+    "v",
+    "gabry",
+    "ponte",
+    "ice",
+    "pop",
 }
 
 
@@ -151,11 +200,7 @@ def _get_provider_for_account(provider_id, acc_id=None):
             # Try to match a registered plugin name ending with the string
             found = False
             for p_id, p_cls in PluginRegistry._plugins.items():
-                if (
-                    hasattr(p_cls, "name")
-                    and p_cls.name
-                    and p_cls.name.lower().endswith(provider_id.lower())
-                ):
+                if hasattr(p_cls, "name") and p_cls.name and p_cls.name.lower().endswith(provider_id.lower()):
                     provider_id = p_id
                     found = True
                     break
@@ -284,13 +329,9 @@ def _cmp_titles(
     # to guard against unrelated short-title collisions.
     if ratio < 0.90 and (context_score >= 0.80 or drama_ctx):
         shorter, longer = (a_n, b_n) if len(a_n) <= len(b_n) else (b_n, a_n)
-        if len(shorter) >= 3 and re.search(
-            r"(?<![\w])" + re.escape(shorter) + r"(?![\w])", longer
-        ):
+        if len(shorter) >= 3 and re.search(r"(?<![\w])" + re.escape(shorter) + r"(?![\w])", longer):
             # Extract delta: strip the shared prefix and collapse leftover whitespace.
-            delta_raw = re.sub(
-                r"(?<![\w])" + re.escape(shorter) + r"(?![\w])", "", longer, count=1
-            )
+            delta_raw = re.sub(r"(?<![\w])" + re.escape(shorter) + r"(?![\w])", "", longer, count=1)
             # Strip ALL punctuation and separators; keep only word characters.
             delta_words = re.sub(r"[^\w]", "", delta_raw, flags=re.UNICODE)
             if not delta_words:
@@ -369,24 +410,18 @@ def _cmp_artists(a: str, b: str) -> float:
     ratio = SequenceMatcher(None, a_n, b_n).ratio()
     if a_n in b_n or b_n in a_n:
         shorter, longer = (a_n, b_n) if len(a_n) < len(b_n) else (b_n, a_n)
-        delta = re.sub(
-            r"(?<![\w])" + re.escape(shorter) + r"(?![\w])", "", longer
-        ).strip()
+        delta = re.sub(r"(?<![\w])" + re.escape(shorter) + r"(?![\w])", "", longer).strip()
         delta_lower = delta.lower()
         delta_tokens = set(re.findall(r"\b\w+\b", delta_lower))
 
-        has_tribute = any(
-            t in delta_lower or t in delta_tokens for t in _TRIBUTE_DELTA_TOKENS
-        )
+        has_tribute = any(t in delta_lower or t in delta_tokens for t in _TRIBUTE_DELTA_TOKENS)
         if not has_tribute:
             return max(ratio, 0.95)
 
     return ratio
 
 
-def _fetch_tier1_candidates(
-    conn, search_title, base_search_title, track_artist, track_duration
-):
+def _fetch_tier1_candidates(conn, search_title, base_search_title, track_artist, track_duration):
     """Execute the Tier 1 artist+title candidate query with search-expansion hook support.
 
     Fires the ``search_expansion`` hook to collect plugin-provided alternative
@@ -466,11 +501,7 @@ def _fetch_tier1_candidates(
     from core.matching_engine.text_utils import split_artist_collaborators
 
     primary_art, collabs = split_artist_collaborators(track_artist or "")
-    all_artists = (
-        ([primary_art] + collabs)
-        if primary_art
-        else ([track_artist] if track_artist else [])
-    )
+    all_artists = ([primary_art] + collabs) if primary_art else ([track_artist] if track_artist else [])
 
     artist_order_parts = [
         "(LOWER(a.name) = LOWER(:artist_exact) OR (a.sort_name IS NOT NULL AND LOWER(a.sort_name) = LOWER(:artist_exact)) OR (ta_a.name IS NOT NULL AND LOWER(ta_a.name) = LOWER(:artist_exact)) OR (alb_a.name IS NOT NULL AND LOWER(alb_a.name) = LOWER(:artist_exact)))"
@@ -586,9 +617,7 @@ def _fetch_tier2_candidates(conn, search_title, track_duration, duration_window_
     return conn.execute(sql, params).fetchall()
 
 
-def _analyze_playlists_internal(
-    source, target_source, playlists, quality_profile="Auto"
-):
+def _analyze_playlists_internal(source, target_source, playlists, quality_profile="Auto"):
     """Run the canonical playlist matching flow used by both manual and scheduled syncs."""
     from sqlalchemy import text
 
@@ -596,18 +625,12 @@ def _analyze_playlists_internal(
     from core.nexus_framework.plugin_SDK import PlaylistSupport
     from database.music_database import MusicDatabase
 
-    target_source_canonical = (
-        _normalize_provider_short_name(target_source)
-        if target_source
-        else target_source
-    )
+    target_source_canonical = _normalize_provider_short_name(target_source) if target_source else target_source
 
     source_provider, default_acc = _get_provider_for_account(source, None)
     if source_provider is None:
         source_name = str(source).title()
-        raise RuntimeError(
-            f"No {source_name} accounts configured. Please add an account in Settings."
-        )
+        raise RuntimeError(f"No {source_name} accounts configured. Please add an account in Settings.")
 
     caps = getattr(source_provider, "capabilities", None)
     if not caps or caps.supports_playlists not in (
@@ -638,16 +661,12 @@ def _analyze_playlists_internal(
             continue
 
         try:
-            logger.info(
-                f"Fetching tracks for playlist: {playlist_name} (id: {playlist_id})"
-            )
+            logger.info(f"Fetching tracks for playlist: {playlist_name} (id: {playlist_id})")
             import inspect
 
             sig = inspect.signature(source_provider.get_playlist_tracks)
             if "force_refresh" in sig.parameters:
-                source_tracks = source_provider.get_playlist_tracks(
-                    playlist_id, force_refresh=True
-                )
+                source_tracks = source_provider.get_playlist_tracks(playlist_id, force_refresh=True)
             else:
                 source_tracks = source_provider.get_playlist_tracks(playlist_id)
 
@@ -678,9 +697,7 @@ def _analyze_playlists_internal(
                 # Base title: strip parentheticals, brackets, and post-hyphen suffixes so that
                 # e.g. "Wellerman - Sea Shanty" also queries for "Wellerman" and finds the DB
                 # row stored as "Wellerman (Sea Shanty)".
-                base_search_title = re.sub(
-                    r"\s*[\(\[].*?[\)\]]", "", search_title
-                ).strip()
+                base_search_title = re.sub(r"\s*[\(\[].*?[\)\]]", "", search_title).strip()
                 base_search_title = re.sub(r"\s+-.*$", "", base_search_title).strip()
                 if not base_search_title:
                     base_search_title = search_title
@@ -744,20 +761,14 @@ def _analyze_playlists_internal(
                                 track_duration,
                                 sql_duration_tolerance_ms,
                             )
-                            candidates = [
-                                c
-                                for c in tier2_raw_candidates
-                                if c[0] not in evaluated_candidate_ids
-                            ]
+                            candidates = [c for c in tier2_raw_candidates if c[0] not in evaluated_candidate_ids]
                             tier2_mode = True
 
                     external_ids_map = {}
                     if target_source_canonical and candidates:
                         candidate_ids = [row[0] for row in candidates]
                         try:
-                            external_ids_map = db.get_external_identifier_map(
-                                target_source_canonical, candidate_ids
-                            )
+                            external_ids_map = db.get_external_identifier_map(target_source_canonical, candidate_ids)
                         except Exception as ext_err:
                             logger.debug(
                                 f"External identifier lookup failed for target '{target_source_canonical}': {ext_err}"
@@ -781,9 +792,7 @@ def _analyze_playlists_internal(
                                 for _ar in _ac.execute(
                                     text(
                                         "SELECT track_id, name FROM track_aliases"
-                                        " WHERE track_id IN ("
-                                        + ",".join(str(c) for c in _cids)
-                                        + ")"
+                                        " WHERE track_id IN (" + ",".join(str(c) for c in _cids) + ")"
                                     )
                                 ).fetchall():
                                     _alias_map.setdefault(_ar[0], []).append(_ar[1])
@@ -796,31 +805,23 @@ def _analyze_playlists_internal(
                     _artist_alias_map: dict = {}
                     if candidates:
                         try:
-                            _artist_ids = list(
-                                {int(r[5]) for r in candidates if r[5] is not None}
-                            )
+                            _artist_ids = list({int(r[5]) for r in candidates if r[5] is not None})
                             if _artist_ids:
                                 with db.engine.connect() as _aac:
                                     for _aar in _aac.execute(
                                         text(
                                             "SELECT artist_id, name FROM artist_aliases"
-                                            " WHERE artist_id IN ("
-                                            + ",".join(str(a) for a in _artist_ids)
-                                            + ")"
+                                            " WHERE artist_id IN (" + ",".join(str(a) for a in _artist_ids) + ")"
                                         )
                                     ).fetchall():
-                                        _artist_alias_map.setdefault(
-                                            _aar[0], []
-                                        ).append(_aar[1])
+                                        _artist_alias_map.setdefault(_aar[0], []).append(_aar[1])
                         except Exception:
                             _artist_alias_map = {}
 
                     for candidate_row in candidates:
                         evaluated_candidate_ids.add(candidate_row[0])
                         candidate_target_id = (
-                            external_ids_map.get(candidate_row[0])
-                            if target_source_canonical
-                            else None
+                            external_ids_map.get(candidate_row[0]) if target_source_canonical else None
                         )
                         raw_title_candidate = candidate_row[1]
                         edition_candidate = candidate_row[3]
@@ -839,13 +840,8 @@ def _analyze_playlists_internal(
 
                         if edition_candidate is None:
                             version_pattern = r"\b(Remix|Mix|Live|Demo|Remaster|Deluxe|Edit|Version|Acoustic|Instrumental|Bonus|Extended|Original)\b"
-                            if (
-                                sort_title_candidate
-                                and sort_title_candidate != raw_title_candidate
-                            ):
-                                version_match = re.search(
-                                    version_pattern, sort_title_candidate, re.IGNORECASE
-                                )
+                            if sort_title_candidate and sort_title_candidate != raw_title_candidate:
+                                version_match = re.search(version_pattern, sort_title_candidate, re.IGNORECASE)
                                 if version_match:
                                     edition_candidate = version_match.group(0)
                             if edition_candidate is None and media_file_path:
@@ -863,9 +859,7 @@ def _analyze_playlists_internal(
                             raw_title=raw_title_candidate,
                             artist_name=candidate_row[4],
                             album_title=candidate_row[7] or "",
-                            duration=parse_duration_to_ms(candidate_row[2])
-                            if candidate_row[2]
-                            else 0,
+                            duration=parse_duration_to_ms(candidate_row[2]) if candidate_row[2] else 0,
                             edition=edition_candidate,
                         )
                         # Populate candidate plugin_context so scoring_modifier can
@@ -895,9 +889,7 @@ def _analyze_playlists_internal(
                             if source_track.artist_name and candidate_row[4]
                             else 0.0
                         )
-                        _t1_drama_ctx = bool(
-                            (candidate_track.plugin_context or {}).get("remote_drama")
-                        )
+                        _t1_drama_ctx = bool((candidate_track.plugin_context or {}).get("remote_drama"))
                         _best_cand_score = _cmp_titles(
                             source_track.title,
                             _best_cand_title,
@@ -917,10 +909,7 @@ def _analyze_playlists_internal(
                             if _alias_score > _best_cand_score:
                                 _best_cand_score = _alias_score
                                 _best_cand_title = _alias_clean
-                        if (
-                            _best_cand_title
-                            and _best_cand_title != candidate_track.title
-                        ):
+                        if _best_cand_title and _best_cand_title != candidate_track.title:
                             candidate_track.title = _best_cand_title
 
                         # ── Promote best artist alias (Tier 1) ────────────────────────────
@@ -935,17 +924,11 @@ def _analyze_playlists_internal(
                         _best_artist_score = 0.0
                         if source_track.artist_name:
                             _best_artist_name = candidate_track.artist_name or ""
-                            _best_artist_score = _cmp_artists(
-                                source_track.artist_name, _best_artist_name
-                            )
-                            for _artist_alias in _artist_alias_map.get(
-                                candidate_row[5], []
-                            ):
+                            _best_artist_score = _cmp_artists(source_track.artist_name, _best_artist_name)
+                            for _artist_alias in _artist_alias_map.get(candidate_row[5], []):
                                 if not _artist_alias:
                                     continue
-                                _a_score = _cmp_artists(
-                                    source_track.artist_name, _artist_alias
-                                )
+                                _a_score = _cmp_artists(source_track.artist_name, _artist_alias)
                                 if _a_score > _best_artist_score:
                                     _best_artist_score = _a_score
                                     _best_artist_name = _artist_alias
@@ -975,9 +958,7 @@ def _analyze_playlists_internal(
 
                                 def _ss_norm(s: str) -> str:
                                     """Strip ALL whitespace and non-word chars, lowercase."""
-                                    return re.sub(
-                                        r"[\s\W_]+", "", s, flags=re.UNICODE
-                                    ).lower()
+                                    return re.sub(r"[\s\W_]+", "", s, flags=re.UNICODE).lower()
 
                                 _ss_src = _ss_norm(source_track.artist_name)
                                 _ss_cand = _ss_norm(_best_artist_name)
@@ -1005,22 +986,12 @@ def _analyze_playlists_internal(
                                     # Check 3: risky direction — apply Double-Lock.
                                     def _dl_norm(s: str) -> str:
                                         """Lowercase + strip punctuation; keep spaces for containment."""
-                                        return (
-                                            re.sub(r"[^\w\s]", "", s, flags=re.UNICODE)
-                                            .strip()
-                                            .lower()
-                                        )
+                                        return re.sub(r"[^\w\s]", "", s, flags=re.UNICODE).strip().lower()
 
                                     _dl_src = _dl_norm(source_track.artist_name)
-                                    _dl_primary = _dl_norm(
-                                        candidate_track.artist_name or ""
-                                    )
+                                    _dl_primary = _dl_norm(candidate_track.artist_name or "")
                                     _dl_aliases = [
-                                        _dl_norm(a)
-                                        for a in _artist_alias_map.get(
-                                            candidate_row[5], []
-                                        )
-                                        if a
+                                        _dl_norm(a) for a in _artist_alias_map.get(candidate_row[5], []) if a
                                     ]
                                     if (
                                         _dl_primary
@@ -1056,16 +1027,10 @@ def _analyze_playlists_internal(
                                     )
 
                                     def _py_strip(s: str) -> str:
-                                        return (
-                                            re.sub(r"[^\w\s]", "", s, flags=re.UNICODE)
-                                            .strip()
-                                            .lower()
-                                        )
+                                        return re.sub(r"[^\w\s]", "", s, flags=re.UNICODE).strip().lower()
 
                                     _xlate = CJKTransliterator()
-                                    _src_py = _py_strip(
-                                        _xlate.to_pinyin(source_track.artist_name)
-                                    )
+                                    _src_py = _py_strip(_xlate.to_pinyin(source_track.artist_name))
 
                                     _py_best_score = 0
                                     _py_best_name = _best_artist_name or ""
@@ -1078,9 +1043,7 @@ def _analyze_playlists_internal(
                                             continue
                                         _cand_py = _py_strip(_xlate.to_pinyin(_py_cand))
                                         if _src_py and _cand_py:
-                                            _ts = _rfuzz.token_sort_ratio(
-                                                _src_py, _cand_py
-                                            )
+                                            _ts = _rfuzz.token_sort_ratio(_src_py, _cand_py)
                                             if _ts > _py_best_score:
                                                 _py_best_score = _ts
                                                 _py_best_name = _py_cand
@@ -1104,15 +1067,10 @@ def _analyze_playlists_internal(
                                         "CJK language pack not installed; skipping Pinyin fallback for artist name."
                                     )
                                 except Exception as _py_exc:
-                                    logger.debug(
-                                        "Pinyin artist fallback error: %s", _py_exc
-                                    )
+                                    logger.debug("Pinyin artist fallback error: %s", _py_exc)
                             # ── End Pinyin fallback ────────────────────────────────────────────
 
-                            if (
-                                _best_artist_name
-                                and _best_artist_name != candidate_track.artist_name
-                            ):
+                            if _best_artist_name and _best_artist_name != candidate_track.artist_name:
                                 candidate_track.artist_name = _best_artist_name
 
                         if source_track.edition or candidate_track.edition:
@@ -1147,17 +1105,11 @@ def _analyze_playlists_internal(
                             (candidate_track.title or ""),
                             flags=re.UNICODE,
                         ).lower()
-                        _title_exact = bool(
-                            _ss_src_title
-                            and _ss_cand_title
-                            and _ss_src_title == _ss_cand_title
-                        )
+                        _title_exact = bool(_ss_src_title and _ss_cand_title and _ss_src_title == _ss_cand_title)
 
                         _orig_dur_tol = None
                         if _best_artist_score >= 0.95 and _title_exact:
-                            _orig_dur_tol = (
-                                matching_engine.weights.duration_tolerance_ms
-                            )
+                            _orig_dur_tol = matching_engine.weights.duration_tolerance_ms
                             matching_engine.weights.duration_tolerance_ms = 90000
                             logger.debug(
                                 "Duration expansion (Tier A): artist_score=%.2f + exact title '%s' — "
@@ -1167,9 +1119,7 @@ def _analyze_playlists_internal(
                                 _orig_dur_tol,
                             )
                         elif _best_artist_score >= 0.95:
-                            _orig_dur_tol = (
-                                matching_engine.weights.duration_tolerance_ms
-                            )
+                            _orig_dur_tol = matching_engine.weights.duration_tolerance_ms
                             matching_engine.weights.duration_tolerance_ms = 15000
                             logger.debug(
                                 "Duration expansion (Tier B): artist_score=%.2f for '%s' — "
@@ -1196,9 +1146,7 @@ def _analyze_playlists_internal(
                             )
 
                         if _orig_dur_tol is not None:
-                            matching_engine.weights.duration_tolerance_ms = (
-                                _orig_dur_tol
-                            )
+                            matching_engine.weights.duration_tolerance_ms = _orig_dur_tol
 
                         logger.debug(
                             f"Match score for '{track_title}' vs '{candidate_track.title}': {result.confidence_score}"
@@ -1257,16 +1205,10 @@ def _analyze_playlists_internal(
                         not tier2_mode
                         and len(candidates) > 0
                         and best_score == 0.0
-                        and all(
-                            not d["result"]["passed_version"]
-                            for d in candidate_diagnostics
-                        )
+                        and all(not d["result"]["passed_version"] for d in candidate_diagnostics)
                     )
                     tier2_needed_due_to_failure = (
-                        not tier2_mode
-                        and len(candidates) > 0
-                        and best_score < 70
-                        and track_duration
+                        not tier2_mode and len(candidates) > 0 and best_score < 70 and track_duration
                     )
 
                     if had_cover_rejection:
@@ -1298,9 +1240,7 @@ def _analyze_playlists_internal(
                             # Sanitize source title for Tier 2 rescoring (strip remix/version/descriptor noise)
                             from core.matching_engine.text_utils import normalize_title
 
-                            clean_t2_source_title = normalize_title(
-                                source_track.raw_title or source_track.title or ""
-                            )
+                            clean_t2_source_title = normalize_title(source_track.raw_title or source_track.title or "")
                             if clean_t2_source_title:
                                 source_track.title = clean_t2_source_title
                             t2_search_title = clean_t2_source_title or search_title
@@ -1321,11 +1261,7 @@ def _analyze_playlists_internal(
                                     track_duration,
                                     sql_duration_tolerance_ms,
                                 )
-                                candidates = [
-                                    c
-                                    for c in tier2_raw_candidates
-                                    if c[0] not in evaluated_candidate_ids
-                                ]
+                                candidates = [c for c in tier2_raw_candidates if c[0] not in evaluated_candidate_ids]
 
                             if candidates:
                                 logger.debug(
@@ -1337,15 +1273,9 @@ def _analyze_playlists_internal(
                                 if target_source:
                                     candidate_ids = [row[0] for row in candidates]
                                     try:
-                                        external_ids_map = (
-                                            db.get_external_identifier_map(
-                                                target_source, candidate_ids
-                                            )
-                                        )
+                                        external_ids_map = db.get_external_identifier_map(target_source, candidate_ids)
                                     except Exception as ext_err:
-                                        logger.debug(
-                                            f"External identifier lookup failed for Tier 2: {ext_err}"
-                                        )
+                                        logger.debug(f"External identifier lookup failed for Tier 2: {ext_err}")
 
                                 # Batch-fetch aliases for all Tier 2 escalation candidates.
                                 _t2_alias_map: dict = {}
@@ -1355,51 +1285,35 @@ def _analyze_playlists_internal(
                                         for _t2_ar in _t2_ac.execute(
                                             text(
                                                 "SELECT track_id, name FROM track_aliases"
-                                                " WHERE track_id IN ("
-                                                + ",".join(str(c) for c in _t2_cids)
-                                                + ")"
+                                                " WHERE track_id IN (" + ",".join(str(c) for c in _t2_cids) + ")"
                                             )
                                         ).fetchall():
-                                            _t2_alias_map.setdefault(
-                                                _t2_ar[0], []
-                                            ).append(_t2_ar[1])
+                                            _t2_alias_map.setdefault(_t2_ar[0], []).append(_t2_ar[1])
                                 except Exception:
                                     _t2_alias_map = {}
 
                                 # Batch-fetch artist aliases for Tier 2 escalation candidates.
                                 _t2_artist_alias_map: dict = {}
                                 try:
-                                    _t2_artist_ids = list(
-                                        {
-                                            int(r[5])
-                                            for r in candidates
-                                            if r[5] is not None
-                                        }
-                                    )
+                                    _t2_artist_ids = list({int(r[5]) for r in candidates if r[5] is not None})
                                     if _t2_artist_ids:
                                         with db.engine.connect() as _t2_aac:
                                             for _t2_aar in _t2_aac.execute(
                                                 text(
                                                     "SELECT artist_id, name FROM artist_aliases"
                                                     " WHERE artist_id IN ("
-                                                    + ",".join(
-                                                        str(a) for a in _t2_artist_ids
-                                                    )
+                                                    + ",".join(str(a) for a in _t2_artist_ids)
                                                     + ")"
                                                 )
                                             ).fetchall():
-                                                _t2_artist_alias_map.setdefault(
-                                                    _t2_aar[0], []
-                                                ).append(_t2_aar[1])
+                                                _t2_artist_alias_map.setdefault(_t2_aar[0], []).append(_t2_aar[1])
                                 except Exception:
                                     _t2_artist_alias_map = {}
 
                                 for candidate_row in candidates:
                                     evaluated_candidate_ids.add(candidate_row[0])
                                     candidate_target_id = (
-                                        external_ids_map.get(candidate_row[0])
-                                        if target_source
-                                        else None
+                                        external_ids_map.get(candidate_row[0]) if target_source else None
                                     )
                                     raw_title_candidate = candidate_row[1]
                                     edition_candidate = candidate_row[3]
@@ -1427,9 +1341,7 @@ def _analyze_playlists_internal(
                                         raw_title=raw_title_candidate,
                                         artist_name=candidate_row[4],
                                         album_title=candidate_row[7] or "",
-                                        duration=candidate_row[2]
-                                        if candidate_row[2]
-                                        else 0,
+                                        duration=candidate_row[2] if candidate_row[2] else 0,
                                         edition=edition_candidate,
                                     )
                                     # Populate candidate plugin_context for the Tier 2
@@ -1448,31 +1360,21 @@ def _analyze_playlists_internal(
                                     _t2_best_title = _t2_clean or candidate_track.title
                                     # Context guard for Tier 2 Semantic Substring Failsafe.
                                     _t2_artist_ctx = (
-                                        _cmp_artists(
-                                            source_track.artist_name, candidate_row[4]
-                                        )
+                                        _cmp_artists(source_track.artist_name, candidate_row[4])
                                         if source_track.artist_name and candidate_row[4]
                                         else 0.0
                                     )
-                                    _t2_drama_ctx = bool(
-                                        (candidate_track.plugin_context or {}).get(
-                                            "remote_drama"
-                                        )
-                                    )
+                                    _t2_drama_ctx = bool((candidate_track.plugin_context or {}).get("remote_drama"))
                                     _t2_best_score = _cmp_titles(
                                         source_track.title,
                                         _t2_best_title,
                                         context_score=_t2_artist_ctx,
                                         drama_ctx=_t2_drama_ctx,
                                     )
-                                    for _t2_alias in _t2_alias_map.get(
-                                        candidate_row[0], []
-                                    ):
+                                    for _t2_alias in _t2_alias_map.get(candidate_row[0], []):
                                         if not _t2_alias:
                                             continue
-                                        _t2_alias_clean = _normalize_candidate_title(
-                                            _t2_alias
-                                        )
+                                        _t2_alias_clean = _normalize_candidate_title(_t2_alias)
                                         _t2_alias_score = _cmp_titles(
                                             source_track.title,
                                             _t2_alias_clean,
@@ -1482,26 +1384,15 @@ def _analyze_playlists_internal(
                                         if _t2_alias_score > _t2_best_score:
                                             _t2_best_score = _t2_alias_score
                                             _t2_best_title = _t2_alias_clean
-                                    if (
-                                        _t2_best_title
-                                        and _t2_best_title != candidate_track.title
-                                    ):
+                                    if _t2_best_title and _t2_best_title != candidate_track.title:
                                         candidate_track.title = _t2_best_title
 
                                     # ── Promote best artist alias (Tier 2) ────────────────────────
                                     _t2_best_artist_score = 0.0
                                     if source_track.artist_name:
-                                        _t2_best_artist = (
-                                            candidate_track.artist_name or ""
-                                        )
-                                        _t2_best_artist_score = _cmp_artists(
-                                            source_track.artist_name, _t2_best_artist
-                                        )
-                                        for (
-                                            _t2_artist_alias
-                                        ) in _t2_artist_alias_map.get(
-                                            candidate_row[5], []
-                                        ):
+                                        _t2_best_artist = candidate_track.artist_name or ""
+                                        _t2_best_artist_score = _cmp_artists(source_track.artist_name, _t2_best_artist)
+                                        for _t2_artist_alias in _t2_artist_alias_map.get(candidate_row[5], []):
                                             if not _t2_artist_alias:
                                                 continue
                                             _t2_a_score = _cmp_artists(
@@ -1511,44 +1402,26 @@ def _analyze_playlists_internal(
                                             if _t2_a_score > _t2_best_artist_score:
                                                 _t2_best_artist_score = _t2_a_score
                                                 _t2_best_artist = _t2_artist_alias
-                                        if (
-                                            _t2_best_artist
-                                            and _t2_best_artist
-                                            != candidate_track.artist_name
-                                        ):
-                                            candidate_track.artist_name = (
-                                                _t2_best_artist
-                                            )
+                                        if _t2_best_artist and _t2_best_artist != candidate_track.artist_name:
+                                            candidate_track.artist_name = _t2_best_artist
 
                                     # Unknown Artist Title-Recovery in Tier 2
                                     from services.playlists_api import (
                                         check_title_recovery,
                                     )
 
-                                    _cand_raw_t = (
-                                        raw_title_candidate
-                                        or candidate_track.title
-                                        or ""
-                                    )
+                                    _cand_raw_t = raw_title_candidate or candidate_track.title or ""
                                     if check_title_recovery(
                                         source_track.artist_name or "",
-                                        source_track.raw_title
-                                        or source_track.title
-                                        or "",
+                                        source_track.raw_title or source_track.title or "",
                                         candidate_track.artist_name or "",
                                         _cand_raw_t,
                                     ):
                                         _t2_best_artist_score = 1.0
-                                        _encap_m = re.match(
-                                            r"^(.*?)\s*[-–—]\s*(.*)$", _cand_raw_t
-                                        )
+                                        _encap_m = re.match(r"^(.*?)\s*[-–—]\s*(.*)$", _cand_raw_t)
                                         if _encap_m:
-                                            candidate_track.artist_name = (
-                                                _encap_m.group(1).strip()
-                                            )
-                                            candidate_track.title = _encap_m.group(
-                                                2
-                                            ).strip()
+                                            candidate_track.artist_name = _encap_m.group(1).strip()
+                                            candidate_track.title = _encap_m.group(2).strip()
                                         elif (
                                             not candidate_track.artist_name
                                             or candidate_track.artist_name.strip().lower()
@@ -1560,9 +1433,7 @@ def _analyze_playlists_internal(
                                                 "",
                                             }
                                         ):
-                                            candidate_track.artist_name = (
-                                                source_track.artist_name
-                                            )
+                                            candidate_track.artist_name = source_track.artist_name
 
                                     # If a new Tier 2 candidate matches the requested artist (artist_score >= 0.90),
                                     # evaluate with full artist score confidence and allow standard acceptance.
@@ -1580,10 +1451,7 @@ def _analyze_playlists_internal(
                                                 target_source=target_source_canonical,
                                                 target_identifier=candidate_target_id,
                                             )
-                                            if (
-                                                t2_res.confidence_score
-                                                > result.confidence_score
-                                            ):
+                                            if t2_res.confidence_score > result.confidence_score:
                                                 result = t2_res
                                     else:
                                         result = matching_engine.calculate_title_duration_match(
@@ -1602,8 +1470,7 @@ def _analyze_playlists_internal(
                                             "candidate": {
                                                 "title": candidate_track.title,
                                                 "artist": candidate_track.artist_name,
-                                                "duration": candidate_track.duration
-                                                or 0,
+                                                "duration": candidate_track.duration or 0,
                                             },
                                             "result": {
                                                 "score": result.confidence_score,
@@ -1636,10 +1503,7 @@ def _analyze_playlists_internal(
                                         best_match_track_id = candidate_row[0]
                                         best_match_target_id = candidate_target_id
 
-                                    if (
-                                        result.is_near_miss
-                                        and near_miss_candidate_id is None
-                                    ):
+                                    if result.is_near_miss and near_miss_candidate_id is None:
                                         near_miss_candidate_id = candidate_row[0]
 
                                 tier2_mode = True
@@ -1650,9 +1514,7 @@ def _analyze_playlists_internal(
                     if best_score < 70 and initial_candidates:
                         for candidate_row in initial_candidates:
                             candidate_target_id = (
-                                external_ids_map.get(candidate_row[0])
-                                if target_source_canonical
-                                else None
+                                external_ids_map.get(candidate_row[0]) if target_source_canonical else None
                             )
                             raw_title_candidate = candidate_row[1]
                             edition_candidate = candidate_row[3]
@@ -1668,9 +1530,7 @@ def _analyze_playlists_internal(
                                 and sort_title_candidate != raw_title_candidate
                             ):
                                 version_pattern = r"\b(Remix|Mix|Live|Demo|Remaster|Deluxe|Edit|Version|Acoustic|Instrumental|Bonus|Extended|Original)\b"
-                                version_match = re.search(
-                                    version_pattern, sort_title_candidate, re.IGNORECASE
-                                )
+                                version_match = re.search(version_pattern, sort_title_candidate, re.IGNORECASE)
                                 if version_match:
                                     edition_candidate = version_match.group(0)
 
@@ -1682,9 +1542,7 @@ def _analyze_playlists_internal(
                                 raw_title=raw_title_candidate,
                                 artist_name=candidate_row[4],
                                 album_title=candidate_row[7] or "",
-                                duration=parse_duration_to_ms(candidate_row[2])
-                                if candidate_row[2]
-                                else 0,
+                                duration=parse_duration_to_ms(candidate_row[2]) if candidate_row[2] else 0,
                                 edition=edition_candidate,
                             )
                             hook_manager.apply_filters(
@@ -1748,9 +1606,7 @@ def _analyze_playlists_internal(
                                     f"-> track_id={near_miss_candidate_id}"
                                 )
                             except Exception as nm_err:
-                                logger.warning(
-                                    f"Failed to queue near-miss suggestion: {nm_err}"
-                                )
+                                logger.warning(f"Failed to queue near-miss suggestion: {nm_err}")
                         if logger.isEnabledFor(logging.DEBUG):
                             try:
                                 src_dur = source_track.duration or 0
@@ -1776,14 +1632,10 @@ def _analyze_playlists_internal(
                                     )
                                     logger.debug(f"    Reasoning: {diag['reasoning']}")
                             except Exception as log_err:
-                                logger.debug(
-                                    f"Verbose unmatched diagnostics failed: {log_err}"
-                                )
+                                logger.debug(f"Verbose unmatched diagnostics failed: {log_err}")
 
                     if best_match:
-                        logger.info(
-                            f"Matched '{track_title}' with database track (score: {best_score:.0f}%)"
-                        )
+                        logger.info(f"Matched '{track_title}' with database track (score: {best_score:.0f}%)")
 
                 except Exception as e:
                     logger.error(
@@ -1820,19 +1672,15 @@ def _analyze_playlists_internal(
                         "target_source": target_source_canonical or target_source,
                         "target_identifier": best_match_target_id,
                         "target_exists": bool(best_match_target_id),
-                        "source_track": source_track.to_dict()
-                        if hasattr(source_track, "to_dict")
-                        else None,
+                        "source_track": source_track.to_dict() if hasattr(source_track, "to_dict") else None,
                         "source_identifier": (
                             None
                             if not getattr(source_track, "identifiers", None)
                             else (
                                 source_track.identifiers.get(source)
-                                if isinstance(source_track.identifiers, dict)
-                                and source in source_track.identifiers
+                                if isinstance(source_track.identifiers, dict) and source in source_track.identifiers
                                 else next(iter(source_track.identifiers.values()), None)
-                                if isinstance(source_track.identifiers, dict)
-                                and source_track.identifiers
+                                if isinstance(source_track.identifiers, dict) and source_track.identifiers
                                 else None
                             )
                         ),
@@ -1883,16 +1731,12 @@ def _analyze_playlists_internal(
                     lines = []
                     for e in entries:
                         src_id = e.get("source_identifier") or "<unknown_source_id>"
-                        lines.append(
-                            f"{src_id} ('{e.get('title')}' by '{e.get('artist')}')"
-                        )
+                        lines.append(f"{src_id} ('{e.get('title')}' by '{e.get('artist')}')")
                     logger.debug(
                         f"[system] - Duplicate match: {', '.join([f'{l} matched EchosyncTrack {echo_id}' for l in lines])}"
                     )
                 except Exception as dup_err:
-                    logger.debug(
-                        f"[system] - Duplicate match formatting failed for EchosyncTrack {echo_id}: {dup_err}"
-                    )
+                    logger.debug(f"[system] - Duplicate match formatting failed for EchosyncTrack {echo_id}: {dup_err}")
     except Exception as dup_all_err:
         logger.debug(f"[system] - Duplicate match analysis failed: {dup_all_err}")
 
@@ -1958,11 +1802,7 @@ def analyze_playlists(payload_obj: PlaylistAnalyzeSchema | None = None):
     payload = payload_obj.model_dump(exclude_unset=True) if payload_obj else {}
     source = str(payload.get("source")) if payload.get("source") is not None else None
     target = str(payload.get("target")) if payload.get("target") is not None else None
-    target_source = (
-        str(payload.get("target_source"))
-        if payload.get("target_source") is not None
-        else target
-    )
+    target_source = str(payload.get("target_source")) if payload.get("target_source") is not None else target
     playlists = payload.get("playlists") or []
     quality_profile = payload.get("quality_profile", "Auto")
 
@@ -1973,9 +1813,7 @@ def analyze_playlists(payload_obj: PlaylistAnalyzeSchema | None = None):
         return {"error": "playlists list required"}
 
     try:
-        result = _analyze_playlists_internal(
-            source, target_source, playlists, quality_profile
-        )
+        result = _analyze_playlists_internal(source, target_source, playlists, quality_profile)
         return result
     except Exception as e:
         logger.error(f"Error analyzing playlists: {e}", exc_info=True)
@@ -1988,11 +1826,7 @@ def start_analyze_job(payload_obj: PlaylistAnalyzeSchema | None = None):
     payload = payload_obj.model_dump(exclude_unset=True) if payload_obj else {}
     source = str(payload.get("source")) if payload.get("source") is not None else None
     target = str(payload.get("target")) if payload.get("target") is not None else None
-    target_source = (
-        str(payload.get("target_source"))
-        if payload.get("target_source") is not None
-        else target
-    )
+    target_source = str(payload.get("target_source")) if payload.get("target_source") is not None else target
     playlists = payload.get("playlists") or []
     quality_profile = payload.get("quality_profile", "Auto")
 
@@ -2017,9 +1851,7 @@ def start_analyze_job(payload_obj: PlaylistAnalyzeSchema | None = None):
         ANALYSIS_JOBS[job_id]["status"] = "running"
         ANALYSIS_JOBS[job_id]["started_at"] = time.time()
         try:
-            res = _analyze_playlists_internal(
-                source, target_source, playlists, quality_profile
-            )
+            res = _analyze_playlists_internal(source, target_source, playlists, quality_profile)
             ANALYSIS_JOBS[job_id]["result"] = res
             ANALYSIS_JOBS[job_id]["status"] = "finished"
         except Exception as e:
@@ -2039,9 +1871,7 @@ def start_analyze_job(payload_obj: PlaylistAnalyzeSchema | None = None):
     target_caps = get_plugin_capabilities(target)
 
     try:
-        job_queue.register_job(
-            job_name, _job_func, interval_seconds=None, start_after=0, enabled=True
-        )
+        job_queue.register_job(job_name, _job_func, interval_seconds=None, start_after=0, enabled=True)
         job_queue.execute_job_now(job_name)
     except Exception as e:
         logger.error(f"Failed to start background analysis job: {e}")
@@ -2069,11 +1899,7 @@ def get_analyze_job(job_id, request: Request):
 
 @router.post("/sync")
 def trigger_sync(payload_obj: PlaylistSyncSchema):
-    payload = (
-        payload_obj.model_dump(exclude_unset=True)
-        if hasattr(payload_obj, "model_dump")
-        else (payload_obj or {})
-    )
+    payload = payload_obj.model_dump(exclude_unset=True) if hasattr(payload_obj, "model_dump") else (payload_obj or {})
     target = payload.get("target_source") or payload.get("target")
     playlist_name = payload.get("playlist_name")
     matches = payload.get("matches") or []
@@ -2175,9 +2001,7 @@ def _sync_to_plex(
 ):
     """Sync matched tracks to a Plex managed playlist."""
     # Collect ratingKeys from matches (target_identifier)
-    rating_keys = [
-        m.get("target_identifier") for m in matches if m.get("target_identifier")
-    ]
+    rating_keys = [m.get("target_identifier") for m in matches if m.get("target_identifier")]
     if not rating_keys:
         return {"accepted": False, "error": "No Plex ratingKeys provided in matches"}
 
@@ -2221,15 +2045,13 @@ def _sync_to_plex(
             try:
                 from core.nexus_framework.plugin_loader import PluginRegistry
 
-                PlexCls = PluginRegistry.get_plugin_class(
-                    "EchoSync.plex"
-                ) or PluginRegistry.get_plugin_class("plex")
+                PlexCls = PluginRegistry.get_plugin_class("EchoSync.plex") or PluginRegistry.get_plugin_class("plex")
                 if PlexCls:
                     client = PlexCls(account_id=target_account_id)
                 else:
-                    client = PluginRegistry.get_plugin_instance(
-                        "EchoSync.plex"
-                    ) or PluginRegistry.get_plugin_instance("plex")
+                    client = PluginRegistry.get_plugin_instance("EchoSync.plex") or PluginRegistry.get_plugin_instance(
+                        "plex"
+                    )
             except Exception as reg_err:
                 logger.warning(f"PluginRegistry resolution of Plex failed: {reg_err}")
 
@@ -2251,11 +2073,7 @@ def _sync_to_plex(
                 raise RuntimeError("Plex connection failed")
 
             valid_match_items = [
-                m
-                for m in matches
-                if m.get("target_identifier")
-                or m.get("matched_track_id")
-                or m.get("track_id")
+                m for m in matches if m.get("target_identifier") or m.get("matched_track_id") or m.get("track_id")
             ]
             valid_keys = []
             failed_tracks = []
@@ -2264,11 +2082,7 @@ def _sync_to_plex(
             # Pre-fetch local track, artist, and media data to guarantee telemetry for live recovery
             matched_track_ids = []
             for m in valid_match_items:
-                tid = (
-                    m.get("matched_track_id")
-                    if m.get("matched_track_id") is not None
-                    else m.get("track_id")
-                )
+                tid = m.get("matched_track_id") if m.get("matched_track_id") is not None else m.get("track_id")
                 if tid is not None and str(tid).isdigit():
                     matched_track_ids.append(int(tid))
 
@@ -2295,27 +2109,19 @@ def _sync_to_plex(
                             track_info_map[t.id] = {
                                 "title": t.title,
                                 "artist": a.name if a else "Unknown Artist",
-                                "album": t.album.title
-                                if getattr(t, "album", None)
-                                else "",
+                                "album": t.album.title if getattr(t, "album", None) else "",
                                 "duration": t.duration or 0,
                                 "file_path": lm.file_path if lm else None,
                                 "media_id": lm.media_id if lm else None,
                             }
                 except Exception as pre_err:
-                    logger.debug(
-                        f"Failed to prefetch Track/LocalMedia for sync recovery: {pre_err}"
-                    )
+                    logger.debug(f"Failed to prefetch Track/LocalMedia for sync recovery: {pre_err}")
 
             from core.db.echo_sync_track import EchosyncMedia, EchosyncTrack
 
             for idx, m in enumerate(valid_match_items):
                 rk = m.get("target_identifier")
-                matched_t_id = (
-                    m.get("matched_track_id")
-                    if m.get("matched_track_id") is not None
-                    else m.get("track_id")
-                )
+                matched_t_id = m.get("matched_track_id") if m.get("matched_track_id") is not None else m.get("track_id")
                 if matched_t_id is not None and str(matched_t_id).isdigit():
                     matched_t_id = int(matched_t_id)
 
@@ -2336,12 +2142,7 @@ def _sync_to_plex(
                     or db_info.get("artist")
                     or "Unknown Artist"
                 )
-                track_album = (
-                    m.get("album")
-                    or (m.get("source_track") or {}).get("album")
-                    or db_info.get("album")
-                    or ""
-                )
+                track_album = m.get("album") or (m.get("source_track") or {}).get("album") or db_info.get("album") or ""
                 track_duration = (
                     m.get("duration_ms")
                     or (m.get("source_track") or {}).get("duration_ms")
@@ -2353,9 +2154,7 @@ def _sync_to_plex(
                 local_media_id = db_info.get("media_id")
 
                 local_media_list = (
-                    [EchosyncMedia(file_path=local_file_path, media_id=local_media_id)]
-                    if local_file_path
-                    else []
+                    [EchosyncMedia(file_path=local_file_path, media_id=local_media_id)] if local_file_path else []
                 )
                 local_track_meta = EchosyncTrack(
                     raw_title=track_title,
@@ -2384,9 +2183,7 @@ def _sync_to_plex(
                     item = None
                     is_recovered = False
                     if hasattr(client, "fetch_or_recover_track"):
-                        item, is_recovered = client.fetch_or_recover_track(
-                            rk, local_track_meta
-                        )
+                        item, is_recovered = client.fetch_or_recover_track(rk, local_track_meta)
                     elif client.server:
                         try:
                             rk_int = int(rk) if rk else None
@@ -2454,9 +2251,7 @@ def _sync_to_plex(
                 raise RuntimeError("No valid Plex items resolved for playlist sync")
 
             # Local-server sync: overwrite managed playlist
-            logger.info(
-                f"[{job_name}] Creating/updating managed playlist with {len(valid_keys)} tracks"
-            )
+            logger.info(f"[{job_name}] Creating/updating managed playlist with {len(valid_keys)} tracks")
             updated = client.add_tracks_to_managed_playlist(
                 playlist_name,
                 valid_keys,
@@ -2493,9 +2288,7 @@ def _sync_to_plex(
                             f"[{job_name}] Batch persisted {persisted} recovered Plex ratingKey external identifiers to database."
                         )
                 except Exception as persist_err:
-                    logger.warning(
-                        f"[{job_name}] Failed to persist recovered ratingKeys to database: {persist_err}"
-                    )
+                    logger.warning(f"[{job_name}] Failed to persist recovered ratingKeys to database: {persist_err}")
 
             try:
                 from core.hook_manager import hook_manager
@@ -2520,13 +2313,9 @@ def _sync_to_plex(
                     )
                 logger.warning("\n".join(summary_lines))
             else:
-                logger.info(
-                    f"[{job_name}] All {len(valid_keys)}/{total} tracks synced successfully to Plex!"
-                )
+                logger.info(f"[{job_name}] All {len(valid_keys)}/{total} tracks synced successfully to Plex!")
 
-            logger.info(
-                f"[{job_name}] Sync complete: {len(valid_keys)} synced, {len(failed_tracks)} failed"
-            )
+            logger.info(f"[{job_name}] Sync complete: {len(valid_keys)} synced, {len(failed_tracks)} failed")
             event_bus.publish(
                 job_name,
                 "sync_complete",
@@ -2569,9 +2358,7 @@ def _sync_to_plex(
         if not job_queue.execute_job_now(job_name):
             raise RuntimeError(f"Job '{job_name}' is already running or unavailable")
     except Exception as e:
-        logger.error(
-            f"Failed to schedule Plex sync job '{job_name}': {e}", exc_info=True
-        )
+        logger.error(f"Failed to schedule Plex sync job '{job_name}': {e}", exc_info=True)
         return {"accepted": False, "error": "Failed to schedule sync job"}
 
     return {
@@ -2585,9 +2372,7 @@ def _sync_to_plex(
     }
 
 
-def _sync_to_tier(
-    payload, source, target, playlist_name, matches, download_missing, sync_mode
-):
+def _sync_to_tier(payload, source, target, playlist_name, matches, download_missing, sync_mode):
     """Sync matched tracks to a tier provider (Spotify, Tidal, etc.)."""
     valid_match_items = [m for m in matches if m.get("target_identifier")]
     track_ids = [m.get("target_identifier") for m in valid_match_items]
@@ -2601,9 +2386,7 @@ def _sync_to_tier(
     job_name = f"sync:{target}:{playlist_name}:{int(time.time())}"
 
     def _run_sync():
-        logger.info(
-            f"[{job_name}] Starting {target} sync for playlist '{playlist_name}' with {len(track_ids)} tracks"
-        )
+        logger.info(f"[{job_name}] Starting {target} sync for playlist '{playlist_name}' with {len(track_ids)} tracks")
         event_bus.publish(
             job_name,
             "sync_started",
@@ -2711,13 +2494,9 @@ def _sync_to_tier(
                     )
                 logger.warning("\n".join(summary_lines))
             else:
-                logger.info(
-                    f"[{job_name}] All {synced}/{len(track_ids)} tracks synced successfully to {target}!"
-                )
+                logger.info(f"[{job_name}] All {synced}/{len(track_ids)} tracks synced successfully to {target}!")
 
-            logger.info(
-                f"[{job_name}] Sync complete: {synced} synced, {len(failed_tracks)} failed"
-            )
+            logger.info(f"[{job_name}] Sync complete: {synced} synced, {len(failed_tracks)} failed")
             event_bus.publish(
                 job_name,
                 "sync_complete",
@@ -2759,9 +2538,7 @@ def _sync_to_tier(
         if not job_queue.execute_job_now(job_name):
             raise RuntimeError(f"Job '{job_name}' is already running or unavailable")
     except Exception as e:
-        logger.error(
-            f"Failed to schedule {target} sync job '{job_name}': {e}", exc_info=True
-        )
+        logger.error(f"Failed to schedule {target} sync job '{job_name}': {e}", exc_info=True)
         return {"accepted": False, "error": "Failed to schedule sync job"}
 
     return {
@@ -2776,9 +2553,7 @@ def _sync_to_tier(
 
 
 @router.get("/sync/events")
-def sync_events(
-    request: Request, job: str | None = None, since: int | str | None = None
-):
+def sync_events(request: Request, job: str | None = None, since: int | str | None = None):
     job_name = job or request.query_params.get("job")
     since_val = since if since is not None else request.query_params.get("since")
     since_int = None
@@ -2876,14 +2651,10 @@ async def download_missing_tracks(request: Request):
 
                 if download_id:
                     success_count += 1
-                    logger.info(
-                        f"Queued for download: {track.title} by {track.artist_name} (ID: {download_id})"
-                    )
+                    logger.info(f"Queued for download: {track.title} by {track.artist_name} (ID: {download_id})")
                 else:
                     failed_count += 1
-                    logger.warning(
-                        f"Failed to queue: {track.title} by {track.artist_name}"
-                    )
+                    logger.warning(f"Failed to queue: {track.title} by {track.artist_name}")
             except Exception as e:
                 failed_count += 1
                 logger.error(f"Error queuing track: {e}")
@@ -3125,29 +2896,20 @@ def _register_scheduled_sync_job(sync_config):
 
     def _run_scheduled_sync():
         try:
-            playlist_entries = [
-                playlist if isinstance(playlist, dict) else {"id": playlist}
-                for playlist in playlists
-            ]
-            analysis = _analyze_playlists_internal(
-                source, target, playlist_entries, quality_profile="Auto"
-            )
+            playlist_entries = [playlist if isinstance(playlist, dict) else {"id": playlist} for playlist in playlists]
+            analysis = _analyze_playlists_internal(source, target, playlist_entries, quality_profile="Auto")
             matches = analysis.get("summary", {}).get("matched_pairs", []) or []
 
             if matches:
                 playlist_name = f"Synced Playlist ({sync_config['id']})"
-                primary_playlist = (
-                    playlist_entries[0] if len(playlist_entries) == 1 else {}
-                )
+                primary_playlist = playlist_entries[0] if len(playlist_entries) == 1 else {}
                 if target == "plex":
                     _sync_to_plex(
                         {
                             "source": source,
                             "target": target,
                             "target_user_id": primary_playlist.get("target_user_id"),
-                            "source_account_name": primary_playlist.get(
-                                "source_account_name"
-                            ),
+                            "source_account_name": primary_playlist.get("source_account_name"),
                         },
                         source,
                         target,
@@ -3183,9 +2945,7 @@ def _register_scheduled_sync_job(sync_config):
             backoff_base=5.0,
             backoff_factor=2.0,
         )
-        logger.info(
-            f"Registered scheduled sync job: {job_name} (interval: {interval}s)"
-        )
+        logger.info(f"Registered scheduled sync job: {job_name} (interval: {interval}s)")
     except Exception as e:
         logger.error(f"Failed to register scheduled sync job '{job_name}': {e}")
 
@@ -3200,6 +2960,4 @@ def load_scheduled_syncs_on_startup():
         if sync_config.get("enabled", True):
             _register_scheduled_sync_job(sync_config)
 
-    logger.info(
-        f"Loaded {len([s for s in scheduled_syncs if s.get('enabled')])} scheduled syncs"
-    )
+    logger.info(f"Loaded {len([s for s in scheduled_syncs if s.get('enabled')])} scheduled syncs")

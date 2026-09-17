@@ -31,8 +31,7 @@ def _serialize_provider(provider_name):
             "metadata_richness": caps.metadata.name,
             "supports_streaming": caps.supports_streaming,
             "supports_library_scan": caps.supports_library_scan,
-            "supports_playlist_write": caps.supports_playlists
-            == PlaylistSupport.READ_WRITE,
+            "supports_playlist_write": caps.supports_playlists == PlaylistSupport.READ_WRITE,
             "supports_cover_art": caps.supports_cover_art,
         }
     except KeyError:
@@ -143,15 +142,13 @@ def _clean_mocks(val):
         return {
             k: _clean_mocks(v)
             for k, v in val.items()
-            if type(v).__name__
-            not in ("MagicMock", "Mock", "NonCallableMagicMock", "NonCallableMock")
+            if type(v).__name__ not in ("MagicMock", "Mock", "NonCallableMagicMock", "NonCallableMock")
         }
     if isinstance(val, list):
         return [
             _clean_mocks(item)
             for item in val
-            if type(item).__name__
-            not in ("MagicMock", "Mock", "NonCallableMagicMock", "NonCallableMock")
+            if type(item).__name__ not in ("MagicMock", "Mock", "NonCallableMagicMock", "NonCallableMock")
         ]
     return val
 

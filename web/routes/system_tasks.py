@@ -1,10 +1,8 @@
 from datetime import UTC, datetime
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
-
-from typing import Any
-
 from pydantic import BaseModel, Field
 
 from core.task_manager.models import ProcessOwner
@@ -67,7 +65,7 @@ def get_task_queue_status():
             blocked_jobs=raw_state.get("blocked_jobs", []),
         )
     except Exception as e:
-        logger.error(f"Error fetching task queue status: {e}", exc_info=True)
+        logger.exception("Error fetching task queue status")
         raise HTTPException(status_code=500, detail=f"Failed to retrieve task queue status: {e!s}")
 
 
@@ -82,7 +80,7 @@ def get_active_processes():
         processes = supervisor.get_active_processes_with_ids()
         return {"total": len(processes), "processes": processes}
     except Exception as e:
-        logger.error(f"Error listing active processes: {e}", exc_info=True)
+        logger.exception("Error listing active processes")
         raise HTTPException(status_code=500, detail=f"Failed to retrieve active processes: {e!s}")
 
 
@@ -239,8 +237,8 @@ async def stream_processes():
                 await asyncio.sleep(2.0)
         except GeneratorExit:
             logger.debug("SSE processes stream client disconnected cleanly.")
-        except Exception as e:
-            logger.error(f"SSE processes stream error: {e}", exc_info=True)
+        except Exception:
+            logger.exception("SSE processes stream error")
 
     return StreamingResponse(
         event_generator(),
@@ -282,7 +280,7 @@ def terminate_process(registration_id: str):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error terminating process '{registration_id}': {e}", exc_info=True)
+        logger.exception(f"Error terminating process '{registration_id}'")
         raise HTTPException(status_code=500, detail=f"Failed to terminate process: {e!s}")
 
 
@@ -305,7 +303,7 @@ def kill_process_with_cleanup(registration_id: str):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error killing process '{registration_id}': {e}", exc_info=True)
+        logger.exception(f"Error killing process '{registration_id}'")
         raise HTTPException(status_code=500, detail=f"Failed to kill process: {e!s}")
 
 
@@ -343,7 +341,7 @@ def get_unified_system_health():
             plugin_states=plugin_states,
         )
     except Exception as e:
-        logger.error(f"Error fetching unified system health: {e}", exc_info=True)
+        logger.exception("Error fetching unified system health")
         raise HTTPException(status_code=500, detail=f"Failed to retrieve system health: {e!s}")
 
 

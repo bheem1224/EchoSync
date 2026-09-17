@@ -80,9 +80,7 @@ def command_center():
         db = get_database()
         total_tracks = stats.get("total_tracks", 0)
         lossless_count = db.count_lossless_files()
-        lossless_ratio = (
-            round(lossless_count / total_tracks, 2) if total_tracks > 0 else 0.0
-        )
+        lossless_ratio = round(lossless_count / total_tracks, 2) if total_tracks > 0 else 0.0
 
         library_stats = {
             "total_tracks": total_tracks,
@@ -127,16 +125,8 @@ def command_center():
             elif not nr_float:
                 nr_float = datetime.now(UTC).timestamp() + interval
 
-            lr_iso = (
-                datetime.fromtimestamp(lr_float, tz=UTC).isoformat()
-                if lr_float
-                else None
-            )
-            nr_iso = (
-                datetime.fromtimestamp(nr_float, tz=UTC).isoformat()
-                if nr_float
-                else None
-            )
+            lr_iso = datetime.fromtimestamp(lr_float, tz=UTC).isoformat() if lr_float else None
+            nr_iso = datetime.fromtimestamp(nr_float, tz=UTC).isoformat() if nr_float else None
 
             upcoming_jobs.append(
                 {
@@ -183,14 +173,10 @@ def get_dashboard():
             data = {}
 
     except YAMLError as e:
-        raise HTTPException(
-            status_code=400, detail={"error": "YAML Syntax Error", "details": str(e)}
-        )
+        raise HTTPException(status_code=400, detail={"error": "YAML Syntax Error", "details": str(e)})
     except Exception as e:
         logger.error(f"Error reading dashboard.yaml: {e}")
-        raise HTTPException(
-            status_code=500, detail="Failed to read dashboard configuration"
-        )
+        raise HTTPException(status_code=500, detail="Failed to read dashboard configuration")
 
     return data
 
@@ -237,9 +223,7 @@ async def update_dashboard(request: Request):
         )
     except Exception as e:
         logger.error(f"Error writing dashboard.yaml: {e}")
-        raise HTTPException(
-            status_code=500, detail="Failed to write dashboard configuration"
-        )
+        raise HTTPException(status_code=500, detail="Failed to write dashboard configuration")
 
 
 @dashboard_bp.get("/layout", dependencies=[Depends(require_auth)])

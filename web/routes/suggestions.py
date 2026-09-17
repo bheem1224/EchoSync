@@ -56,9 +56,7 @@ def _resolve_scope_account(accounts, requested_account_id=None, requested_user_i
             if str(account.get("user_id") or "") == requested_user_id:
                 return account, "user_id"
 
-    active_account = next(
-        (account for account in accounts if account.get("is_active")), None
-    )
+    active_account = next((account for account in accounts if account.get("is_active")), None)
     if active_account:
         return active_account, "active_account"
 
@@ -68,9 +66,7 @@ def _resolve_scope_account(accounts, requested_account_id=None, requested_user_i
     return None, "none"
 
 
-def _calculate_top_genres_for_user(
-    work_session, music_session, user_id: int, limit: int = 5
-):
+def _calculate_top_genres_for_user(work_session, music_session, user_id: int, limit: int = 5):
     """Calculate user-scoped taste distribution from highly-rated tracks.
 
     Uses user ratings from working DB and matches to music DB tracks by decoded
@@ -141,9 +137,7 @@ def get_suggestion_accounts(request: Request):
         music_db = get_music_database()
 
         requested_account_id = (
-            int(request.query_params.get("account_id"))
-            if request.query_params.get("account_id") is not None
-            else None
+            int(request.query_params.get("account_id")) if request.query_params.get("account_id") is not None else None
         )
         requested_user_id = request.query_params.get("user_id")
 
@@ -156,9 +150,7 @@ def get_suggestion_accounts(request: Request):
             plugin_cls = PluginRegistry.get_plugin_class(p_id)
             if plugin_cls and hasattr(plugin_cls, "capabilities"):
                 caps = plugin_cls.capabilities
-                if getattr(
-                    caps, "supports_playlists", None
-                ) == PlaylistSupport.READ_WRITE and getattr(
+                if getattr(caps, "supports_playlists", None) == PlaylistSupport.READ_WRITE and getattr(
                     caps, "supports_metrics", False
                 ):
                     service_id = config_db.get_service_id(p_id)
@@ -167,9 +159,7 @@ def get_suggestion_accounts(request: Request):
 
         accounts = []
         for service_id in target_service_ids:
-            accounts.extend(
-                config_db.get_accounts(service_id=service_id, is_active=True)
-            )
+            accounts.extend(config_db.get_accounts(service_id=service_id, is_active=True))
 
         scoped_account, scope_source = _resolve_scope_account(
             accounts,
@@ -182,9 +172,7 @@ def get_suggestion_accounts(request: Request):
 
         for account in accounts:
             account_id = account["id"]
-            account_name = (
-                account.get("display_name") or account.get("account_name") or "Unknown"
-            )
+            account_name = account.get("display_name") or account.get("account_name") or "Unknown"
 
             # Get taste profile: top genres from user's track ratings
             total_suggestions = 0
@@ -196,9 +184,7 @@ def get_suggestion_accounts(request: Request):
                     with music_db.session_scope() as music_session:
                         user = (
                             work_session.query(Account)
-                            .filter(
-                                Account.remote_account_id == str(account.get("user_id"))
-                            )
+                            .filter(Account.remote_account_id == str(account.get("user_id")))
                             .first()
                             if account.get("user_id")
                             else None
@@ -222,15 +208,10 @@ def get_suggestion_accounts(request: Request):
                                 limit=5,
                             )
 
-                            if (
-                                scoped_account
-                                and scoped_account.get("id") == account_id
-                            ):
+                            if scoped_account and scoped_account.get("id") == account_id:
                                 scoped_distribution = top_genres
             except Exception as e:
-                logger.warning(
-                    f"Failed to calculate taste profile for account {account_id}: {e}"
-                )
+                logger.warning(f"Failed to calculate taste profile for account {account_id}: {e}")
 
             result_accounts.append(
                 {
@@ -307,9 +288,7 @@ def get_pending_suggestions(account_id: int):
         try:
             with working_db.session_scope() as session:
                 user = (
-                    session.query(Account)
-                    .filter(Account.provider_identifier == account.get("user_id"))
-                    .first()
+                    session.query(Account).filter(Account.provider_identifier == account.get("user_id")).first()
                     if account.get("user_id")
                     else None
                 )
@@ -342,9 +321,7 @@ def get_pending_suggestions(account_id: int):
             from core.hook_manager import hook_manager
 
             # Let plugins filter or add tracks to the list
-            plugin_tracks = hook_manager.apply_filters(
-                "ON_SUGGESTION_READY", pending_tracks, account_id=account_id
-            )
+            plugin_tracks = hook_manager.apply_filters("ON_SUGGESTION_READY", pending_tracks, account_id=account_id)
             if isinstance(plugin_tracks, list):
                 pending_tracks = plugin_tracks
         except Exception as e:
@@ -426,9 +403,7 @@ def get_suggestion_audit(request: Request):
     try:
         limit = int(request.query_params.get("limit", 50))
         account_id = (
-            int(request.query_params.get("account_id"))
-            if request.query_params.get("account_id") is not None
-            else None
+            int(request.query_params.get("account_id")) if request.query_params.get("account_id") is not None else None
         )
 
         working_db = get_working_database()
@@ -448,9 +423,7 @@ def get_suggestion_audit(request: Request):
                     # Would need to implement account_id linking in DownloadQueue model
                     pass
 
-                downloads = (
-                    query.order_by(desc(DownloadQueue.created_at)).limit(limit).all()
-                )
+                downloads = query.order_by(desc(DownloadQueue.created_at)).limit(limit).all()
 
                 for dl in downloads:
                     audit_history.append(
@@ -458,12 +431,8 @@ def get_suggestion_audit(request: Request):
                             "id": dl.id,
                             "sync_id": dl.sync_id,
                             "status": dl.status,
-                            "created_at": dl.created_at.isoformat()
-                            if dl.created_at
-                            else None,
-                            "updated_at": dl.updated_at.isoformat()
-                            if dl.updated_at
-                            else None,
+                            "created_at": dl.created_at.isoformat() if dl.created_at else None,
+                            "updated_at": dl.updated_at.isoformat() if dl.updated_at else None,
                             "retry_count": dl.retry_count,
                         }
                     )
