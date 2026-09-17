@@ -11,71 +11,79 @@ use symphonia::core::probe::Hint;
 
 pub fn generate_fingerprint(file_path: &str, trim_silence: bool) -> Result<(String, f64), String> {
     let path = Path::new(file_path);
-    let src = File::open(path).map_err(|e| format!("Failed to open file: {e}"))?;
-    let mss = MediaSourceStream::new(Box::new(src), Default::default());
 
-    let mut hint = Hint::new();
-    if let Some(extension) = path.extension().and_then(|ext| ext.to_str()) {
-        hint.with_extension(extension);
-    }
+    // Inner scope: all Symphonia format readers, decoders, and packet buffers are
+    // dropped here before the chromaprint encoding step crosses the FFI boundary.
+    let (samples, original_sample_rate) = {
+        let src = File::open(path).map_err(|e| format!("Failed to open file: {e}"))?;
+        let mss = MediaSourceStream::new(Box::new(src), Default::default());
 
-    let meta_opts: MetadataOptions = Default::default();
-    let fmt_opts: FormatOptions = Default::default();
+        let mut hint = Hint::new();
+        if let Some(extension) = path.extension().and_then(|ext| ext.to_str()) {
+            hint.with_extension(extension);
+        }
 
-    let probed = symphonia::default::get_probe()
-        .format(&hint, mss, &fmt_opts, &meta_opts)
-        .map_err(|e| format!("Unsupported format or probe failure: {e}"))?;
+        let meta_opts: MetadataOptions = Default::default();
+        let fmt_opts: FormatOptions = Default::default();
 
-    let mut format = probed.format;
-    let track = format
-        .tracks()
-        .iter()
-        .find(|t| t.codec_params.codec != CODEC_TYPE_NULL)
-        .ok_or_else(|| "No supported audio track found in file".to_string())?;
+        let probed = symphonia::default::get_probe()
+            .format(&hint, mss, &fmt_opts, &meta_opts)
+            .map_err(|e| format!("Unsupported format or probe failure: {e}"))?;
 
-    let dec_opts: DecoderOptions = Default::default();
-    let mut decoder = symphonia::default::get_codecs()
-        .make(&track.codec_params, &dec_opts)
-        .map_err(|e| format!("Unsupported codec: {e}"))?;
+        let mut format = probed.format;
+        let track = format
+            .tracks()
+            .iter()
+            .find(|t| t.codec_params.codec != CODEC_TYPE_NULL)
+            .ok_or_else(|| "No supported audio track found in file".to_string())?;
 
-    let track_id = track.id;
-    let original_sample_rate = track
-        .codec_params
-        .sample_rate
-        .ok_or_else(|| "Unknown sample rate".to_string())?;
+        let dec_opts: DecoderOptions = Default::default();
+        let mut decoder = symphonia::default::get_codecs()
+            .make(&track.codec_params, &dec_opts)
+            .map_err(|e| format!("Unsupported codec: {e}"))?;
 
-    let mut samples: Vec<f32> = Vec::new();
+        let track_id = track.id;
+        let original_sample_rate = track
+            .codec_params
+            .sample_rate
+            .ok_or_else(|| "Unknown sample rate".to_string())?;
 
-    loop {
-        let packet = match format.next_packet() {
-            Ok(packet) => packet,
-            Err(SymphoniaError::IoError(ref err))
-                if err.kind() == std::io::ErrorKind::UnexpectedEof =>
-            {
-                break;
-            }
-            Err(SymphoniaError::ResetRequired) => {
-                decoder.reset();
+        let mut samples: Vec<f32> = Vec::new();
+
+        loop {
+            let packet = match format.next_packet() {
+                Ok(packet) => packet,
+                Err(SymphoniaError::IoError(ref err))
+                    if err.kind() == std::io::ErrorKind::UnexpectedEof =>
+                {
+                    break;
+                }
+                Err(SymphoniaError::ResetRequired) => {
+                    decoder.reset();
+                    continue;
+                }
+                Err(_) => {
+                    break;
+                }
+            };
+
+            if packet.track_id() != track_id {
                 continue;
             }
-            Err(_) => {
-                break;
-            }
-        };
 
-        if packet.track_id() != track_id {
-            continue;
+            match decoder.decode(&packet) {
+                Ok(decoded) => {
+                    append_mono_samples(&decoded, &mut samples);
+                }
+                Err(SymphoniaError::IoError(_)) => break,
+                Err(SymphoniaError::DecodeError(_)) => continue,
+                Err(_) => break,
+            }
         }
 
-        match decoder.decode(&packet) {
-            Ok(decoded) => {
-                append_mono_samples(&decoded, &mut samples);
-            }
-            Err(SymphoniaError::IoError(_)) => break,
-            Err(SymphoniaError::DecodeError(_)) => continue,
-            Err(_) => break,
-        }
-    }
+        // format, decoder, and all packet/SampleBuffer state drop here.
+        (samples, original_sample_rate)
+    };
 
     if samples.is_empty() {
         return Err("No audio samples decoded".to_string());
@@ -314,94 +322,102 @@ pub fn fingerprint_and_hash_audio(
     trim_silence: bool,
 ) -> Result<(String, f64, String), String> {
     let path = Path::new(file_path);
-    let src = File::open(path).map_err(|e| format!("Failed to open file: {e}"))?;
-    let mss = MediaSourceStream::new(Box::new(src), Default::default());
 
-    let mut hint = Hint::new();
-    if let Some(extension) = path.extension().and_then(|ext| ext.to_str()) {
-        hint.with_extension(extension);
-    }
+    // Inner scope: all Symphonia format readers, decoders, packet buffers, and
+    // BLAKE3 state are dropped here before the chromaprint encoding step.
+    let (samples, original_sample_rate, pcm_hash) = {
+        let src = File::open(path).map_err(|e| format!("Failed to open file: {e}"))?;
+        let mss = MediaSourceStream::new(Box::new(src), Default::default());
 
-    let meta_opts: MetadataOptions = Default::default();
-    let fmt_opts: FormatOptions = Default::default();
+        let mut hint = Hint::new();
+        if let Some(extension) = path.extension().and_then(|ext| ext.to_str()) {
+            hint.with_extension(extension);
+        }
 
-    let probed = symphonia::default::get_probe()
-        .format(&hint, mss, &fmt_opts, &meta_opts)
-        .map_err(|e| format!("Unsupported format or probe failure: {e}"))?;
+        let meta_opts: MetadataOptions = Default::default();
+        let fmt_opts: FormatOptions = Default::default();
 
-    let mut format = probed.format;
-    let track = format
-        .tracks()
-        .iter()
-        .find(|t| t.codec_params.codec != CODEC_TYPE_NULL)
-        .ok_or_else(|| "No supported audio track found in file".to_string())?;
+        let probed = symphonia::default::get_probe()
+            .format(&hint, mss, &fmt_opts, &meta_opts)
+            .map_err(|e| format!("Unsupported format or probe failure: {e}"))?;
 
-    let dec_opts: DecoderOptions = Default::default();
-    let mut decoder = symphonia::default::get_codecs()
-        .make(&track.codec_params, &dec_opts)
-        .map_err(|e| format!("Unsupported codec: {e}"))?;
+        let mut format = probed.format;
+        let track = format
+            .tracks()
+            .iter()
+            .find(|t| t.codec_params.codec != CODEC_TYPE_NULL)
+            .ok_or_else(|| "No supported audio track found in file".to_string())?;
 
-    let track_id = track.id;
-    let original_sample_rate = track
-        .codec_params
-        .sample_rate
-        .ok_or_else(|| "Unknown sample rate".to_string())?;
+        let dec_opts: DecoderOptions = Default::default();
+        let mut decoder = symphonia::default::get_codecs()
+            .make(&track.codec_params, &dec_opts)
+            .map_err(|e| format!("Unsupported codec: {e}"))?;
 
-    let mut samples: Vec<f32> = Vec::new();
-    let mut hasher = blake3::Hasher::new();
-    let mut hash_sample_count = 0usize;
+        let track_id = track.id;
+        let original_sample_rate = track
+            .codec_params
+            .sample_rate
+            .ok_or_else(|| "Unknown sample rate".to_string())?;
 
-    loop {
-        let packet = match format.next_packet() {
-            Ok(packet) => packet,
-            Err(SymphoniaError::IoError(ref err))
-                if err.kind() == std::io::ErrorKind::UnexpectedEof =>
-            {
-                break;
-            }
-            Err(SymphoniaError::ResetRequired) => {
-                decoder.reset();
+        let mut samples: Vec<f32> = Vec::new();
+        let mut hasher = blake3::Hasher::new();
+        let mut hash_sample_count = 0usize;
+
+        loop {
+            let packet = match format.next_packet() {
+                Ok(packet) => packet,
+                Err(SymphoniaError::IoError(ref err))
+                    if err.kind() == std::io::ErrorKind::UnexpectedEof =>
+                {
+                    break;
+                }
+                Err(SymphoniaError::ResetRequired) => {
+                    decoder.reset();
+                    continue;
+                }
+                Err(_) => {
+                    break;
+                }
+            };
+
+            if packet.track_id() != track_id {
                 continue;
             }
-            Err(_) => {
-                break;
-            }
-        };
 
-        if packet.track_id() != track_id {
-            continue;
-        }
+            match decoder.decode(&packet) {
+                Ok(decoded) => {
+                    append_mono_samples(&decoded, &mut samples);
 
-        match decoder.decode(&packet) {
-            Ok(decoded) => {
-                append_mono_samples(&decoded, &mut samples);
-
-                let spec = *decoded.spec();
-                let mut sample_buf = symphonia::core::audio::SampleBuffer::<f32>::new(
-                    decoded.capacity() as u64,
-                    spec,
-                );
-                sample_buf.copy_interleaved_ref(decoded);
-                for sample in sample_buf.samples() {
-                    hasher.update(&sample.to_le_bytes());
-                    hash_sample_count += 1;
+                    let spec = *decoded.spec();
+                    let mut sample_buf = symphonia::core::audio::SampleBuffer::<f32>::new(
+                        decoded.capacity() as u64,
+                        spec,
+                    );
+                    sample_buf.copy_interleaved_ref(decoded);
+                    for sample in sample_buf.samples() {
+                        hasher.update(&sample.to_le_bytes());
+                        hash_sample_count += 1;
+                    }
+                    // sample_buf drops at end of this arm — no heap retention per packet
                 }
+                Err(SymphoniaError::IoError(_)) => break,
+                Err(SymphoniaError::DecodeError(_)) => continue,
+                Err(_) => break,
             }
-            Err(SymphoniaError::IoError(_)) => break,
-            Err(SymphoniaError::DecodeError(_)) => continue,
-            Err(_) => break,
         }
-    }
 
-    if samples.is_empty() {
-        return Err("No audio samples decoded".to_string());
-    }
+        if samples.is_empty() {
+            return Err("No audio samples decoded".to_string());
+        }
 
-    if hash_sample_count == 0 {
-        return Err("No audio samples decoded for PCM hashing".to_string());
-    }
+        if hash_sample_count == 0 {
+            return Err("No audio samples decoded for PCM hashing".to_string());
+        }
 
-    let pcm_hash = hasher.finalize().to_hex().to_string();
+        let pcm_hash = hasher.finalize().to_hex().to_string();
+        // format, decoder, hasher, and all packet/SampleBuffer state drop here.
+        (samples, original_sample_rate, pcm_hash)
+    };
 
     // Silence trimming (< -60 dBFS = amplitude < 0.001)
     let processed_samples = if trim_silence {

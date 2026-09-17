@@ -48,6 +48,25 @@ from database.working_database import (
     get_working_database,
 )
 
+import ctypes
+import gc
+
+
+def trim_process_memory() -> None:
+    """Force Python GC and instruct glibc to release free memory arenas back to the OS.
+
+    On Linux/Docker (glibc) this calls malloc_trim(0), which returns free arena pages
+    to the kernel and prevents the process RSS from crawling upward between batch
+    iterations. The call is a no-op on Windows and macOS where glibc is absent.
+    """
+    gc.collect()
+    try:
+        libc = ctypes.CDLL("libc.so.6")
+        libc.malloc_trim(0)
+    except Exception:
+        pass  # Graceful no-op on Windows/macOS/musl environments
+
+
 logger = get_logger("services.metadata_enhancer")
 
 
@@ -2906,7 +2925,17 @@ class RetroactiveEnhancer:
                 session.expunge_all()
                 if is_paused(job_id):
                     wait_for_resume(job_id)
-                gc.collect()
+                trim_process_memory()
+
+            # Purge all in-flight accumulator references so Python refcounts drop
+            # to zero before the next iteration begins, allowing the GC to collect
+            # EchosyncTrack objects, tag dicts, and bucket tuples immediately.
+            results_to_commit.clear()
+            track_items.clear()
+            bucket_trust.clear()
+            bucket_target.clear()
+            bucket_heavy.clear()
+            trim_process_memory()
 
     def enrich_plugin_metadata(
         self,
