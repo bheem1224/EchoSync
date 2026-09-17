@@ -476,7 +476,7 @@ def test_targeted_fetch_tampered_signature_voids_and_demotes_to_acoustic_waterfa
 
     new_signatures_generated = []
 
-    def mock_gen_sig(p, title, artist):
+    def mock_gen_sig(p, title, artist, pcm_hash=None):
         sig = f"VALID_SIG_{title}_{artist}"
         new_signatures_generated.append((p, sig))
         return sig

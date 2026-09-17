@@ -261,8 +261,16 @@ class MusicBrainzClient(PluginBase):
             rg = r.get("release-group") or {}
             p_type = (rg.get("primary-type") or "").strip().lower()
             s_types = [str(st).strip().lower() for st in (rg.get("secondary-types") or [])]
+            status = (r.get("status") or "").strip().lower()
 
-            is_compilation = "compilation" in s_types or "various artists" in str(r.get("artist-credit") or []).lower()
+            if status and status != "official":
+                continue
+
+            is_compilation = (
+                any(t in s_types for t in ["compilation", "remix", "dj-mix", "sampler"])
+                or "various artists" in str(r.get("artist-credit") or []).lower()
+            )
+
             if is_compilation:
                 continue
 
@@ -274,7 +282,7 @@ class MusicBrainzClient(PluginBase):
                 except ValueError:
                     pass
 
-            is_studio_type = p_type in ("album", "ep") or not p_type
+            is_studio_type = p_type == "album" or not p_type
             if is_studio_type:
                 candidates.append(
                     {
@@ -283,6 +291,8 @@ class MusicBrainzClient(PluginBase):
                         "canonical_studio_release_group_mbid": rg.get("id"),
                         "canonical_year": year_val,
                         "date": date_str,
+                        "primary_type": p_type,
+                        "secondary_types": s_types,
                     }
                 )
 
@@ -1083,18 +1093,28 @@ class MusicBrainzClient(PluginBase):
                 if isinstance(credits[0], dict) and isinstance(credits[0].get("artist"), dict):
                     result["artist_id"] = credits[0]["artist"].get("id") or ""
 
-            canonical_release = self.resolve_canonical_studio_release(releases)
+            from core.path_formatter import get_prefer_canonical_studio_album
+
+            if get_prefer_canonical_studio_album():
+                canonical_release = self.resolve_canonical_studio_release(releases)
+            else:
+                canonical_release = None
             if canonical_release:
                 result["album"] = canonical_release.get("canonical_studio_album") or ""
                 result["release_id"] = canonical_release.get("canonical_studio_release_mbid") or ""
                 result["release_group_id"] = canonical_release.get("canonical_studio_release_group_mbid") or ""
                 result["date"] = canonical_release.get("date") or ""
                 result["year"] = canonical_release.get("canonical_year")
+                result["primary_type"] = canonical_release.get("primary_type")
+                result["secondary_types"] = canonical_release.get("secondary_types", [])
             elif releases:
                 release = releases[0] or {}
                 result["album"] = release.get("title") or ""
                 result["release_id"] = release.get("id") or ""
-                result["release_group_id"] = (release.get("release-group") or {}).get("id") or ""
+                rg = release.get("release-group") or {}
+                result["release_group_id"] = rg.get("id") or ""
+                result["primary_type"] = (rg.get("primary-type") or "").strip().lower()
+                result["secondary_types"] = [str(st).strip().lower() for st in (rg.get("secondary-types") or [])]
                 result["date"] = release.get("date") or ""
                 raw_d = str(result["date"]).strip()
                 if len(raw_d) >= 4 and raw_d[:4].isdigit():
@@ -1222,18 +1242,28 @@ class MusicBrainzClient(PluginBase):
                         if isinstance(credits[0], dict) and isinstance(credits[0].get("artist"), dict):
                             result["artist_id"] = credits[0]["artist"].get("id") or ""
 
-                    canonical_release = self.resolve_canonical_studio_release(rec_releases)
+                    if get_prefer_canonical_studio_album():
+                        canonical_release = self.resolve_canonical_studio_release(rec_releases)
+                    else:
+                        canonical_release = None
                     if canonical_release:
                         result["album"] = canonical_release.get("canonical_studio_album") or ""
                         result["release_id"] = canonical_release.get("canonical_studio_release_mbid") or ""
                         result["release_group_id"] = canonical_release.get("canonical_studio_release_group_mbid") or ""
                         result["date"] = canonical_release.get("date") or ""
                         result["year"] = canonical_release.get("canonical_year")
+                        result["primary_type"] = canonical_release.get("primary_type")
+                        result["secondary_types"] = canonical_release.get("secondary_types", [])
                     elif rec_releases:
                         release = rec_releases[0] or {}
                         result["album"] = release.get("title") or ""
                         result["release_id"] = release.get("id") or ""
-                        result["release_group_id"] = (release.get("release-group") or {}).get("id") or ""
+                        rg = release.get("release-group") or {}
+                        result["release_group_id"] = rg.get("id") or ""
+                        result["primary_type"] = (rg.get("primary-type") or "").strip().lower()
+                        result["secondary_types"] = [
+                            str(st).strip().lower() for st in (rg.get("secondary-types") or [])
+                        ]
                         result["date"] = release.get("date") or ""
                         raw_d = str(result["date"]).strip()
                         if len(raw_d) >= 4 and raw_d[:4].isdigit():

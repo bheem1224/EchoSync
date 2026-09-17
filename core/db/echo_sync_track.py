@@ -168,6 +168,9 @@ class EchosyncTrack:
     quality_tags: list[str] | None = None
     is_compilation: bool | None = None
 
+    # Custom track tags (used for passing provenance like COMPILATION_SOURCE)
+    custom_tags: dict[str, str] = field(default_factory=dict)
+
     # Plugin-private scratch space — populated by pre_normalize_title hooks.
     # Excluded from equality / repr so it doesn't affect matching identity checks.
     plugin_context: dict[str, Any] = field(default_factory=dict, compare=False, repr=False)

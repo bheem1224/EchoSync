@@ -2659,6 +2659,12 @@ class RetroactiveEnhancer:
                                 if res_result.artist:
                                     t_track.artist_name = res_result.artist
                                 if res_result.album:
+                                    if (
+                                        hasattr(t_track, "album_title")
+                                        and t_track.album_title
+                                        and t_track.album_title != res_result.album
+                                    ):
+                                        t_track.custom_tags["COMPILATION_SOURCE"] = t_track.album_title
                                     t_track.album_title = res_result.album
                                 if res_result.musicbrainz_release_id:
                                     t_track.mb_release_id = res_result.musicbrainz_release_id
@@ -2732,6 +2738,8 @@ class RetroactiveEnhancer:
                             update_tags["album"] = t_track.album_title
                         if t_track.isrc:
                             update_tags["isrc"] = t_track.isrc
+                        if hasattr(t_track, "custom_tags") and t_track.custom_tags:
+                            update_tags.update(t_track.custom_tags)
 
                         # Generate and stamp echosync_signature
                         try:
@@ -2849,6 +2857,40 @@ class RetroactiveEnhancer:
                             track.artist_id = t_track.artist_id
                         if getattr(t_track, "album_id", None):
                             track.album_id = t_track.album_id
+
+                            candidate_year = None
+                            if getattr(t_track, "release_year", None):
+                                try:
+                                    candidate_year = int(t_track.release_year)
+                                except ValueError:
+                                    pass
+
+                            if candidate_year is None:
+                                for date_attr in ["year", "date", "release_date"]:
+                                    val = getattr(t_track, date_attr, None)
+                                    if val:
+                                        raw_d = str(val).strip()
+                                        if len(raw_d) >= 4 and raw_d[:4].isdigit():
+                                            try:
+                                                candidate_year = int(raw_d[:4])
+                                                break
+                                            except ValueError:
+                                                pass
+
+                            if candidate_year is not None:
+                                from database.music_database import Album
+                                from core.task_manager import db_write_lease
+                                import datetime
+
+                                album = session.get(Album, t_track.album_id)
+                                if album:
+                                    album_year = album.release_date.year if album.release_date else None
+                                    if album_year != candidate_year:
+                                        with db_write_lease("working"):
+                                            if album.release_date:
+                                                album.release_date = album.release_date.replace(year=candidate_year)
+                                            else:
+                                                album.release_date = datetime.date(candidate_year, 1, 1)
 
                     track.metadata_status = res["metadata_status"]
                     flag_modified(track, "metadata_status")

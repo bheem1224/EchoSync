@@ -330,12 +330,31 @@ class MetadataResolutionEngine:
                         release_group = rg
                         break
 
-        p_type = release_group.get("primary_type") or release_group.get("primary-type")
-        album_bonus = 5.0 if p_type == "Album" else 0.0
+        p_type = (release_group.get("primary_type") or release_group.get("primary-type") or "").strip().lower()
+        s_types = [
+            str(st).strip().lower()
+            for st in (release_group.get("secondary_types") or release_group.get("secondary-types") or [])
+        ]
+
+        is_compilation = any(t in s_types for t in ["compilation", "dj-mix", "sampler", "remix"])
+        c_title_lower = c_title.lower()
+        title_has_mix = "mix" in c_title_lower or "remix" in c_title_lower
+
+        penalty = 0.0
+        if is_compilation and not title_has_mix:
+            penalty = -35.0  # -0.35 mapped to 0-100 scale
+
+        bonus = 0.0
+        if p_type == "album" and not s_types:
+            bonus = 25.0  # +0.25 mapped to 0-100 scale
+
+        artist_credit = candidate.get("artist-credit") or candidate.get("artists") or []
+        if "various artists" in str(artist_credit).lower():
+            penalty -= 10.0
 
         # Base physical acoustic evidence grants high confidence when tags are corrupted
         base_score = matcher_score if matcher_score > 0.0 else 80.0
-        score = base_score + album_bonus
+        score = base_score + bonus + penalty
 
         # Progressive Duration Multiplier:
         # If delta <= 1.0s, duration weight yields maximum weight (dominates candidate ranking
