@@ -174,17 +174,16 @@ def test_cached_scope_used_even_if_oauth_invalidates(monkeypatch):
     with patch(
         "core.account_manager.AccountManager.get_account",
         return_value={"client_id": "fake", "client_secret": "fake"},
+    ), patch(
+        "core.account_manager.AccountManager.get_account_token",
+        return_value=limited_token,
     ):
-        with patch(
-            "core.account_manager.AccountManager.get_account_token",
-            return_value=limited_token,
-        ):
-            client = SpotifyClient(account_id=6)
-            # we should still have initialized with the limited scope value
-            assert created.get("scope") == limited_scope
-            # authentication check should be True because we verify cached token in is_authenticated()
-            # even if OAuth object failed to initialize fully
-            assert client.is_authenticated() is True
+        client = SpotifyClient(account_id=6)
+        # we should still have initialized with the limited scope value
+        assert created.get("scope") == limited_scope
+        # authentication check should be True because we verify cached token in is_authenticated()
+        # even if OAuth object failed to initialize fully
+        assert client.is_authenticated() is True
 
 
 def test_setup_client_prefers_account_creds(monkeypatch):

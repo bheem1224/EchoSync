@@ -1,5 +1,5 @@
-from database.music_database import Album, Artist, Base, LocalMedia, MusicDatabase, Track
 from core.database.repositories.track_repo import TrackRepository
+from database.music_database import Album, Artist, Base, LocalMedia, MusicDatabase, Track
 
 
 def test_placeholder_tracks_are_selected_when_metadata_is_populated(tmp_path):

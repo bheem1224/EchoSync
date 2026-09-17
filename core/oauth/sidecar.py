@@ -330,6 +330,7 @@ def oauth_callback(provider_name: str):
     if request.path.startswith("/api/oauth/callback/plugins/"):
         try:
             import binascii
+
             from core.nexus_framework.plugin_loader import PluginRegistry
 
             plugin_cls = PluginRegistry.get_plugin_class(provider_name)

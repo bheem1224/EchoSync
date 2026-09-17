@@ -154,7 +154,6 @@ class LocalServerProvider(PluginBase):
                     added_at=added_at,
                 )
 
-        import concurrent.futures
 
         def _iter_audio_files(root: Path) -> Generator[Path, None, None]:
             """Walk the directory tree, yielding audio files while tolerating

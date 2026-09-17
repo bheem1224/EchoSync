@@ -2,7 +2,6 @@ import logging
 import queue
 import sqlite3
 import threading
-import time
 from collections.abc import Callable
 from typing import Any
 

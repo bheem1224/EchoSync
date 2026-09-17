@@ -50,7 +50,9 @@ class PluginCache:
     def _ensure_table(self):
         """Ensure the cache table exists."""
         try:
-            with self.db.engine.connect() as conn:
+            from core.task_manager.task_queue import db_write_lease
+
+            with db_write_lease("cache"), self.db.engine.connect() as conn:
                 conn.execute(
                     text("""
                     CREATE TABLE IF NOT EXISTS parsed_tracks (
@@ -102,7 +104,7 @@ class PluginCache:
 
     def set(self, key: str, value: Any, ttl_seconds: int = 3600) -> bool:
         """
-        Store value in cache with TTL (deferred to background pool)
+        Store value in cache with TTL directly under db_write_lease("cache").
 
         Args:
             key: Cache key
@@ -110,61 +112,36 @@ class PluginCache:
             ttl_seconds: Time-to-live in seconds
 
         Returns:
-            True immediately without waiting for DB commit
+            True if successfully persisted, False otherwise
         """
-        # --- NEW GUARD CLAUSE ---
         # Abort cache write if the value explicitly represents an error or unconfigured state
         if isinstance(value, dict):
             error_msg = str(value.get("error", "")).lower()
             if error_msg or "not configured" in error_msg:
                 logger.debug(f"Skipping cache write for error state: {value}")
                 return False
-        # ------------------------
 
-        # OPTIMIZATION: Defer cache persistence to background to prevent blocking main thread
-        def _persist_cache():
-            try:
-                import json
-                from datetime import timedelta
+        try:
+            from datetime import timedelta
+            from core.task_manager.task_queue import db_write_lease
+            from time_utils import utc_now
 
-                from sqlalchemy import text
+            json_value = json.dumps(value, default=str)
+            expires_at = utc_now() + timedelta(seconds=ttl_seconds)
 
-                from time_utils import utc_now
+            query = text("""
+                INSERT OR REPLACE INTO parsed_tracks
+                (raw_string, parsed_json, created_at, ttl_expires_at)
+                VALUES (:key, :value, CURRENT_TIMESTAMP, :expires)
+            """)
 
-                json_value = json.dumps(value, default=str)
-                expires_at = utc_now() + timedelta(seconds=ttl_seconds)
-
-                query = text("""
-                    INSERT OR REPLACE INTO parsed_tracks
-                    (raw_string, parsed_json, created_at, ttl_expires_at)
-                    VALUES (:key, :value, CURRENT_TIMESTAMP, :expires)
-                """)
-
-                with self.db.engine.connect() as conn:
-                    conn.execute(
-                        query, {"key": key, "value": json_value, "expires": expires_at}
-                    )
-                    conn.commit()
-            except Exception as e:
-                import logging
-
-                logging.getLogger("plugin_cache").error(f"Error storing in cache: {e}")
-
-        # OPTIMIZATION: Dispatch via job_queue to prevent thread exhaustion
-        # and keep all threads managed by central job queue
-        import time
-
-        from core.job_queue import job_queue
-
-        job_name = f"plugin_cache_writer_{hash(key)}_{int(time.time() * 1000)}"
-        job_queue.register_job(
-            name=job_name,
-            func=_persist_cache,
-            interval_seconds=None,
-            tags=["system", "cache"],
-        )
-        job_queue.execute_job_now(job_name)
-        return True
+            with db_write_lease("cache"), self.db.engine.connect() as conn:
+                conn.execute(query, {"key": key, "value": json_value, "expires": expires_at})
+                conn.commit()
+            return True
+        except Exception as e:
+            logging.getLogger("plugin_cache").error(f"Error storing in cache: {e}")
+            return False
 
     def delete(self, key: str) -> bool:
         """
@@ -177,8 +154,10 @@ class PluginCache:
             True if successful, False otherwise
         """
         try:
+            from core.task_manager.task_queue import db_write_lease
+
             query = text("DELETE FROM parsed_tracks WHERE raw_string = :key")
-            with self.db.engine.connect() as conn:
+            with db_write_lease("cache"), self.db.engine.connect() as conn:
                 conn.execute(query, {"key": key})
                 conn.commit()
             return True
@@ -194,12 +173,14 @@ class PluginCache:
             Number of entries deleted
         """
         try:
+            from core.task_manager.task_queue import db_write_lease
+
             query = text("""
                 DELETE FROM parsed_tracks
                 WHERE ttl_expires_at IS NOT NULL
                 AND ttl_expires_at <= CURRENT_TIMESTAMP
             """)
-            with self.db.engine.connect() as conn:
+            with db_write_lease("cache"), self.db.engine.connect() as conn:
                 result = conn.execute(query)
                 conn.commit()
                 return result.rowcount
@@ -215,8 +196,10 @@ class PluginCache:
             True if successful
         """
         try:
+            from core.task_manager.task_queue import db_write_lease
+
             query = text("DELETE FROM parsed_tracks")
-            with self.db.engine.connect() as conn:
+            with db_write_lease("cache"), self.db.engine.connect() as conn:
                 conn.execute(query)
                 conn.commit()
             return True
@@ -317,8 +300,10 @@ def invalidate_cache_for(pattern: str) -> int:
     """
     cache = get_cache()
     try:
+        from core.task_manager.task_queue import db_write_lease
+
         query = text("DELETE FROM parsed_tracks WHERE raw_string LIKE :pattern")
-        with cache.db.engine.connect() as conn:
+        with db_write_lease("cache"), cache.db.engine.connect() as conn:
             result = conn.execute(query, {"pattern": pattern})
             conn.commit()
             logger.info(f"Invalidated cache entries matching: {pattern}")

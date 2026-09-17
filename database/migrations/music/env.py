@@ -62,12 +62,11 @@ def run_migrations_online() -> None:
     connectable = db.engine
     from core.task_manager import db_write_lease
 
-    with db_write_lease(task_name="migration_music_online"):
-        with connectable.connect() as connection:
-            context.configure(connection=connection, target_metadata=target_metadata, render_as_batch=True)
+    with db_write_lease(task_name="migration_music_online"), connectable.connect() as connection:
+        context.configure(connection=connection, target_metadata=target_metadata, render_as_batch=True)
 
-            with context.begin_transaction():
-                context.run_migrations()
+        with context.begin_transaction():
+            context.run_migrations()
 
 
 if context.is_offline_mode():

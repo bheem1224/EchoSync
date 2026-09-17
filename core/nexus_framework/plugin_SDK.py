@@ -724,9 +724,10 @@ def check_plugin_permission(plugin_id: str, scope: str) -> bool:
         return True
 
     import json
+
+    from core.nexus_framework.permissions import SAFE_BASE_SCOPES
     from core.settings import config_manager
     from database.config_database import get_config_database
-    from core.nexus_framework.permissions import SAFE_BASE_SCOPES
 
     clean_scope = scope.strip()
     is_base_scope = clean_scope in SAFE_BASE_SCOPES or clean_scope in (
@@ -809,8 +810,8 @@ def check_plugin_permission(plugin_id: str, scope: str) -> bool:
                                     return True
                                 if db_perms.get(canonical_scope) or db_perms.get(sub_key):
                                     return True
-                            elif (clean_scope in db_perms and db_perms[clean_scope]) or (
-                                canonical_scope in db_perms and db_perms[canonical_scope]
+                            elif (db_perms.get(clean_scope)) or (
+                                db_perms.get(canonical_scope)
                             ):
                                 return True
                     except Exception:

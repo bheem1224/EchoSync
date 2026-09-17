@@ -714,6 +714,7 @@ def test_plugin_store_uninstall_boundary_check(regression_env, tmp_path):
 def test_search_route_dual_prefix_and_json_response():
     """Verifies that search /route endpoint returns JSONResponse and is mounted on both prefixes."""
     from fastapi.testclient import TestClient
+
     from web.api_app import create_app
 
     app = create_app(testing=True)
@@ -733,6 +734,7 @@ def test_search_route_dual_prefix_and_json_response():
 async def test_telemetry_stream_endpoint():
     """Verifies that the telemetry stream endpoint generates expected typed SSE events."""
     from unittest.mock import AsyncMock
+
     from web.routes.telemetry import telemetry_stream
 
     req = AsyncMock()
@@ -752,6 +754,7 @@ async def test_telemetry_stream_endpoint():
 def test_plex_blueprint_and_router_mounting(regression_env):
     """Verifies that Plex (3021005569) initializes with APIRouter without Blueprint errors."""
     from pathlib import Path
+
     from core.nexus_framework.plugin_loader import PluginLoader, PluginRegistry
     from web.api_app import create_app
 
@@ -791,6 +794,7 @@ def test_legacy_flask_blueprint_rejection_and_warning(regression_env, caplog):
     have router_status set to 'DEPRECATED_FLASK_UNSUPPORTED', and log a clear deprecation warning.
     """
     import logging
+
     from core.nexus_framework.plugin_loader import PluginLoader, PluginRegistry
     from core.plugins.sdk import compute_plugin_crc32
     from web.api_app import create_app

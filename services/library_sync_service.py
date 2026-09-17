@@ -1,15 +1,15 @@
 import logging
 import os
 import time
+
 import echosync_core
 from sqlalchemy import delete, select
-
-from core.task_manager.task_queue import db_write_lease
 
 from core.database.repositories.track_repo import TrackRepository
 from core.io_gatekeeper import Gatekeeper
 from core.orchestrator.ingestion import _parse_telemetry_dict
 from core.settings import config_manager
+from core.task_manager.task_queue import db_write_lease
 from database import _canonicalize_path, get_database
 from database.music_database import (
     Album,

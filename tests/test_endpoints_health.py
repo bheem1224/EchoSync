@@ -1,4 +1,5 @@
 from fastapi.testclient import TestClient
+
 """Quick test to verify all critical endpoints return 200."""
 
 

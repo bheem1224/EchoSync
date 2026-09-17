@@ -28,7 +28,6 @@ TaskState = TaskStatus
 class QueueFullError(Exception):
     """Raised when the JobQueue reaches its maximum pending capacity."""
 
-    pass
 
 
 @dataclass(order=True)
@@ -212,8 +211,9 @@ class JobQueue:
             )
             # Execute checkpoint with 5.0s bounded wait
             try:
-                from database.music_database import get_database
                 from sqlalchemy import text
+
+                from database.music_database import get_database
 
                 db = get_database()
                 with db.engine.connect() as conn:

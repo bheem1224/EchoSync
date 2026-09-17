@@ -1,8 +1,8 @@
-from unittest.mock import MagicMock
 from pathlib import Path
+from unittest.mock import MagicMock
 
-import pytest
 import echosync_core
+import pytest
 
 from core.enums import Capability
 from core.matching_engine.fingerprinting import FingerprintGenerator

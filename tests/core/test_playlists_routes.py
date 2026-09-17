@@ -48,29 +48,28 @@ def test_plex_sync_client_resolution_failure():
     from web.routes.playlists import _sync_to_plex
 
     # When Plex plugin is not available or cannot connect, _run_sync should gracefully handle it
-    with patch(
+    with (
+        patch(
         "plugins.EchoSync.plex.client.PlexClient", side_effect=ImportError("No plex")
+    ), patch(
+            "core.nexus_framework.plugin_loader.PluginRegistry.get_plugin_class",
+            return_value=None,
+        ),
+        patch(
+            "core.nexus_framework.plugin_loader.PluginRegistry.get_plugin",
+            return_value=None,
+        ),
     ):
-        with (
-            patch(
-                "core.nexus_framework.plugin_loader.PluginRegistry.get_plugin_class",
-                return_value=None,
-            ),
-            patch(
-                "core.nexus_framework.plugin_loader.PluginRegistry.get_plugin",
-                return_value=None,
-            ),
-        ):
-            result = _sync_to_plex(
-                payload={},
-                source="spotify",
-                target="plex",
-                playlist_name="Test Playlist",
-                matches=[{"target_identifier": "12345"}],
-                download_missing=False,
-                sync_mode="direct",
-            )
-            assert result.get("accepted") is True
-            job_name = result.get("job")
-            assert job_name is not None
-            assert "sync/events" in result.get("events_path")
+        result = _sync_to_plex(
+            payload={},
+            source="spotify",
+            target="plex",
+            playlist_name="Test Playlist",
+            matches=[{"target_identifier": "12345"}],
+            download_missing=False,
+            sync_mode="direct",
+        )
+        assert result.get("accepted") is True
+        job_name = result.get("job")
+        assert job_name is not None
+        assert "sync/events" in result.get("events_path")

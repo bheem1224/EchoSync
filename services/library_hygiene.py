@@ -163,8 +163,9 @@ class DuplicateHygieneService:
             self.backfill_missing_fingerprints(progress_callback=progress_callback)
 
         try:
-            from services.deduplicator import get_deduplicator
             from sqlalchemy.orm import joinedload, selectinload
+
+            from services.deduplicator import get_deduplicator
 
             dedup = get_deduplicator(self.db)
 
@@ -755,34 +756,33 @@ class DuplicateHygieneService:
         now = utc_now()
         updated_count = 0
 
-        with self.db.session_scope() as music_session:
-            with working_db.session_scope() as work_session:
-                # Find corresponding track IDs
-                from sqlalchemy.orm import joinedload
+        with self.db.session_scope() as music_session, working_db.session_scope() as work_session:
+            # Find corresponding track IDs
+            from sqlalchemy.orm import joinedload
 
-                ext_idents = (
-                    music_session.query(ExternalIdentifier, Track)
-                    .options(joinedload(Track.artist))
-                    .join(Track, ExternalIdentifier.track_id == Track.id)
-                    .filter(ExternalIdentifier.provider_item_id.in_(stale_provider_ids))
-                    .yield_per(1000)
+            ext_idents = (
+                music_session.query(ExternalIdentifier, Track)
+                .options(joinedload(Track.artist))
+                .join(Track, ExternalIdentifier.track_id == Track.id)
+                .filter(ExternalIdentifier.provider_item_id.in_(stale_provider_ids))
+                .yield_per(1000)
+            )
+
+            for ext, track in ext_idents:
+                # Resolve to sync_id
+                sync_id = track.sync_id
+
+                states = (
+                    work_session.query(UserTrackState).filter(UserTrackState.sync_id == sync_id).yield_per(1000)
                 )
 
-                for ext, track in ext_idents:
-                    # Resolve to sync_id
-                    sync_id = track.sync_id
-
-                    states = (
-                        work_session.query(UserTrackState).filter(UserTrackState.sync_id == sync_id).yield_per(1000)
-                    )
-
-                    for state in states:
-                        # Only mark stale if it's not already staged for deletion/upgrade or exempt
-                        if not state.lifecycle_action and not state.admin_exempt_deletion:
-                            state.lifecycle_action = "STALE"
-                            state.lifecycle_queued_at = now
-                            updated_count += 1
-                            logger.info(f"Marked track '{track.title}' (sync_id: {sync_id}) as STALE.")
+                for state in states:
+                    # Only mark stale if it's not already staged for deletion/upgrade or exempt
+                    if not state.lifecycle_action and not state.admin_exempt_deletion:
+                        state.lifecycle_action = "STALE"
+                        state.lifecycle_queued_at = now
+                        updated_count += 1
+                        logger.info(f"Marked track '{track.title}' (sync_id: {sync_id}) as STALE.")
 
         logger.info(f"Stale track scan completed. Marked {updated_count} states as STALE.")
         return {"status": "success", "count": updated_count}

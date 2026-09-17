@@ -27,7 +27,6 @@ from core.database.repositories.download_repo import DownloadRepository
 from core.db.echo_sync_track import EchosyncTrack
 from core.enums import Capability, TaskCategory, TaskPriority
 from core.hook_manager import hook_manager
-from core.task_manager.task_queue import db_write_lease, job_queue
 from core.matching_engine.matching_engine import WeightedMatchingEngine
 from core.matching_engine.scoring_profile import PROFILE_DOWNLOAD_SEARCH
 from core.matching_engine.text_utils import (
@@ -42,6 +41,7 @@ from core.matching_engine.track_parser import TrackParser
 from core.nexus_framework.plugin_loader import PluginRegistry
 from core.nexus_framework.plugin_SDK import PluginBase
 from core.settings import config_manager
+from core.task_manager.task_queue import db_write_lease, job_queue
 from database.music_database import Album, Artist, Track, get_database
 from database.working_database import DownloadQueue, get_working_database
 from time_utils import utc_now

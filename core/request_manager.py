@@ -15,7 +15,7 @@ import random
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import requests
 from requests import Response
@@ -140,7 +140,7 @@ class RequestManager:
                         from email.utils import parsedate_to_datetime
 
                         dt = parsedate_to_datetime(retry_after)
-                        delay = (dt - datetime.now(timezone.utc)).total_seconds()
+                        delay = (dt - datetime.now(UTC)).total_seconds()
                         if delay > 0:
                             time.sleep(min(delay, self.retry.max_backoff))
                             return

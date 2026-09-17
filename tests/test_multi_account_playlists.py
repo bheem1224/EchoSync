@@ -1,8 +1,8 @@
-from fastapi.testclient import TestClient
 import zlib
 from unittest.mock import MagicMock, patch
 
 import pytest
+from fastapi.testclient import TestClient
 from flask import Flask
 
 from core.db.echo_sync_track import EchosyncTrack

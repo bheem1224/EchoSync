@@ -376,7 +376,6 @@ def extract_mb_aliases(db_track: Any, **kwargs: Any) -> Any:
 # ---------------------------------------------------------------------------
 
 from core.nexus_framework.plugin_SDK import PluginBase
-from core.task_manager.task_queue import TaskCategory
 
 
 class CJKLanguagePackPlugin(PluginBase):
@@ -391,7 +390,8 @@ class CJKLanguagePackPlugin(PluginBase):
         Cooperatively yields, strictly gated on tracks possessing an echosync_signature.
         """
         import asyncio
-        from database.music_database import get_database, Track
+
+        from database.music_database import Track, get_database
 
         music_db = get_database()
         processed = 0

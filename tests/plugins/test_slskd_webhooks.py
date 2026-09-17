@@ -192,8 +192,8 @@ def test_slskd_webhook_dispatches_verifying_state(webhook_client, mock_work_db):
         "local_path": "/path/to/downloaded/test_track.flac",
     }
 
-    from plugins.EchoSync.slskd.plugin import on_webhook_received
     from core.plugins.sdk import _WEBHOOK_HANDLERS, compute_plugin_crc32
+    from plugins.EchoSync.slskd.plugin import on_webhook_received
 
     _WEBHOOK_HANDLERS.setdefault(compute_plugin_crc32("EchoSync.slskd"), []).append(
         on_webhook_received

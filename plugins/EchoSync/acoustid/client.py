@@ -212,16 +212,12 @@ class AcoustIDProvider(PluginBase):
                 return {"acoustid_id": None, "mbids": [], "score": None, "match_status": "UNRESOLVED"}
 
             data = response.json()
-            logger.info(
-                "[AcoustID Raw Response] results_count=%d, results=%s",
-                len(data.get("results", [])),
-                data.get("results", []),
-            )
             if data.get("status") != "ok":
                 logger.error(f"AcoustID API returned error status: {data}")
                 return {"acoustid_id": None, "mbids": [], "score": None, "match_status": "UNRESOLVED"}
 
             results = data.get("results") or []
+            logger.debug(f"[AcoustID] Fingerprint matched {len(results)} candidate recordings")
             if not results:
                 logger.debug("AcoustID lookup succeeded but found 0 matches for fingerprint.")
             mbids: list[str] = []
@@ -286,13 +282,22 @@ class AcoustIDProvider(PluginBase):
                     acoustid_id = result_id
 
             match_status = "MATCHED" if (acoustid_id or mbids) else "UNRESOLVED"
-            return {
+            final_res = {
                 "acoustid_id": acoustid_id,
                 "mbids": mbids,
                 "recordings": recordings_list,
                 "score": best_score if best_score >= 0.0 else None,
                 "match_status": match_status,
             }
+
+            # Explicitly dereference raw API payload and results to eliminate heap bloat
+            response = None
+            payload = None
+            data = None
+            results = None
+            best_result = None
+
+            return final_res
         except Exception as e:
             logger.error(f"Failed to resolve fingerprint: {e}")
             return {"acoustid_id": None, "mbids": [], "score": None, "match_status": "UNRESOLVED"}

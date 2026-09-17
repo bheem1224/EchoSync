@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+
 import psutil
 from fastapi import APIRouter, Request
 from sse_starlette.sse import EventSourceResponse
@@ -69,8 +70,8 @@ async def telemetry_stream(request: Request):
                 # 3. Queue Summary
                 queue_summary = {"active": 0, "queued": 0}
                 try:
-                    from database.working_database import get_working_database
                     from core.database.models.working import DownloadQueue, DownloadStatus
+                    from database.working_database import get_working_database
 
                     w_db = get_working_database()
                     with w_db.session_scope() as session:

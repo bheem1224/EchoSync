@@ -76,7 +76,7 @@ from core.suggestion_engine.deletion import (
 )
 from core.tiered_logger import get_logger
 from database.config_database import get_config_database
-from database.music_database import Album, Artist, LocalMedia, Track, get_database
+from database.music_database import Artist, Track, get_database
 from database.working_database import (
     Account,
     SuggestionBlacklist,

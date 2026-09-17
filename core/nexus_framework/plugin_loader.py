@@ -51,24 +51,23 @@ def _hydrate_manifest_permissions(plugin_id: int, manifest_permissions: Any) -> 
     from database.config_database import get_config_database
 
     db = get_config_database()
-    with db_write_lease(task_name=f"hydrate_plugin_permissions_{plugin_id}"):
-        with db._open_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT permissions FROM services WHERE plugin_id=?", (plugin_id,))
-            row = cursor.fetchone()
-            raw_permissions = row[0] if row else None
-            if raw_permissions not in (None, "", "{}", "[]"):
-                try:
-                    if json.loads(raw_permissions):
-                        return json.loads(raw_permissions)
-                except (TypeError, json.JSONDecodeError):
-                    pass
-            serialized = json.dumps(manifest_permissions)
-            cursor.execute(
-                "UPDATE services SET permissions=? WHERE plugin_id=?",
-                (serialized, plugin_id),
-            )
-            conn.commit()
+    with db_write_lease(task_name=f"hydrate_plugin_permissions_{plugin_id}"), db._open_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT permissions FROM services WHERE plugin_id=?", (plugin_id,))
+        row = cursor.fetchone()
+        raw_permissions = row[0] if row else None
+        if raw_permissions not in (None, "", "{}", "[]"):
+            try:
+                if json.loads(raw_permissions):
+                    return json.loads(raw_permissions)
+            except (TypeError, json.JSONDecodeError):
+                pass
+        serialized = json.dumps(manifest_permissions)
+        cursor.execute(
+            "UPDATE services SET permissions=? WHERE plugin_id=?",
+            (serialized, plugin_id),
+        )
+        conn.commit()
     return manifest_permissions
 
 
@@ -791,7 +790,6 @@ class PluginLoader:
         prune orphaned records, and garbage collect physical files.
         """
         logger.info("Starting authoritative services registry reconciliation...")
-        import binascii
         import json
         import shutil
         import sqlite3
@@ -1478,7 +1476,6 @@ class PluginLoader:
 
                 sys.path.insert(0, str(package_dir))
 
-                import plugins
 
                 plugins_root_resolved = str(plugins_root.resolve())
                 if "plugins" in sys.modules and hasattr(sys.modules["plugins"], "__path__"):
@@ -1679,9 +1676,9 @@ class PluginLoader:
                             except Exception:
                                 pass
                     if plugin_instance:
-                        setattr(plugin_instance, "router_status", "DEPRECATED_FLASK_UNSUPPORTED")
+                        plugin_instance.router_status = "DEPRECATED_FLASK_UNSUPPORTED"
                     if plugin_cls:
-                        setattr(plugin_cls, "router_status", "DEPRECATED_FLASK_UNSUPPORTED")
+                        plugin_cls.router_status = "DEPRECATED_FLASK_UNSUPPORTED"
                     logger.warning(
                         f"WARNING: Plugin '{name}' exposes a deprecated Flask Blueprint. Routes will not be mounted. Please update plugin via the store to a FastAPI-compatible version."
                     )

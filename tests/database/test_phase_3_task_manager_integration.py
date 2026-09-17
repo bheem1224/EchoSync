@@ -10,17 +10,15 @@ Verifies:
 """
 
 import os
-import sqlite3
 import tempfile
-import threading
 import time
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
 from core.task_manager.models import OwnerType, ProcessCategory
 from core.task_manager.supervisor import supervisor
-from core.task_manager.task_queue import job_queue, db_write_lease
+from core.task_manager.task_queue import db_write_lease, job_queue
 from database.music_database import Artist, Track, get_database
 from database.working_database import Account, get_working_database
 
@@ -83,23 +81,22 @@ def test_music_database_session_scope_acquires_write_lease():
         lease_acquired = True
         return original_lease(*args, **kwargs)
 
-    with patch.object(job_queue, "db_write_lease", side_effect=lease_wrapper):
-        with db.session_scope() as session:
-            artist = session.query(Artist).first()
-            if not artist:
-                artist = Artist(name="Phase 3 Artist", normalized_name="phase 3 artist")
-                session.add(artist)
-                session.flush()
+    with patch.object(job_queue, "db_write_lease", side_effect=lease_wrapper), db.session_scope() as session:
+        artist = session.query(Artist).first()
+        if not artist:
+            artist = Artist(name="Phase 3 Artist", normalized_name="phase 3 artist")
+            session.add(artist)
+            session.flush()
 
-            track = session.query(Track).filter_by(sync_id="phase3_test_sync_1").first()
-            if not track:
-                track = Track(
-                    sync_id="phase3_test_sync_1",
-                    title="Phase 3 Test Track",
-                    artist_id=artist.id,
-                    duration=180000,
-                )
-                session.add(track)
+        track = session.query(Track).filter_by(sync_id="phase3_test_sync_1").first()
+        if not track:
+            track = Track(
+                sync_id="phase3_test_sync_1",
+                title="Phase 3 Test Track",
+                artist_id=artist.id,
+                duration=180000,
+            )
+            session.add(track)
 
     assert lease_acquired is True
 
@@ -115,16 +112,15 @@ def test_working_database_session_scope_acquires_write_lease():
         lease_acquired = True
         return original_lease(*args, **kwargs)
 
-    with patch.object(job_queue, "db_write_lease", side_effect=lease_wrapper):
-        with w_db.session_scope() as session:
-            acc = session.query(Account).filter_by(username="phase3_test_user").first()
-            if not acc:
-                acc = Account(
-                    username="phase3_test_user",
-                    plugin_id=1,
-                    remote_account_id="remote_test_123",
-                )
-                session.add(acc)
+    with patch.object(job_queue, "db_write_lease", side_effect=lease_wrapper), w_db.session_scope() as session:
+        acc = session.query(Account).filter_by(username="phase3_test_user").first()
+        if not acc:
+            acc = Account(
+                username="phase3_test_user",
+                plugin_id=1,
+                remote_account_id="remote_test_123",
+            )
+            session.add(acc)
 
     assert lease_acquired is True
 
@@ -153,10 +149,9 @@ def test_reentrant_db_write_lease_across_nested_scopes():
             assert found is not None
 
         # Even deeper nesting
-        with db_write_lease(task_name="deeply_nested"):
-            with db.session_scope() as session2:
-                found2 = session2.query(Artist).first()
-                assert found2 is not None
+        with db_write_lease(task_name="deeply_nested"), db.session_scope() as session2:
+            found2 = session2.query(Artist).first()
+            assert found2 is not None
 
 
 def test_orchestrator_ingestion_acquires_write_lease():

@@ -148,23 +148,22 @@ async def test_ghost_transfer_fallback_and_blacklist(mock_work_db, mock_db):
 
     with patch.object(
         dm, "_get_active_download_providers", return_value=[mock_provider]
-    ):
-        with patch.object(
-            dm, "_execute_waterfall_search_and_download", new_callable=AsyncMock
-        ) as mock_waterfall:
-            await dm._check_active_downloads()
+    ), patch.object(
+        dm, "_execute_waterfall_search_and_download", new_callable=AsyncMock
+    ) as mock_waterfall:
+        await dm._check_active_downloads()
 
-            # Verify cancellation was called
-            mock_provider._async_cancel_download.assert_called_once_with(
-                "peer1|test.flac"
-            )
+        # Verify cancellation was called
+        mock_provider._async_cancel_download.assert_called_once_with(
+            "peer1|test.flac"
+        )
 
-            # Verify DB record updated: status="searching", blacklist updated
-            with mock_work_db.session_scope() as session:
-                refreshed = session.get(DownloadQueue, db_id)
-                assert refreshed is not None
-                assert refreshed.status == "searching"
-                assert refreshed.provider_id is None
-                blacklist = refreshed.echo_sync_track.get("blacklisted_candidates", [])
-                assert "peer1|test.flac" in blacklist
-                assert "test.flac" in blacklist
+        # Verify DB record updated: status="searching", blacklist updated
+        with mock_work_db.session_scope() as session:
+            refreshed = session.get(DownloadQueue, db_id)
+            assert refreshed is not None
+            assert refreshed.status == "searching"
+            assert refreshed.provider_id is None
+            blacklist = refreshed.echo_sync_track.get("blacklisted_candidates", [])
+            assert "peer1|test.flac" in blacklist
+            assert "test.flac" in blacklist

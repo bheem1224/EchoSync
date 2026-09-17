@@ -1,4 +1,3 @@
-from fastapi.testclient import TestClient
 from core.oauth.sidecar import app
 
 

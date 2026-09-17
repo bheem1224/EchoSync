@@ -430,6 +430,7 @@ def _persist_track_aliases(track_obj: Any, alias_entries: list[dict]) -> None:
         return
     try:
         from sqlalchemy.orm import object_session
+
         from core.nexus_framework.plugin_SDK import sdk
 
         session = object_session(track_obj)
@@ -485,6 +486,7 @@ def _persist_artist_aliases(track_obj: Any, alias_entries: list[dict]) -> None:
         return
     try:
         from sqlalchemy.orm import object_session
+
         from core.nexus_framework.plugin_SDK import sdk
 
         session = object_session(track_obj)

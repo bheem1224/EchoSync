@@ -3,8 +3,6 @@
 import base64
 import json
 import time
-import urllib.parse
-import uuid
 
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse

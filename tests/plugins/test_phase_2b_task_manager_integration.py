@@ -10,17 +10,14 @@ Tests:
 6. LocalServer DatabaseCleanupJob write lease acquisition.
 """
 
-import asyncio
-import logging
-import pytest
 from unittest.mock import MagicMock, patch
 
-from core.plugins.sdk import compute_plugin_crc32
-from core.task_manager.models import OwnerType, ProcessCategory
-from core.task_manager.supervisor import supervisor
-from core.task_manager.task_queue import job_queue, db_write_lease
-from core.tiered_logger import get_logger, SourceTagAdapter
+import pytest
 
+from core.plugins.sdk import compute_plugin_crc32
+from core.task_manager.models import OwnerType
+from core.task_manager.supervisor import supervisor
+from core.tiered_logger import SourceTagAdapter, get_logger
 
 # ==============================================================================
 # 1. Tiered Logger Strict Integer Plugin ID Tests
@@ -69,8 +66,8 @@ def test_tiered_logger_rejects_out_of_range_plugin_id():
 
 
 def test_slskd_eventbus_callbacks_spawn_supervised_threads():
-    from plugins.EchoSync.slskd.plugin import PLUGIN_CRC32
     from core.event_bus import event_bus
+    from plugins.EchoSync.slskd.plugin import PLUGIN_CRC32
 
     # Ensure event bus dispatcher is actively running before patching supervisor
     event_bus.start()
@@ -97,7 +94,7 @@ def test_slskd_eventbus_callbacks_spawn_supervised_threads():
 @pytest.mark.asyncio
 async def test_slskd_webhook_mutation_acquires_db_write_lease():
     """Verify that on_webhook_received acquires db_write_lease during DownloadQueue update."""
-    from plugins.EchoSync.slskd.plugin import on_webhook_received, PLUGIN_CRC32
+    from plugins.EchoSync.slskd.plugin import PLUGIN_CRC32, on_webhook_received
 
     mock_lease = MagicMock()
     mock_lease.__enter__ = MagicMock(return_value=None)
@@ -187,7 +184,7 @@ def test_local_server_crawler_cooperative_cancellation(tmp_path):
 
 def test_local_server_database_cleanup_acquires_write_lease():
     """Verify DatabaseCleanupJob acquires db_write_lease during execution."""
-    from plugins.EchoSync.local_server.database_cleanup import DatabaseCleanupJob, PLUGIN_CRC32
+    from plugins.EchoSync.local_server.database_cleanup import PLUGIN_CRC32, DatabaseCleanupJob
 
     job = DatabaseCleanupJob()
     mock_db = MagicMock()
@@ -200,11 +197,10 @@ def test_local_server_database_cleanup_acquires_write_lease():
     mock_lease.__enter__ = MagicMock(return_value=None)
     mock_lease.__exit__ = MagicMock(return_value=None)
 
-    with patch("plugins.EchoSync.local_server.database_cleanup.get_database", return_value=mock_db):
-        with patch(
-            "plugins.EchoSync.local_server.database_cleanup.db_write_lease", return_value=mock_lease
-        ) as lease_mock:
-            job.execute()
-            lease_mock.assert_called_once_with(task_name=f"plugin_{PLUGIN_CRC32}")
-            mock_lease.__enter__.assert_called_once()
-            mock_lease.__exit__.assert_called_once()
+    with patch("plugins.EchoSync.local_server.database_cleanup.get_database", return_value=mock_db), patch(
+        "plugins.EchoSync.local_server.database_cleanup.db_write_lease", return_value=mock_lease
+    ) as lease_mock:
+        job.execute()
+        lease_mock.assert_called_once_with(task_name=f"plugin_{PLUGIN_CRC32}")
+        mock_lease.__enter__.assert_called_once()
+        mock_lease.__exit__.assert_called_once()

@@ -310,7 +310,6 @@ def lookup_isrc(isrc: str):
 def get_cover_art(path: str = Query(..., description="absolute path to audio file")):
     """Extract embedded cover art from an audio file."""
     try:
-        from core.path_security import PathTraversalError, resolve_safe_path
         from core.settings import config_manager
 
         candidate_roots = [

@@ -7,39 +7,35 @@ Unit and integration tests for Stage 2:
 """
 
 import binascii
-import json
+
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
-from database.music_database import (
-    Base,
-    Track,
-    Artist,
-    Album,
-    TrackAlias,
-    ArtistAlias,
-    TrackAttribute,
-    ArtistAttribute,
-    AlbumAttribute,
-    _ensure_alias_and_attribute_schema,
-)
 from core.database.repositories.track_repo import TrackRepository
 from core.metadata.schemas import EntityAliasProposal
 from core.nexus_framework.plugin_SDK import (
     _AliasBroker,
     _AttributeBroker,
     _validate_attribute_payload,
-    check_plugin_permission,
-    sdk,
+)
+from database.music_database import (
+    Album,
+    AlbumAttribute,
+    Artist,
+    ArtistAlias,
+    ArtistAttribute,
+    Base,
+    Track,
+    TrackAlias,
+    TrackAttribute,
+    _ensure_alias_and_attribute_schema,
 )
 from plugins.EchoSync.cjk_language_pack.plugin import (
     CJKLanguagePackPlugin,
     extract_mb_aliases,
 )
-
-
-from sqlalchemy.pool import StaticPool
 
 
 @pytest.fixture
@@ -406,6 +402,7 @@ def test_rich_track_endpoint(memory_db, monkeypatch):
         monkeypatch.setattr("web.routes.tracks.get_database", lambda: MockDB())
 
         from fastapi.testclient import TestClient
+
         from web.api_app import create_app
 
         client = TestClient(create_app())

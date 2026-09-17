@@ -739,6 +739,7 @@ def test_retroactive_enhancer_short_circuits_via_local_fingerprint(
     locally without calling MusicBrainzClient.search_recording or AcoustID APIs.
     """
     import logging
+
     from core.nexus_framework.plugin_loader import PluginRegistry
     from database.music_database import (
         Album,

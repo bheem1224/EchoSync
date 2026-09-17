@@ -31,7 +31,7 @@ async def _graceful_close(clients: Iterable[Any]) -> None:
                 maybe_coro = close_fn()
                 if asyncio.iscoroutine(maybe_coro):
                     await asyncio.wait_for(maybe_coro, timeout=3)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.error("Error closing %s: %s", client.__class__.__name__, exc)
 
 

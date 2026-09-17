@@ -37,7 +37,6 @@ from core.matching_engine.text_utils import (
 from core.matching_engine.trust_gate import (
     is_generic_title,
     sanitize_title_from_filename,
-    should_bypass_filename_trust_gate,
     verify_title_trust_gate,
 )
 from core.metadata.schemas import ResolutionRequest
@@ -665,10 +664,10 @@ class RetroactiveEnhancer:
 
     @property
     def resolution_engine(self) -> Any:
+        from unittest.mock import MagicMock, Mock
+
         from core.enums import Capability
         from core.metadata.engine import MetadataResolutionEngine
-
-        from unittest.mock import MagicMock, Mock
 
         mb_prov = self._get_mb_plugin()
         fetch_prov = self._get_plugin(Capability.FETCH_METADATA) if hasattr(self, "_get_plugin") else None

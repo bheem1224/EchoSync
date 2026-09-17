@@ -1444,9 +1444,7 @@ class MetadataResolutionEngine:
                         if not common_tokens:
                             # Disjoint titles sharing no significant words:
                             # If acoustic match has veto authority, give 0.65 floor.
-                            if veto_applies:
-                                sim = max(sim, 0.65)
-                            elif cand_acoustid_score >= 0.95 and dur_delta_sec <= 1.0:
+                            if veto_applies or cand_acoustid_score >= 0.95 and dur_delta_sec <= 1.0:
                                 sim = max(sim, 0.65)
                             else:
                                 sim = min(sim, 0.15)
@@ -1638,10 +1636,10 @@ class MetadataResolutionEngine:
                     best_veto_applied,
                     filename_stem,
                 )
-                return {
-                    "title": best_candidate.get("title") or baseline_title,
-                    "artist": best_candidate.get("artist") or best_candidate.get("artist_name") or "",
-                    "album": best_candidate.get("album") or best_candidate.get("album_title") or "",
+                result_payload = {
+                    "title": str(best_candidate.get("title") or baseline_title),
+                    "artist": str(best_candidate.get("artist") or best_candidate.get("artist_name") or ""),
+                    "album": str(best_candidate.get("album") or best_candidate.get("album_title") or ""),
                     "year": cand_year,
                     "track_number": cand_track,
                     "disc_number": cand_disc,
@@ -1654,6 +1652,15 @@ class MetadataResolutionEngine:
                     "duration_delta_sec": best_dur_delta,
                     "veto_applied": best_veto_applied,
                 }
+                # Explicitly dereference intermediate structures to prevent heap retention
+                details = None
+                recordings = None
+                candidate_mbids = None
+                rec_by_mbid = None
+                viable_candidates = None
+                top_candidates = None
+                best_candidate = None
+                return result_payload
         except Exception as exc:
             logger.warning("[resolution_engine] AcoustID resolution error: %s", exc)
 
@@ -1866,7 +1873,7 @@ class MetadataResolutionEngine:
                     or baseline_isrc
                 )
 
-                return {
+                result_payload = {
                     "title": final_title,
                     "artist": final_artist,
                     "album": final_album,
@@ -1878,6 +1885,13 @@ class MetadataResolutionEngine:
                     "isrc": final_isrc,
                     "confidence_score": best_score / 100.0,
                 }
+                # Explicitly dereference intermediate structures to prevent heap retention
+                meta = None
+                results = None
+                results_list = None
+                candidate_tracks = None
+                best_cand = None
+                return result_payload
         except Exception as exc:
             logger.warning("[resolution_engine] Scoped text waterfall error: %s", exc)
 

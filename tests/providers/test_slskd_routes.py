@@ -1,5 +1,6 @@
-from fastapi.testclient import TestClient
 from unittest.mock import MagicMock, patch
+
+from fastapi.testclient import TestClient
 
 from web.api_app import create_app
 

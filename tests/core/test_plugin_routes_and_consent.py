@@ -1,13 +1,11 @@
-import json
 import pytest
-from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
 
-from web.api_app import create_app
-from database.config_database import close_config_database, get_config_database
-from database.working_database import close_working_database
 from core.nexus_framework.plugin_store import PrivilegeEscalationError, plugin_store
 from core.plugins.sdk import compute_plugin_crc32
+from database.config_database import close_config_database, get_config_database
+from database.working_database import close_working_database
+from web.api_app import create_app
 
 
 @pytest.fixture

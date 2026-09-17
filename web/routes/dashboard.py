@@ -1,14 +1,12 @@
 import os
 import re
 from datetime import UTC
-from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import PlainTextResponse
 from ruamel.yaml import YAML
 from ruamel.yaml.error import YAMLError
 
-from core.path_security import PathTraversalError, resolve_safe_path
 from core.tiered_logger import get_logger
 from web.auth import require_auth
 

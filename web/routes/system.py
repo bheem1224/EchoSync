@@ -24,6 +24,7 @@ def get_status():
     """Get system runtime status, platform, and uptime."""
     import platform
     import sys
+
     from core.state import system_state
 
     uptime_seconds = int(time.time() - system_state.start_time)
@@ -55,8 +56,8 @@ def request_restart():
     import os
 
     from core.enums import TaskCategory, TaskPriority
-    from core.task_manager.task_queue import JobQueue, job_queue
     from core.state import system_state
+    from core.task_manager.task_queue import JobQueue, job_queue
 
     logger.info("Application restart requested via API")
 
@@ -961,8 +962,8 @@ def reset_factory():
     try:
         import time
 
-        from core.task_manager.task_queue import JobQueue
         from core.state import system_state
+        from core.task_manager.task_queue import JobQueue
 
         logger.warning("Factory reset requested! Deleting all primary databases.")
 
@@ -1008,7 +1009,7 @@ def reset_factory():
             os._exit(1)
 
         from core.enums import TaskCategory, TaskPriority
-        from core.task_manager.task_queue import JobQueue, job_queue
+        from core.task_manager.task_queue import job_queue
 
         system_state.restart_pending = True
         JobQueue.RESTART_PENDING = True

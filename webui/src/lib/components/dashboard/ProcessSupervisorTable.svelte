@@ -269,9 +269,11 @@
 
                 <!-- Memory -->
                 <td class="mono-sm">
-                  {#if proc.pid && proc.category === "os_subprocess"}
+                  {#if proc.pid && proc.memory_bytes > 0}
                     {formatBytes(proc.memory_bytes)}
-                  {:else if proc.thread_id || proc.category === "worker_thread"}
+                  {:else if proc.thread_id || (proc.category && proc.category
+                        .toLowerCase()
+                        .includes("worker"))}
                     <span class="td-dim text-xs">Shared Heap</span>
                   {:else if proc.memory_bytes > 0}
                     {formatBytes(proc.memory_bytes)}

@@ -7,15 +7,15 @@ Phase 1A Integration Test Suite:
 """
 
 import threading
-import time
+
 import pytest
 
-from core.database.models.working import DownloadIntent, DownloadQueue, DownloadStatus
+from core.database.models.working import DownloadIntent, DownloadStatus
 from core.database.repositories.download_repo import DownloadRepository
 from core.database.repositories.track_repo import TrackRepository
 from core.enums import TaskCategory, TaskPriority
 from core.metadata.schemas import EntityAliasProposal
-from core.task_manager.task_queue import JobQueue, db_write_lease, job_queue
+from core.task_manager.task_queue import db_write_lease, job_queue
 from database.music_database import Artist, Track, get_database
 from database.working_database import get_working_database
 from services.download_manager import get_download_manager, register_download_manager_job
@@ -184,4 +184,4 @@ def test_download_manager_job_queue_alignment():
     assert single_job is not None
     assert single_job.category == TaskCategory.GENERAL
     assert single_job.priority == TaskPriority.HIGH
-    assert f"download:99999" in single_job.tags
+    assert "download:99999" in single_job.tags

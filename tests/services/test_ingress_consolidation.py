@@ -9,24 +9,18 @@ Verifies:
 
 import os
 import time
-from pathlib import Path
-from unittest.mock import MagicMock, patch
+import uuid
+from unittest.mock import patch
 
 import pytest
 from fastapi import HTTPException
 
-import echosync_core
 from core.database.repositories.track_repo import TrackRepository
-from core.db.echo_sync_track import EchosyncMedia, EchosyncTrack
-from core.io_gatekeeper import Gatekeeper
-from core.metadata.engine import MetadataResolutionEngine
-from core.metadata.schemas import ResolutionRequest, ResolutionResult
+from core.metadata.schemas import ResolutionResult
 from core.path_formatter import ensure_path_invariance
-import uuid
 from database.music_database import (
     Album,
     Artist,
-    AudioFingerprint,
     Base,
     LocalMedia,
     Track,

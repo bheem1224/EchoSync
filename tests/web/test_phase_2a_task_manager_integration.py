@@ -6,24 +6,18 @@ Phase 2A Integration Test Suite:
 - SearchAdapter aggregate_stream bounded by general pool & registered with ProcessSupervisor (search_service.py)
 """
 
-import asyncio
-import os
-import threading
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
 from fastapi.testclient import TestClient
 
 from core.enums import TaskCategory, TaskPriority, TaskStatus
-from core.event_bus import EventBus, event_bus
-from core.task_manager.models import OwnerType, ProcessCategory, ProcessOwner
-from core.task_manager.supervisor import supervisor
 from core.task_manager.task_queue import JobQueue, ScheduledJob, job_queue
 from web.api_app import create_app
 from web.routes.library import router as library_router
 from web.routes.system import router as system_router
 from web.services.search_service import SearchAdapter
-
 
 # ── 1. Web Lifespan Tests ────────────────────────────────────────────────
 
@@ -31,7 +25,6 @@ from web.services.search_service import SearchAdapter
 @pytest.mark.asyncio
 async def test_api_app_lifespan_lifecycle():
     """Verify api_app lifespan runs backend services as asyncio.Task and stops JobQueue & EventBus on shutdown."""
-    import web.api_app as api_module
 
     app = create_app(testing=True)
 
@@ -136,22 +129,21 @@ def test_library_update_dispatches_via_job_queue():
 
     with patch(
         "core.nexus_framework.plugin_loader.PluginRegistry.get_active_services_by_type", return_value=["local_server"]
-    ):
-        with patch("core.nexus_framework.plugin_loader.PluginRegistry.create_instance") as mock_inst:
-            mock_provider = MagicMock()
-            mock_provider.ensure_connection.return_value = True
-            mock_inst.return_value = mock_provider
+    ), patch("core.nexus_framework.plugin_loader.PluginRegistry.create_instance") as mock_inst:
+        mock_provider = MagicMock()
+        mock_provider.ensure_connection.return_value = True
+        mock_inst.return_value = mock_provider
 
-            with patch.object(job_queue, "trigger_job_by_name", return_value=True) as mock_trigger:
-                resp = client.post("/api/v1/core/library/update-database?mode=full")
-                assert resp.status_code == 200
-                data = resp.json()
-                assert data["success"] is True
+        with patch.object(job_queue, "trigger_job_by_name", return_value=True) as mock_trigger:
+            resp = client.post("/api/v1/core/library/update-database?mode=full")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["success"] is True
 
-                mock_trigger.assert_called_once_with(
-                    "database_update",
-                    params={"scan_mode": "full_rebuild", "full_refresh": True},
-                )
+            mock_trigger.assert_called_once_with(
+                "database_update",
+                params={"scan_mode": "full_rebuild", "full_refresh": True},
+            )
 
 
 def test_library_update_status_reflects_job_queue_state():
@@ -165,12 +157,11 @@ def test_library_update_status_reflects_job_queue_state():
 
     with patch(
         "core.nexus_framework.plugin_loader.PluginRegistry.get_active_services_by_type", return_value=["local_server"]
-    ):
-        with patch.dict(job_queue._is_running, {"database_update": True}):
-            resp = client.get("/api/v1/core/library/update-status")
-            assert resp.status_code == 200
-            data = resp.json()
-            assert data["running"] is True
+    ), patch.dict(job_queue._is_running, {"database_update": True}):
+        resp = client.get("/api/v1/core/library/update-status")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["running"] is True
 
 
 # ── 4. Search Service Stream Worker Tests ─────────────────────────────────

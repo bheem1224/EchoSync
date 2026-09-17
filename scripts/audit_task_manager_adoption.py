@@ -9,7 +9,6 @@ Generates a structured migration backlog report for alignment with ADR 0001.
 from __future__ import annotations
 
 import ast
-import os
 import sys
 from collections import defaultdict
 from dataclasses import dataclass
@@ -372,7 +371,7 @@ def main():
     print("\n" + "=" * 80)
     print("TASK MANAGER ADOPTION & CONCURRENCY AUDIT REPORT")
     print("=" * 80)
-    print(f"Total Files Scanned across core/, services/, database/, web/, plugins/")
+    print("Total Files Scanned across core/, services/, database/, web/, plugins/")
     print(f"Total Violations / Candidates: {len(findings)}")
     print(f"  - CRITICAL (Raw Threads / Processes / Pools): {len(critical)}")
     print(f"  - MEDIUM   (Unleased Database Writes):        {len(medium)}")

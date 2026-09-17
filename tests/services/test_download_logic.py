@@ -51,14 +51,13 @@ class TestDownloadManagerLogic:
             album_title="Some Album",
         )
 
-        with patch("services.download_manager.get_database", return_value=mock_db):
-            with patch(
-                "services.download_manager.get_working_database",
-                return_value=mock_work_db,
-            ):
-                result_id = manager.queue_download(track_to_download)
-                # 3. Assert: Result should be 0 (skipped) and queue size 0
-                assert result_id == 0
+        with patch("services.download_manager.get_database", return_value=mock_db), patch(
+            "services.download_manager.get_working_database",
+            return_value=mock_work_db,
+        ):
+            result_id = manager.queue_download(track_to_download)
+            # 3. Assert: Result should be 0 (skipped) and queue size 0
+            assert result_id == 0
 
     def test_queue_download_deduplicates_failed_tracks(self, mock_db, mock_work_db):
         """Verify that queuing a track with an existing failed entry re-queues and reuses the record."""
@@ -83,13 +82,12 @@ class TestDownloadManagerLogic:
             session.commit()
             original_id = failed_entry.id
 
-        with patch("services.download_manager.get_database", return_value=mock_db):
-            with patch(
-                "services.download_manager.get_working_database",
-                return_value=mock_work_db,
-            ):
-                result_id = manager.queue_download(track_to_download)
-                assert result_id == original_id
+        with patch("services.download_manager.get_database", return_value=mock_db), patch(
+            "services.download_manager.get_working_database",
+            return_value=mock_work_db,
+        ):
+            result_id = manager.queue_download(track_to_download)
+            assert result_id == original_id
 
         with mock_work_db.session_scope() as session:
             items = session.query(DownloadQueue).all()
@@ -139,12 +137,11 @@ class TestDownloadManagerLogic:
             session.commit()
 
         # 2. Action: Run purge
-        with patch("services.download_manager.get_database", return_value=mock_db):
-            with patch(
-                "services.download_manager.get_working_database",
-                return_value=mock_work_db,
-            ):
-                manager._purge_existing_tracks_from_queue()
+        with patch("services.download_manager.get_database", return_value=mock_db), patch(
+            "services.download_manager.get_working_database",
+            return_value=mock_work_db,
+        ):
+            manager._purge_existing_tracks_from_queue()
 
         # 3. Assert: Queue should be empty
         with mock_work_db.session_scope() as session:
@@ -176,12 +173,11 @@ class TestDownloadManagerLogic:
             session.commit()
 
         # Attempt process
-        with patch("services.download_manager.get_database", return_value=mock_db):
-            with patch(
-                "services.download_manager.get_working_database",
-                return_value=mock_work_db,
-            ):
-                await manager._process_queued_items()
+        with patch("services.download_manager.get_database", return_value=mock_db), patch(
+            "services.download_manager.get_working_database",
+            return_value=mock_work_db,
+        ):
+            await manager._process_queued_items()
 
         # Should still be failed_max_retries (not requeued or searching)
         with mock_work_db.session_scope() as session:
@@ -233,18 +229,17 @@ class TestAutoImportLogic:
 
         with patch(
             "services.auto_importer.get_working_database", return_value=mock_work_db
-        ):
-            with patch("services.auto_importer.RetroactiveEnhancer"):
-                with patch("services.auto_importer.config_manager") as mock_config:
-                    mock_config.get_library_dir.return_value = Path("/tmp/lib")
-                    # 'ignored' → always skip
-                    assert service._is_path_ignored(ignored_path) is True
-                    # recent 'pending' → skip (API-spam guard)
-                    assert service._is_path_ignored(pending_recent_path) is True
-                    # old 'pending' → allow retry
-                    assert service._is_path_ignored(pending_old_path) is False
-                    # unknown path → don't skip
-                    assert service._is_path_ignored("/downloads/random.mp3") is False
+        ), patch("services.auto_importer.RetroactiveEnhancer"):
+            with patch("services.auto_importer.config_manager") as mock_config:
+                mock_config.get_library_dir.return_value = Path("/tmp/lib")
+                # 'ignored' → always skip
+                assert service._is_path_ignored(ignored_path) is True
+                # recent 'pending' → skip (API-spam guard)
+                assert service._is_path_ignored(pending_recent_path) is True
+                # old 'pending' → allow retry
+                assert service._is_path_ignored(pending_old_path) is False
+                # unknown path → don't skip
+                assert service._is_path_ignored("/downloads/random.mp3") is False
 
     def test_process_single_download_triggers_waterfall(self):
         """Verify process_single_download executes strictly for the given download_id."""

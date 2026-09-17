@@ -15,12 +15,12 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session, joinedload
 
 from core.database.utils import calculate_safe_batch_size
-from core.task_manager.task_queue import db_write_lease
 
 # Canonical model: EchosyncTrack + EchosyncMedia from core.db
 from core.db.echo_sync_track import EchosyncMedia, EchosyncTrack
 from core.matching_engine.text_utils import split_artists
 from core.metadata.schemas import EntityAliasProposal
+from core.task_manager.task_queue import db_write_lease
 from database import _canonicalize_path
 from database.music_database import (
     Album,

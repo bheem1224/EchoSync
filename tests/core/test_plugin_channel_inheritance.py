@@ -1,14 +1,11 @@
 import json
 import sqlite3
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-from fastapi.testclient import TestClient
 
 from core.nexus_framework.plugin_loader import (
     compute_plugin_crc32,
-    generate_plugin_id,
     resolve_plugin_directory,
 )
 from database.models import Service

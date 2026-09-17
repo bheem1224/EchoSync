@@ -1,14 +1,8 @@
-from fastapi.testclient import TestClient
 from unittest.mock import patch
 
 import pytest
+from fastapi.testclient import TestClient
 
-from web.routes.system_tasks import (
-    ProcessListResponse,
-    ProcessTerminateResponse,
-    SystemHealthResponse,
-    TaskQueueSummaryResponse,
-)
 from core.task_manager import (
     OwnerType,
     PluginLifecycleState,
@@ -17,6 +11,12 @@ from core.task_manager import (
     supervisor,
 )
 from web.api_app import create_app
+from web.routes.system_tasks import (
+    ProcessListResponse,
+    ProcessTerminateResponse,
+    SystemHealthResponse,
+    TaskQueueSummaryResponse,
+)
 
 
 @pytest.fixture

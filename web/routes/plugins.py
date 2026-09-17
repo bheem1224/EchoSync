@@ -88,16 +88,15 @@ def set_plugin_channel_preference(
 
     canonical_pref, beta_opt_val = _channel_value(preference)
     db = get_config_database()
-    with db_write_lease(task_name=f"set_plugin_channel_preference_{plugin_id}"):
-        with db._open_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                "UPDATE services SET channel_preference=?, beta_opt_in=? WHERE plugin_id=?",
-                (canonical_pref, beta_opt_val, plugin_id),
-            )
-            if cursor.rowcount == 0:
-                raise HTTPException(status_code=404, detail=f"Plugin {plugin_id} not found")
-            conn.commit()
+    with db_write_lease(task_name=f"set_plugin_channel_preference_{plugin_id}"), db._open_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE services SET channel_preference=?, beta_opt_in=? WHERE plugin_id=?",
+            (canonical_pref, beta_opt_val, plugin_id),
+        )
+        if cursor.rowcount == 0:
+            raise HTTPException(status_code=404, detail=f"Plugin {plugin_id} not found")
+        conn.commit()
 
     return {"plugin_id": plugin_id, "channel_preference": canonical_pref}
 

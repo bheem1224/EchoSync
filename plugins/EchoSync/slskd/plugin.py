@@ -183,9 +183,10 @@ async def on_webhook_received(slug: str, payload: dict[str, Any]) -> None:
         if task_id:
             try:
                 task_id = int(task_id) if str(task_id).isdigit() else task_id
-                from database.working_database import get_working_database
-                from core.database.models.working import DownloadQueue, DownloadStatus
                 import datetime
+
+                from core.database.models.working import DownloadQueue, DownloadStatus
+                from database.working_database import get_working_database
 
                 work_db = get_working_database()
                 with db_write_lease(task_name=f"plugin_{PLUGIN_CRC32}"):
@@ -197,7 +198,7 @@ async def on_webhook_received(slug: str, payload: dict[str, Any]) -> None:
                                 track_dict = dict(task.echo_sync_track)
                                 track_dict["downloaded_file_path"] = file_path
                                 task.echo_sync_track = track_dict
-                            task.updated_at = datetime.datetime.now(datetime.timezone.utc)
+                            task.updated_at = datetime.datetime.now(datetime.UTC)
                             session.commit()
                             session.refresh(task)
                             logger.info("DownloadQueue %s transitioned to VERIFYING", task_id)

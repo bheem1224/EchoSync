@@ -11,17 +11,11 @@ Verifies:
 
 import threading
 import time
-from pathlib import Path
 from unittest.mock import MagicMock, patch
-
-import pytest
 
 from core.enums import TaskCategory, TaskPriority, TaskStatus
 from core.task_manager.task_queue import (
     JobQueue,
-    QueueFullError,
-    ScheduledJob,
-    TaskState,
 )
 
 
@@ -36,8 +30,7 @@ def test_worker_pool_throttling_enforced():
         nonlocal active_count, max_concurrent
         with count_lock:
             active_count += 1
-            if active_count > max_concurrent:
-                max_concurrent = active_count
+            max_concurrent = max(max_concurrent, active_count)
         try:
             time.sleep(0.15)
         finally:
@@ -122,8 +115,7 @@ def test_scoped_db_write_lease_mutual_exclusion():
         with queue.db_write_lease(task_name="test_writer"):
             with lease_lock:
                 concurrent_writers += 1
-                if concurrent_writers > max_concurrent_writers:
-                    max_concurrent_writers = concurrent_writers
+                max_concurrent_writers = max(max_concurrent_writers, concurrent_writers)
             time.sleep(0.1)
             with lease_lock:
                 concurrent_writers -= 1

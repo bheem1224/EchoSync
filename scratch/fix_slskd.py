@@ -1,4 +1,3 @@
-import re
 
 content = open("plugins/EchoSync/slskd/plugin.py").read()
 

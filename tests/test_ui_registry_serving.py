@@ -1,8 +1,8 @@
-from fastapi.testclient import TestClient
 import json
 from unittest.mock import MagicMock, patch
 
 import pytest
+from fastapi.testclient import TestClient
 
 from core.nexus_framework.plugin_loader import (
     _sync_ui_components_to_db,

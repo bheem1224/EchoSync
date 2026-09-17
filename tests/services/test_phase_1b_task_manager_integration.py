@@ -6,20 +6,16 @@ Phase 1B Integration Test Suite:
 - AutoImportService JobQueue general pool dispatching
 """
 
-import threading
 import time
 from pathlib import Path
-from unittest.mock import MagicMock, patch
-import pytest
+from unittest.mock import patch
 
 from core.enums import TaskCategory
-from core.event_bus import EventBus, _SHUTDOWN_SENTINEL
+from core.event_bus import EventBus
 from core.task_manager.task_queue import db_write_lease, job_queue
-from database.music_database import get_database
 from services.auto_importer import AutoImportService
 from services.library_sync_service import LibrarySyncService
-from services.library_watcher import LibraryWatcherService, _process_new_file
-
+from services.library_watcher import _process_new_file
 
 # ── 1. EventBus Lifecycle Supervision Tests ──────────────────────────────
 
@@ -144,19 +140,15 @@ def test_library_sync_sequential_extraction_no_thread_pool():
 
     with patch("services.library_sync_service.config_manager.get") as mock_get:
         mock_get.return_value = "C:/fake_music_dir"
-        with patch("services.library_sync_service.Gatekeeper.validate_path", return_value=True):
-            with patch(
-                "services.library_sync_service.os.walk",
-                return_value=[("C:/fake_music_dir", [], ["track1.mp3", "track2.mp3"])],
-            ):
-                with patch("services.library_sync_service.os.path.getmtime", return_value=12345.0):
-                    with patch(
-                        "services.library_sync_service.echosync_core.read_metadata",
-                        side_effect=lambda p: {"title": "Test", "artist_name": "Artist"},
-                    ):
-                        with patch("services.library_sync_service.TrackRepository.bulk_upsert_tracks", return_value=2):
-                            with patch("services.library_sync_service.TrackRepository.resolve_artists_and_albums"):
-                                service.sync_library(scan_mode="incremental")
+        with patch("services.library_sync_service.Gatekeeper.validate_path", return_value=True), patch(
+            "services.library_sync_service.os.walk",
+            return_value=[("C:/fake_music_dir", [], ["track1.mp3", "track2.mp3"])],
+        ), patch("services.library_sync_service.os.path.getmtime", return_value=12345.0), patch(
+            "services.library_sync_service.echosync_core.read_metadata",
+            side_effect=lambda p: {"title": "Test", "artist_name": "Artist"},
+        ), patch("services.library_sync_service.TrackRepository.bulk_upsert_tracks", return_value=2):
+            with patch("services.library_sync_service.TrackRepository.resolve_artists_and_albums"):
+                service.sync_library(scan_mode="incremental")
 
     # If ThreadPoolExecutor were still in place, it would have shown in thread stacks;
     # verify that synchronous execution succeeded cleanly.
@@ -199,10 +191,9 @@ def test_library_watcher_uses_db_write_lease():
                         "duration_ms": 180000,
                         "isrc": "US1234567890",
                     },
-                ):
-                    with patch("core.database.repositories.track_repo.TrackRepository.bulk_upsert_tracks"):
-                        with patch("services.library_watcher.event_bus.publish"):
-                            _process_new_file(test_path)
+                ), patch("core.database.repositories.track_repo.TrackRepository.bulk_upsert_tracks"):
+                    with patch("services.library_watcher.event_bus.publish"):
+                        _process_new_file(test_path)
 
     assert "library_watcher" in acquired_leases
 

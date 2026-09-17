@@ -1,6 +1,7 @@
 """Pydantic schemas for system settings requests and responses."""
 
 from typing import Any
+
 from pydantic import BaseModel, ConfigDict, Field
 
 

@@ -1,8 +1,5 @@
 import logging
-from pathlib import Path
 from unittest.mock import MagicMock
-
-import pytest
 
 from core.db.echo_sync_track import EchosyncTrack
 from core.matching_engine.fingerprinting import FingerprintGenerator

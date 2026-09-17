@@ -1,4 +1,3 @@
-import re
 
 content = open("tests/plugins/test_slskd_webhooks.py").read()
 content = content.replace(

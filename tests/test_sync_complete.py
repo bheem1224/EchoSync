@@ -1,4 +1,5 @@
 from fastapi.testclient import TestClient
+
 """Test complete sync implementation with all 5 remaining features."""
 
 import time

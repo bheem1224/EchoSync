@@ -268,6 +268,15 @@ class ProcessSupervisor:
 
     def get_active_processes(self, owner_id: str | None = None) -> list[ProcessOwner]:
         with self._lock:
+            if HAS_PSUTIL:
+                for owner in self._processes.values():
+                    if owner.pid:
+                        try:
+                            p = psutil.Process(owner.pid)
+                            owner.cpu_percent = p.cpu_percent(interval=None)
+                            owner.memory_bytes = p.memory_info().rss
+                        except (psutil.NoSuchProcess, psutil.AccessDenied, Exception):
+                            pass
             if owner_id:
                 return [p for p in self._processes.values() if p.owner_id == owner_id]
             return list(self._processes.values())
@@ -281,13 +290,13 @@ class ProcessSupervisor:
             if owner_id and owner.owner_id != owner_id:
                 continue
 
-            # Aggregate system metrics dynamically
-            if HAS_PSUTIL and owner.pid and owner.category == ProcessCategory.OS_SUBPROCESS:
+            # Aggregate system metrics dynamically for any registered OS process
+            if HAS_PSUTIL and owner.pid:
                 try:
                     p = psutil.Process(owner.pid)
                     owner.cpu_percent = p.cpu_percent(interval=None)
                     owner.memory_bytes = p.memory_info().rss
-                except psutil.NoSuchProcess:
+                except (psutil.NoSuchProcess, psutil.AccessDenied, Exception):
                     pass
 
             # Aggregate WASM metrics

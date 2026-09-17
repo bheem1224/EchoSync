@@ -591,7 +591,6 @@ class ConfigDatabase:
         if not is_matched:
             import re
 
-            from core.path_security import PathTraversalError, resolve_safe_path
             from core.settings import config_manager
 
             plugin_name = name.split(".")[-1]
@@ -656,6 +655,7 @@ class ConfigDatabase:
             plugin_id = binascii.crc32(name.lower().encode("utf-8")) & 0xFFFFFFFF
 
         from pathlib import Path
+
         from core.settings import config_manager
 
         core_services = {"system"}
@@ -1943,9 +1943,9 @@ def close_config_database() -> None:
 
 __all__ = [
     "ConfigDatabase",
+    "close_config_database",
     "get_config_database",
     "get_config_db",
-    "close_config_database",
     "retry_sqlite_io",
 ]
 

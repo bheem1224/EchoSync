@@ -4,7 +4,6 @@ Unit tests for Plugin Update Channel Resolution & Permission Seeding.
 
 import json
 import os
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -16,8 +15,6 @@ from core.matching_engine.echo_sync_track import (
     Track,
 )
 from core.nexus_framework.permissions import (
-    DEFAULT_BASE_PERMISSIONS,
-    SAFE_BASE_SCOPES,
     seed_base_permissions,
 )
 from core.nexus_framework.plugin_SDK import (

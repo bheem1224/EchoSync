@@ -1,6 +1,7 @@
-from core.nexus_framework.plugin_SDK import sdk, _HealthCheckSDKFacade
-from core.task_manager.task_queue import job_queue
 from core.health_check import HealthCheckResult
+from core.nexus_framework.plugin_SDK import _HealthCheckSDKFacade, sdk
+from core.task_manager.task_queue import job_queue
+
 
 def test_sdk_health_dynamic_caller_resolution():
     health_facade = sdk.health

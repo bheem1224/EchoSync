@@ -1,4 +1,3 @@
-import re
 
 content = open("services/download_manager.py").read()
 

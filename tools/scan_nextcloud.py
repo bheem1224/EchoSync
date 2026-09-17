@@ -10,7 +10,7 @@ def main():
             dirs.clear()
             continue
         for f in files:
-            if f.endswith(".db") and not ".git" in root and not ".venv" in root:
+            if f.endswith(".db") and ".git" not in root and ".venv" not in root:
                 full_path = os.path.join(root, f)
                 print(f"Found: {full_path} ({os.path.getsize(full_path)} bytes)")
 

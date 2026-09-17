@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import base64
 import hashlib
-import time
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -34,7 +33,6 @@ from core.oauth.sidecar import (
 )
 from core.task_manager.models import OwnerType, ProcessCategory
 from core.task_manager.supervisor import supervisor
-
 
 # ==============================================================================
 # 1. Strict Unsigned 32-Bit Integer Plugin ID Validation
@@ -197,21 +195,20 @@ def test_centralized_token_broker_direct_caller_return_and_supervision():
             target(*t_args)
         return MagicMock(), "reg_123"
 
-    with patch("requests.post", return_value=mock_resp) as mock_post:
-        with patch.object(
-            supervisor,
-            "spawn_supervised_thread",
-            sideeffect=_mock_spawn if hasattr(supervisor, "spawn_supervised_thread") else None,
-        ) as mock_spawn_patch:
-            # If sideeffect is used
-            mock_spawn_patch.side_effect = _mock_spawn
+    with patch("requests.post", return_value=mock_resp) as mock_post, patch.object(
+        supervisor,
+        "spawn_supervised_thread",
+        sideeffect=_mock_spawn if hasattr(supervisor, "spawn_supervised_thread") else None,
+    ) as mock_spawn_patch:
+        # If sideeffect is used
+        mock_spawn_patch.side_effect = _mock_spawn
 
-            with app.test_client() as client:
-                cb_url = f"/api/oauth/callback/plugins/tidal?code=auth_code_123&state={handle.session_id}"
-                resp = client.get(cb_url)
+        with app.test_client() as client:
+            cb_url = f"/api/oauth/callback/plugins/tidal?code=auth_code_123&state={handle.session_id}"
+            resp = client.get(cb_url)
 
-                assert resp.status_code == 200
-                assert b"Authentication Successful" in resp.data
+            assert resp.status_code == 200
+            assert b"Authentication Successful" in resp.data
 
     # 1. Upstream POST was made with correct credentials and code_verifier
     assert mock_post.called

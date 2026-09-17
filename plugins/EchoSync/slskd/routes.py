@@ -166,24 +166,23 @@ def test_connection(data: TestConnectionRequest | None = None):
 
         async def _test():
             try:
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(
-                        f"{slskd_url}/api/v0/application",
-                        headers={"X-API-Key": api_key},
-                        timeout=aiohttp.ClientTimeout(total=10),
-                    ) as resp:
-                        if resp.status == 200:
-                            d = await resp.json()
-                            return {
-                                "success": True,
-                                "version": d.get("version", "unknown"),
-                            }
-                        if resp.status == 401:
-                            return {"success": False, "error": "Invalid API key"}
+                async with aiohttp.ClientSession() as session, session.get(
+                    f"{slskd_url}/api/v0/application",
+                    headers={"X-API-Key": api_key},
+                    timeout=aiohttp.ClientTimeout(total=10),
+                ) as resp:
+                    if resp.status == 200:
+                        d = await resp.json()
                         return {
-                            "success": False,
-                            "error": f"Server returned {resp.status}",
+                            "success": True,
+                            "version": d.get("version", "unknown"),
                         }
+                    if resp.status == 401:
+                        return {"success": False, "error": "Invalid API key"}
+                    return {
+                        "success": False,
+                        "error": f"Server returned {resp.status}",
+                    }
             except aiohttp.ClientConnectorError:
                 return {
                     "success": False,

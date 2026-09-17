@@ -1198,6 +1198,7 @@ class MusicBrainzClient(PluginBase):
                         "release_id": "",
                         "release_group_id": "",
                         "date": "",
+                        "year": None,
                         "track_number": None,
                         "disc_number": None,
                         "cover_art_url": None,
@@ -1208,7 +1209,6 @@ class MusicBrainzClient(PluginBase):
                         "length": int(recording.get("length"))
                         if recording.get("length") and str(recording.get("length")).isdigit()
                         else None,
-                        "releases": rec_releases,
                     }
 
                     credits = recording.get("artist-credit") or []
@@ -1228,18 +1228,61 @@ class MusicBrainzClient(PluginBase):
                         result["release_id"] = canonical_release.get("canonical_studio_release_mbid") or ""
                         result["release_group_id"] = canonical_release.get("canonical_studio_release_group_mbid") or ""
                         result["date"] = canonical_release.get("date") or ""
+                        result["year"] = canonical_release.get("canonical_year")
                     elif rec_releases:
                         release = rec_releases[0] or {}
                         result["album"] = release.get("title") or ""
                         result["release_id"] = release.get("id") or ""
                         result["release_group_id"] = (release.get("release-group") or {}).get("id") or ""
                         result["date"] = release.get("date") or ""
+                        raw_d = str(result["date"]).strip()
+                        if len(raw_d) >= 4 and raw_d[:4].isdigit():
+                            try:
+                                result["year"] = int(raw_d[:4])
+                            except ValueError:
+                                pass
+
+                    target_rel_id = result.get("release_id")
+                    for r in rec_releases:
+                        if not isinstance(r, dict):
+                            continue
+                        if target_rel_id and r.get("id") != target_rel_id:
+                            continue
+                        for medium in r.get("media", []) or []:
+                            if not isinstance(medium, dict):
+                                continue
+                            m_pos = medium.get("position") or 1
+                            for track_entry in medium.get("tracks", []) or []:
+                                if not isinstance(track_entry, dict):
+                                    continue
+                                r_entry = track_entry.get("recording") or {}
+                                if r_entry.get("id") == rec_id:
+                                    raw_num = track_entry.get("number") or track_entry.get("position")
+                                    try:
+                                        result["track_number"] = int(str(raw_num).split("/")[0].strip())
+                                    except (TypeError, ValueError):
+                                        pass
+                                    try:
+                                        result["disc_number"] = int(m_pos)
+                                    except (TypeError, ValueError):
+                                        result["disc_number"] = 1
+                                    break
+                            if result["track_number"] is not None:
+                                break
+                        if result["track_number"] is not None:
+                            break
 
                     isrcs = recording.get("isrcs") or []
                     if isrcs:
                         result["isrc"] = isrcs[0]
 
                     results[rec_id] = result
+                    rec_releases = None
+                    credits = None
+
+                # Explicitly discard raw payload references to prevent heap retention
+                data = None
+                response = None
 
             except HttpError as exc:
                 logger.warning(f"MusicBrainz batch metadata HTTP error: {exc}")
@@ -1395,15 +1438,19 @@ class MusicBrainzClient(PluginBase):
             logger.debug(f"[MusicBrainz Client] No metadata returned for track_id={track_id}")
             return None
         track_obj = self.create_echo_sync_track(
-            title=metadata.get("title") or "",
-            artist=metadata.get("artist") or "",
-            album=metadata.get("album") or "Unknown Album",
-            musicbrainz_id=metadata.get("recording_id"),
-            isrc=metadata.get("isrc"),
-            provider_id=metadata.get("recording_id"),
+            title=str(metadata.get("title") or ""),
+            artist=str(metadata.get("artist") or ""),
+            album=str(metadata.get("album") or "Unknown Album"),
+            musicbrainz_id=str(metadata.get("recording_id") or "") or None,
+            isrc=str(metadata.get("isrc") or "") or None,
+            provider_id=str(metadata.get("recording_id") or "") or None,
             source=self.name,
         )
-        logger.debug(f"[MusicBrainz Client] Created EchosyncTrack object: {track_obj.to_dict() if track_obj else None}")
+        metadata = None
+        if track_obj:
+            logger.debug(
+                f"[MusicBrainz Client] Created EchosyncTrack: '{track_obj.title}' by '{track_obj.artist_name}'"
+            )
         return track_obj
 
     def get_album(self, album_id: str) -> dict[str, Any] | None:

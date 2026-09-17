@@ -8,14 +8,12 @@ Validates Stage 2 of the metadata enhancement rebuild:
 5. Fault tolerance: malformed proposals or plugin exceptions never abort resolution
 """
 
-from pathlib import Path
-from unittest.mock import MagicMock
 
+import echosync_core
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-import echosync_core
 from core.database.repositories.track_repo import TrackRepository
 from core.hook_manager import HookManager
 from core.metadata.engine import MetadataResolutionEngine

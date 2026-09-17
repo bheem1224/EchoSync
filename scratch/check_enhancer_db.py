@@ -3,9 +3,9 @@ from pathlib import Path
 
 sys.path.append(str(Path(__file__).parent.parent))
 
-from core.file_handling.path_mapper import PathMapper
 from sqlalchemy import Integer, and_, func, or_
 
+from core.file_handling.path_mapper import PathMapper
 from database.music_database import Artist, Track, get_database
 
 # Pass absolute path directly

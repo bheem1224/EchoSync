@@ -50,9 +50,9 @@ __all__ = [
     "verify_title_trust_gate",
 ]
 
-from .trust_gate import sanitize_title_from_filename, verify_title_trust_gate
-
 from typing import Any, Tuple
+
+from .trust_gate import sanitize_title_from_filename, verify_title_trust_gate
 
 
 class MusicMatchingEngine:

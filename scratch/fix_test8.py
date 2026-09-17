@@ -1,4 +1,3 @@
-import re
 
 content = open("tests/services/test_metadata_enhancer.py").read()
 content = content.replace(

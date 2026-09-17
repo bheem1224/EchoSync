@@ -1,5 +1,5 @@
 from unittest.mock import MagicMock, patch
-import pytest
+
 from requests import Response
 
 from core.request_manager import HttpError, RequestManager, RetryConfig
