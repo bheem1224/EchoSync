@@ -9,12 +9,14 @@ use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
 
+const MAX_FINGERPRINT_SECONDS: f64 = 120.0;
+
 pub fn generate_fingerprint(file_path: &str, trim_silence: bool) -> Result<(String, f64), String> {
     let path = Path::new(file_path);
 
     // Inner scope: all Symphonia format readers, decoders, and packet buffers are
     // dropped here before the chromaprint encoding step crosses the FFI boundary.
-    let (samples, original_sample_rate) = {
+    let (samples, original_sample_rate, total_decoded_frames) = {
         let src = File::open(path).map_err(|e| format!("Failed to open file: {e}"))?;
         let mss = MediaSourceStream::new(Box::new(src), Default::default());
 
@@ -48,7 +50,10 @@ pub fn generate_fingerprint(file_path: &str, trim_silence: bool) -> Result<(Stri
             .sample_rate
             .ok_or_else(|| "Unknown sample rate".to_string())?;
 
+        let max_samples = (original_sample_rate as f64 * MAX_FINGERPRINT_SECONDS) as usize;
         let mut samples: Vec<f32> = Vec::new();
+        let mut total_decoded_frames: u64 = 0;
+        let mut found_audio_start = !trim_silence;
 
         loop {
             let packet = match format.next_packet() {
@@ -73,7 +78,14 @@ pub fn generate_fingerprint(file_path: &str, trim_silence: bool) -> Result<(Stri
 
             match decoder.decode(&packet) {
                 Ok(decoded) => {
-                    append_mono_samples(&decoded, &mut samples);
+                    total_decoded_frames += decoded.frames() as u64;
+                    append_mono_samples_clamped(
+                        &decoded,
+                        &mut samples,
+                        max_samples,
+                        trim_silence,
+                        &mut found_audio_start,
+                    );
                 }
                 Err(SymphoniaError::IoError(_)) => break,
                 Err(SymphoniaError::DecodeError(_)) => continue,
@@ -82,31 +94,28 @@ pub fn generate_fingerprint(file_path: &str, trim_silence: bool) -> Result<(Stri
         }
 
         // format, decoder, and all packet/SampleBuffer state drop here.
-        (samples, original_sample_rate)
+        (samples, original_sample_rate, total_decoded_frames)
     };
 
-    if samples.is_empty() {
+    if total_decoded_frames == 0 {
         return Err("No audio samples decoded".to_string());
     }
 
-    // Silence trimming (< -60 dBFS = amplitude < 0.001)
+    if samples.is_empty() {
+        return Err("Audio is completely silent".to_string());
+    }
+
+    // Silence trimming: leading silence was already skipped during decoding.
+    // Trim any trailing silence from the clamped window if applicable.
     let processed_samples = if trim_silence {
         let silence_threshold = 0.001f32;
-        let start = samples
-            .iter()
-            .position(|&s| s.abs() >= silence_threshold)
-            .unwrap_or(0);
         let end = samples
             .iter()
             .rposition(|&s| s.abs() >= silence_threshold)
             .map(|idx| idx + 1)
             .unwrap_or(samples.len());
 
-        if start < end {
-            &samples[start..end]
-        } else {
-            &samples[..]
-        }
+        &samples[..end]
     } else {
         &samples[..]
     };
@@ -115,11 +124,11 @@ pub fn generate_fingerprint(file_path: &str, trim_silence: bool) -> Result<(Stri
         return Err("Audio is completely silent".to_string());
     }
 
-    // Full track duration derived from total decoded samples (unaffected by fingerprint window)
-    let duration_seconds = (samples.len() as f64) / (original_sample_rate as f64);
+    // Full track duration derived from total decoded frames (unaffected by fingerprint window clamp)
+    let duration_seconds = (total_decoded_frames as f64) / (original_sample_rate as f64);
 
     let trimmed_f32: Vec<f32> = processed_samples.to_vec();
-    drop(samples); // Free ~52 MiB monolithic decode buffer before next allocation
+    drop(samples); // Free intermediate decode buffer before next allocation
 
     // Convert f32 PCM to 16-bit signed integer samples for Chromaprint
     let i16_samples: Vec<i16> = trimmed_f32
@@ -131,23 +140,13 @@ pub fn generate_fingerprint(file_path: &str, trim_silence: bool) -> Result<(Stri
         .collect();
     drop(trimmed_f32); // Free intermediate window buffer
 
-    // AcoustID / fpcalc standard: fingerprint only the first 120 seconds of audio.
-    // Feeding more samples produces a hash that diverges from the AcoustID cluster index.
-    const CHROMAPRINT_MAX_SECONDS: f64 = 120.0;
-    let max_samples = (CHROMAPRINT_MAX_SECONDS * original_sample_rate as f64) as usize;
-    let fingerprint_window: &[i16] = if i16_samples.len() > max_samples {
-        &i16_samples[..max_samples]
-    } else {
-        &i16_samples[..]
-    };
-
     let config = Configuration::preset_test2();
     let mut printer = Fingerprinter::new(&config);
     printer
         .start(original_sample_rate, 1)
         .map_err(|e| format!("Failed to start fingerprinter: {e:?}"))?;
 
-    printer.consume(fingerprint_window);
+    printer.consume(&i16_samples);
     printer.finish();
 
     let raw_fp = printer.fingerprint();
@@ -156,6 +155,45 @@ pub fn generate_fingerprint(file_path: &str, trim_silence: bool) -> Result<(Stri
     let encoded_fingerprint = base64_encode(&compressed);
 
     Ok((encoded_fingerprint, duration_seconds))
+}
+
+fn append_mono_samples_clamped(
+    decoded: &AudioBufferRef,
+    out: &mut Vec<f32>,
+    max_samples: usize,
+    trim_silence: bool,
+    found_audio_start: &mut bool,
+) {
+    if out.len() >= max_samples {
+        return;
+    }
+
+    let silence_threshold = 0.001f32;
+    let mut packet_samples = Vec::with_capacity(decoded.frames());
+    append_mono_samples(decoded, &mut packet_samples);
+
+    let to_take = if trim_silence && !*found_audio_start {
+        // Look for the first non-silent sample in this packet
+        if let Some(pos) = packet_samples
+            .iter()
+            .position(|&s| s.abs() >= silence_threshold)
+        {
+            *found_audio_start = true;
+            &packet_samples[pos..]
+        } else {
+            // Entire packet is leading silence, skip it
+            return;
+        }
+    } else {
+        &packet_samples[..]
+    };
+
+    let remaining_capacity = max_samples.saturating_sub(out.len());
+    if to_take.len() <= remaining_capacity {
+        out.extend_from_slice(to_take);
+    } else {
+        out.extend_from_slice(&to_take[..remaining_capacity]);
+    }
 }
 
 fn append_mono_samples(decoded: &AudioBufferRef, out: &mut Vec<f32>) {
@@ -325,7 +363,7 @@ pub fn fingerprint_and_hash_audio(
 
     // Inner scope: all Symphonia format readers, decoders, packet buffers, and
     // BLAKE3 state are dropped here before the chromaprint encoding step.
-    let (samples, original_sample_rate, pcm_hash) = {
+    let (samples, original_sample_rate, total_decoded_frames, pcm_hash) = {
         let src = File::open(path).map_err(|e| format!("Failed to open file: {e}"))?;
         let mss = MediaSourceStream::new(Box::new(src), Default::default());
 
@@ -359,7 +397,10 @@ pub fn fingerprint_and_hash_audio(
             .sample_rate
             .ok_or_else(|| "Unknown sample rate".to_string())?;
 
+        let max_samples = (original_sample_rate as f64 * MAX_FINGERPRINT_SECONDS) as usize;
         let mut samples: Vec<f32> = Vec::new();
+        let mut total_decoded_frames: u64 = 0;
+        let mut found_audio_start = !trim_silence;
         let mut hasher = blake3::Hasher::new();
         let mut hash_sample_count = 0usize;
 
@@ -386,7 +427,15 @@ pub fn fingerprint_and_hash_audio(
 
             match decoder.decode(&packet) {
                 Ok(decoded) => {
-                    append_mono_samples(&decoded, &mut samples);
+                    total_decoded_frames += decoded.frames() as u64;
+
+                    append_mono_samples_clamped(
+                        &decoded,
+                        &mut samples,
+                        max_samples,
+                        trim_silence,
+                        &mut found_audio_start,
+                    );
 
                     let spec = *decoded.spec();
                     let mut sample_buf = symphonia::core::audio::SampleBuffer::<f32>::new(
@@ -406,7 +455,7 @@ pub fn fingerprint_and_hash_audio(
             }
         }
 
-        if samples.is_empty() {
+        if total_decoded_frames == 0 {
             return Err("No audio samples decoded".to_string());
         }
 
@@ -416,27 +465,29 @@ pub fn fingerprint_and_hash_audio(
 
         let pcm_hash = hasher.finalize().to_hex().to_string();
         // format, decoder, hasher, and all packet/SampleBuffer state drop here.
-        (samples, original_sample_rate, pcm_hash)
+        (
+            samples,
+            original_sample_rate,
+            total_decoded_frames,
+            pcm_hash,
+        )
     };
 
-    // Silence trimming (< -60 dBFS = amplitude < 0.001)
+    if samples.is_empty() {
+        return Err("Audio is completely silent".to_string());
+    }
+
+    // Silence trimming: leading silence was already skipped during decoding.
+    // Trim any trailing silence from the clamped window if applicable.
     let processed_samples = if trim_silence {
         let silence_threshold = 0.001f32;
-        let start = samples
-            .iter()
-            .position(|&s| s.abs() >= silence_threshold)
-            .unwrap_or(0);
         let end = samples
             .iter()
             .rposition(|&s| s.abs() >= silence_threshold)
             .map(|idx| idx + 1)
             .unwrap_or(samples.len());
 
-        if start < end {
-            &samples[start..end]
-        } else {
-            &samples[..]
-        }
+        &samples[..end]
     } else {
         &samples[..]
     };
@@ -445,11 +496,11 @@ pub fn fingerprint_and_hash_audio(
         return Err("Audio is completely silent".to_string());
     }
 
-    // Full track duration derived from total decoded samples (unaffected by fingerprint window)
-    let duration_seconds = (samples.len() as f64) / (original_sample_rate as f64);
+    // Full track duration derived from total decoded frames (unaffected by fingerprint window clamp)
+    let duration_seconds = (total_decoded_frames as f64) / (original_sample_rate as f64);
 
     let trimmed_f32: Vec<f32> = processed_samples.to_vec();
-    drop(samples); // Free ~52 MiB monolithic decode buffer before next allocation
+    drop(samples); // Free intermediate decode buffer before next allocation
 
     // Convert f32 PCM to 16-bit signed integer samples for Chromaprint
     let i16_samples: Vec<i16> = trimmed_f32
@@ -461,23 +512,13 @@ pub fn fingerprint_and_hash_audio(
         .collect();
     drop(trimmed_f32); // Free intermediate window buffer
 
-    // AcoustID / fpcalc standard: fingerprint only the first 120 seconds of audio.
-    // Feeding more samples produces a hash that diverges from the AcoustID cluster index.
-    const CHROMAPRINT_MAX_SECONDS: f64 = 120.0;
-    let max_samples = (CHROMAPRINT_MAX_SECONDS * original_sample_rate as f64) as usize;
-    let fingerprint_window: &[i16] = if i16_samples.len() > max_samples {
-        &i16_samples[..max_samples]
-    } else {
-        &i16_samples[..]
-    };
-
     let config = Configuration::preset_test2();
     let mut printer = Fingerprinter::new(&config);
     printer
         .start(original_sample_rate, 1)
         .map_err(|e| format!("Failed to start fingerprinter: {e:?}"))?;
 
-    printer.consume(fingerprint_window);
+    printer.consume(&i16_samples);
     printer.finish();
 
     let raw_fp = printer.fingerprint();
@@ -486,4 +527,37 @@ pub fn fingerprint_and_hash_audio(
     let encoded_fingerprint = base64_encode(&compressed);
 
     Ok((encoded_fingerprint, duration_seconds, pcm_hash))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_chromaprint_length_bounded_to_120s() {
+        let sample_rate = 44100;
+        let config = Configuration::preset_test2();
+        let mut printer = Fingerprinter::new(&config);
+        printer.start(sample_rate, 1).unwrap();
+
+        // 120 seconds of test audio at 44.1 kHz = 5,292,000 samples
+        let max_samples = (sample_rate as f64 * MAX_FINGERPRINT_SECONDS) as usize;
+        let test_samples: Vec<i16> = (0..max_samples)
+            .map(|i| ((i as f32 * 0.05).sin() * 15000.0) as i16)
+            .collect();
+
+        printer.consume(&test_samples);
+        printer.finish();
+
+        let raw_fp = printer.fingerprint();
+        let compressor = rusty_chromaprint::FingerprintCompressor::from(&config);
+        let compressed = compressor.compress(raw_fp);
+        let encoded = base64_encode(&compressed);
+
+        assert!(
+            encoded.len() <= 1400,
+            "Fingerprint length ({}) exceeded 1,400 characters for 120s of audio",
+            encoded.len()
+        );
+    }
 }
