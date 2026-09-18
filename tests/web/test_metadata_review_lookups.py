@@ -176,3 +176,135 @@ def test_import_single_file_updates_existing_track_and_local_media(tmp_path):
         updated_media = session.query(LocalMedia).filter_by(track_id=track_id).first()
         assert updated_media is not None
         assert updated_media.file_path == _canonicalize_path(str(new_file))
+
+
+def test_task_790_manual_review_stale_fingerprint_invalidation_and_title_cleansing(tmp_path):
+    from database import _canonicalize_path
+    from database.music_database import AudioFingerprint, Base, LocalMedia, get_database
+    from database.working_database import ReviewTask, WorkingBase, get_working_database
+    from web.routes.metadata_review import lookup_review_queue_item_acoustid
+    from core.metadata.schemas import ResolutionResult
+
+    music_db = get_database()
+    working_db = get_working_database()
+    Base.metadata.create_all(music_db.engine)
+    WorkingBase.metadata.create_all(working_db.engine)
+
+    # 1. Setup file named 17 - So Long (21).flac
+    file_path = tmp_path / "17 - So Long (21).flac"
+    file_path.write_bytes(b"mock flac content")
+    canon_path = _canonicalize_path(str(file_path))
+
+    # 2. Seed main_db with Track, LocalMedia, and stale bloated AudioFingerprint (>1400 chars)
+    import uuid
+    from database.music_database import Album, Artist, Track
+    stale_fingerprint = "A" * 3627
+    test_sid = f"sid_{uuid.uuid4().hex[:12]}"
+    test_mid = f"mid_{uuid.uuid4().hex[:12]}"
+    with music_db.session_scope() as session:
+        artist = Artist(name="ABBA", normalized_name="abba")
+        album = Album(title="ABBA", normalized_title="abba", artist=artist)
+        track = Track(
+            title="So Long (21)",
+            normalized_title="so long (21)",
+            sync_id=test_sid,
+            artist=artist,
+            album=album,
+        )
+        session.add(track)
+        session.flush()
+
+        media = LocalMedia(
+            track_id=track.id,
+            media_id=test_mid,
+            file_path=canon_path,
+            file_format="flac",
+        )
+        session.add(media)
+        session.flush()
+        af = AudioFingerprint(
+            media_id=media.media_id,
+            chromaprint=stale_fingerprint,
+        )
+        session.add(af)
+        session.commit()
+
+    # 3. Seed working_db with ReviewTask 790 containing bloated fingerprint and unscrubbed title
+    with working_db.session_scope() as session:
+        existing_t = session.get(ReviewTask, 790)
+        if existing_t:
+            session.delete(existing_t)
+            session.flush()
+
+        task = ReviewTask(
+            id=790,
+            file_path=str(file_path),
+            status="pending",
+            track_data={
+                "raw_title": "So Long (21)",
+                "title": "So Long (21)",
+                "artist_name": "ABBA",
+                "fingerprint": stale_fingerprint,
+                "duration": 180000,
+            },
+            detected_metadata={
+                "raw_title": "So Long (21)",
+                "title": "So Long (21)",
+                "artist": "ABBA",
+                "fingerprint": stale_fingerprint,
+            },
+        )
+        session.add(task)
+        session.commit()
+
+    clamped_hash = "AQAA_CLAMPED_DSP_HASH"
+    captured_req = None
+
+    def fake_resolve_track(req, enabled_stages=None):
+        nonlocal captured_req
+        captured_req = req
+        return ResolutionResult(
+            media_id=req.media_id,
+            title="So Long",
+            artist="ABBA",
+            album="ABBA",
+            confidence_score=0.95,
+            resolution_method="acoustid",
+            chromaprint=req.chromaprint,
+            musicbrainz_track_id="mbid-solong-123",
+            acoustid_id="aid-solong-456",
+        )
+
+    # 4. Mock _resolve_task_file, echosync_core.fingerprint_and_hash_audio, and MetadataResolutionEngine.resolve_track
+    with (
+        patch("web.routes.metadata_review._resolve_task_file", return_value=file_path),
+        patch("echosync_core.fingerprint_and_hash_audio", return_value=(clamped_hash, 180.0, "fake_hash")),
+        patch("core.metadata.engine.MetadataResolutionEngine.resolve_track", side_effect=fake_resolve_track),
+    ):
+        res = lookup_review_queue_item_acoustid(790)
+
+    # 5. Verify assertions
+    assert res["success"] is True
+    assert res["match_found"] is True
+    assert res["metadata"]["title"] == "So Long"
+
+    # Verify request sent to engine cleansed copy marker and track number
+    assert captured_req is not None
+    assert captured_req.baseline_title == "So Long"
+    assert captured_req.chromaprint == clamped_hash
+    assert len(captured_req.chromaprint) <= 1400
+
+    # Verify task in working_db was updated with clamped fingerprint
+    with working_db.session_scope() as session:
+        t = session.get(ReviewTask, 790)
+        assert t.track_data["fingerprint"] == clamped_hash
+        assert len(t.track_data["fingerprint"]) <= 1400
+
+    # Verify AudioFingerprint in main_db was updated with clamped fingerprint
+    with music_db.session_scope() as session:
+        af_rec = session.query(AudioFingerprint).filter_by(media_id=test_mid).first()
+        assert af_rec is not None
+        assert af_rec.chromaprint == clamped_hash
+        assert len(af_rec.chromaprint) <= 1400
+
+

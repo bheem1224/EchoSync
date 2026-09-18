@@ -164,25 +164,45 @@ def calculate_text_duration_weight(track_duration: float, candidate_duration: fl
 
 
 def extract_filename_title(file_path: str) -> str:
-    """Derive a clean title string from a file path by stripping extension and leading
-    disc/track-number prefixes.
+    """Derive a clean title string from a file path by stripping extension, leading
+    disc/track-number prefixes, and trailing copy markers.
 
     Examples:
         "01 - There's Nothing Holdin' Me Back.flac" -> "There's Nothing Holdin' Me Back"
         "02_Closer.mp3"                              -> "Closer"
         "cd1-03 Yellow.flac"                         -> "Yellow"
         "Track 07 - Hello.mp3"                       -> "Hello"
+        "17 - So Long (21).flac"                     -> "So Long"
+        "05 - Song [1].mp3"                          -> "Song"
     """
     import os as _os
 
-    base = _os.path.splitext(_os.path.basename(file_path))[0]
-    # Strip leading disc/track number tokens: "01 - ", "02.", "cd1-03 ", "[07] ", "1_", etc.
+    filename = _os.path.basename(file_path)
+    base = _os.path.splitext(filename)[0]
+
+    # 1. Structured TrackParser extraction
+    try:
+        from core.matching_engine.track_parser import TrackParser
+
+        parsed = TrackParser.parse_filename(filename)
+        if parsed and parsed.title and not is_generic_title(parsed.title):
+            cleaned = re.sub(r"\s*[\(\[]\d+[\)\]]$", "", parsed.title).strip()
+            if cleaned:
+                return cleaned
+    except Exception:
+        pass
+
+    # 2. Strip leading disc/track number tokens: "01 - ", "02.", "cd1-03 ", "[07] ", "1_", etc.
     cleaned = re.sub(
         r"^(\d+[\-_]\d+|\d+|\[\d+\]|cd\d+[\-_]?\d*)[\s.\-_]+",
         "",
         base,
         flags=re.IGNORECASE,
     ).strip()
+
+    # 3. Strip trailing copy markers e.g. " (21)", " [1]"
+    cleaned = re.sub(r"\s*[\(\[]\d+[\)\]]$", "", cleaned).strip()
+
     return cleaned or base
 
 
@@ -450,6 +470,16 @@ class MetadataResolutionEngine:
             duration_ms = round(d_val * 1000) if d_val < 10000 else round(d_val)
 
         chromaprint: str | None = request.chromaprint
+        if chromaprint and len(chromaprint) > 1400:
+            logger.warning(
+                "[resolution_engine] [acoustid-isolated] Stale chromaprint detected (len=%d > 1400); "
+                "invalidating and regenerating via clamped Rust DSP engine: %s",
+                len(chromaprint),
+                file_path.name,
+            )
+            chromaprint = None
+            request.chromaprint = None
+
         if not chromaprint:
             if channels > 2:
                 logger.info(
@@ -459,17 +489,30 @@ class MetadataResolutionEngine:
                 )
             else:
                 try:
-                    chromaprint, fp_dur = FingerprintGenerator.generate_with_duration(str(file_path))
-                    if fp_dur and duration_ms <= 0:
-                        duration_ms = round(float(fp_dur) * 1000)
+                    import echosync_core
+
+                    res_fp = echosync_core.fingerprint_and_hash_audio(str(file_path), False)
+                    if isinstance(res_fp, tuple) and len(res_fp) >= 2:
+                        chromaprint = res_fp[0]
+                        if duration_ms <= 0 and res_fp[1]:
+                            duration_ms = round(float(res_fp[1]) * 1000)
+                    elif isinstance(res_fp, str):
+                        chromaprint = res_fp
                     if chromaprint:
                         request.chromaprint = chromaprint
-                except Exception as fp_err:
-                    logger.warning(
-                        "[resolution_engine] [acoustid-isolated] Fingerprint generation failed for %s: %s",
-                        file_path.name,
-                        fp_err,
-                    )
+                except Exception:
+                    try:
+                        chromaprint, fp_dur = FingerprintGenerator.generate_with_duration(str(file_path))
+                        if fp_dur and duration_ms <= 0:
+                            duration_ms = round(float(fp_dur) * 1000)
+                        if chromaprint:
+                            request.chromaprint = chromaprint
+                    except Exception as fp_err:
+                        logger.warning(
+                            "[resolution_engine] [acoustid-isolated] Fingerprint generation failed for %s: %s",
+                            file_path.name,
+                            fp_err,
+                        )
 
         # ── Stage 3: AcoustID (isolated) ─────────────────────────────────────
         acoustid_res: dict[str, Any] | None = None
@@ -658,6 +701,16 @@ class MetadataResolutionEngine:
 
         # Invariant: Multi-channel audio (>2 channels) must skip fingerprinting until native downmixing
         chromaprint: str | None = request.chromaprint
+        if chromaprint and len(chromaprint) > 1400:
+            logger.warning(
+                "[resolution_engine] Stale chromaprint detected in _execute_waterfall (len=%d > 1400); "
+                "invalidating and regenerating via clamped Rust DSP engine: %s",
+                len(chromaprint),
+                file_path.name,
+            )
+            chromaprint = None
+            request.chromaprint = None
+
         if not chromaprint:
             if channels > 2:
                 logger.info(
@@ -667,18 +720,31 @@ class MetadataResolutionEngine:
                 )
             else:
                 try:
-                    chromaprint, fp_dur = FingerprintGenerator.generate_with_duration(str(file_path))
-                    if fp_dur and (duration_ms <= 0):
-                        duration_ms = round(float(fp_dur) * 1000)
+                    import echosync_core
+
+                    res_fp = echosync_core.fingerprint_and_hash_audio(str(file_path), False)
+                    if isinstance(res_fp, tuple) and len(res_fp) >= 2:
+                        chromaprint = res_fp[0]
+                        if duration_ms <= 0 and res_fp[1]:
+                            duration_ms = round(float(res_fp[1]) * 1000)
+                    elif isinstance(res_fp, str):
+                        chromaprint = res_fp
                     if chromaprint:
                         request.chromaprint = chromaprint
-                except Exception as fp_err:
-                    logger.warning(
-                        "[resolution_engine] Fingerprint generation failed for %s: %s",
-                        file_path.name,
-                        fp_err,
-                    )
-                    chromaprint = None
+                except Exception:
+                    try:
+                        chromaprint, fp_dur = FingerprintGenerator.generate_with_duration(str(file_path))
+                        if fp_dur and (duration_ms <= 0):
+                            duration_ms = round(float(fp_dur) * 1000)
+                        if chromaprint:
+                            request.chromaprint = chromaprint
+                    except Exception as fp_err:
+                        logger.warning(
+                            "[resolution_engine] Fingerprint generation failed for %s: %s",
+                            file_path.name,
+                            fp_err,
+                        )
+                        chromaprint = None
 
         tag_title = raw_tags.get("title")
         tag_artist = raw_tags.get("artist") or raw_tags.get("artist_name")
@@ -1278,15 +1344,40 @@ class MetadataResolutionEngine:
         if request is not None:
             if request.chromaprint:
                 chromaprint = request.chromaprint
-            elif not chromaprint and request.file_path:
+                if len(chromaprint) > 1400:
+                    logger.warning(
+                        "[resolution_engine] Stale chromaprint detected in _resolve_acoustid (len=%d > 1400); "
+                        "invalidating and regenerating via clamped Rust DSP engine: %s",
+                        len(chromaprint),
+                        request.file_path,
+                    )
+                    chromaprint = None
+                    request.chromaprint = None
+
+            if not chromaprint and request.file_path:
                 try:
-                    chromaprint, fp_dur = FingerprintGenerator.generate_with_duration(str(request.file_path))
-                    if fp_dur and file_duration_ms <= 0:
-                        file_duration_ms = round(float(fp_dur) * 1000)
+                    import echosync_core
+
+                    res_fp = echosync_core.fingerprint_and_hash_audio(str(request.file_path), False)
+                    if isinstance(res_fp, tuple) and len(res_fp) >= 2:
+                        chromaprint = res_fp[0]
+                        if file_duration_ms <= 0 and res_fp[1]:
+                            file_duration_ms = round(float(res_fp[1]) * 1000)
+                    elif isinstance(res_fp, str):
+                        chromaprint = res_fp
                     if chromaprint:
                         request.chromaprint = chromaprint
-                except Exception as fp_err:
-                    logger.warning("[resolution_engine] Fingerprint generation failed in _resolve_acoustid: %s", fp_err)
+                except Exception:
+                    try:
+                        chromaprint, fp_dur = FingerprintGenerator.generate_with_duration(str(request.file_path))
+                        if fp_dur and file_duration_ms <= 0:
+                            file_duration_ms = round(float(fp_dur) * 1000)
+                        if chromaprint:
+                            request.chromaprint = chromaprint
+                    except Exception as fp_err:
+                        logger.warning(
+                            "[resolution_engine] Fingerprint generation failed in _resolve_acoustid: %s", fp_err
+                        )
 
             if not filename and request.file_path:
                 filename = Path(request.file_path).name
@@ -1301,6 +1392,14 @@ class MetadataResolutionEngine:
             elif request.duration and file_duration_ms <= 0:
                 d_val = float(request.duration)
                 file_duration_ms = round(d_val * 1000) if d_val < 10000 else round(d_val)
+
+        if chromaprint and len(chromaprint) > 1400:
+            logger.warning(
+                "[resolution_engine] Stale chromaprint parameter detected (len=%d > 1400); invalidating: %s",
+                len(chromaprint),
+                filename,
+            )
+            chromaprint = None
 
         if not chromaprint:
             return None

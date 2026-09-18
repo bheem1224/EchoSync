@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 from typing import Any, cast
 
@@ -12,7 +13,7 @@ from core.nexus_framework import plugin_loader
 from core.nexus_framework.plugin_loader import get_plugin_by_capability
 from core.settings import config_manager
 from core.tiered_logger import get_logger
-from database import get_database
+from database import _canonicalize_path, get_database
 from database.working_database import ReviewTask, get_working_database
 from services.metadata_enhancer import get_metadata_enhancer
 from web.auth import require_auth
@@ -165,13 +166,37 @@ def _resolve_task_file(task: ReviewTask) -> Path | None:
 
 
 def _get_fingerprint_provider():
-    """Resolve fingerprint provider bound by capability."""
+    """Resolve fingerprint provider bound by capability, preferring chromaprint."""
+    try:
+        from core.nexus_framework.plugin_loader import PluginRegistry
+
+        plugins = PluginRegistry.get_plugins_with_capability(Capability.RESOLVE_FINGERPRINT)
+        for p in plugins:
+            caps = getattr(p, "capabilities", None)
+            if caps:
+                algos = getattr(caps, "fingerprint_algorithms", []) or []
+                if "chromaprint" in algos or getattr(caps, "supports_fingerprinting", False):
+                    return p
+        if plugins:
+            return plugins[0]
+    except Exception:
+        pass
     return get_plugin_by_capability(Capability.RESOLVE_FINGERPRINT)
 
 
 def _get_metadata_provider():
     """Resolve metadata provider bound by capability."""
     return get_plugin_by_capability(Capability.FETCH_METADATA)
+
+
+def _get_spotify_provider():
+    """Resolve Spotify provider bound by capability or plugin name."""
+    try:
+        from core.nexus_framework import plugin_loader
+
+        return plugin_loader.get_plugin("EchoSync.spotify") or plugin_loader.get_plugin("spotify")
+    except Exception:
+        return None
 
 
 def _read_current_metadata(task: ReviewTask) -> dict[str, Any]:
@@ -1102,21 +1127,126 @@ def lookup_review_queue_item_acoustid(task_id: int, _=Depends(require_auth)):
 
             from sqlalchemy.orm.attributes import flag_modified
 
-            from core.metadata.engine import MetadataResolutionEngine
+            from core.matching_engine.text_utils import normalize_title
+            from core.matching_engine.track_parser import TrackParser
+            from core.matching_engine.trust_gate import is_generic_title
+            from core.metadata.engine import MetadataResolutionEngine, extract_filename_title
             from core.metadata.schemas import ResolutionRequest
+            from core.task_manager.task_queue import db_write_lease
 
             track_obj = EchosyncTrack.from_dict(task.track_data or {})
+
+            # 1. Sanitize filename stem: route through normalize_title and track parser cleansing
+            target_title = None
+            try:
+                parsed_track = TrackParser.parse_filename(file_path.name)
+                if parsed_track and parsed_track.title and not is_generic_title(parsed_track.title):
+                    target_title = re.sub(r"\s*[\(\[]\d+[\)\]]$", "", parsed_track.title).strip()
+            except Exception:
+                pass
+
+            if not target_title:
+                norm_fn = normalize_title(file_path.name)
+                try:
+                    norm_parsed = TrackParser.parse_filename(norm_fn)
+                    if norm_parsed and norm_parsed.title and not is_generic_title(norm_parsed.title):
+                        target_title = norm_parsed.title.strip()
+                except Exception:
+                    pass
+
+            if not target_title:
+                target_title = extract_filename_title(file_path.name)
+
+            if target_title:
+                target_title = re.sub(r"\s*[\(\[]\d+[\)\]]$", "", target_title).strip()
+
+            # 2. Inspect existing chromaprint string from task or DB and invalidate stale (>1400 chars)
+            existing_chromaprint = (
+                (task.track_data or {}).get("fingerprint")
+                or (task.track_data or {}).get("chromaprint")
+                or (task.detected_metadata or {}).get("fingerprint")
+                or (task.detected_metadata or {}).get("chromaprint")
+            )
+
+            canonical_path = _canonicalize_path(str(file_path))
+            main_db = get_database()
+            media_record = None
+            try:
+                with main_db.session_scope() as main_session:
+                    from database.music_database import AudioFingerprint, LocalMedia
+
+                    media_record = main_session.query(LocalMedia).filter(LocalMedia.file_path == canonical_path).first()
+                    if media_record:
+                        af = (
+                            main_session.query(AudioFingerprint)
+                            .filter(AudioFingerprint.media_id == media_record.media_id)
+                            .first()
+                        )
+                        if af and af.chromaprint and not existing_chromaprint:
+                            existing_chromaprint = af.chromaprint
+            except Exception as exc:
+                logger.debug(f"Failed to probe AudioFingerprint in main database: {exc}")
+
+            clamped_fingerprint = existing_chromaprint
+            if existing_chromaprint and len(existing_chromaprint) > 1400:
+                logger.warning(
+                    f"Task {task_id}: stale bloated chromaprint detected (len={len(existing_chromaprint)} > 1400); "
+                    f"forcing regeneration via clamped Rust DSP engine: {file_path.name}"
+                )
+                try:
+                    import echosync_core
+
+                    native_res = echosync_core.fingerprint_and_hash_audio(str(file_path), False)
+                    if isinstance(native_res, tuple) and len(native_res) >= 2:
+                        clamped_fingerprint = native_res[0]
+                    elif isinstance(native_res, str):
+                        clamped_fingerprint = native_res
+                except Exception as dsp_err:
+                    logger.error(f"Failed to regenerate clamped fingerprint for task {task_id}: {dsp_err}")
+
+                if clamped_fingerprint:
+                    if not task.track_data:
+                        task.track_data = {}
+                    task.track_data["fingerprint"] = clamped_fingerprint
+                    track_obj.fingerprint = clamped_fingerprint
+                    flag_modified(task, "track_data")
+
+                    # Update database record wrapped inside db_write_lease
+                    if media_record:
+                        try:
+                            with db_write_lease("metadata_review_update_stale_fingerprint"):
+                                with main_db.session_scope() as main_session:
+                                    from database.music_database import AudioFingerprint
+
+                                    af = (
+                                        main_session.query(AudioFingerprint)
+                                        .filter(AudioFingerprint.media_id == media_record.media_id)
+                                        .first()
+                                    )
+                                    if af:
+                                        af.chromaprint = clamped_fingerprint
+                                        main_session.flush()
+                        except Exception as db_err:
+                            logger.error(f"Failed to update clamped fingerprint in main db: {db_err}")
+
+            duration_ms = _coerce_int(track_obj.duration)
+            duration_sec = duration_ms / 1000.0 if (duration_ms and duration_ms > 0) else None
 
             engine = MetadataResolutionEngine(
                 acoustid_provider=_get_fingerprint_provider(),
                 metadata_provider=_get_metadata_provider(),
+                spotify_provider=_get_spotify_provider(),
             )
             req = ResolutionRequest(
                 media_id=str(task.id),
+                sync_id=track_obj.sync_id if hasattr(track_obj, "sync_id") else None,
                 file_path=Path(file_path),
-                baseline_title=None,  # Zero-trust fingerprint semantics: audio proof overrides corrupt DB title
+                baseline_title=target_title,
                 baseline_artist=None,  # Zero-trust: audio proof determines true artist without dirty baseline bias
                 baseline_album=None,
+                chromaprint=clamped_fingerprint,
+                duration=duration_sec,
+                duration_ms=duration_ms,
                 ignore_embedded_mbid=True,
                 ignore_cache=True,
             )
@@ -1130,6 +1260,22 @@ def lookup_review_queue_item_acoustid(task_id: int, _=Depends(require_auth)):
                 if res and res.chromaprint:
                     task.track_data = track_obj.to_dict()
                     flag_modified(task, "track_data")
+                    if media_record:
+                        try:
+                            with db_write_lease("metadata_review_fingerprint_miss"):
+                                with main_db.session_scope() as main_session:
+                                    from database.music_database import AudioFingerprint
+
+                                    af = (
+                                        main_session.query(AudioFingerprint)
+                                        .filter(AudioFingerprint.media_id == media_record.media_id)
+                                        .first()
+                                    )
+                                    if af and af.chromaprint != res.chromaprint:
+                                        af.chromaprint = res.chromaprint
+                                        main_session.flush()
+                        except Exception as db_err:
+                            logger.debug(f"Failed to update fingerprint in main db on miss: {db_err}")
                 logger.warning(
                     f"AcoustID scan for task {task_id}: no verified match found "
                     f"(score={res.confidence_score if res else 0.0}, fingerprint_len={len(res.chromaprint or '') if res else 0})"
@@ -1164,11 +1310,37 @@ def lookup_review_queue_item_acoustid(task_id: int, _=Depends(require_auth)):
                 track_obj.isrc = res.isrc
 
             track_obj.identifiers["source"] = "acoustid_lookup"
+            if res.chromaprint:
+                track_obj.fingerprint = res.chromaprint
+            res_dict = res.to_dict()
+            if res.chromaprint:
+                res_dict["fingerprint"] = res.chromaprint
+                res_dict["chromaprint"] = res.chromaprint
             task.track_data = track_obj.to_dict()
-            task.detected_metadata = res.to_dict()
-            task.proposed_metadata = res.to_dict()
+            task.detected_metadata = res_dict
+            task.proposed_metadata = res_dict
             task.confidence_score = res.confidence_score
             flag_modified(task, "track_data")
+
+            if media_record and (res.chromaprint or res.acoustid_id):
+                try:
+                    with db_write_lease("metadata_review_fingerprint_match"):
+                        with main_db.session_scope() as main_session:
+                            from database.music_database import AudioFingerprint
+
+                            af = (
+                                main_session.query(AudioFingerprint)
+                                .filter(AudioFingerprint.media_id == media_record.media_id)
+                                .first()
+                            )
+                            if af:
+                                if res.chromaprint:
+                                    af.chromaprint = res.chromaprint
+                                if res.acoustid_id:
+                                    af.acoustid_id = res.acoustid_id
+                                main_session.flush()
+                except Exception as db_err:
+                    logger.debug(f"Failed to update fingerprint in main db on match: {db_err}")
 
             updated_fields = []
             if track_obj.title:

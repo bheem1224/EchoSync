@@ -135,7 +135,8 @@ class ReviewTask(WorkingBase):
             "isrc": self.track_data.get("isrc"),
             "acoustid_id": self.track_data.get("acoustid") or self.track_data.get("acoustid_id"),
             "mb_release_id": self.track_data.get("mb_release_id"),
-            "fingerprint": self.track_data.get("fingerprint"),
+            "fingerprint": self.track_data.get("fingerprint") or self.track_data.get("chromaprint"),
+            "chromaprint": self.track_data.get("chromaprint") or self.track_data.get("fingerprint"),
         }
 
     @detected_metadata.setter
@@ -158,7 +159,9 @@ class ReviewTask(WorkingBase):
         self.track_data["isrc"] = val.get("isrc")
         self.track_data["acoustid"] = val.get("acoustid_id") or val.get("acoustid")
         self.track_data["mb_release_id"] = val.get("mb_release_id")
-        self.track_data["fingerprint"] = val.get("fingerprint")
+        fp = val.get("fingerprint") or val.get("chromaprint")
+        self.track_data["fingerprint"] = fp
+        self.track_data["chromaprint"] = fp
 
         # Copy custom/extra keys to ensure they are not lost
         for k, v in val.items():
@@ -180,6 +183,7 @@ class ReviewTask(WorkingBase):
                 "acoustid",
                 "mb_release_id",
                 "fingerprint",
+                "chromaprint",
             ]:
                 self.track_data[k] = v
 

@@ -82,11 +82,13 @@ def is_cross_script(s1: str, s2: str) -> bool:
 
 
 def sanitize_title_from_filename(filename: str | Path) -> str:
-    """Extract clean title from filename by stripping track numbers and delimiters."""
+    """Extract clean title from filename by stripping track numbers, delimiters, and copy markers."""
     base = Path(filename).stem
     # Strip leading track numbers e.g. "00 - ", "01. ", "01 - ", "12 ", etc.
     cleaned = re.sub(r"^\d+[\s\-_.]+", "", base)
-    return cleaned.strip()
+    # Strip trailing copy markers e.g. (21), [1]
+    cleaned = re.sub(r"\s*[\(\[]\d+[\)\]]$", "", cleaned).strip()
+    return cleaned
 
 
 # Alias for compatibility with clean_title_from_filename convention
