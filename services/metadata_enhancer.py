@@ -1471,9 +1471,16 @@ class RetroactiveEnhancer:
             )
 
         if expected_isrc and read_isrc != expected_isrc:
-            raise MetadataWriteVerificationError(
-                f"Tag verification failed for {path.name}: isrc ('{read_isrc}' vs '{expected_isrc}')"
-            )
+            if path.suffix.lower() == ".wav" and not read_isrc:
+                logger.warning(
+                    "tag_file_verified: %s (WAV) container does not retain ISRC tag '%s' on readback; continuing without ISRC verification",
+                    path.name,
+                    expected_isrc,
+                )
+            else:
+                raise MetadataWriteVerificationError(
+                    f"Tag verification failed for {path.name}: isrc ('{read_isrc}' vs '{expected_isrc}')"
+                )
 
         logger.info(
             "tag_file_verified: successfully verified tags for %s (title='%s', artist='%s', isrc='%s')",

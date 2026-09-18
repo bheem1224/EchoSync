@@ -319,6 +319,13 @@ fn populate_riff_items(tag: &mut Tag, tags: &HashMap<String, String>) {
         tag.set_genre(g_val.to_string());
     }
 
+    if let Some(isrc_val) = tags.get("isrc").map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        tag.insert_unchecked(TagItem::new(
+            ItemKey::Unknown("ISRC".to_string()),
+            ItemValue::Text(isrc_val.to_string()),
+        ));
+    }
+
     let sig_val = tags
         .get("echosync_signature")
         .or_else(|| tags.get("signature"))

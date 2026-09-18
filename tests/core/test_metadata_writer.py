@@ -377,3 +377,66 @@ def test_wav_corrupt_legacy_riff_info_recovery(tmp_path):
     verified = enhancer.tag_file_verified(corrupt_wav_path, metadata)
     assert verified.get("title") == "Open Sore"
     assert verified.get("artist") == "Skinny Puppy"
+
+
+def test_wav_isrc_write_read_roundtrip(tmp_path):
+    """Verify that echosync_core writes and reads ISRC on WAV files."""
+    wav_path = _create_minimal_wav_file(tmp_path / "isrc_test.wav")
+
+    tags_to_write = {
+        "title": "JUSTIN BIEBER!!!!!",
+        "artist": "Kitty",
+        "isrc": "gb28k1700019",
+    }
+
+    success = echosync_core.write_metadata(str(wav_path), tags_to_write)
+    assert success is True
+
+    read_back = echosync_core.read_metadata(str(wav_path))
+    assert isinstance(read_back, dict)
+    assert read_back.get("title") == "JUSTIN BIEBER!!!!!"
+    assert read_back.get("artist") == "Kitty"
+    assert (read_back.get("isrc") or "").lower() == "gb28k1700019"
+
+
+def test_wav_tag_file_verified_with_isrc(tmp_path):
+    """Verify that enhancer.tag_file_verified succeeds on WAV files with ISRC."""
+    wav_path = _create_minimal_wav_file(tmp_path / "verified_isrc_test.wav")
+    enhancer = RetroactiveEnhancer()
+
+    metadata = {
+        "title": "JUSTIN BIEBER!!!!!",
+        "artist": "Kitty",
+        "isrc": "gb28k1700019",
+    }
+
+    verified = enhancer.tag_file_verified(wav_path, metadata)
+    assert verified.get("title") == "JUSTIN BIEBER!!!!!"
+    assert verified.get("artist") == "Kitty"
+
+
+def test_wav_tag_file_verified_does_not_abort_when_container_drops_isrc(tmp_path, monkeypatch):
+    """Verify that enhancer.tag_file_verified does not raise MetadataWriteVerificationError if a WAV container drops ISRC on readback."""
+    wav_path = _create_minimal_wav_file(tmp_path / "dropped_isrc.wav")
+    enhancer = RetroactiveEnhancer()
+
+    # Mock read_metadata to simulate a legacy WAV file that strips or drops ISRC on readback
+    original_read = echosync_core.read_metadata
+
+    def mock_read_no_isrc(path_str):
+        tags = original_read(path_str)
+        tags["isrc"] = ""
+        return tags
+
+    monkeypatch.setattr(echosync_core, "read_metadata", mock_read_no_isrc)
+
+    metadata = {
+        "title": "JUSTIN BIEBER!!!!!",
+        "artist": "Kitty",
+        "isrc": "gb28k1700019",
+    }
+
+    # Must NOT raise MetadataWriteVerificationError
+    verified = enhancer.tag_file_verified(wav_path, metadata)
+    assert verified.get("title") == "JUSTIN BIEBER!!!!!"
+
