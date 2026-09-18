@@ -5,7 +5,7 @@ from typing import Any
 
 from rapidfuzz import fuzz
 
-from core.caching.plugin_cache import plugin_cache
+from core.caching.plugin_cache import get_cache, plugin_cache
 from core.db.echo_sync_track import EchosyncTrack
 from core.matching_engine.text_utils import normalize_artist, normalize_title
 from core.matching_engine.track_parser import TrackParser
@@ -1032,6 +1032,18 @@ class MusicBrainzClient(PluginBase):
         if not mbid:
             return None
 
+        cache = get_cache()
+        cache_key = f"musicbrainz:get_metadata:{mbid}"
+        try:
+            cached = cache.get(cache_key, ttl_seconds=604800)
+            if cached is not None:
+                if isinstance(cached, dict) and cached.get("__tombstone__"):
+                    logger.debug(f"[MusicBrainz Client] MBID {mbid} is cached tombstone (404); skipping network lookup")
+                    return None
+                return cached
+        except Exception as c_err:
+            logger.debug(f"[MusicBrainz Client] Cache lookup error for {mbid}: {c_err}")
+
         try:
             logger.debug(
                 f"[MusicBrainz Client] Fetching detailed metadata for mbid='{mbid}' via GET {self.api_base}/recording/{mbid}"
@@ -1041,6 +1053,13 @@ class MusicBrainzClient(PluginBase):
                 params={"fmt": "json", "inc": "artists+releases+release-groups+isrcs+media"},
             )
             logger.debug(f"[MusicBrainz Client] get_metadata response: status={response.status_code}")
+            if response.status_code == 404:
+                logger.warning(f"MusicBrainz get_metadata 404 Not Found for mbid={mbid}; caching tombstone")
+                try:
+                    cache.set(cache_key, {"__tombstone__": True, "status": 404}, ttl_seconds=604800)
+                except Exception:
+                    pass
+                return None
             if response.status_code != 200:
                 logger.warning(f"MusicBrainz get_metadata failed for mbid={mbid}: status={response.status_code}")
                 return None
@@ -1163,10 +1182,22 @@ class MusicBrainzClient(PluginBase):
             credits = None
             response = None
 
+            try:
+                cache.set(cache_key, result, ttl_seconds=604800)
+            except Exception:
+                pass
+
             return result
 
         except HttpError as exc:
-            logger.warning(f"MusicBrainz get_metadata HTTP error for {mbid}: {exc}")
+            if getattr(exc, "status", None) == 404 or getattr(exc, "status_code", None) == 404:
+                logger.warning(f"MusicBrainz get_metadata HTTP 404 for {mbid}; caching tombstone")
+                try:
+                    cache.set(cache_key, {"__tombstone__": True, "status": 404}, ttl_seconds=604800)
+                except Exception:
+                    pass
+            else:
+                logger.warning(f"MusicBrainz get_metadata HTTP error for {mbid}: {exc}")
             return None
         except Exception as exc:
             logger.error(f"Failed to fetch metadata for {mbid}: {exc}")

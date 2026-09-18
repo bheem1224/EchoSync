@@ -1129,9 +1129,9 @@ class RetroactiveEnhancer:
                 if (existing_fp and existing_fp.chromaprint)
                 else getattr(track, "fingerprint", None)
             )
-            if chromaprint and len(chromaprint) > 1400:
+            if chromaprint and len(chromaprint) > 4000:
                 logger.info(
-                    "[enhancer] Discarding stale unclamped fingerprint (len=%d > 1400) for media %s",
+                    "[enhancer] Discarding stale unclamped fingerprint (len=%d > 4000) for media %s",
                     len(chromaprint),
                     first_media.media_id if first_media else track_id,
                 )
@@ -2031,7 +2031,7 @@ class RetroactiveEnhancer:
                     if media_ids:
                         fp_rows = session.query(AudioFingerprint).filter(AudioFingerprint.media_id.in_(media_ids)).all()
                         for fp in fp_rows:
-                            valid_cp = fp.chromaprint if (fp.chromaprint and len(fp.chromaprint) <= 1400) else None
+                            valid_cp = fp.chromaprint if (fp.chromaprint and len(fp.chromaprint) <= 4000) else None
                             fps_map[fp.media_id] = {
                                 "chromaprint": valid_cp,
                                 "acoustid_id": fp.acoustid_id if valid_cp else None,
@@ -2277,6 +2277,15 @@ class RetroactiveEnhancer:
                             and (sig_valid or not sig_to_verify)
                         ):
                             bucket_trust.append((item, valid_media_paths, all_file_tags))
+                        elif not sig_valid and sig_to_verify:
+                            # Stage 0 signature corrupted; demote embedded MBID directly to acoustic waterfall
+                            logger.debug(
+                                "[enhancer] Stage 0 signature corrupted; demoting embedded MBID '%s' for track %s directly to acoustic waterfall",
+                                t_track.musicbrainz_id,
+                                getattr(t_track, "id", item.get("id")),
+                            )
+                            item["ignore_embedded_mbid"] = True
+                            bucket_heavy.append((item, valid_media_paths, all_file_tags))
                         else:
                             bucket_target.append((item, valid_media_paths, all_file_tags))
                     else:
@@ -2368,6 +2377,12 @@ class RetroactiveEnhancer:
                                         first_filename,
                                     )
                                     item["metadata_status"]["trust_gate_rejected"] = True
+                                    stage_metadata_divergence(
+                                        sync_id=t_track.sync_id if hasattr(t_track, "sync_id") else None,
+                                        candidate_metadata=meta,
+                                        file_path=first_local_path or "",
+                                        original_title=baseline_title or first_tag_title,
+                                    )
                                     has_signature = bool(item["metadata_status"].get("signature_valid"))
                                     if not has_signature:
                                         track_id = getattr(t_track, "id", item.get("id"))
@@ -2380,12 +2395,6 @@ class RetroactiveEnhancer:
                                         bucket_heavy.append((item, valid_media_paths, all_file_tags))
                                         continue
                                     else:
-                                        stage_metadata_divergence(
-                                            sync_id=t_track.sync_id if hasattr(t_track, "sync_id") else None,
-                                            candidate_metadata=meta,
-                                            file_path=first_local_path or "",
-                                            original_title=baseline_title or first_tag_title,
-                                        )
                                         t_track.musicbrainz_id = "NOT_FOUND"
                                         item["metadata_status"]["enhancement_attempts"] = (
                                             item["metadata_status"].get("enhancement_attempts", 0) + 1
@@ -2516,7 +2525,7 @@ class RetroactiveEnhancer:
                     for media, local_path in valid_media_paths:
                         mid = media.media_id
                         existing_fp = item["fingerprints"].get(mid, {}).get("chromaprint")
-                        if existing_fp and len(existing_fp) > 1400:
+                        if existing_fp and len(existing_fp) > 4000:
                             existing_fp = None
                         if not existing_fp:
                             try:

@@ -84,7 +84,7 @@ def test_diagnostic_retroactive_enhancer_divergence_track_2491(tmp_path, monkeyp
 
     monkeypatch.setattr(echosync_core, "extract_metadata", lambda p: {})
 
-    mock_chromaprint = "AQABz0mSRIqYJEoUB9_xH" * 300
+    mock_chromaprint = "AQABz0mSRIqYJEoUB9_xH" * 50
     monkeypatch.setattr(
         FingerprintGenerator,
         "generate_with_duration",
@@ -191,7 +191,7 @@ def test_diagnostic_manual_review_ui_acoustid_success_track_2491(tmp_path, monke
     )
 
     # Manual UI calls generate_with_duration:
-    mock_chromaprint = "AQABz0mSRIqYJEoUB9_xH" * 300
+    mock_chromaprint = "AQABz0mSRIqYJEoUB9_xH" * 50
     mock_duration = 219  # 3 minutes 39 seconds
     monkeypatch.setattr(
         FingerprintGenerator,

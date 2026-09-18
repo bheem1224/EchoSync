@@ -409,6 +409,9 @@ class MetadataResolutionEngine:
         result.alias_proposals = self._resolve_aliases(request, result)
         return result
 
+    # Alias for uniform resolution engine invocations
+    resolve_track_metadata = resolve_track
+
     def _resolve_acoustid_isolated(self, request: ResolutionRequest) -> ResolutionResult:
         """Execute Stage 3 (AcoustID) in strict isolation.
 
@@ -428,35 +431,17 @@ class MetadataResolutionEngine:
 
         # ── Minimal physical inspection ────────────────────────────────────────
         raw_tags: dict[str, Any] = {}
+        duration_ms = 0
+        channels = 2
         try:
             import echosync_core
 
             raw_tags = echosync_core.extract_metadata(str(file_path)) or {}
-        except Exception as exc:
-            logger.debug(
-                "[resolution_engine] [acoustid-isolated] Tag extraction failed for %s: %s",
-                file_path.name,
-                exc,
-            )
+            raw_dur = raw_tags.get("duration_ms") or raw_tags.get("duration")
+            if raw_dur is not None:
+                d_val = float(raw_dur)
+                duration_ms = round(d_val * 1000) if d_val < 10000 else round(d_val)
 
-        # Duration from header tags or fingerprint generator
-        duration_ms = 0
-        raw_dur = raw_tags.get("duration_ms")
-        if raw_dur is not None:
-            try:
-                duration_ms = int(raw_dur)
-            except (ValueError, TypeError):
-                duration_ms = 0
-        elif raw_tags.get("duration") is not None:
-            try:
-                d_sec = float(raw_tags["duration"])
-                duration_ms = round(d_sec * 1000) if d_sec < 10000 else round(d_sec)
-            except (ValueError, TypeError):
-                duration_ms = 0
-
-        # Channel check: skip fingerprinting for multi-channel audio
-        channels = 2
-        try:
             raw_ch = raw_tags.get("channels")
             if raw_ch is not None:
                 channels = int(raw_ch)
@@ -470,9 +455,9 @@ class MetadataResolutionEngine:
             duration_ms = round(d_val * 1000) if d_val < 10000 else round(d_val)
 
         chromaprint: str | None = request.chromaprint
-        if chromaprint and len(chromaprint) > 1400:
+        if chromaprint and len(chromaprint) > 4000:
             logger.warning(
-                "[resolution_engine] [acoustid-isolated] Stale chromaprint detected (len=%d > 1400); "
+                "[resolution_engine] [acoustid-isolated] Stale chromaprint detected (len=%d > 4000); "
                 "invalidating and regenerating via clamped Rust DSP engine: %s",
                 len(chromaprint),
                 file_path.name,
@@ -701,9 +686,9 @@ class MetadataResolutionEngine:
 
         # Invariant: Multi-channel audio (>2 channels) must skip fingerprinting until native downmixing
         chromaprint: str | None = request.chromaprint
-        if chromaprint and len(chromaprint) > 1400:
+        if chromaprint and len(chromaprint) > 4000:
             logger.warning(
-                "[resolution_engine] Stale chromaprint detected in _execute_waterfall (len=%d > 1400); "
+                "[resolution_engine] Stale chromaprint detected in _execute_waterfall (len=%d > 4000); "
                 "invalidating and regenerating via clamped Rust DSP engine: %s",
                 len(chromaprint),
                 file_path.name,
@@ -867,8 +852,15 @@ class MetadataResolutionEngine:
             (tag_title and not is_generic_title(str(tag_title)))
             and (tag_artist and not str(tag_artist).lower().strip().startswith("unknown"))
         )
+        deferred_embedded_mbid: str | None = None
         if embedded_mbid and not request.ignore_embedded_mbid:
-            if not has_identifiable_tags:
+            if not signature_valid:
+                logger.debug(
+                    "[resolution_engine] Stage 0 unverified; demoting embedded MBID '%s' and routing directly to AcoustID",
+                    embedded_mbid,
+                )
+                deferred_embedded_mbid = str(embedded_mbid).strip()
+            elif not has_identifiable_tags:
                 logger.info(
                     "[resolution_engine] Skipping embedded MBID %s (tags missing/unknown); dropping straight to Chromaprint/AcoustID",
                     embedded_mbid,
@@ -1221,6 +1213,104 @@ class MetadataResolutionEngine:
                 resolution_method="text_waterfall",
             )
 
+        # ── Secondary Fallback: Demoted Embedded MBID ─────────────────────────
+        if deferred_embedded_mbid:
+            logger.info(
+                "[resolution_engine] Evaluating demoted embedded MBID '%s' as secondary fallback after acoustic/text miss: %s",
+                deferred_embedded_mbid,
+                file_path.name,
+            )
+            mb_plugin = self._get_mb_plugin()
+            if mb_plugin and hasattr(mb_plugin, "get_metadata"):
+                try:
+                    meta = mb_plugin.get_metadata(str(deferred_embedded_mbid).strip())
+                    if meta:
+                        c_title = meta.get("title") if isinstance(meta, dict) else getattr(meta, "title", None)
+                        baseline_check = request.baseline_title or baseline_title
+
+                        contradicts_filename = False
+                        if c_title and filename_contradicts_baseline:
+                            sim = difflib.SequenceMatcher(
+                                None,
+                                str(c_title).lower().strip(),
+                                sanitized_file_title.lower().strip(),
+                            ).ratio()
+                            if sim < 0.60:
+                                contradicts_filename = True
+
+                        if (
+                            c_title
+                            and not contradicts_filename
+                            and verify_title_trust_gate(
+                                candidate_title=c_title,
+                                baseline_title=baseline_check,
+                                filename=file_path.name,
+                                tag_title=tag_title,
+                                min_similarity=0.60,
+                            )
+                        ):
+                            c_artist = (
+                                (meta.get("artist") or meta.get("artist_name"))
+                                if isinstance(meta, dict)
+                                else (getattr(meta, "artist_name", None) or getattr(meta, "artist", None))
+                            )
+                            c_album = (
+                                (meta.get("album") or meta.get("album_title"))
+                                if isinstance(meta, dict)
+                                else (getattr(meta, "album_title", None) or getattr(meta, "album", None))
+                            )
+                            c_rel_id = (
+                                meta.get("release_id")
+                                if isinstance(meta, dict)
+                                else getattr(meta, "mb_release_id", None)
+                            )
+                            c_year, c_track, c_disc = _extract_release_details(
+                                meta,
+                                recording_id=str(deferred_embedded_mbid).strip(),
+                                fallback_year=parsed_year,
+                                fallback_track=parsed_track_num,
+                                fallback_disc=parsed_disc_num,
+                            )
+                            logger.info(
+                                "[resolution_engine] Demoted embedded MBID verified as fallback: %s → %s",
+                                file_path.name,
+                                deferred_embedded_mbid,
+                            )
+                            return ResolutionResult(
+                                media_id=request.media_id,
+                                sync_id=request.sync_id,
+                                title=c_title or baseline_title,
+                                artist=c_artist or baseline_artist,
+                                album=c_album or baseline_album,
+                                year=c_year,
+                                track_number=c_track,
+                                disc_number=c_disc,
+                                musicbrainz_track_id=str(deferred_embedded_mbid).strip(),
+                                musicbrainz_release_id=c_rel_id,
+                                acoustid_id=raw_tags.get("acoustid_id"),
+                                chromaprint=chromaprint,
+                                duration_ms=duration_ms,
+                                isrc=tag_isrc,
+                                confidence_score=0.85,
+                                resolution_method="embedded_mbid_fallback",
+                            )
+                        else:
+                            logger.warning(
+                                "[resolution_engine] Demoted embedded MBID '%s' rejected by trust gate against %s",
+                                deferred_embedded_mbid,
+                                file_path.name,
+                            )
+                    else:
+                        logger.info(
+                            "[resolution_engine] Demoted embedded MBID '%s' returned no metadata (404 / dead tag)",
+                            deferred_embedded_mbid,
+                        )
+                except Exception as e_mb:
+                    logger.debug(
+                        "[resolution_engine] Demoted embedded MBID lookup error: %s",
+                        e_mb,
+                    )
+
         # ── Unresolved Fallback ───────────────────────────────────────────────
         logger.info(
             "[resolution_engine] All resolution stages exhausted for %s. Marking for manual review.",
@@ -1344,9 +1434,9 @@ class MetadataResolutionEngine:
         if request is not None:
             if request.chromaprint:
                 chromaprint = request.chromaprint
-                if len(chromaprint) > 1400:
+                if len(chromaprint) > 4000:
                     logger.warning(
-                        "[resolution_engine] Stale chromaprint detected in _resolve_acoustid (len=%d > 1400); "
+                        "[resolution_engine] Stale chromaprint detected in _resolve_acoustid (len=%d > 4000); "
                         "invalidating and regenerating via clamped Rust DSP engine: %s",
                         len(chromaprint),
                         request.file_path,
@@ -1393,9 +1483,9 @@ class MetadataResolutionEngine:
                 d_val = float(request.duration)
                 file_duration_ms = round(d_val * 1000) if d_val < 10000 else round(d_val)
 
-        if chromaprint and len(chromaprint) > 1400:
+        if chromaprint and len(chromaprint) > 4000:
             logger.warning(
-                "[resolution_engine] Stale chromaprint parameter detected (len=%d > 1400); invalidating: %s",
+                "[resolution_engine] Stale chromaprint parameter detected (len=%d > 4000); invalidating: %s",
                 len(chromaprint),
                 filename,
             )

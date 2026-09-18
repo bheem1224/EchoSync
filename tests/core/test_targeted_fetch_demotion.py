@@ -566,3 +566,201 @@ def test_targeted_fetch_tampered_signature_voids_and_demotes_to_acoustic_waterfa
     with working_db.session_scope() as session:
         staged = session.query(SuggestionStagingQueue).all()
         assert len(staged) == 0
+
+
+def test_unverified_embedded_mbid_bypasses_stage1_to_acoustid(tmp_path, monkeypatch):
+    """When Stage 0 signature is missing or unverified, Stage 1 direct embedded MBID
+
+    lookup is suppressed, routing directly to AcoustID (Stage 3).
+    """
+    from core.metadata.engine import MetadataResolutionEngine
+    from core.metadata.schemas import ResolutionRequest
+
+    audio_file = tmp_path / "01 - Past Lives.flac"
+    audio_file.write_bytes(b"mock flac content")
+
+    stale_embedded_mbid = "mbid-stale-unverified-404"
+    canonical_acoustic_mbid = "mbid-past-lives-winner"
+
+    monkeypatch.setattr(
+        echosync_core,
+        "extract_metadata",
+        lambda p: {
+            "title": "Past Lives",
+            "artist": "BØRNS",
+            "musicbrainz_trackid": stale_embedded_mbid,
+            "duration_ms": 274000,
+            "channels": 2,
+        },
+    )
+
+    dummy_cp = "C" * 120
+    monkeypatch.setattr(
+        FingerprintGenerator,
+        "generate_with_duration",
+        lambda p: (dummy_cp, 274.0),
+    )
+
+    mock_mb = MagicMock()
+    mock_acoustid = MagicMock()
+    mock_acoustid.resolve_fingerprint_details.return_value = {
+        "acoustid_id": "acoustid-past-lives",
+        "mbids": [canonical_acoustic_mbid],
+    }
+
+    def mock_mb_get(mbid):
+        if mbid == stale_embedded_mbid:
+            # Should NOT be called!
+            raise AssertionError(f"Stage 1 called mb_plugin.get_metadata with unverified MBID '{stale_embedded_mbid}'!")
+        elif mbid == canonical_acoustic_mbid:
+            return {
+                "title": "Past Lives",
+                "artist": "BØRNS",
+                "album": "Dopamine",
+                "recording_id": canonical_acoustic_mbid,
+                "release_id": "rel-dopamine",
+                "duration_ms": 274000,
+                "year": 2015,
+            }
+        return None
+
+    mock_mb.get_metadata.side_effect = mock_mb_get
+
+    engine = MetadataResolutionEngine(
+        acoustid_provider=mock_acoustid,
+        metadata_provider=mock_mb,
+    )
+
+    req = ResolutionRequest(
+        media_id="media_past_lives",
+        file_path=audio_file,
+        baseline_title="Past Lives",
+        baseline_artist="BØRNS",
+    )
+
+    result = engine.resolve_track(req)
+
+    assert result.musicbrainz_track_id == canonical_acoustic_mbid
+    assert result.resolution_method == "acoustid"
+    assert result.title == "Past Lives"
+    assert result.confidence_score == 0.95
+    # Confirm stale_embedded_mbid was never called
+    assert stale_embedded_mbid not in [call.args[0] for call in mock_mb.get_metadata.call_args_list if call.args]
+
+
+def test_unverified_embedded_mbid_used_as_secondary_fallback_when_acoustid_and_text_miss(tmp_path, monkeypatch):
+    """When Stage 0 is unverified, but AcoustID and text waterfall return no candidate,
+
+    the demoted embedded MBID is queried as a secondary fallback.
+    """
+    from core.metadata.engine import MetadataResolutionEngine
+    from core.metadata.schemas import ResolutionRequest
+
+    audio_file = tmp_path / "02 - Obscure Track.flac"
+    audio_file.write_bytes(b"mock flac content")
+
+    fallback_mbid = "mbid-obscure-fallback-123"
+
+    monkeypatch.setattr(
+        echosync_core,
+        "extract_metadata",
+        lambda p: {
+            "title": "Obscure Track",
+            "artist": "Obscure Artist",
+            "musicbrainz_id": fallback_mbid,
+            "duration_ms": 180000,
+            "channels": 2,
+        },
+    )
+
+    dummy_cp = "E" * 120
+    monkeypatch.setattr(
+        FingerprintGenerator,
+        "generate_with_duration",
+        lambda p: (dummy_cp, 180.0),
+    )
+
+    mock_mb = MagicMock()
+    mock_mb.search_metadata.return_value = []
+    mock_acoustid = MagicMock()
+    # AcoustID has no match
+    mock_acoustid.resolve_fingerprint_details.return_value = None
+
+    def mock_mb_get(mbid):
+        if mbid == fallback_mbid:
+            return {
+                "title": "Obscure Track",
+                "artist": "Obscure Artist",
+                "album": "Obscure Album",
+                "recording_id": fallback_mbid,
+                "release_id": "rel-obscure",
+                "duration_ms": 180000,
+                "year": 2021,
+            }
+        return None
+
+    mock_mb.get_metadata.side_effect = mock_mb_get
+
+    engine = MetadataResolutionEngine(
+        acoustid_provider=mock_acoustid,
+        metadata_provider=mock_mb,
+    )
+
+    req = ResolutionRequest(
+        media_id="media_obscure",
+        file_path=audio_file,
+        baseline_title="Obscure Track",
+        baseline_artist="Obscure Artist",
+    )
+
+    result = engine.resolve_track(req)
+
+    assert result.musicbrainz_track_id == fallback_mbid
+    assert result.resolution_method == "embedded_mbid_fallback"
+    assert result.confidence_score == 0.85
+    assert result.title == "Obscure Track"
+
+
+def test_musicbrainz_client_404_caches_tombstone(monkeypatch):
+    """When MusicBrainz get_metadata receives HTTP 404, it records a tombstone
+
+    in plugin_cache and suppresses subsequent HTTP calls for that MBID.
+    """
+    from core.caching.plugin_cache import get_cache
+    from plugins.EchoSync.musicbrainz.client import MusicBrainzClient
+
+    cache = get_cache()
+    test_mbid = "00000000-0000-0000-0000-deadbeef4040"
+    cache_key = f"musicbrainz:get_metadata:{test_mbid}"
+    cache.delete(cache_key)
+
+    client = MusicBrainzClient()
+    mock_resp = MagicMock()
+    mock_resp.status_code = 404
+
+    http_calls = 0
+
+    def fake_get(url, params=None):
+        nonlocal http_calls
+        http_calls += 1
+        return mock_resp
+
+    client.http.get = fake_get
+
+    # 1. First call should perform HTTP request and cache tombstone
+    res1 = client.get_metadata(test_mbid)
+    assert res1 is None
+    assert http_calls == 1
+
+    # Verify tombstone exists in cache
+    cached_val = cache.get(cache_key)
+    assert cached_val is not None
+    assert cached_val.get("__tombstone__") is True
+
+    # 2. Second call should return None directly from cache without incrementing http_calls
+    res2 = client.get_metadata(test_mbid)
+    assert res2 is None
+    assert http_calls == 1
+
+    cache.delete(cache_key)
+

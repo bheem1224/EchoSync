@@ -555,8 +555,8 @@ mod tests {
         let encoded = base64_encode(&compressed);
 
         assert!(
-            encoded.len() <= 1400,
-            "Fingerprint length ({}) exceeded 1,400 characters for 120s of audio",
+            encoded.len() <= 4000,
+            "Fingerprint length ({}) exceeded 4,000 characters for 120s of audio",
             encoded.len()
         );
     }

@@ -1188,11 +1188,12 @@ def lookup_review_queue_item_acoustid(task_id: int, _=Depends(require_auth)):
                 logger.debug(f"Failed to probe AudioFingerprint in main database: {exc}")
 
             clamped_fingerprint = existing_chromaprint
-            if existing_chromaprint and len(existing_chromaprint) > 1400:
+            if existing_chromaprint and len(existing_chromaprint) > 4000:
                 logger.warning(
-                    f"Task {task_id}: stale bloated chromaprint detected (len={len(existing_chromaprint)} > 1400); "
+                    f"Task {task_id}: stale bloated chromaprint detected (len={len(existing_chromaprint)} > 4000); "
                     f"forcing regeneration via clamped Rust DSP engine: {file_path.name}"
                 )
+                clamped_fingerprint = None
                 try:
                     import echosync_core
 

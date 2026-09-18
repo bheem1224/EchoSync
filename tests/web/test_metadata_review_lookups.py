@@ -195,10 +195,10 @@ def test_task_790_manual_review_stale_fingerprint_invalidation_and_title_cleansi
     file_path.write_bytes(b"mock flac content")
     canon_path = _canonicalize_path(str(file_path))
 
-    # 2. Seed main_db with Track, LocalMedia, and stale bloated AudioFingerprint (>1400 chars)
+    # 2. Seed main_db with Track, LocalMedia, and stale bloated AudioFingerprint (>4000 chars)
     import uuid
     from database.music_database import Album, Artist, Track
-    stale_fingerprint = "A" * 3627
+    stale_fingerprint = "A" * 5000
     test_sid = f"sid_{uuid.uuid4().hex[:12]}"
     test_mid = f"mid_{uuid.uuid4().hex[:12]}"
     with music_db.session_scope() as session:
@@ -292,19 +292,92 @@ def test_task_790_manual_review_stale_fingerprint_invalidation_and_title_cleansi
     assert captured_req is not None
     assert captured_req.baseline_title == "So Long"
     assert captured_req.chromaprint == clamped_hash
-    assert len(captured_req.chromaprint) <= 1400
+    assert len(captured_req.chromaprint) <= 4000
 
     # Verify task in working_db was updated with clamped fingerprint
     with working_db.session_scope() as session:
         t = session.get(ReviewTask, 790)
         assert t.track_data["fingerprint"] == clamped_hash
-        assert len(t.track_data["fingerprint"]) <= 1400
+        assert len(t.track_data["fingerprint"]) <= 4000
 
     # Verify AudioFingerprint in main_db was updated with clamped fingerprint
     with music_db.session_scope() as session:
         af_rec = session.query(AudioFingerprint).filter_by(media_id=test_mid).first()
         assert af_rec is not None
         assert af_rec.chromaprint == clamped_hash
-        assert len(af_rec.chromaprint) <= 1400
+        assert len(af_rec.chromaprint) <= 4000
+
+
+def test_task_828_legitimate_dense_fingerprint_preserved_without_invalidation(tmp_path):
+    """Verifies that legitimate 120s clamped fingerprints (e.g. len=3658 for dynamic music)
+
+    are NOT invalidated or discarded as stale, and are preserved and passed to AcoustID.
+    """
+    from database.music_database import Base, get_database
+    from database.working_database import ReviewTask, WorkingBase, get_working_database
+    from web.routes.metadata_review import lookup_review_queue_item_acoustid
+    from core.metadata.schemas import ResolutionResult
+
+    music_db = get_database()
+    working_db = get_working_database()
+    Base.metadata.create_all(music_db.engine)
+    WorkingBase.metadata.create_all(working_db.engine)
+
+    file_path = tmp_path / "03 - Shut Up and Dance.flac"
+    file_path.write_bytes(b"mock flac content")
+
+    legitimate_dense_fp = "B" * 3658
+
+    with working_db.session_scope() as session:
+        task = ReviewTask(
+            file_path=str(file_path),
+            status="pending",
+            track_data={
+                "raw_title": "03 - Shut Up and Dance",
+                "title": "Shut Up and Dance",
+                "artist_name": "WALK THE MOON",
+                "fingerprint": legitimate_dense_fp,
+                "duration": 199040,
+            },
+            detected_metadata={
+                "title": "Shut Up and Dance",
+                "artist": "WALK THE MOON",
+                "fingerprint": legitimate_dense_fp,
+            },
+        )
+        session.add(task)
+        session.flush()
+        task_id = task.id
+
+    captured_req = None
+
+    def fake_resolve_track(req, enabled_stages=None):
+        nonlocal captured_req
+        captured_req = req
+        return ResolutionResult(
+            media_id=req.media_id,
+            title="Shut Up and Dance",
+            artist="WALK THE MOON",
+            album="TALKING IS HARD",
+            confidence_score=0.95,
+            resolution_method="acoustid",
+            chromaprint=req.chromaprint,
+            musicbrainz_track_id="mbid-shut-up-dance-123",
+            acoustid_id="aid-shut-up-dance-456",
+        )
+
+    with (
+        patch("web.routes.metadata_review._resolve_task_file", return_value=file_path),
+        patch("core.metadata.engine.MetadataResolutionEngine.resolve_track", side_effect=fake_resolve_track),
+    ):
+        res = lookup_review_queue_item_acoustid(task_id)
+
+    assert res["success"] is True
+    assert res["match_found"] is True
+    assert captured_req is not None
+    # Fingerprint was NOT invalidated or set to None
+    assert captured_req.chromaprint == legitimate_dense_fp
+    assert len(captured_req.chromaprint) == 3658
+
 
 
