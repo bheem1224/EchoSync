@@ -1,17 +1,3 @@
-import re
-
-_ATTRIBUTION_PATTERN = re.compile(
-    r"[\(\[]\s*(?:feat\.?|ft\.?|featuring|with)\s+[^()\[\]]*?[\)\]]|\s+(?:feat\.?|ft\.?|featuring|with)\s+.*$",
-    re.IGNORECASE,
-)
-
-_VERSION_KEYWORDS_PATTERN = re.compile(
-    r"\b(?:Remix|Mix|Live|Demo|Remaster|Deluxe|Edit|Version|Acoustic|Instrumental|Bonus|Extended|Original)\b",
-    re.IGNORECASE,
-)
-
-_EDITION_CLEANUP_RE = re.compile(r"[\)\]]\s*$")
-
 """
 EchosyncTrack: The core data structure for music track representation in Echosync.
 
@@ -286,52 +272,23 @@ class EchosyncTrack:
         elif isinstance(self.identifiers, dict) and "acoustid_id" in self.identifiers:
             self.acoustid_id = self.identifiers["acoustid_id"]
 
-        # 2. Regex Extraction for Edition
-        # Extract edition/version info from title (e.g., "2005 Remaster", "Live at X", etc.)
-        # Strategy: Find the LAST occurrence of version keywords, then work backwards to find delimiter
-        # This handles: "Sweet Dreams (Are Made of This) - 2005 Remaster" → edition="2005 Remaster"
-        # Find all matches of version keywords
-        all_matches = list(_VERSION_KEYWORDS_PATTERN.finditer(self.raw_title))
+        from core.matching_engine.track_parser import extract_version_descriptors, decompose_artists
+
+        # 2. Title & Version normalization
         clean_title = self.raw_title
+        if clean_title:
+            clean_title, ext_version, ext_edition = extract_version_descriptors(clean_title)
+            if ext_edition and not self.edition:
+                self.edition = ext_edition
+            if ext_version and not self.version:
+                self.version = ext_version
 
-        if all_matches:
-            # Use the LAST match (rightmost)
-            last_match = all_matches[-1]
-            keyword_pos = last_match.start()
-
-            # Look backwards from keyword to find the delimiter (dash, bracket, paren)
-            prefix = self.raw_title[:keyword_pos]
-
-            # Find the LAST delimiter before the keyword
-            last_dash = prefix.rfind(" - ")
-            last_paren = prefix.rfind("(")
-            last_bracket = prefix.rfind("[")
-
-            # Use the rightmost delimiter
-            delimiter_pos = max(last_dash, last_paren, last_bracket)
-
-            if delimiter_pos >= 0:
-                # Extract from delimiter to end
-                if last_dash == delimiter_pos:
-                    edition_start = delimiter_pos + 3  # Skip " - "
-                else:
-                    edition_start = delimiter_pos + 1  # Skip '(' or '['
-
-                edition_text = self.raw_title[edition_start:].strip()
-
-                # Remove trailing closing brackets/parens if present
-                edition_text = _EDITION_CLEANUP_RE.sub("", edition_text).strip()
-
-                # Only set edition if not explicitly provided
-                if self.edition is None and edition_text:
-                    self.edition = edition_text
-
-                # Clean title is everything before the delimiter
-                clean_title = self.raw_title[:delimiter_pos].strip()
-
-        # 3. Strip Featured Artist Attribution
-        # Remove (feat. ...), [feat. ...], or trailing "feat. ..." after all other info is extracted
-        clean_title = _ATTRIBUTION_PATTERN.sub("", clean_title).strip()
+        # 3. Artist decomposition
+        if self.artist_name and not self.primary_artists:
+            roles = decompose_artists(self.artist_name)
+            self.primary_artists = roles.get("primary") or [self.artist_name]
+            self.featured_artists = roles.get("featured") or []
+            self.remixers = roles.get("remixer") or []
 
         # 4. Balanced Quote Stripping
         clean_title = clean_title.strip()
@@ -657,7 +614,10 @@ class EchosyncTrack:
 
 def _get_artist_name(self) -> str:
     if getattr(self, "primary_artists", None):
-        return " & ".join(self.primary_artists)
+        res = " & ".join(self.primary_artists)
+        if getattr(self, "featured_artists", None):
+            res += " ft. " + " & ".join(self.featured_artists)
+        return res
     return self.__dict__.get("artist_name", "Unknown Artist")
 
 

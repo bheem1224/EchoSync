@@ -174,7 +174,7 @@ def test_tier2_title_sanitization_remix_inputs():
     engine = WeightedMatchingEngine(profile)
 
     source = EchosyncTrack(
-        raw_title="In the End - Mellen Gi Remix",
+        raw_title="In the End (Mellen Gi Remix)",
         artist_name="Unknown Artist",
         album_title="In the End",
         duration=218000,
