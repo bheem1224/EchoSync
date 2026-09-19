@@ -165,7 +165,7 @@ def test_stage0_signature_gate_short_circuit(tmp_path: Path):
     result = engine.resolve_track(req)
 
     assert result.confidence_score == 1.0
-    assert result.resolution_method == "signature_verified"
+    assert result.resolution_method.startswith("signature_verified")
     assert result.title == title
     assert result.artist == artist
     assert result.musicbrainz_track_id == "11111111-2222-3333-4444-555555555555"

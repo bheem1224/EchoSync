@@ -466,26 +466,18 @@ def _import_single_file(file_path: Path, metadata: dict[str, Any], old_file_path
             if existing_lm.track_id:
                 existing_track = session.get(Track, existing_lm.track_id)
                 if existing_track:
-                    # Resolve new Artist and Album entities in DB
-                    TrackRepository.resolve_artists_and_albums(session, [track_dto])
+                    # Hydrate scalars and artists using the adapter
+                    from core.metadata.adapter import ResolutionAdapter
 
-                    if track_dto.title:
-                        existing_track.title = track_dto.title
-                        existing_track.normalized_title = normalize_title(track_dto.title)
-                    if track_dto.sort_title:
-                        existing_track.sort_title = track_dto.sort_title
-                    if track_dto.edition is not None:
-                        existing_track.edition = track_dto.edition
-                    if track_dto.artist_id:
-                        existing_track.artist_id = track_dto.artist_id
+                    adapter = ResolutionAdapter()
+                    existing_track = adapter.hydrate_track(track_dto, session, existing_track)
+
+                    # We still resolve album since adapter only does artist & scalars
+                    TrackRepository.resolve_artists_and_albums(session, [track_dto])
                     if track_dto.album_id is not None:
                         existing_track.album_id = track_dto.album_id
-                    if track_dto.duration:
-                        existing_track.duration = track_dto.duration
-                    if track_dto.track_number is not None:
-                        existing_track.track_number = track_dto.track_number
-                    if track_dto.disc_number is not None:
-                        existing_track.disc_number = track_dto.disc_number
+                    if track_dto.sort_title:
+                        existing_track.sort_title = track_dto.sort_title
                     if track_dto.musicbrainz_id:
                         existing_track.musicbrainz_id = track_dto.musicbrainz_id
                     if track_dto.isrc:

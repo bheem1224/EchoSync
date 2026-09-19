@@ -259,7 +259,7 @@ def test_signed_file_divergence_routes_to_review_queue(monkeypatch, tmp_path):
     result = engine.resolve_track(req)
 
     # Invariant: Signed file metadata preserved
-    assert result.resolution_method == "signature_verified"
+    assert result.resolution_method.startswith("signature_verified")
     assert result.title == "User Curated Title"
     assert result.artist == "User Curated Artist"
     assert result.confidence_score == 1.0

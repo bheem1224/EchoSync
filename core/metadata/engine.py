@@ -16,7 +16,6 @@ from pathlib import Path
 from typing import Any
 
 from core.db.echo_sync_track import EchosyncTrack
-from core.enums import Capability
 from core.matching_engine.fingerprinting import FingerprintGenerator
 from core.matching_engine.matching_engine import WeightedMatchingEngine
 from core.matching_engine.scoring_profile import PROFILE_EXACT_SYNC
@@ -33,12 +32,84 @@ from core.metadata.schemas import (
     AliasResolutionContext,
     EntityAliasProposal,
     ResolutionRequest,
-    ResolutionResult,
 )
-from core.nexus_framework.plugin_loader import PluginRegistry, generate_plugin_id
 from core.tiered_logger import get_logger
 
 logger = get_logger("core.metadata.engine")
+
+from core.metadata.plugins import get_acoustid_plugin, get_musicbrainz_plugin
+from core.metadata.scoring import (
+    calculate_acoustid_duration_weight,
+    calculate_text_duration_weight,
+    score_acoustid_candidate,
+)
+from core.metadata.cache import ChromaprintCache
+from core.metadata.dsp import extract_physical_tags, probe_physical_audio
+
+
+def _create_resolved_track(
+    media_id: str | None = None,
+    sync_id: str | None = None,
+    title: str = "",
+    artist: str = "",
+    album: str | None = None,
+    year: int | None = None,
+    track_number: int | None = None,
+    disc_number: int | None = None,
+    musicbrainz_track_id: str | None = None,
+    musicbrainz_release_id: str | None = None,
+    acoustid_id: str | None = None,
+    chromaprint: str | None = None,
+    duration_ms: int = 0,
+    isrc: str | None = None,
+    confidence_score: float = 0.0,
+    resolution_method: str | None = None,
+    extra_metadata: dict[str, Any] | None = None,
+    file_path: str | Path | None = None,
+) -> EchosyncTrack:
+    from core.db.echo_sync_track import EchosyncMedia
+    from core.matching_engine.track_parser import decompose_artists, extract_version_descriptors
+
+    clean_t, ext_ver, ext_ed = extract_version_descriptors(title or "")
+    roles = decompose_artists(artist or "")
+    primary = roles.get("primary", [artist]) if artist else []
+    featured = roles.get("featured", [])
+    remixers = roles.get("remixer", [])
+
+    track = EchosyncTrack(
+        raw_title=title or "",
+        artist_name=artist or "",
+        album_title=album or "",
+        edition=ext_ed,
+        version=ext_ver,
+        sync_id=sync_id,
+        duration=duration_ms,
+        track_number=track_number,
+        disc_number=disc_number,
+        release_year=year,
+        primary_artists=primary,
+        featured_artists=featured,
+        remixers=remixers,
+        musicbrainz_id=musicbrainz_track_id,
+        mb_release_id=musicbrainz_release_id,
+        acoustid_id=acoustid_id,
+        fingerprint=chromaprint,
+        isrc=isrc,
+        confidence_score=confidence_score,
+        resolution_method=resolution_method,
+        extra_metadata=extra_metadata or {},
+        media=[
+            EchosyncMedia(
+                media_id=media_id,
+                file_path=str(file_path) if file_path else None,
+            )
+        ]
+        if (media_id or file_path)
+        else [],
+    )
+    if clean_t:
+        track.title = clean_t
+    return track
 
 
 def _extract_release_details(
@@ -148,21 +219,6 @@ def _extract_release_details(
     return extracted_year, final_track, final_disc
 
 
-def calculate_acoustid_duration_weight(track_duration: float, candidate_duration: float) -> float:
-    delta = abs(track_duration - candidate_duration)
-    if delta > 2.0:
-        return 0.0
-    # Progressive parabolic curve: 1.0 at 0s, 0.75 at 1s, 0.0 at 2s
-    return max(0.0, 1.0 - (delta / 2.0) ** 2)
-
-
-def calculate_text_duration_weight(track_duration: float, candidate_duration: float) -> float:
-    delta = abs(track_duration - candidate_duration)
-    if delta > 8.0:
-        return 0.0
-    return max(0.0, 1.0 - (delta / 8.0))
-
-
 def extract_filename_title(file_path: str) -> str:
     """Derive a clean title string from a file path by stripping extension, leading
     disc/track-number prefixes, and trailing copy markers.
@@ -223,17 +279,16 @@ class MetadataResolutionEngine:
         self._metadata_provider = metadata_provider
         self._spotify_provider = spotify_provider
         self._hook_manager = hook_manager
-        import collections
-
-        self._chromaprint_cache: collections.OrderedDict[str, dict[str, Any]] = collections.OrderedDict()
+        self.cache = ChromaprintCache()
         self.matcher = WeightedMatchingEngine(PROFILE_EXACT_SYNC)
+
+    @property
+    def _chromaprint_cache(self) -> dict[str, Any]:
+        return self.cache._cache
 
     def invalidate_cache(self, chromaprint: str | None = None) -> None:
         """Invalidate in-memory chromaprint cache entry or entire cache."""
-        if chromaprint:
-            self._chromaprint_cache.pop(chromaprint, None)
-        else:
-            self._chromaprint_cache.clear()
+        self.cache.invalidate(chromaprint)
 
     @property
     def hook_manager(self) -> Any:
@@ -244,44 +299,10 @@ class MetadataResolutionEngine:
         return hook_manager
 
     def _get_acoustid_plugin(self) -> Any | None:
-        if self._acoustid_provider is not None:
-            return self._acoustid_provider
-
-        # Check by plugin id / alias
-        plugin = (
-            PluginRegistry.get_plugin(generate_plugin_id("EchoSync.acoustid"))
-            or PluginRegistry.get_plugin("EchoSync.acoustid")
-            or PluginRegistry.get_plugin("acoustid")
-        )
-        if plugin:
-            return plugin
-
-        # Check by capability
-        plugins = PluginRegistry.get_plugins_with_capability(Capability.RESOLVE_FINGERPRINT)
-        for p in plugins:
-            caps = getattr(p, "capabilities", None)
-            if caps:
-                algos = getattr(caps, "fingerprint_algorithms", []) or []
-                if "chromaprint" in algos or getattr(caps, "supports_fingerprinting", False):
-                    return p
-        return plugins[0] if plugins else None
+        return get_acoustid_plugin(self._acoustid_provider)
 
     def _get_mb_plugin(self) -> Any | None:
-        if self._metadata_provider is not None:
-            return self._metadata_provider
-
-        # Check by plugin id / alias
-        plugin = (
-            PluginRegistry.get_plugin(generate_plugin_id("EchoSync.musicbrainz"))
-            or PluginRegistry.get_plugin("EchoSync.musicbrainz")
-            or PluginRegistry.get_plugin("musicbrainz")
-        )
-        if plugin:
-            return plugin
-
-        # Fallback to general metadata capability
-        plugins = PluginRegistry.get_plugins_with_capability(Capability.FETCH_METADATA)
-        return plugins[0] if plugins else None
+        return get_musicbrainz_plugin(self._metadata_provider)
 
     def score_candidate(
         self,
@@ -291,107 +312,49 @@ class MetadataResolutionEngine:
         baseline_artist: str | None = None,
         baseline_album: str | None = None,
         filename: str | None = None,
+        prefer_studio_album: bool = True,
     ) -> float:
         """Score AcoustID recording candidate by duration proximity, variant disambiguation penalties,
         and canonical studio release weighting using WeightedMatchingEngine(PROFILE_EXACT_SYNC).
         """
-        cand_dur = candidate.get("length") or candidate.get("duration_ms") or candidate.get("duration")
-        cand_dur_ms: int | None = None
-        duration_weight = 1.0
-        delta_sec = 0.0
-        if cand_dur:
-            try:
-                cand_dur_val = float(cand_dur)
-                if 0 < cand_dur_val < 10000:
-                    cand_dur_val *= 1000.0
-                cand_dur_ms = int(cand_dur_val)
-                if file_duration_ms > 0:
-                    track_dur_sec = file_duration_ms / 1000.0
-                    cand_dur_sec = cand_dur_ms / 1000.0
-                    delta_sec = abs(track_dur_sec - cand_dur_sec)
-                    duration_weight = calculate_acoustid_duration_weight(track_dur_sec, cand_dur_sec)
-                    if duration_weight <= 0.0 or delta_sec > 2.0:
-                        return 0.0  # Hard AcoustID duration gate (reject delta > 2.0s)
-            except (ValueError, TypeError):
-                pass
-
-        c_title = str(candidate.get("title") or "")
-        c_artist = str(candidate.get("artist") or candidate.get("artist_name") or "")
-        c_album = str(candidate.get("album") or candidate.get("album_title") or "")
-
-        clean_file_title = clean_title_from_filename(filename) if filename else ""
-        query_title = (
-            clean_file_title if (clean_file_title and not is_generic_title(clean_file_title)) else baseline_title
+        return score_acoustid_candidate(
+            matcher=self.matcher,
+            candidate=candidate,
+            baseline_title=baseline_title,
+            file_duration_ms=file_duration_ms,
+            baseline_artist=baseline_artist,
+            baseline_album=baseline_album,
+            filename=filename,
+            prefer_studio_album=prefer_studio_album,
         )
-
-        query_track = EchosyncTrack(
-            raw_title=query_title or c_title,
-            artist_name=baseline_artist or c_artist,
-            album_title=baseline_album or c_album,
-            duration=file_duration_ms if file_duration_ms > 0 else None,
-        )
-        cand_track = EchosyncTrack(
-            raw_title=c_title,
-            artist_name=c_artist,
-            album_title=c_album,
-            duration=cand_dur_ms,
-            version=candidate.get("disambiguation") or candidate.get("version"),
-        )
-        match_res = self.matcher.calculate_match(query_track, cand_track)
-        matcher_score = match_res.confidence_score if match_res else 0.0
-
-        # Preference for canonical studio release groups
-        release_group = candidate.get("release_group") or candidate.get("release-group") or {}
-        if not release_group and candidate.get("releases"):
-            for r in candidate.get("releases") or []:
-                if isinstance(r, dict):
-                    rg = r.get("release-group") or r.get("release_group") or {}
-                    if rg.get("primary_type") == "Album" or rg.get("primary-type") == "Album":
-                        release_group = rg
-                        break
-
-        p_type = (release_group.get("primary_type") or release_group.get("primary-type") or "").strip().lower()
-        s_types = [
-            str(st).strip().lower()
-            for st in (release_group.get("secondary_types") or release_group.get("secondary-types") or [])
-        ]
-
-        is_compilation = any(t in s_types for t in ["compilation", "dj-mix", "sampler", "remix"])
-        c_title_lower = c_title.lower()
-        title_has_mix = "mix" in c_title_lower or "remix" in c_title_lower
-
-        penalty = 0.0
-        if is_compilation and not title_has_mix:
-            penalty = -35.0  # -0.35 mapped to 0-100 scale
-
-        bonus = 0.0
-        if p_type == "album" and not s_types:
-            bonus = 25.0  # +0.25 mapped to 0-100 scale
-
-        artist_credit = candidate.get("artist-credit") or candidate.get("artists") or []
-        if "various artists" in str(artist_credit).lower():
-            penalty -= 10.0
-
-        # Base physical acoustic evidence grants high confidence when tags are corrupted
-        base_score = matcher_score if matcher_score > 0.0 else 80.0
-        score = base_score + bonus + penalty
-
-        # Progressive Duration Multiplier:
-        # If delta <= 1.0s, duration weight yields maximum weight (dominates candidate ranking
-        # and preserves canonical release group advantages).
-        # Beyond 1.0s, steep progressive parabolic decay applies.
-        if delta_sec <= 1.0:
-            score = score * (0.95 + 0.05 * duration_weight)
-        else:
-            score = score * duration_weight
-
-        return max(score, 0.0)
 
     def resolve_track(
         self,
-        request: ResolutionRequest,
+        request: ResolutionRequest | EchosyncTrack,
         enabled_stages: list[str] | None = None,
-    ) -> ResolutionResult:
+    ) -> EchosyncTrack:
+        """Resolve track metadata through the authoritative 6-stage resolution waterfall.
+
+        Accepts either an EchosyncTrack (baseline domain model) or a ResolutionRequest.
+        Returns a finalized, fully hydrated EchosyncTrack domain model.
+        """
+        if isinstance(request, EchosyncTrack):
+            file_p = Path(request.file_path) if request.file_path else Path("")
+            req = ResolutionRequest(
+                media_id=request.media_id or (f"media_{file_p.stem}" if file_p else "media_default"),
+                file_path=file_p,
+                sync_id=request.sync_id,
+                baseline_title=request.raw_title or request.title,
+                baseline_artist=request.artist_name or (request.artist if hasattr(request, "artist") else ""),
+                baseline_album=request.album_title or (request.album if hasattr(request, "album") else ""),
+                baseline_isrc=request.isrc,
+                chromaprint=request.fingerprint,
+                duration=float(request.duration / 1000.0) if request.duration else None,
+                duration_ms=request.duration,
+                track=request,
+            )
+        else:
+            req = request
         """Resolve track metadata through the authoritative 6-stage resolution waterfall.
 
         When ``enabled_stages`` is provided, only the listed stages are executed.
@@ -400,19 +363,19 @@ class MetadataResolutionEngine:
         """
         # ── Acoustid-only isolated path ────────────────────────────────────────
         if enabled_stages and enabled_stages == ["acoustid"]:
-            return self._resolve_acoustid_isolated(request)
+            return self._resolve_acoustid_isolated(req)
 
         # ── Standard full waterfall ────────────────────────────────────────────
-        result = self._execute_waterfall(request)
+        result = self._execute_waterfall(req)
 
         # ── Stage 6: Entity Alias Resolution ──────────────────────────────────
-        result.alias_proposals = self._resolve_aliases(request, result)
+        result.alias_proposals = self._resolve_aliases(req, result)
         return result
 
     # Alias for uniform resolution engine invocations
     resolve_track_metadata = resolve_track
 
-    def _resolve_acoustid_isolated(self, request: ResolutionRequest) -> ResolutionResult:
+    def _resolve_acoustid_isolated(self, request: ResolutionRequest) -> EchosyncTrack:
         """Execute Stage 3 (AcoustID) in strict isolation.
 
         Performs the minimum physical inspection required to obtain a chromaprint and
@@ -430,75 +393,18 @@ class MetadataResolutionEngine:
         file_path = Path(request.file_path)
 
         # ── Minimal physical inspection ────────────────────────────────────────
-        raw_tags: dict[str, Any] = {}
-        duration_ms = 0
-        channels = 2
-        try:
-            import echosync_core
-
-            raw_tags = echosync_core.extract_metadata(str(file_path)) or {}
-            raw_dur = raw_tags.get("duration_ms") or raw_tags.get("duration")
-            if raw_dur is not None:
-                d_val = float(raw_dur)
-                duration_ms = round(d_val * 1000) if d_val < 10000 else round(d_val)
-
-            raw_ch = raw_tags.get("channels")
-            if raw_ch is not None:
-                channels = int(raw_ch)
-        except (ValueError, TypeError):
-            channels = 2
-
-        if request.duration_ms and duration_ms <= 0:
-            duration_ms = request.duration_ms
-        elif request.duration and duration_ms <= 0:
-            d_val = float(request.duration)
-            duration_ms = round(d_val * 1000) if d_val < 10000 else round(d_val)
-
-        chromaprint: str | None = request.chromaprint
-        if chromaprint and len(chromaprint) > 4000:
-            logger.warning(
-                "[resolution_engine] [acoustid-isolated] Stale chromaprint detected (len=%d > 4000); "
-                "invalidating and regenerating via clamped Rust DSP engine: %s",
-                len(chromaprint),
-                file_path.name,
-            )
-            chromaprint = None
-            request.chromaprint = None
-
-        if not chromaprint:
-            if channels > 2:
-                logger.info(
-                    "[resolution_engine] [acoustid-isolated] Multi-channel audio (%d ch) on %s; skipping Chromaprint.",
-                    channels,
-                    file_path.name,
-                )
-            else:
-                try:
-                    import echosync_core
-
-                    res_fp = echosync_core.fingerprint_and_hash_audio(str(file_path), False)
-                    if isinstance(res_fp, tuple) and len(res_fp) >= 2:
-                        chromaprint = res_fp[0]
-                        if duration_ms <= 0 and res_fp[1]:
-                            duration_ms = round(float(res_fp[1]) * 1000)
-                    elif isinstance(res_fp, str):
-                        chromaprint = res_fp
-                    if chromaprint:
-                        request.chromaprint = chromaprint
-                except Exception:
-                    try:
-                        chromaprint, fp_dur = FingerprintGenerator.generate_with_duration(str(file_path))
-                        if fp_dur and duration_ms <= 0:
-                            duration_ms = round(float(fp_dur) * 1000)
-                        if chromaprint:
-                            request.chromaprint = chromaprint
-                    except Exception as fp_err:
-                        logger.warning(
-                            "[resolution_engine] [acoustid-isolated] Fingerprint generation failed for %s: %s",
-                            file_path.name,
-                            fp_err,
-                        )
-
+        baseline_track = probe_physical_audio(
+            file_path=file_path,
+            channels=2,
+            duration_ms=request.duration_ms or (round(float(request.duration) * 1000) if request.duration else 0),
+            existing_chromaprint=request.chromaprint,
+            log_prefix="[resolution_engine] [acoustid-isolated]",
+        )
+        chromaprint = baseline_track.fingerprint
+        duration_ms = baseline_track.duration or 0
+        if chromaprint:
+            request.chromaprint = chromaprint
+        raw_tags = baseline_track
         # ── Stage 3: AcoustID (isolated) ─────────────────────────────────────
         acoustid_res: dict[str, Any] | None = None
         if chromaprint and duration_ms > 0:
@@ -532,7 +438,7 @@ class MetadataResolutionEngine:
                 acoustid_res["candidate_score"],
             )
             tag_isrc = raw_tags.get("isrc") or request.baseline_isrc
-            return ResolutionResult(
+            return _create_resolved_track(
                 media_id=request.media_id,
                 sync_id=request.sync_id,
                 title=acoustid_res["title"],
@@ -559,7 +465,7 @@ class MetadataResolutionEngine:
             len(chromaprint) if chromaprint else "None",
             duration_ms,
         )
-        return ResolutionResult(
+        return _create_resolved_track(
             media_id=request.media_id,
             sync_id=request.sync_id,
             title="",
@@ -570,7 +476,7 @@ class MetadataResolutionEngine:
             resolution_method="acoustid",
         )
 
-    def _resolve_aliases(self, request: ResolutionRequest, result: ResolutionResult) -> list[EntityAliasProposal]:
+    def _resolve_aliases(self, request: ResolutionRequest, result: EchosyncTrack) -> list[EntityAliasProposal]:
         """Stage 6: Query active language packs and plugins for entity alias proposals."""
         if not result.sync_id and request.sync_id:
             result.sync_id = request.sync_id
@@ -622,29 +528,30 @@ class MetadataResolutionEngine:
             logger.warning(f"[metadata_engine] Error resolving entity aliases for sync_id={result.sync_id}: {e}")
             return []
 
-    def _execute_waterfall(self, request: ResolutionRequest) -> ResolutionResult:
+    def _execute_waterfall(self, request: ResolutionRequest) -> EchosyncTrack:
+        result = self._execute_waterfall_inner(request)
+        if hasattr(request, "_signature_locked_title") and hasattr(request, "_signature_locked_artist"):
+            result.raw_title = request._signature_locked_title
+            result.title = request._signature_locked_title
+            result.artist_name = request._signature_locked_artist
+            if result.resolution_method and not str(result.resolution_method).startswith("signature_verified"):
+                result.resolution_method = f"signature_verified_merged_with_{result.resolution_method}"
+            result.confidence_score = 1.0
+        return result
+
+    def _execute_waterfall_inner(self, request: ResolutionRequest) -> EchosyncTrack:
         """Execute stages 1-5 of the resolution waterfall."""
         file_path = Path(request.file_path)
 
         # ── Stage 1: Physical Inspection ──────────────────────────────────────
-        raw_tags: dict[str, Any] = {}
-        try:
-            import echosync_core
-
-            raw_tags = echosync_core.extract_metadata(str(file_path)) or {}
-        except Exception as exc:
-            logger.debug(
-                "[resolution_engine] Failed to extract header tags from %s: %s",
-                file_path.name,
-                exc,
-            )
+        raw_tags = extract_physical_tags(file_path)
 
         if not file_path.exists() and not raw_tags and not request.baseline_title:
             logger.warning(
                 "[resolution_engine] File not found on disk and no metadata: %s",
                 request.file_path,
             )
-            return ResolutionResult(
+            return _create_resolved_track(
                 media_id=request.media_id,
                 sync_id=request.sync_id,
                 title=request.baseline_title or file_path.stem,
@@ -684,52 +591,17 @@ class MetadataResolutionEngine:
             d_val = float(request.duration)
             duration_ms = round(d_val * 1000) if d_val < 10000 else round(d_val)
 
-        # Invariant: Multi-channel audio (>2 channels) must skip fingerprinting until native downmixing
-        chromaprint: str | None = request.chromaprint
-        if chromaprint and len(chromaprint) > 4000:
-            logger.warning(
-                "[resolution_engine] Stale chromaprint detected in _execute_waterfall (len=%d > 4000); "
-                "invalidating and regenerating via clamped Rust DSP engine: %s",
-                len(chromaprint),
-                file_path.name,
-            )
-            chromaprint = None
-            request.chromaprint = None
-
-        if not chromaprint:
-            if channels > 2:
-                logger.info(
-                    "[resolution_engine] Multi-channel audio detected (%d channels) for %s; skipping Chromaprint extraction.",
-                    channels,
-                    file_path.name,
-                )
-            else:
-                try:
-                    import echosync_core
-
-                    res_fp = echosync_core.fingerprint_and_hash_audio(str(file_path), False)
-                    if isinstance(res_fp, tuple) and len(res_fp) >= 2:
-                        chromaprint = res_fp[0]
-                        if duration_ms <= 0 and res_fp[1]:
-                            duration_ms = round(float(res_fp[1]) * 1000)
-                    elif isinstance(res_fp, str):
-                        chromaprint = res_fp
-                    if chromaprint:
-                        request.chromaprint = chromaprint
-                except Exception:
-                    try:
-                        chromaprint, fp_dur = FingerprintGenerator.generate_with_duration(str(file_path))
-                        if fp_dur and (duration_ms <= 0):
-                            duration_ms = round(float(fp_dur) * 1000)
-                        if chromaprint:
-                            request.chromaprint = chromaprint
-                    except Exception as fp_err:
-                        logger.warning(
-                            "[resolution_engine] Fingerprint generation failed for %s: %s",
-                            file_path.name,
-                            fp_err,
-                        )
-                        chromaprint = None
+        baseline_track = probe_physical_audio(
+            file_path=file_path,
+            channels=channels,
+            duration_ms=duration_ms,
+            existing_chromaprint=request.chromaprint,
+            log_prefix="[resolution_engine]",
+        )
+        chromaprint = baseline_track.fingerprint
+        duration_ms = baseline_track.duration or duration_ms
+        if chromaprint:
+            request.chromaprint = chromaprint
 
         tag_title = raw_tags.get("title")
         tag_artist = raw_tags.get("artist") or raw_tags.get("artist_name")
@@ -791,7 +663,10 @@ class MetadataResolutionEngine:
         # ── Stage 0: Zero-Trust Signature Gate (ECHOSYNC_SIGNATURE) ───────────
         signature_valid: bool = False
         sig_tag = raw_tags.get("echosync_signature") or raw_tags.get("ECHOSYNC_SIGNATURE")
-        if sig_tag and baseline_title and baseline_artist:
+
+        force_mode = request.ignore_embedded_mbid
+
+        if sig_tag and baseline_title and baseline_artist and not force_mode:
             try:
                 import echosync_core
 
@@ -802,33 +677,13 @@ class MetadataResolutionEngine:
                         )
                     )
                     if signature_valid:
-                        if not request.ignore_cache:
-                            logger.info(
-                                "[resolution_engine] Stage 0 HIT (Verified ECHOSYNC_SIGNATURE): %s",
-                                file_path.name,
-                            )
-                            return ResolutionResult(
-                                media_id=request.media_id,
-                                sync_id=request.sync_id,
-                                title=baseline_title,
-                                artist=baseline_artist,
-                                album=baseline_album or None,
-                                year=parsed_year,
-                                track_number=parsed_track_num,
-                                disc_number=parsed_disc_num,
-                                musicbrainz_track_id=raw_tags.get("musicbrainz_track_id")
-                                or raw_tags.get("musicbrainz_id")
-                                or raw_tags.get("mbid")
-                                or raw_tags.get("recording_id"),
-                                musicbrainz_release_id=raw_tags.get("musicbrainz_album_id")
-                                or raw_tags.get("musicbrainz_release_id"),
-                                acoustid_id=raw_tags.get("acoustid_id"),
-                                chromaprint=chromaprint,
-                                duration_ms=duration_ms,
-                                isrc=tag_isrc,
-                                confidence_score=1.0,
-                                resolution_method="signature_verified",
-                            )
+                        logger.info(
+                            "[resolution_engine] Stage 0 HIT (Verified ECHOSYNC_SIGNATURE): %s. Locking Title/Artist for partial merge.",
+                            file_path.name,
+                        )
+                        # Lock the title and artist for partial merge at the end
+                        request._signature_locked_title = baseline_title
+                        request._signature_locked_artist = baseline_artist
                     else:
                         logger.warning(
                             "[resolution_engine] Stage 0 FAILED: ECHOSYNC_SIGNATURE mismatch/tampering detected on %s",
@@ -841,6 +696,10 @@ class MetadataResolutionEngine:
                 )
                 signature_valid = False
 
+        # If forced, we explicitly mark signature_valid as False so we don't bypass trust gates
+        if force_mode:
+            signature_valid = False
+
         # ── Fast-Path: Embedded MusicBrainz ID in Tags ─────────────────────────
         embedded_mbid = (
             raw_tags.get("musicbrainz_id")
@@ -848,6 +707,33 @@ class MetadataResolutionEngine:
             or raw_tags.get("recording_id")
             or raw_tags.get("musicbrainz_trackid")
         )
+
+        if signature_valid and embedded_mbid and not force_mode:
+            logger.info(
+                "[resolution_engine] Stage 0 HIT (Verified ECHOSYNC_SIGNATURE with embedded MBID): %s → %s",
+                file_path.name,
+                embedded_mbid,
+            )
+            return _create_resolved_track(
+                media_id=request.media_id,
+                sync_id=request.sync_id,
+                title=baseline_title,
+                artist=baseline_artist,
+                album=baseline_album,
+                year=parsed_year,
+                track_number=parsed_track_num,
+                disc_number=parsed_disc_num,
+                musicbrainz_track_id=str(embedded_mbid).strip(),
+                musicbrainz_release_id=raw_tags.get("musicbrainz_release_id") or raw_tags.get("release_mbid"),
+                acoustid_id=raw_tags.get("acoustid_id"),
+                chromaprint=chromaprint,
+                duration_ms=duration_ms,
+                isrc=tag_isrc,
+                confidence_score=1.0,
+                resolution_method="signature_verified",
+                file_path=file_path,
+            )
+
         has_identifiable_tags = bool(
             (tag_title and not is_generic_title(str(tag_title)))
             and (tag_artist and not str(tag_artist).lower().strip().startswith("unknown"))
@@ -890,13 +776,16 @@ class MetadataResolutionEngine:
 
                             if (
                                 not c_title
-                                or contradicts_filename
-                                or not verify_title_trust_gate(
-                                    candidate_title=c_title,
-                                    baseline_title=baseline_check,
-                                    filename=file_path.name,
-                                    tag_title=tag_title,
-                                    min_similarity=0.60,
+                                or (not signature_valid and contradicts_filename)
+                                or (
+                                    not signature_valid
+                                    and not verify_title_trust_gate(
+                                        candidate_title=c_title,
+                                        baseline_title=baseline_check,
+                                        filename=file_path.name,
+                                        tag_title=tag_title,
+                                        min_similarity=0.60,
+                                    )
                                 )
                             ):
                                 logger.warning(
@@ -932,7 +821,7 @@ class MetadataResolutionEngine:
                                     file_path.name,
                                     embedded_mbid,
                                 )
-                                return ResolutionResult(
+                                return _create_resolved_track(
                                     media_id=request.media_id,
                                     sync_id=request.sync_id,
                                     title=c_title or baseline_title,
@@ -962,7 +851,7 @@ class MetadataResolutionEngine:
                         )
 
         # ── Stage 2: Local Chromaprint Cache ──────────────────────────────────
-        if chromaprint and not request.ignore_cache:
+        if chromaprint and not request.ignore_cache and not force_mode:
             cached_meta = self._check_local_chromaprint_cache(chromaprint, sync_id=request.sync_id)
             if cached_meta:
                 cand_title = cached_meta.get("title")
@@ -982,15 +871,17 @@ class MetadataResolutionEngine:
                         )
                         self.invalidate_cache(chromaprint)
 
-                if (
-                    cand_title
-                    and not contradicts_filename
-                    and verify_title_trust_gate(
-                        candidate_title=cand_title,
-                        baseline_title=request.baseline_title or baseline_title,
-                        filename=file_path.name,
-                        tag_title=tag_title,
-                        min_similarity=0.60,
+                if cand_title and (
+                    signature_valid
+                    or (
+                        not contradicts_filename
+                        and verify_title_trust_gate(
+                            candidate_title=cand_title,
+                            baseline_title=request.baseline_title or baseline_title,
+                            filename=file_path.name,
+                            tag_title=tag_title,
+                            min_similarity=0.60,
+                        )
                     )
                 ):
                     logger.info(
@@ -1005,7 +896,7 @@ class MetadataResolutionEngine:
                         fallback_track=parsed_track_num,
                         fallback_disc=parsed_disc_num,
                     )
-                    return ResolutionResult(
+                    return _create_resolved_track(
                         media_id=request.media_id,
                         sync_id=request.sync_id,
                         title=cached_meta.get("title") or baseline_title,
@@ -1082,28 +973,8 @@ class MetadataResolutionEngine:
                                 e_task,
                             )
 
-                        return ResolutionResult(
-                            media_id=request.media_id,
-                            sync_id=request.sync_id,
-                            title=baseline_title,
-                            artist=baseline_artist,
-                            album=baseline_album or None,
-                            year=parsed_year,
-                            track_number=parsed_track_num,
-                            disc_number=parsed_disc_num,
-                            musicbrainz_track_id=raw_tags.get("musicbrainz_track_id")
-                            or raw_tags.get("musicbrainz_id")
-                            or raw_tags.get("mbid")
-                            or raw_tags.get("recording_id"),
-                            musicbrainz_release_id=raw_tags.get("musicbrainz_album_id")
-                            or raw_tags.get("musicbrainz_release_id"),
-                            acoustid_id=raw_tags.get("acoustid_id"),
-                            chromaprint=chromaprint,
-                            duration_ms=duration_ms,
-                            isrc=tag_isrc,
-                            confidence_score=1.0,
-                            resolution_method="signature_verified",
-                        )
+                        # We no longer return early here. We fall through to return the merged AcoustID result.
+                        # The wrapper around _execute_waterfall_inner will enforce the locked title/artist.
                 elif bool(sig_tag) and (
                     acoustid_res.get("candidate_score", 0.0) >= 0.92 or acoustid_res.get("acoustid_score", 0.0) >= 0.92
                 ):
@@ -1121,11 +992,11 @@ class MetadataResolutionEngine:
                     acoustid_res["candidate_score"],
                     acoustid_res.get("veto_applied", False),
                 )
-                return ResolutionResult(
+                return _create_resolved_track(
                     media_id=request.media_id,
                     sync_id=request.sync_id,
-                    title=acoustid_res["title"],
-                    artist=acoustid_res["artist"],
+                    title=baseline_title if signature_valid else acoustid_res["title"],
+                    artist=baseline_artist if signature_valid else acoustid_res["artist"],
                     album=acoustid_res.get("album") or baseline_album,
                     year=acoustid_res.get("year") if acoustid_res.get("year") is not None else parsed_year,
                     track_number=acoustid_res.get("track_number")
@@ -1140,17 +1011,18 @@ class MetadataResolutionEngine:
                     chromaprint=chromaprint,
                     duration_ms=duration_ms,
                     isrc=acoustid_res.get("isrc") or tag_isrc,
-                    confidence_score=0.95,
-                    resolution_method="acoustid",
+                    confidence_score=1.0 if signature_valid else 0.95,
+                    resolution_method="signature_verified" if signature_valid else "acoustid",
                 )
 
         # ── Stage 4: ISRC Resolution ──────────────────────────────────────────
-        if tag_isrc:
+        if tag_isrc and not force_mode:
             isrc_res = self._resolve_isrc(
                 isrc=tag_isrc,
                 baseline_title=baseline_title,
                 filename=file_path.name,
                 tag_title=tag_title,
+                has_signature=signature_valid,
             )
             if isrc_res:
                 logger.info(
@@ -1158,7 +1030,7 @@ class MetadataResolutionEngine:
                     file_path.name,
                     tag_isrc,
                 )
-                return ResolutionResult(
+                return _create_resolved_track(
                     media_id=request.media_id,
                     sync_id=request.sync_id,
                     title=isrc_res["title"],
@@ -1186,6 +1058,7 @@ class MetadataResolutionEngine:
             filename=file_path.name,
             tag_title=tag_title,
             baseline_isrc=tag_isrc or request.baseline_isrc,
+            has_signature=signature_valid,
         )
         if text_res:
             logger.info(
@@ -1194,7 +1067,7 @@ class MetadataResolutionEngine:
                 text_res.get("musicbrainz_track_id"),
                 text_res["confidence_score"],
             )
-            return ResolutionResult(
+            return _create_resolved_track(
                 media_id=request.media_id,
                 sync_id=request.sync_id,
                 title=text_res["title"],
@@ -1276,7 +1149,7 @@ class MetadataResolutionEngine:
                                 file_path.name,
                                 deferred_embedded_mbid,
                             )
-                            return ResolutionResult(
+                            return _create_resolved_track(
                                 media_id=request.media_id,
                                 sync_id=request.sync_id,
                                 title=c_title or baseline_title,
@@ -1316,7 +1189,7 @@ class MetadataResolutionEngine:
             "[resolution_engine] All resolution stages exhausted for %s. Marking for manual review.",
             file_path.name,
         )
-        return ResolutionResult(
+        return _create_resolved_track(
             media_id=request.media_id,
             sync_id=request.sync_id,
             title=baseline_title or file_path.stem,
@@ -1338,71 +1211,7 @@ class MetadataResolutionEngine:
     # ── Helpers ───────────────────────────────────────────────────────────────
 
     def _check_local_chromaprint_cache(self, chromaprint: str, sync_id: str | None = None) -> dict[str, Any] | None:
-        """Inspect in-memory cache and query music_library.db for peer tracks sharing the chromaprint."""
-        if not chromaprint or len(chromaprint.strip()) < 50:
-            return None
-
-        if chromaprint in self._chromaprint_cache:
-            return self._chromaprint_cache[chromaprint]
-
-        try:
-            from database.music_database import (
-                AudioFingerprint,
-                LocalMedia,
-                Track,
-                get_database,
-            )
-
-            db = get_database()
-            with db.session_scope() as session:
-                query = (
-                    session.query(Track)
-                    .join(LocalMedia, LocalMedia.track_id == Track.id)
-                    .join(
-                        AudioFingerprint,
-                        AudioFingerprint.media_id == LocalMedia.media_id,
-                    )
-                    .filter(
-                        AudioFingerprint.chromaprint == chromaprint,
-                        Track.musicbrainz_id.isnot(None),
-                        Track.musicbrainz_id != "",
-                        Track.musicbrainz_id != "NOT_FOUND",
-                        Track.title.isnot(None),
-                        Track.title != "",
-                    )
-                )
-                if sync_id:
-                    query = query.filter(Track.sync_id != sync_id)
-
-                peer_track = query.first()
-                if not peer_track:
-                    return None
-
-                artist_name = peer_track.artist.name if peer_track.artist else None
-                album_title = peer_track.album.title if peer_track.album else None
-                release_mbid = peer_track.album.mb_release_id if peer_track.album else None
-
-                res = {
-                    "title": peer_track.title,
-                    "artist": artist_name,
-                    "album": album_title,
-                    "year": peer_track.year,
-                    "isrc": peer_track.isrc,
-                    "musicbrainz_id": peer_track.musicbrainz_id,
-                    "musicbrainz_track_id": peer_track.musicbrainz_id,
-                    "release_mbid": release_mbid,
-                    "track_number": peer_track.track_number,
-                    "disc_number": peer_track.disc_number,
-                    "duration_ms": peer_track.duration,
-                }
-                if res:
-                    if len(self._chromaprint_cache) >= 200:
-                        self._chromaprint_cache.popitem(last=False)
-                    self._chromaprint_cache[chromaprint] = res
-                return res
-        except Exception as exc:
-            logger.debug("[resolution_engine] Local chromaprint DB lookup failed: %s", exc)
-            return None
+        return self.cache.check_local(chromaprint, sync_id)
 
     def _resolve_acoustid(
         self,
@@ -1668,18 +1477,7 @@ class MetadataResolutionEngine:
                                 sim = max(sim, 0.65)
                     elif veto_applies:
                         sim = max(sim, 0.65)
-
-                    # Pruning Rule: Discard any candidate where title similarity < 0.35 unless veto applies
-                    if sim < 0.35 and not veto_applies:
-                        logger.debug(
-                            "[resolution_engine] Title pre-filter DROPPED MBID %s '%s': "
-                            "title similarity %.2f < 0.35 against filename '%s'",
-                            mbid_str,
-                            cand_title,
-                            sim,
-                            filename_stem,
-                        )
-                        continue
+                    # Removed sim < 0.35 trust gate as per Trust but Verify mandate
 
                 elif veto_applies:
                     sim = 0.65
@@ -1797,7 +1595,8 @@ class MetadataResolutionEngine:
                                 release_group = rg
                                 break
                 p_type = release_group.get("primary_type") or release_group.get("primary-type")
-                album_bonus = 5.0 if p_type == "Album" else 0.0
+                prefer_studio = request.prefer_studio_album if request else True
+                album_bonus = 5.0 if prefer_studio and p_type == "Album" else 0.0
 
                 # Duration proximity weight (parabolic)
                 if cand_dur_ms is not None and file_duration_ms > 0:
@@ -1898,6 +1697,7 @@ class MetadataResolutionEngine:
         baseline_title: str,
         filename: str,
         tag_title: str | None,
+        has_signature: bool = False,
     ) -> dict[str, Any] | None:
         """Query ISRC resolution via dispatch_isrc_lookup."""
         try:
@@ -1908,12 +1708,16 @@ class MetadataResolutionEngine:
                 return None
 
             cand_title = isrc_track.title
-            if cand_title and not verify_title_trust_gate(
-                candidate_title=cand_title,
-                baseline_title=baseline_title,
-                filename=filename,
-                tag_title=tag_title,
-                min_similarity=0.60,
+            if (
+                cand_title
+                and not has_signature
+                and not verify_title_trust_gate(
+                    candidate_title=cand_title,
+                    baseline_title=baseline_title,
+                    filename=filename,
+                    tag_title=tag_title,
+                    min_similarity=0.60,
+                )
             ):
                 logger.warning(
                     "[resolution_engine] Trust Gate REJECTED ISRC candidate '%s' vs baseline '%s'",
@@ -1957,6 +1761,7 @@ class MetadataResolutionEngine:
         filename: str,
         tag_title: str | None,
         baseline_isrc: str | None = None,
+        has_signature: bool = False,
     ) -> dict[str, Any] | None:
         """Scoped text search waterfall with prefix sanitization and strict recording: + artist: matching.
 
@@ -2019,7 +1824,7 @@ class MetadataResolutionEngine:
 
             for cand, mbid in candidate_tracks:
                 cand_title = cand.title or cand.raw_title
-                if not verify_title_trust_gate(
+                if not has_signature and not verify_title_trust_gate(
                     candidate_title=cand_title,
                     baseline_title=baseline_title,
                     filename=filename,

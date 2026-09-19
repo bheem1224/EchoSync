@@ -271,13 +271,15 @@ def build_native_tag_payload(track: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
-def normalize_singles_metadata(track: Any) -> Any:
+def normalize_singles_metadata(track: Any, group_standalone_singles: bool = True) -> Any:
     """
     Normalizes metadata for single releases and standalone recordings:
     Intercepts placeholders '[standalone recordings]', '[non-album tracks]', or empty album,
     and normalizes album to 'Singles' and release_type to 'single'.
     Supports dict and object interfaces.
     """
+    if not group_standalone_singles:
+        return track
     is_dict = isinstance(track, dict)
     album_val = (
         (track.get("album") or track.get("album_title") or "")
@@ -1064,15 +1066,23 @@ class RetroactiveEnhancer:
         On failure: Returns (None, 0.0) - file will be marked for manual review.
         """
         from core.metadata.schemas import ResolutionRequest
+        from database.config_database import get_config_database
+
+        config_db = get_config_database()
+        prefer_studio = bool(config_db.get_system_setting("metadata_enhancement.prefer_canonical_studio_album", True))
+        group_singles = bool(config_db.get_system_setting("metadata_enhancement.group_standalone_singles", True))
 
         path = Path(file_path)
         req = ResolutionRequest(
             media_id=f"media_{path.stem}",
             file_path=path,
+            prefer_studio_album=prefer_studio,
         )
         result = self.resolution_engine.resolve_track(req)
         if not result or result.confidence_score < 0.60 or not (result.musicbrainz_track_id or result.isrc):
             return None, 0.0
+
+        result = normalize_singles_metadata(result, group_standalone_singles=group_singles)
         return result.to_dict(), result.confidence_score
 
     def enhance_track(
@@ -1154,6 +1164,14 @@ class RetroactiveEnhancer:
 
             duration_ms = round(duration_sec * 1000) if duration_sec else (track.duration or 0)
 
+            from database.config_database import get_config_database
+
+            config_db = get_config_database()
+            prefer_studio = bool(
+                config_db.get_system_setting("metadata_enhancement.prefer_canonical_studio_album", True)
+            )
+            group_singles = bool(config_db.get_system_setting("metadata_enhancement.group_standalone_singles", True))
+
             req = ResolutionRequest(
                 media_id=media_id or (first_media.media_id if first_media else f"media_{track.id}"),
                 sync_id=sync_id or track.sync_id,
@@ -1165,8 +1183,11 @@ class RetroactiveEnhancer:
                 chromaprint=chromaprint,
                 duration=duration_sec,
                 duration_ms=duration_ms,
+                prefer_studio_album=prefer_studio,
             )
             result = self.resolution_engine.resolve_track(req)
+            if result:
+                result = normalize_singles_metadata(result, group_standalone_singles=group_singles)
 
             # Persist fingerprints atomically for all media associated with this track
             for media in media_files:
@@ -1186,26 +1207,19 @@ class RetroactiveEnhancer:
                             fp.acoustid_id = result.acoustid_id
 
             if result and result.confidence_score >= 0.60 and result.musicbrainz_track_id:
-                track.title = result.title
+                from core.metadata.adapter import ResolutionAdapter
+
+                adapter = ResolutionAdapter()
+                track = adapter.hydrate_track(result, sess, track)
+
                 track.musicbrainz_id = result.musicbrainz_track_id
-                if result.isrc:
-                    track.isrc = result.isrc
                 if result.acoustid_id and hasattr(track, "acoustid_id"):
                     track.acoustid_id = result.acoustid_id
-                if result.duration_ms:
-                    track.duration = result.duration_ms
 
-                # Resolve artists and albums
-                dto = EchosyncTrack(
-                    raw_title=result.title,
-                    artist_name=result.artist,
-                    album_title=result.album or "Unknown Album",
-                )
-                TrackRepository.resolve_artists_and_albums(sess, [dto])
-                if getattr(dto, "artist_id", None):
-                    track.artist_id = dto.artist_id
-                if getattr(dto, "album_id", None):
-                    track.album_id = dto.album_id
+                # Resolve albums using result directly as canonical EchosyncTrack
+                TrackRepository.resolve_artists_and_albums(sess, [result])
+                if getattr(result, "album_id", None):
+                    track.album_id = result.album_id
 
                 meta_status = dict(track.metadata_status or {})
                 meta_status["enhanced"] = True
@@ -2659,6 +2673,17 @@ class RetroactiveEnhancer:
                                 else (round(float(duration) * 1000) if duration else 0)
                             )
                             file_dur_sec = file_dur_ms / 1000.0 if file_dur_ms else None
+
+                            from database.config_database import get_config_database
+
+                            config_db = get_config_database()
+                            prefer_studio = bool(
+                                config_db.get_system_setting("metadata_enhancement.prefer_canonical_studio_album", True)
+                            )
+                            group_singles = bool(
+                                config_db.get_system_setting("metadata_enhancement.group_standalone_singles", True)
+                            )
+
                             res_req = ResolutionRequest(
                                 media_id=_first_media.media_id
                                 if _first_media
@@ -2674,8 +2699,14 @@ class RetroactiveEnhancer:
                                 duration=file_dur_sec,
                                 duration_ms=file_dur_ms,
                                 ignore_embedded_mbid=bool(item.get("ignore_embedded_mbid")),
+                                prefer_studio_album=prefer_studio,
                             )
                             res_result = self.resolution_engine.resolve_track(res_req)
+
+                            if res_result:
+                                res_result = normalize_singles_metadata(
+                                    res_result, group_standalone_singles=group_singles
+                                )
 
                             if res_result and res_result.confidence_score >= 0.60 and res_result.musicbrainz_track_id:
                                 new_musicbrainz_id = res_result.musicbrainz_track_id
@@ -2852,7 +2883,6 @@ class RetroactiveEnhancer:
             # Step 6: Commit the batch updates in a new short session
             with db.session_scope() as session:
                 from core.database.repositories.track_repo import TrackRepository
-                from core.matching_engine.text_utils import normalize_title
 
                 changed_tracks = [res["track"] for res in results_to_commit if res.get("metadata_changed")]
                 if changed_tracks:
@@ -2875,11 +2905,10 @@ class RetroactiveEnhancer:
                         track.isrc = t_track.isrc
 
                     if res.get("metadata_changed"):
-                        if t_track.title:
-                            track.title = t_track.title
-                            track.normalized_title = normalize_title(t_track.title)
-                        if getattr(t_track, "artist_id", None):
-                            track.artist_id = t_track.artist_id
+                        from core.metadata.adapter import ResolutionAdapter
+
+                        adapter = ResolutionAdapter()
+                        track = adapter.hydrate_track(t_track, session, track)
                         if getattr(t_track, "album_id", None):
                             track.album_id = t_track.album_id
 

@@ -33,9 +33,7 @@ class LibraryReorganizerService:
 
         return re.sub(r'[<>:"/\\|?*\x00-\x1f]', "", filename).strip()
 
-    def reorganize_library(
-        self, track_ids: list[int] | None = None, progress_callback=None
-    ):
+    def reorganize_library(self, track_ids: list[int] | None = None, progress_callback=None):
         pref_lib, pattern = get_library_preferences()
         if not self.library_root and pref_lib:
             self.library_root = Path(pref_lib)
@@ -57,9 +55,7 @@ class LibraryReorganizerService:
 
             for index, track in enumerate(tracks):
                 if progress_callback:
-                    progress_callback(
-                        index + 1, total_tracks, "Reorganizing library tracks..."
-                    )
+                    progress_callback(index + 1, total_tracks, "Reorganizing library tracks...")
 
                 for media in track.media_files:
                     if not media.file_path or not os.path.exists(media.file_path):
@@ -75,10 +71,7 @@ class LibraryReorganizerService:
                     # Orphan Review Check: Missing core metadata
                     # Established library tracks must NEVER be ejected to /data/downloads.
                     # ----------------------------------------------------
-                    if (
-                        raw_artist.lower() == "unknown artist"
-                        or raw_album.lower() == "unknown album"
-                    ):
+                    if raw_artist.lower() == "unknown artist" or raw_album.lower() == "unknown album":
                         logger.warning(
                             f"Library track {track.id} (media {media.id}) missing core metadata: {media.file_path}. "
                             "Enrolling in ReviewTask(action='RESOLVE_LIBRARY_ORPHAN') without destructive ejection."
@@ -121,20 +114,14 @@ class LibraryReorganizerService:
                         "albumartist": album_artist,
                         "track_number": track.track_number,
                         "disc_number": track.disc_number,
-                        "year": str(track.album.release_date)[:4]
-                        if (track.album and track.album.release_date)
-                        else "",
+                        "year": str(track.album.release_date)[:4] if (track.album and track.album.release_date) else "",
                         "release_year": str(track.album.release_date)[:4]
                         if (track.album and track.album.release_date)
                         else "",
                         "isrc": track.isrc or "",
                         "musicbrainz_track_id": track.musicbrainz_id or "",
-                        "musicbrainz_album_id": track.album.mb_release_id
-                        if track.album
-                        else "",
-                        "musicbrainz_release_group_id": track.album.release_group_id
-                        if track.album
-                        else "",
+                        "musicbrainz_album_id": track.album.mb_release_id if track.album else "",
+                        "musicbrainz_release_group_id": track.album.release_group_id if track.album else "",
                         "release_type": track.release_type or "album",
                     }
 
@@ -144,25 +131,25 @@ class LibraryReorganizerService:
                         import echosync_core
 
                         if hasattr(echosync_core, "read_metadata"):
-                            file_tags = (
-                                echosync_core.read_metadata(str(current_path)) or {}
-                            )
+                            file_tags = echosync_core.read_metadata(str(current_path)) or {}
                         else:
-                            file_tags = (
-                                echosync_core.extract_metadata(str(current_path)) or {}
-                            )
+                            file_tags = echosync_core.extract_metadata(str(current_path)) or {}
                     except Exception:
                         pass
 
                     if file_tags.get("repack_source"):
                         track_meta["repack_source"] = file_tags["repack_source"]
                     if file_tags.get("repack_release_mbid"):
-                        track_meta["repack_release_mbid"] = file_tags[
-                            "repack_release_mbid"
-                        ]
+                        track_meta["repack_release_mbid"] = file_tags["repack_release_mbid"]
+
+                    from database.config_database import get_config_database
+
+                    group_singles = bool(
+                        get_config_database().get_system_setting("metadata_enhancement.group_standalone_singles", True)
+                    )
 
                     # Singles normalization
-                    track_meta = normalize_singles_metadata(track_meta)
+                    track_meta = normalize_singles_metadata(track_meta, group_standalone_singles=group_singles)
                     if track_meta.get("is_single"):
                         track.release_type = "single"
 
@@ -173,16 +160,9 @@ class LibraryReorganizerService:
                         if track_meta.get("album") and track.album:
                             track.album.title = track_meta["album"]
                         if track_meta.get("musicbrainz_album_id") and track.album:
-                            track.album.mb_release_id = track_meta[
-                                "musicbrainz_album_id"
-                            ]
-                        if (
-                            track_meta.get("musicbrainz_release_group_id")
-                            and track.album
-                        ):
-                            track.album.release_group_id = track_meta[
-                                "musicbrainz_release_group_id"
-                            ]
+                            track.album.mb_release_id = track_meta["musicbrainz_album_id"]
+                        if track_meta.get("musicbrainz_release_group_id") and track.album:
+                            track.album.release_group_id = track_meta["musicbrainz_release_group_id"]
 
                     # Compute ideal path using canonical path formatter
                     ideal_absolute_path = build_destination_path(
@@ -194,10 +174,7 @@ class LibraryReorganizerService:
                     )
 
                     # If already in the ideal path and not realigned, skip
-                    if (
-                        current_path.resolve() == ideal_absolute_path.resolve()
-                        and not realigned
-                    ):
+                    if current_path.resolve() == ideal_absolute_path.resolve() and not realigned:
                         continue
 
                     # If metadata was altered or realigned, re-tag audio file with roundtrip verification before moving
@@ -215,19 +192,13 @@ class LibraryReorganizerService:
                     parent.mkdir(parents=True, exist_ok=True)
 
                     collision_occurred = False
-                    if (
-                        dest_path.exists()
-                        and dest_path.resolve() != current_path.resolve()
-                    ):
+                    if dest_path.exists() and dest_path.resolve() != current_path.resolve():
                         collision_occurred = True
                         counter = 1
                         stem = dest_path.stem
                         ext_with_dot = dest_path.suffix
 
-                        while (
-                            dest_path.exists()
-                            and dest_path.resolve() != current_path.resolve()
-                        ):
+                        while dest_path.exists() and dest_path.resolve() != current_path.resolve():
                             dest_path = parent / f"{stem} ({counter}){ext_with_dot}"
                             counter += 1
 
@@ -241,9 +212,7 @@ class LibraryReorganizerService:
                         )
                         logger.info(f"Reorganized: {current_path} -> {dest_path}")
                     except Exception as e:
-                        logger.error(
-                            f"Failed to move {current_path} to {dest_path}: {e}"
-                        )
+                        logger.error(f"Failed to move {current_path} to {dest_path}: {e}")
                         continue
 
                     # Database Update

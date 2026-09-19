@@ -210,71 +210,29 @@ class TrackRepository:
         )
 
         # Multi-tiered priority order:
-        # 1. Unknown Artist / Missing Artist
-        # 2. Unknown Album / Missing Album
-        # 3. Unknown Title / Missing Title
-        # 4. Various Artists without resolved compilation performer
-        # 5. Missing MusicBrainz ID (None)
-        # 6. Failed MusicBrainz ID ('NOT_FOUND')
-        # 7. Missing ECHOSYNC_SIGNATURE
-        # 8. Other unenhanced tracks
+        # 1. NO ECHOSYNC_SIGNATURE
+        # 2. WITH signature, missing supplemental info (Year, Album, Track Number, MBID, ISRC)
+        # 3. WITH signature and all info (Processed only if force_refresh)
+
+        missing_sig = or_(
+            Track.echosync_signature.is_(None),
+            Track.echosync_signature == "",
+            func.json_extract(Track.metadata_status, "$.echosync_signature").is_(None),
+            func.json_extract(Track.metadata_status, "$.echosync_signature") == "",
+        )
+
+        missing_supplemental = or_(
+            Track.album_id.is_(None),
+            Album.title.ilike("unknown%"),
+            Track.track_number.is_(None),
+            Track.musicbrainz_id.is_(None),
+            Track.isrc.is_(None),
+        )
+
         priority_case = case(
-            (
-                or_(
-                    Artist.name.ilike("unknown%"),
-                    Artist.normalized_name.ilike("unknown%"),
-                    Track.artist_id.is_(None),
-                    Artist.name.is_(None),
-                ),
-                1,
-            ),
-            (
-                or_(
-                    Album.title.ilike("unknown%"),
-                    Album.normalized_title.ilike("unknown%"),
-                    Track.album_id.is_(None),
-                    Album.title.is_(None),
-                ),
-                2,
-            ),
-            (
-                or_(
-                    Track.title.ilike("unknown%"),
-                    Track.normalized_title.ilike("unknown%"),
-                    Track.title.is_(None),
-                    Track.title == "",
-                ),
-                3,
-            ),
-            (
-                and_(
-                    Artist.name.ilike("various artist%"),
-                    func.coalesce(
-                        func.json_extract(Track.metadata_status, "$.compilation_performer_resolved"),
-                        0,
-                    ).cast(Integer)
-                    == 0,
-                ),
-                4,
-            ),
-            (
-                or_(
-                    Track.musicbrainz_track_id.is_(None),
-                    Track.musicbrainz_id.is_(None),
-                ),
-                5,
-            ),
-            (Track.musicbrainz_id == "NOT_FOUND", 6),
-            (
-                or_(
-                    Track.echosync_signature.is_(None),
-                    Track.echosync_signature == "",
-                    func.json_extract(Track.metadata_status, "$.echosync_signature").is_(None),
-                    func.json_extract(Track.metadata_status, "$.echosync_signature") == "",
-                ),
-                7,
-            ),
-            else_=8,
+            (missing_sig, 1),
+            (missing_supplemental, 2),
+            else_=3,
         )
 
         if missing_plugin:
@@ -284,31 +242,10 @@ class TrackRepository:
             )
             query = query.filter(missing_plugin_cond)
         elif not force_refresh:
-            MAX_REATTEMPTS = 5
-            base_unenhanced = or_(
-                Track.metadata_enhanced.is_(False),
-                Track.metadata_enhanced.is_(None),
-                func.json_extract(Track.metadata_status, "$.enhanced").is_(None),
-                func.json_extract(Track.metadata_status, "$.enhanced") == False,
-                func.json_extract(Track.metadata_status, "$.enhanced") == 0,
-                func.json_extract(Track.metadata_status, "$.enhanced") == "false",
-            )
-            if require_signature:
-                missing_sig = or_(
-                    Track.echosync_signature.is_(None),
-                    Track.echosync_signature == "",
-                    func.json_extract(Track.metadata_status, "$.echosync_signature").is_(None),
-                    func.json_extract(Track.metadata_status, "$.echosync_signature") == "",
-                )
-                missing_mbid = or_(
-                    Track.musicbrainz_track_id.is_(None),
-                    Track.musicbrainz_id.is_(None),
-                )
-                unenhanced_filter = or_(base_unenhanced, missing_sig, missing_mbid, placeholder_track)
-            else:
-                unenhanced_filter = or_(base_unenhanced, placeholder_track)
+            query = query.filter(or_(missing_sig, missing_supplemental))
 
-            query = query.filter(unenhanced_filter).filter(
+            MAX_REATTEMPTS = 5
+            query = query.filter(
                 not_(
                     and_(
                         Track.musicbrainz_id == "NOT_FOUND",
@@ -320,75 +257,6 @@ class TrackRepository:
                     )
                 )
             )
-            if not check_all_files:
-                from core.hook_manager import hook_manager
-
-                required_keys = hook_manager.apply_filters("register_metadata_requirements", [])
-
-                MAX_REATTEMPTS = 5
-                needs_identification = or_(
-                    Track.musicbrainz_track_id.is_(None),
-                    Track.musicbrainz_id.is_(None),
-                    and_(
-                        Track.musicbrainz_id == "NOT_FOUND",
-                        func.coalesce(
-                            func.json_extract(Track.metadata_status, "$.enhancement_attempts"),
-                            0,
-                        ).cast(Integer)
-                        < MAX_REATTEMPTS,
-                    ),
-                )
-                conditions = [
-                    needs_identification,
-                    Artist.name.ilike("unknown%"),
-                    Artist.normalized_name.ilike("unknown%"),
-                    Track.artist_id.is_(None),
-                    Artist.name.is_(None),
-                    Album.title.ilike("unknown%"),
-                    Album.normalized_title.ilike("unknown%"),
-                    Track.album_id.is_(None),
-                    Album.title.is_(None),
-                    Track.title.ilike("unknown%"),
-                    Track.normalized_title.ilike("unknown%"),
-                    Track.title.is_(None),
-                    Track.title == "",
-                ]
-                if require_signature:
-                    missing_sig = or_(
-                        Track.echosync_signature.is_(None),
-                        Track.echosync_signature == "",
-                        func.json_extract(Track.metadata_status, "$.echosync_signature").is_(None),
-                        func.json_extract(Track.metadata_status, "$.echosync_signature") == "",
-                    )
-                    conditions.append(missing_sig)
-                    conditions.append(base_unenhanced)
-                    conditions.append(Track.musicbrainz_track_id.is_(None))
-
-                for key in required_keys:
-                    conditions.append(
-                        and_(
-                            Track.musicbrainz_id.isnot(None),
-                            Track.musicbrainz_id != "NOT_FOUND",
-                            func.json_extract(Track.metadata_status, f"$.{key}").is_(None),
-                        )
-                    )
-
-                conditions.append(
-                    and_(
-                        Artist.name.ilike("various artist%"),
-                        func.coalesce(
-                            func.json_extract(
-                                Track.metadata_status,
-                                "$.compilation_performer_resolved",
-                            ),
-                            0,
-                        ).cast(Integer)
-                        == 0,
-                    )
-                )
-                conditions.append(placeholder_track)
-
-                query = query.filter(or_(*conditions))
 
         return query.order_by(priority_case.asc(), Track.id.asc()).limit(batch_size).all()
 

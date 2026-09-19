@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Literal
+
+from core.db.echo_sync_track import EchosyncTrack, EchosyncMedia
 
 ResolutionMethod = Literal["local_cache", "acoustid", "isrc", "text_waterfall", "embedded_mbid"]
 
@@ -54,69 +57,62 @@ class ResolutionRequest:
     duration_ms: int | None = None
     ignore_embedded_mbid: bool = False
     ignore_cache: bool = False
+    prefer_studio_album: bool = True
+    track: EchosyncTrack | None = None
 
 
-@dataclass
-class ResolutionResult:
-    """Canonical output contract for resolved metadata."""
+class ResolutionResult(EchosyncTrack):
+    """Deprecated: EchosyncTrack is the universal canonical transport model.
 
-    media_id: str
-    title: str  # Original native script preserved
-    artist: str  # Original native script preserved
-    confidence_score: float
-    resolution_method: ResolutionMethod
-    duration_ms: int = 0  # Extracted from physical audio stream
-    sync_id: str | None = None
-    album: str | None = None  # Original native script preserved
-    year: int | None = None
-    track_number: int | None = None
-    disc_number: int | None = None
-    musicbrainz_track_id: str | None = None
-    musicbrainz_release_id: str | None = None
-    acoustid_id: str | None = None
-    chromaprint: str | None = None
-    isrc: str | None = None
-    extra_metadata: dict[str, Any] | None = None
-    musicbrainz_artist_id: str | None = None
-    track_artist_ids: list[int] = field(default_factory=list)
-    alias_proposals: list[EntityAliasProposal] = field(default_factory=list)
+    ResolutionResult is maintained for backward compatibility.
+    """
 
-    @property
-    def success(self) -> bool:
-        """True if resolution achieved a valid MusicBrainz recording match with confidence."""
-        return bool(self.musicbrainz_track_id and self.confidence_score > 0.0)
-
-    def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary matching legacy identify_file metadata format."""
-        mbid = self.musicbrainz_track_id
-        res = {
-            "sync_id": self.sync_id,
-            "media_id": self.media_id,
-            "title": self.title,
-            "raw_title": self.title,
-            "display_title": self.title,
-            "artist": self.artist,
-            "artist_name": self.artist,
-            "album": self.album,
-            "album_title": self.album,
-            "year": self.year,
-            "release_year": self.year,
-            "date": str(self.year) if self.year is not None else None,
-            "track_number": self.track_number,
-            "disc_number": self.disc_number,
-            "musicbrainz_track_id": mbid,
-            "musicbrainz_id": mbid,
-            "recording_id": mbid,
-            "musicbrainz_release_id": self.musicbrainz_release_id,
-            "release_id": self.musicbrainz_release_id,
-            "acoustid_id": self.acoustid_id,
-            "chromaprint": self.chromaprint,
-            "duration_ms": self.duration_ms,
-            "duration": (self.duration_ms / 1000.0) if self.duration_ms else None,
-            "isrc": self.isrc,
-            "confidence_score": self.confidence_score,
-            "resolution_method": self.resolution_method,
-        }
-        if self.extra_metadata:
-            res.update(self.extra_metadata)
-        return res
+    def __init__(
+        self,
+        media_id: str = "",
+        title: str = "",
+        artist: str = "",
+        confidence_score: float = 0.0,
+        resolution_method: str = "text_waterfall",
+        duration_ms: int = 0,
+        sync_id: str | None = None,
+        album: str | None = None,
+        year: int | None = None,
+        track_number: int | None = None,
+        disc_number: int | None = None,
+        musicbrainz_track_id: str | None = None,
+        musicbrainz_release_id: str | None = None,
+        acoustid_id: str | None = None,
+        chromaprint: str | None = None,
+        isrc: str | None = None,
+        extra_metadata: dict[str, Any] | None = None,
+        musicbrainz_artist_id: str | None = None,
+        track_artist_ids: list[int] | None = None,
+        alias_proposals: list[Any] | None = None,
+        **kwargs: Any,
+    ):
+        warnings.warn(
+            "ResolutionResult is deprecated; use EchosyncTrack as the canonical model.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        super().__init__(
+            raw_title=title or kwargs.get("raw_title", ""),
+            artist_name=artist or kwargs.get("artist_name", ""),
+            album_title=album or kwargs.get("album_title", "") or "",
+            sync_id=sync_id,
+            duration=duration_ms or kwargs.get("duration", 0),
+            track_number=track_number,
+            disc_number=disc_number,
+            release_year=year,
+            musicbrainz_id=musicbrainz_track_id or kwargs.get("musicbrainz_id"),
+            mb_release_id=musicbrainz_release_id or kwargs.get("mb_release_id"),
+            acoustid_id=acoustid_id,
+            fingerprint=chromaprint or kwargs.get("fingerprint"),
+            isrc=isrc,
+            confidence_score=confidence_score,
+            resolution_method=resolution_method,
+            alias_proposals=alias_proposals or [],
+            extra_metadata=extra_metadata or {},
+            media=[EchosyncMedia(media_id=media_id)] if media_id else [],
+        )
