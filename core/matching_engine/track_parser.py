@@ -21,6 +21,73 @@ from .fingerprinting import FingerprintCache, FingerprintGenerator
 
 logger = logging.getLogger(__name__)
 
+# Atomic Role Parsing Patterns
+FEATURED_PATTERN = re.compile(r"\s+(?:feat\.?|ft\.?|featuring|with)\s+(.+?)(?=\s*[\(\[]|$)", re.IGNORECASE)
+PRIMARY_SPLIT_PATTERN = re.compile(r"\s*(?:&|/|,|\band\b)\s*", re.IGNORECASE)
+VS_PATTERN = re.compile(r"\s+vs\.?\s+", re.IGNORECASE)
+
+# Version Extraction Patterns
+VERSION_PATTERNS = {
+    "edition": re.compile(r"\(([^)]*(?:Remix|Rmx|Mix|Edit|Bootleg|Flip|Rework)[^)]*)\)", re.IGNORECASE),
+    "version": re.compile(r"\(([^)]*(?:Live|Remaster|Acoustic|Take|Instrumental|Demo)[^)]*)\)", re.IGNORECASE),
+    "bracket_edition": re.compile(r"\[([^\]]*(?:Remix|Rmx|Mix|Edit|Bootleg|Flip|Rework)[^\]]*)\]", re.IGNORECASE),
+    "bracket_version": re.compile(
+        r"\[([^\]]*(?:Live|Remaster|Acoustic|Take|Instrumental|Demo)[^\]]*)\]", re.IGNORECASE
+    ),
+}
+
+
+def decompose_artists(raw_artist_str: str) -> dict[str, list[str]]:
+    """Strictly decompose composite artist strings into atomic roles."""
+    results = {"primary": [], "featured": [], "remixer": []}
+    if not raw_artist_str:
+        return results
+
+    raw = str(raw_artist_str)
+
+    # Step A: Extract featured artists
+    feat_match = FEATURED_PATTERN.search(raw)
+    primary_raw = raw
+    if feat_match:
+        primary_raw = raw[: feat_match.start()].strip()
+        feat_str = feat_match.group(1).strip()
+        results["featured"] = [n.strip() for n in PRIMARY_SPLIT_PATTERN.split(feat_str) if n.strip()]
+
+    # Step B & C: Extract vs/battle and split remaining primary
+    vs_parts = VS_PATTERN.split(primary_raw)
+    primary_names = []
+    for part in vs_parts:
+        primary_names.extend([n.strip() for n in PRIMARY_SPLIT_PATTERN.split(part) if n.strip()])
+
+    results["primary"] = primary_names
+    return results
+
+
+def extract_version_descriptors(title: str) -> tuple[str, str | None, str | None]:
+    """Cleanly extract version and edition descriptors without data loss."""
+    clean_title = title
+    version = None
+    edition = None
+
+    if not title:
+        return clean_title, version, edition
+
+    for key in ["edition", "bracket_edition"]:
+        match = VERSION_PATTERNS[key].search(clean_title)
+        if match:
+            edition = match.group(1).strip()
+            clean_title = clean_title[: match.start()] + clean_title[match.end() :]
+            clean_title = clean_title.strip()
+
+    for key in ["version", "bracket_version"]:
+        match = VERSION_PATTERNS[key].search(clean_title)
+        if match:
+            version = match.group(1).strip()
+            clean_title = clean_title[: match.start()] + clean_title[match.end() :]
+            clean_title = clean_title.strip()
+
+    return clean_title, version, edition
+
 
 @dataclass
 class ParseConfig:
@@ -203,15 +270,20 @@ class TrackParser:
             # Remove quality info for cleaner parsing
             working_string = self._remove_quality_markers(working_string)
 
+        # Extract version/edition descriptors before junk removal (prevents data loss of [Remastered] etc)
+        ext_version = None
+        ext_edition = None
+        if self.config.detect_version:
+            working_string, ext_version, ext_edition = extract_version_descriptors(working_string)
+
         # Remove junk before parsing
         if self.config.remove_junk_chars:
             working_string = self._remove_junk(working_string)
 
-        # Extract version/remix info
+        # Old version extraction fallback (if not found by our strict descriptors)
         version = None
         if self.config.detect_version:
             version = self._extract_version(working_string)
-            # Remove version parentheticals but keep version string
             working_string = self._remove_parenthetical_versions(working_string)
 
         # Remove leading track number prefixes (e.g. "04 - ", "01. ", "00 - ", "1-05 ", "01 ")
@@ -267,18 +339,30 @@ class TrackParser:
             if not album_title:
                 album_title = ""
 
+            parsed_title = parsed_data.get("title", "")
+            parsed_artist = parsed_data.get("artist", "")
+
+            artist_roles = decompose_artists(parsed_artist)
+
+            # If the old regex pattern (artist_title) caught a 'version' group,
+            # we consider it a fallback.
+            fallback_version = parsed_data.get("version") or version
+
             track = EchosyncTrack(
-                raw_title=parsed_data.get("title", ""),
-                artist_name=parsed_data.get("artist", ""),
+                raw_title=parsed_title,
+                artist_name=parsed_artist,
                 album_title=album_title,
                 release_year=year,
-                edition=version,
-                version=version,
+                edition=ext_edition or (fallback_version if not ext_version else None),
+                version=ext_version or (fallback_version if not ext_edition else None),
                 quality_tags=quality_tags,
                 track_number=track_number,
                 disc_number=disc_number,
                 is_compilation=is_compilation,
                 album_type="compilation" if is_compilation else None,
+                primary_artists=artist_roles["primary"],
+                featured_artists=artist_roles["featured"],
+                remixers=artist_roles["remixer"],
             )
 
             # Validate the track

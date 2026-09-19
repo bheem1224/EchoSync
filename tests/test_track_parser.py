@@ -82,8 +82,8 @@ class TestTrackParserVersion:
         """Test detection of remix version"""
         track = self.parser.parse_filename("Calvin Harris - Summer (Chromatics Remix)")
         assert track is not None
-        assert track.version is not None
-        assert "remix" in track.version.lower()
+        assert track.edition is not None
+        assert "remix" in track.edition.lower()
 
     def test_extended_version(self):
         """Test detection of extended version"""
@@ -103,13 +103,21 @@ class TestTrackParserVersion:
         """Test 'Original' version label"""
         track = self.parser.parse_filename("Daft Punk - One More Time (Original Mix)")
         assert track is not None
-        assert track.version is not None
+        assert track.edition is not None
 
     def test_no_version_present(self):
         """Test track with no version info"""
         track = self.parser.parse_filename("Aphex Twin - Windowlicker")
         assert track is not None
-        assert track.version is None
+        assert track.edition is None
+
+    def test_live_version_extraction(self):
+        """Test extraction of live versions"""
+        track = self.parser.parse_filename("Artist - Song Name (Live at Wembley)")
+        assert track is not None
+        assert track.title.lower() == "song name"
+        assert track.version == "Live at Wembley"
+        assert track.edition is None
 
 
 class TestTrackParserQuality:
@@ -233,6 +241,7 @@ class TestTrackParserFeatured:
         )
         assert track is not None
         assert track.title is not None
+        assert "Chance The Rapper" in track.featured_artists
 
     def test_featuring(self):
         """Test 'featuring' extraction"""
@@ -240,6 +249,14 @@ class TestTrackParserFeatured:
         assert track is not None
         # Should extract something
         assert track.artist_name is not None or track.title is not None
+
+    def test_decompose_primary_artists(self):
+        """Test that 'Glass Animals & Iann Dior' splits into two primary artists."""
+        track = self.parser.parse_filename("Glass Animals & Iann Dior - Heat Waves")
+        assert track is not None
+        assert "Glass Animals" in track.primary_artists
+        assert "Iann Dior" in track.primary_artists
+        assert len(track.primary_artists) == 2
 
 
 class TestTrackParserEdgeCases:
@@ -396,3 +413,4 @@ class TestTrackParserIntegration:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+

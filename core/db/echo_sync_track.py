@@ -149,6 +149,11 @@ class EchosyncTrack:
     version: str | None = None  # e.g., "Remix", "Live", "Extended"
     added_at: datetime | None = None
 
+    # Artist Roles
+    primary_artists: list[str] = field(default_factory=list)
+    featured_artists: list[str] = field(default_factory=list)
+    remixers: list[str] = field(default_factory=list)
+
     # Physical Media Files (1:N relationship)
     media: list[EchosyncMedia] = field(default_factory=list)
 
@@ -526,3 +531,16 @@ class EchosyncTrack:
             acoustid_id=acoustid_id,
             fingerprint=chromaprint,
         )
+
+
+def _get_artist_name(self) -> str:
+    if getattr(self, "primary_artists", None):
+        return " & ".join(self.primary_artists)
+    return self.__dict__.get("artist_name", "Unknown Artist")
+
+
+def _set_artist_name(self, val: str):
+    self.__dict__["artist_name"] = val
+
+
+EchosyncTrack.artist_name = property(_get_artist_name, _set_artist_name)
