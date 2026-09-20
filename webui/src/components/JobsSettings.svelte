@@ -16,6 +16,8 @@
   let enhanceBatchSize = 50;
   let enhanceLimit = "";
   let enhanceCheckAll = false;
+  let showRetryReviewSettings = false;
+  let forceCheckReviewTasks = false;
 
   // Category definitions
   const categories = {
@@ -166,6 +168,9 @@
           force_refresh: enhanceCheckAll,
           force: enhanceCheckAll,
         };
+      }
+      if (jobName === "retry_aged_review_tasks" && forceCheckReviewTasks) {
+        payload.params = { force_check: true };
       }
       await apiClient.post("/system/jobs/run", payload);
       const modeSuffix =
@@ -735,6 +740,67 @@
                                 <span style="font-size: 12px;"
                                   >Check All Tracks (Force Pass)</span
                                 >
+                              </label>
+                            </div>
+                          {/if}
+                        </div>
+                      {:else if job.name === "retry_aged_review_tasks"}
+                        <div
+                          style="position: relative; display: flex; align-items: center; gap: 4px;"
+                        >
+                          <button
+                            class="btn-action active:scale-95 transition-all duration-200"
+                            on:click={() => runJob(job.name)}
+                            disabled={job.running}
+                            title={job.running
+                              ? "Job is already running"
+                              : "Run now"}
+                          >
+                            <svg
+                              width="16"
+                              height="16"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              stroke-width="2"
+                            >
+                              <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                            </svg>
+                            {job.running ? "Running..." : "Run"}
+                          </button>
+
+                          <button
+                            class="btn-action btn-cog active:scale-95 transition-all duration-200"
+                            on:click={() =>
+                              (showRetryReviewSettings =
+                                !showRetryReviewSettings)}
+                            title="Job parameters"
+                            style="padding: 6px;"
+                          >
+                            <svg
+                              width="16"
+                              height="16"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              stroke-width="2"
+                            >
+                              <circle cx="12" cy="12" r="3"></circle>
+                              <path
+                                d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"
+                              ></path>
+                            </svg>
+                          </button>
+
+                          {#if showRetryReviewSettings}
+                            <div class="job-settings-dropdown">
+                              <label class="dropdown-item">
+                                <input
+                                  type="checkbox"
+                                  bind:checked={forceCheckReviewTasks}
+                                  style="cursor: pointer;"
+                                />
+                                <span>Force Check All (Ignore 7-Day Age)</span>
                               </label>
                             </div>
                           {/if}

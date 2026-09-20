@@ -321,101 +321,127 @@ class AutoImportService:
             max_retries=3,
         )
 
-    def _retry_aged_review_tasks(self) -> None:
-        """Proactively re-evaluate review queue items older than 7 days."""
+    def _retry_aged_review_tasks(self, force_check: bool = False, **kwargs) -> None:
+        """Proactively re-evaluate review queue items older than 7 days, or all pending items if force_check=True."""
         work_db = get_working_database()
         from time_utils import utc_now
 
+        force_val = kwargs.get("force_check", kwargs.get("force", force_check))
+        is_force = force_val if isinstance(force_val, bool) else (str(force_val).lower() in ("true", "1", "yes"))
+
         cutoff = utc_now() - timedelta(days=7)
-
-        tasks_to_retry: list[dict[str, Any]] = []
-        try:
-            with work_db.session_scope() as session:
-                aged_tasks = (
-                    session.query(ReviewTask)
-                    .filter(ReviewTask.status == "pending", ReviewTask.updated_at < cutoff)
-                    .all()
-                )
-                for t in aged_tasks:
-                    tasks_to_retry.append({"id": t.id, "file_path": t.file_path})
-        except Exception as e:
-            logger.error(f"Error querying aged review tasks: {e}", exc_info=True)
-            return
-
-        if not tasks_to_retry:
-            logger.debug("No aged review tasks pending re-evaluation (>7 days).")
-            return
-
-        logger.info(f"Found {len(tasks_to_retry)} aged review task(s) for re-evaluation (>7 days old).")
+        batch_size = 50
+        last_seen_id = 0
+        total_processed = 0
 
         meta_config = config_manager.get("metadata_enhancement") or {}
         auto_import = meta_config.get("auto_import", False)
         confidence_threshold = meta_config.get("confidence_threshold", 90) / 100.0
 
-        for item in tasks_to_retry:
-            task_id = item["id"]
-            file_path_str = item["file_path"]
-            p = Path(file_path_str)
-
-            if not p.exists():
-                logger.info(f"Aged review task file no longer on disk: {file_path_str}")
-                try:
-                    with work_db.session_scope() as session:
-                        task = session.query(ReviewTask).filter(ReviewTask.id == task_id).first()
-                        if task:
-                            task.last_checked_at = utc_now()
-                            task.updated_at = utc_now()
-                except Exception:
-                    pass
-                continue
-
+        while True:
+            tasks_to_retry: list[dict[str, Any]] = []
             try:
-                metadata = None
-                confidence = 0.0
-                res_dict = None
-                if hasattr(self, "enhancer") and hasattr(self.enhancer, "identify_file"):
-                    try:
-                        metadata, confidence = self.enhancer.identify_file(p)
-                        if metadata:
-                            res_dict = metadata
-                    except Exception as enh_err:
-                        logger.debug("enhancer.identify_file failed, falling back to engine: %s", enh_err)
-
-                if res_dict is None:
-                    from core.metadata.schemas import ResolutionRequest
-
-                    req = ResolutionRequest(media_id=f"review_{task_id}", file_path=p)
-                    res = self.engine.resolve_track(req)
-                    metadata = res.to_dict() if (res.success and res.musicbrainz_track_id) else None
-                    confidence = res.confidence_score
-                    res_dict = res.to_dict()
-
-                now = utc_now()
                 with work_db.session_scope() as session:
-                    task = session.query(ReviewTask).filter(ReviewTask.id == task_id).first()
-                    if task:
-                        task.last_checked_at = now
-                        task.updated_at = now
-                        task.retry_count = (task.retry_count or 0) + 1
-                        task.confidence_score = confidence
-                        task.detected_metadata = res_dict
+                    query = session.query(ReviewTask).filter(
+                        ReviewTask.id > last_seen_id,
+                        ReviewTask.status == "pending",
+                    )
+                    if not is_force:
+                        query = query.filter(ReviewTask.updated_at < cutoff)
 
-                if metadata and confidence >= confidence_threshold:
-                    if auto_import:
-                        logger.info(f"Aged task match found and auto_import is True; importing: {p}")
-                        self.finalize_import(p, metadata)
-                    else:
-                        logger.info(f"Aged task match found but auto_import is False for {p}")
-            except Exception as err:
-                logger.warning(f"Failed to re-evaluate aged review task #{task_id} ({file_path_str}): {err}")
+                    batch = query.order_by(ReviewTask.id.asc()).limit(batch_size).all()
+                    if not batch:
+                        break
+
+                    for t in batch:
+                        tasks_to_retry.append({"id": t.id, "file_path": t.file_path})
+                        last_seen_id = t.id
+            except Exception as e:
+                logger.error(f"Error querying review tasks for re-evaluation: {e}", exc_info=True)
+                break
+
+            if not tasks_to_retry:
+                break
+
+            if total_processed == 0:
+                if is_force:
+                    logger.info("Force re-evaluating pending review task(s) (bypassing 7-day age cutoff)...")
+                else:
+                    logger.info("Re-evaluating aged review task(s) (>7 days old)...")
+
+            for item in tasks_to_retry:
+                total_processed += 1
+                task_id = item["id"]
+                file_path_str = item["file_path"]
+                p = Path(file_path_str)
+
+                if not p.exists():
+                    logger.info(f"Review task file no longer on disk: {file_path_str}")
+                    try:
+                        with work_db.session_scope() as session:
+                            task = session.query(ReviewTask).filter(ReviewTask.id == task_id).first()
+                            if task:
+                                task.last_checked_at = utc_now()
+                                task.updated_at = utc_now()
+                    except Exception:
+                        pass
+                    continue
+
                 try:
+                    metadata = None
+                    confidence = 0.0
+                    res_dict = None
+                    if hasattr(self, "enhancer") and hasattr(self.enhancer, "identify_file"):
+                        try:
+                            metadata, confidence = self.enhancer.identify_file(p)
+                            if metadata:
+                                res_dict = metadata
+                        except Exception as enh_err:
+                            logger.debug("enhancer.identify_file failed, falling back to engine: %s", enh_err)
+
+                    if res_dict is None:
+                        from core.metadata.schemas import ResolutionRequest
+
+                        req = ResolutionRequest(media_id=f"review_{task_id}", file_path=p)
+                        res = self.engine.resolve_track(req)
+                        metadata = res.to_dict() if (res.success and res.musicbrainz_track_id) else None
+                        confidence = res.confidence_score
+                        res_dict = res.to_dict()
+
+                    now = utc_now()
                     with work_db.session_scope() as session:
                         task = session.query(ReviewTask).filter(ReviewTask.id == task_id).first()
                         if task:
-                            task.last_checked_at = utc_now()
-                            task.updated_at = utc_now()
-                except Exception:
-                    pass
+                            task.last_checked_at = now
+                            task.updated_at = now
+                            task.retry_count = (task.retry_count or 0) + 1
+                            task.confidence_score = confidence
+                            task.detected_metadata = res_dict
+
+                    if metadata and confidence >= confidence_threshold:
+                        if auto_import:
+                            logger.info(f"Review task match found and auto_import is True; importing: {p}")
+                            self.finalize_import(p, metadata)
+                        else:
+                            logger.info(f"Review task match found but auto_import is False for {p}")
+                except Exception as err:
+                    logger.warning(f"Failed to re-evaluate review task #{task_id} ({file_path_str}): {err}")
+                    try:
+                        with work_db.session_scope() as session:
+                            task = session.query(ReviewTask).filter(ReviewTask.id == task_id).first()
+                            if task:
+                                task.last_checked_at = utc_now()
+                                task.updated_at = utc_now()
+                    except Exception:
+                        pass
+
+        if total_processed == 0:
+            if is_force:
+                logger.debug("No pending review tasks found for force re-evaluation.")
+            else:
+                logger.debug("No aged review tasks pending re-evaluation (>7 days).")
+        else:
+            logger.info(f"Finished re-evaluating {total_processed} review task(s).")
 
     def scan_and_process(self, force_scan: bool = False, params: dict[str, Any] | None = None, **kwargs):
         """Scan download directory for audio files and process them."""
@@ -845,7 +871,7 @@ def get_auto_importer():
 
 
 def register_auto_import_service():
-    service = AutoImportService.get_instance()
+    _ = AutoImportService.get_instance()
     logger.info("Auto Import Service initialized, watchdog started, and jobs registered")
 
 

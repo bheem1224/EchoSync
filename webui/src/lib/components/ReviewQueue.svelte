@@ -1,51 +1,77 @@
-<svelte:options customElement={{
-  tag: 'echosync-review-queue',
-  shadow: 'none'
-}} />
+<svelte:options
+  customElement={{
+    tag: "echosync-review-queue",
+    shadow: "none",
+  }}
+/>
 
 <script lang="ts">
-  import { onMount } from 'svelte';
-  import apiClient from '../../api/client';
-  import MetadataReviewModal from './MetadataReviewModal.svelte';
+  import { onMount } from "svelte";
+  import apiClient from "../../api/client";
+  import MetadataReviewModal from "./MetadataReviewModal.svelte";
 
   let loading = true;
-  let error = '';
+  let error = "";
   let tasks = [];
   let rowActionState = {};
+  let retryingQueue = false;
 
   let showReviewModal = false;
   let selectedTask = null;
 
+  async function retryAllPending() {
+    if (retryingQueue) return;
+    retryingQueue = true;
+    try {
+      await apiClient.post("/system/jobs/run", {
+        name: "retry_aged_review_tasks",
+        job_name: "retry_aged_review_tasks",
+        params: { force_check: true },
+      });
+      setTimeout(() => {
+        loadQueue();
+      }, 1500);
+    } catch (err) {
+      console.error("Failed to trigger retry job:", err);
+      error =
+        err?.response?.data?.error ||
+        err?.message ||
+        "Failed to trigger retry job";
+    } finally {
+      retryingQueue = false;
+    }
+  }
+
   function getFilename(filePath) {
-    if (!filePath) return 'Unknown file';
-    const normalized = String(filePath).replace(/\\/g, '/');
-    const parts = normalized.split('/');
+    if (!filePath) return "Unknown file";
+    const normalized = String(filePath).replace(/\\/g, "/");
+    const parts = normalized.split("/");
     return parts[parts.length - 1] || normalized;
   }
 
   function getProposedArtist(task) {
-    return task?.detected_metadata?.artist || 'Unknown Artist';
+    return task?.detected_metadata?.artist || "Unknown Artist";
   }
 
   function getProposedTitle(task) {
-    return task?.detected_metadata?.title || 'Unknown Title';
+    return task?.detected_metadata?.title || "Unknown Title";
   }
 
   function getReadableSyncLabel(task) {
     const rawSyncId = task?.sync_id;
-    if (!rawSyncId) return '';
+    if (!rawSyncId) return "";
     try {
-        if (!rawSyncId || typeof rawSyncId !== 'string') return rawSyncId;
-        if (rawSyncId.startsWith('ss:track:meta:')) {
-            const b64 = rawSyncId.split('?')[0].replace('ss:track:meta:', '');
-            const jsonStr = atob(b64);
-            const data = JSON.parse(jsonStr);
-            return `${data.artist} - ${data.title}`;
-        }
-        if (rawSyncId.startsWith('ss:track:acoustid:')) {
-            return `AcoustID: ${rawSyncId.replace('ss:track:acoustid:', '').split('?')[0]}`;
-        }
-    } catch(e) {}
+      if (!rawSyncId || typeof rawSyncId !== "string") return rawSyncId;
+      if (rawSyncId.startsWith("ss:track:meta:")) {
+        const b64 = rawSyncId.split("?")[0].replace("ss:track:meta:", "");
+        const jsonStr = atob(b64);
+        const data = JSON.parse(jsonStr);
+        return `${data.artist} - ${data.title}`;
+      }
+      if (rawSyncId.startsWith("ss:track:acoustid:")) {
+        return `AcoustID: ${rawSyncId.replace("ss:track:acoustid:", "").split("?")[0]}`;
+      }
+    } catch (e) {}
     return rawSyncId;
   }
 
@@ -58,7 +84,7 @@
     if (!taskId) return;
     rowActionState = {
       ...rowActionState,
-      [taskId]: state
+      [taskId]: state,
     };
   }
 
@@ -70,10 +96,10 @@
   }
 
   function getStateLabel(state) {
-    if (state === 'approving') return 'Approving...';
-    if (state === 'saving') return 'Saving...';
-    if (state === 'saved') return 'Saved';
-    return '';
+    if (state === "approving") return "Approving...";
+    if (state === "saving") return "Saving...";
+    if (state === "saved") return "Saved";
+    return "";
   }
 
   function closeReviewModal() {
@@ -82,58 +108,65 @@
   }
 
   async function handleModalSaveDraft(e) {
-      const { proposedMetadata, item } = e.detail || {};
-      if (!item) return;
-      const taskId = item.id;
+    const { proposedMetadata, item } = e.detail || {};
+    if (!item) return;
+    const taskId = item.id;
 
-      setRowState(taskId, 'saving');
-      try {
-          const payload = { ...item.proposed_metadata, ...proposedMetadata };
-          await apiClient.put(`/core/metadata_review/${taskId}`, payload);
+    setRowState(taskId, "saving");
+    try {
+      const payload = { ...item.proposed_metadata, ...proposedMetadata };
+      await apiClient.put(`/core/metadata_review/${taskId}`, payload);
 
-          tasks = tasks.map((task) =>
-            task.id === taskId
-              ? { ...task, detected_metadata: { ...payload }, proposed_metadata: { ...payload } }
-              : task
-          );
+      tasks = tasks.map((task) =>
+        task.id === taskId
+          ? {
+              ...task,
+              detected_metadata: { ...payload },
+              proposed_metadata: { ...payload },
+            }
+          : task,
+      );
 
-          setRowState(taskId, 'saved');
-          setTimeout(() => clearRowState(taskId), 1200);
-      } catch (err) {
-          console.error('Failed to save draft:', err);
-          clearRowState(taskId);
-      }
+      setRowState(taskId, "saved");
+      setTimeout(() => clearRowState(taskId), 1200);
+    } catch (err) {
+      console.error("Failed to save draft:", err);
+      clearRowState(taskId);
+    }
   }
 
   async function handleModalApprove(e) {
-      const { item } = e.detail || {};
-      const taskId = item?.id || selectedTask?.id;
-      if (!taskId) return;
+    const { item } = e.detail || {};
+    const taskId = item?.id || selectedTask?.id;
+    if (!taskId) return;
 
-      tasks = tasks.filter(t => t.id !== taskId);
-      clearRowState(taskId);
-      closeReviewModal();
+    tasks = tasks.filter((t) => t.id !== taskId);
+    clearRowState(taskId);
+    closeReviewModal();
   }
 
   async function handleModalReject(e) {
-      const { item } = e.detail || {};
-      const taskId = item?.id || selectedTask?.id;
-      if (!taskId) return;
+    const { item } = e.detail || {};
+    const taskId = item?.id || selectedTask?.id;
+    if (!taskId) return;
 
-      tasks = tasks.filter(t => t.id !== taskId);
-      clearRowState(taskId);
-      closeReviewModal();
+    tasks = tasks.filter((t) => t.id !== taskId);
+    clearRowState(taskId);
+    closeReviewModal();
   }
 
   async function loadQueue() {
     loading = true;
-    error = '';
+    error = "";
     try {
-      const response = await apiClient.get('/core/metadata_review');
+      const response = await apiClient.get("/core/metadata_review");
       tasks = Array.isArray(response.data?.tasks) ? response.data.tasks : [];
     } catch (err) {
-      console.error('Failed to load review queue:', err);
-      error = err?.response?.data?.error || err?.message || 'Failed to load review queue';
+      console.error("Failed to load review queue:", err);
+      error =
+        err?.response?.data?.error ||
+        err?.message ||
+        "Failed to load review queue";
     } finally {
       loading = false;
     }
@@ -145,66 +178,110 @@
 <div class="flex flex-col h-full min-h-0 bg-background">
   <div class="flex items-center justify-between p-4 bg-transparent">
     <div>
-      <p class="text-xs uppercase tracking-wide text-secondary font-semibold">Metadata Workflow</p>
+      <p class="text-xs uppercase tracking-wide text-secondary font-semibold">
+        Metadata Workflow
+      </p>
       <h2 class="text-2xl font-bold text-primary m-0">Review Queue</h2>
     </div>
-    <button
-      class="px-4 py-2 rounded-global text-sm font-medium bg-black/20 text-white border border-glass-border hover:bg-black/40 transition-colors active:scale-95"
-      on:click={loadQueue}
-      disabled={loading}
-    >
-      {loading ? 'Refreshing...' : 'Refresh'}
-    </button>
+    <div class="flex items-center gap-2">
+      <button
+        class="px-4 py-2 rounded-global text-sm font-medium bg-accent text-primary hover:opacity-90 transition-all active:scale-95 disabled:opacity-50"
+        on:click={retryAllPending}
+        disabled={retryingQueue || loading}
+      >
+        {retryingQueue ? "Triggering..." : "Retry All Pending"}
+      </button>
+      <button
+        class="px-4 py-2 rounded-global text-sm font-medium bg-black/20 text-white border border-glass-border hover:bg-black/40 transition-colors active:scale-95"
+        on:click={loadQueue}
+        disabled={loading}
+      >
+        {loading ? "Refreshing..." : "Refresh"}
+      </button>
+    </div>
   </div>
 
-  <div class="m-4 mt-0 flex-1 min-h-0 overflow-y-auto rounded-global bg-black/20 backdrop-blur-md border border-glass-border">
+  <div
+    class="m-4 mt-0 flex-1 min-h-0 overflow-y-auto rounded-global bg-black/20 backdrop-blur-md border border-glass-border"
+  >
     {#if loading}
       <div class="p-8 text-center text-secondary">Loading review queue...</div>
     {:else if error}
       <div class="p-8 text-center text-error-text bg-error-bg">{error}</div>
     {:else if tasks.length === 0}
-      <div class="p-8 text-center text-secondary italic">No pending metadata review tasks.</div>
+      <div class="p-8 text-center text-secondary italic">
+        No pending metadata review tasks.
+      </div>
     {:else}
       <div class="overflow-x-auto">
         <table class="min-w-full text-left border-collapse">
           <thead class="bg-surface-hover">
-            <tr class="text-secondary text-xs uppercase tracking-wider border-b border-global">
+            <tr
+              class="text-secondary text-xs uppercase tracking-wider border-b border-global"
+            >
               <th class="px-4 py-3 font-semibold">File</th>
               <th class="px-4 py-3 font-semibold">Proposed Artist / Title</th>
               <th class="px-4 py-3 font-semibold">Confidence</th>
               <th class="px-4 py-3 font-semibold text-right">Action</th>
             </tr>
           </thead>
-          <tbody class="divide-y divide-[rgba(255,255,255,0.05)] bg-transparent">
+          <tbody
+            class="divide-y divide-[rgba(255,255,255,0.05)] bg-transparent"
+          >
             {#each tasks as task (task.id)}
               <tr class="hover:bg-surface-hover transition-colors">
                 <td class="px-4 py-3">
-                  <div class="text-sm text-primary font-medium">{getFilename(task.file_path)}</div>
-                  <div class="text-xs text-secondary truncate max-w-xs">{task.file_path}</div>
+                  <div class="text-sm text-primary font-medium">
+                    {getFilename(task.file_path)}
+                  </div>
+                  <div class="text-xs text-secondary truncate max-w-xs">
+                    {task.file_path}
+                  </div>
                 </td>
                 <td class="px-4 py-3">
-                  <div class="text-sm text-primary">{getProposedArtist(task)}</div>
-                  <div class="text-sm text-secondary">{getProposedTitle(task)}</div>
+                  <div class="text-sm text-primary">
+                    {getProposedArtist(task)}
+                  </div>
+                  <div class="text-sm text-secondary">
+                    {getProposedTitle(task)}
+                  </div>
                   {#if task?.sync_id}
-                    <div class="text-xs text-accent truncate max-w-xs mt-1" title={task.sync_id}>
+                    <div
+                      class="text-xs text-accent truncate max-w-xs mt-1"
+                      title={task.sync_id}
+                    >
                       {getReadableSyncLabel(task)}
                     </div>
                   {/if}
                 </td>
                 <td class="px-4 py-3">
-                  <span class={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold border ${
-                      (task.confidence_score || 0) >= 0.85 ? 'bg-success-bg text-success-text border-success-border' :
-                      (task.confidence_score || 0) >= 0.6 ? 'bg-warning-bg text-warning-text border-warning-border' :
-                      'bg-error-bg text-error-text border-error-border'
-                  }`}>
-                    {(task.confidence_score || 0) >= 0.85 ? 'High' : (task.confidence_score || 0) >= 0.6 ? 'Medium' : 'Low'}
-                    <span class="opacity-80 ml-1">{Math.round((task.confidence_score || 0) * 100)}%</span>
+                  <span
+                    class={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold border ${
+                      (task.confidence_score || 0) >= 0.85
+                        ? "bg-success-bg text-success-text border-success-border"
+                        : (task.confidence_score || 0) >= 0.6
+                          ? "bg-warning-bg text-warning-text border-warning-border"
+                          : "bg-error-bg text-error-text border-error-border"
+                    }`}
+                  >
+                    {(task.confidence_score || 0) >= 0.85
+                      ? "High"
+                      : (task.confidence_score || 0) >= 0.6
+                        ? "Medium"
+                        : "Low"}
+                    <span class="opacity-80 ml-1"
+                      >{Math.round((task.confidence_score || 0) * 100)}%</span
+                    >
                   </span>
                 </td>
                 <td class="px-4 py-3 text-right">
-                  <div class="inline-flex items-center gap-2 justify-end w-full">
+                  <div
+                    class="inline-flex items-center gap-2 justify-end w-full"
+                  >
                     {#if rowActionState[task.id]}
-                      <span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-semibold bg-surface border border-global text-primary">
+                      <span
+                        class="inline-flex items-center px-2 py-1 rounded-full text-xs font-semibold bg-surface border border-global text-primary"
+                      >
                         {getStateLabel(rowActionState[task.id])}
                       </span>
                     {/if}
@@ -227,25 +304,55 @@
 
 {#if showReviewModal && selectedTask}
   <!-- We use the native web component we built earlier -->
-    <MetadataReviewModal
-      task={selectedTask}
-      on:close={() => closeReviewModal()}
-      on:saved={(e) => handleModalSaveDraft({ detail: { proposedMetadata: e.detail?.metadata || e.detail?.proposedMetadata, item: selectedTask } })}
-      on:approved={(e) => handleModalApprove({ detail: { proposedMetadata: e.detail?.metadata || e.detail?.proposedMetadata, item: selectedTask } })}
-      on:rejected={(e) => handleModalReject({ detail: { item: selectedTask } })}
-    />
+  <MetadataReviewModal
+    task={selectedTask}
+    on:close={() => closeReviewModal()}
+    on:saved={(e) =>
+      handleModalSaveDraft({
+        detail: {
+          proposedMetadata: e.detail?.metadata || e.detail?.proposedMetadata,
+          item: selectedTask,
+        },
+      })}
+    on:approved={(e) =>
+      handleModalApprove({
+        detail: {
+          proposedMetadata: e.detail?.metadata || e.detail?.proposedMetadata,
+          item: selectedTask,
+        },
+      })}
+    on:rejected={(e) => handleModalReject({ detail: { item: selectedTask } })}
+  />
 {/if}
 
 <style>
-  .bg-success-bg { background-color: var(--es-success-bg); }
-  .text-success-text { color: var(--es-success-text); }
-  .border-success-border { border-color: var(--es-success-bg); }
+  .bg-success-bg {
+    background-color: var(--es-success-bg);
+  }
+  .text-success-text {
+    color: var(--es-success-text);
+  }
+  .border-success-border {
+    border-color: var(--es-success-bg);
+  }
 
-  .bg-warning-bg { background-color: var(--es-warning-bg); }
-  .text-warning-text { color: var(--es-warning-text); }
-  .border-warning-border { border-color: var(--es-warning-border); }
+  .bg-warning-bg {
+    background-color: var(--es-warning-bg);
+  }
+  .text-warning-text {
+    color: var(--es-warning-text);
+  }
+  .border-warning-border {
+    border-color: var(--es-warning-border);
+  }
 
-  .bg-error-bg { background-color: var(--es-error-bg); }
-  .text-error-text { color: var(--es-error-text); }
-  .border-error-border { border-color: var(--es-error-border); }
+  .bg-error-bg {
+    background-color: var(--es-error-bg);
+  }
+  .text-error-text {
+    color: var(--es-error-text);
+  }
+  .border-error-border {
+    border-color: var(--es-error-border);
+  }
 </style>

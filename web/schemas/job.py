@@ -23,6 +23,7 @@ class JobRunRequest(BaseModel):
     scan_mode: str | None = None
     force: bool | None = None
     force_refresh: bool | None = None
+    force_check: bool | None = None
     check_all_files: bool | None = None
     batch_size: int | None = None
     limit: int | None = None

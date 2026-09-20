@@ -141,6 +141,23 @@ async def run_job(request: Request, payload: JobRunRequest = None):
         params["force_refresh"] = is_force
         params["force"] = is_force
 
+    # Extract and normalize force_check
+    force_check_val = None
+    if payload.force_check is not None:
+        force_check_val = payload.force_check
+    elif "force_check" in params:
+        force_check_val = params["force_check"]
+    elif request.query_params.get("force_check") is not None:
+        force_check_val = request.query_params.get("force_check")
+
+    if force_check_val is not None:
+        is_force_check = (
+            force_check_val
+            if isinstance(force_check_val, bool)
+            else (str(force_check_val).lower() in ("true", "1", "yes"))
+        )
+        params["force_check"] = is_force_check
+
     # Extract and normalize check_all_files
     check_all_val = None
     if payload.check_all_files is not None:
