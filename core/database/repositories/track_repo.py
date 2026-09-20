@@ -33,7 +33,6 @@ from database.music_database import (
     Track,
     TrackAlias,
     TrackArtist,
-    TrackArtistAlias,
     TrackAttribute,
     generate_nanoid,
 )
@@ -209,10 +208,17 @@ class TrackRepository:
             Track.album_id == default_album_id,
         )
 
-        # Multi-tiered priority order:
-        # 1. NO ECHOSYNC_SIGNATURE
-        # 2. WITH signature, missing supplemental info (Year, Album, Track Number, MBID, ISRC)
-        # 3. WITH signature and all info (Processed only if force_refresh)
+        unknown_artist = or_(
+            Track.artist_id == default_artist_id,
+            Artist.name.ilike("unknown%"),
+            Artist.name.is_(None),
+        )
+        unknown_album = or_(
+            Track.album_id == default_album_id,
+            Album.title.ilike("unknown%"),
+            Track.album_id.is_(None),
+        )
+        missing_mbid = Track.musicbrainz_id.is_(None)
 
         missing_sig = or_(
             Track.echosync_signature.is_(None),
@@ -222,17 +228,17 @@ class TrackRepository:
         )
 
         missing_supplemental = or_(
-            Track.album_id.is_(None),
-            Album.title.ilike("unknown%"),
-            Track.track_number.is_(None),
-            Track.musicbrainz_id.is_(None),
-            Track.isrc.is_(None),
+            unknown_artist,
+            unknown_album,
+            missing_mbid,
         )
 
         priority_case = case(
-            (missing_sig, 1),
-            (missing_supplemental, 2),
-            else_=3,
+            (unknown_artist, 1),
+            (unknown_album, 2),
+            (missing_sig, 3),
+            (missing_mbid, 4),
+            else_=5,
         )
 
         if missing_plugin:
@@ -242,7 +248,25 @@ class TrackRepository:
             )
             query = query.filter(missing_plugin_cond)
         elif not force_refresh:
-            query = query.filter(or_(missing_sig, missing_supplemental))
+            is_enhanced = or_(
+                func.json_extract(Track.metadata_status, "$.enhanced") == True,
+                func.json_extract(Track.metadata_status, "$.enhanced") == "true",
+                func.json_extract(Track.metadata_status, "$.enhanced") == 1,
+            )
+            if require_signature:
+                query = query.filter(or_(missing_sig, missing_supplemental, placeholder_track))
+            elif not check_all_files:
+                query = query.filter(or_(missing_supplemental, placeholder_track))
+            else:
+                query = query.filter(
+                    or_(
+                        Track.metadata_status.is_(None),
+                        func.json_extract(Track.metadata_status, "$.enhanced").is_(None),
+                        not_(is_enhanced),
+                        missing_supplemental,
+                        placeholder_track,
+                    )
+                )
 
             MAX_REATTEMPTS = 5
             query = query.filter(
@@ -1019,13 +1043,27 @@ class TrackRepository:
             script = getattr(prop, "script", None)
             alias_type = getattr(prop, "alias_type", None)
 
-            if entity_type == "artist":
+            if entity_type in ("artist", "track_artist"):
                 artist_id: int | None = None
                 if prop.entity_id is not None:
                     if isinstance(prop.entity_id, int) or (
                         isinstance(prop.entity_id, str) and prop.entity_id.isdigit()
                     ):
-                        artist_id = int(prop.entity_id)
+                        candidate_id = int(prop.entity_id)
+                        if session.query(Artist).filter_by(id=candidate_id).first():
+                            artist_id = candidate_id
+                        elif entity_type == "track_artist":
+                            ta = session.query(TrackArtist).filter_by(id=candidate_id).first()
+                            if ta:
+                                artist_id = ta.artist_id
+                            elif track:
+                                ta_by_artist = (
+                                    session.query(TrackArtist)
+                                    .filter_by(track_id=track.id, artist_id=candidate_id)
+                                    .first()
+                                )
+                                if ta_by_artist:
+                                    artist_id = ta_by_artist.artist_id
                     else:
                         found_artist = (
                             session.query(Artist)
@@ -1040,8 +1078,13 @@ class TrackRepository:
                         if found_artist:
                             artist_id = found_artist.id
 
-                if not artist_id and track and track.artist_id:
-                    artist_id = track.artist_id
+                if not artist_id and track:
+                    if entity_type == "track_artist":
+                        track_artists = session.query(TrackArtist).filter_by(track_id=track.id).all()
+                        if len(track_artists) == 1:
+                            artist_id = track_artists[0].artist_id
+                    if not artist_id and track.artist_id:
+                        artist_id = track.artist_id
 
                 if not artist_id:
                     continue
@@ -1071,75 +1114,6 @@ class TrackRepository:
                         plugin_id=plugin_id,
                     )
                     session.add(new_alias)
-                upserted_count += 1
-
-            elif entity_type == "track_artist":
-                track_artist_id: int | None = None
-                if prop.entity_id is not None:
-                    if isinstance(prop.entity_id, int) or (
-                        isinstance(prop.entity_id, str) and prop.entity_id.isdigit()
-                    ):
-                        candidate_id = int(prop.entity_id)
-                        ta = session.query(TrackArtist).filter_by(id=candidate_id).first()
-                        if ta:
-                            track_artist_id = ta.id
-                        elif track:
-                            ta_by_artist = (
-                                session.query(TrackArtist).filter_by(track_id=track.id, artist_id=candidate_id).first()
-                            )
-                            if ta_by_artist:
-                                track_artist_id = ta_by_artist.id
-                    else:
-                        if track:
-                            found_artist = (
-                                session.query(Artist)
-                                .filter(
-                                    or_(
-                                        Artist.musicbrainz_id == str(prop.entity_id),
-                                        Artist.name == str(prop.entity_id),
-                                    )
-                                )
-                                .first()
-                            )
-                            if found_artist:
-                                ta_by_artist = (
-                                    session.query(TrackArtist)
-                                    .filter_by(track_id=track.id, artist_id=found_artist.id)
-                                    .first()
-                                )
-                                if ta_by_artist:
-                                    track_artist_id = ta_by_artist.id
-
-                if not track_artist_id and track:
-                    track_artists = session.query(TrackArtist).filter_by(track_id=track.id).all()
-                    if len(track_artists) == 1:
-                        track_artist_id = track_artists[0].id
-
-                if not track_artist_id:
-                    continue
-
-                existing_ta = (
-                    session.query(TrackArtistAlias)
-                    .filter_by(
-                        track_artist_id=track_artist_id,
-                        language=lang,
-                        script=script,
-                        alias_name=value,
-                    )
-                    .first()
-                )
-                if existing_ta:
-                    if alias_type:
-                        existing_ta.alias_type = alias_type
-                else:
-                    new_ta_alias = TrackArtistAlias(
-                        track_artist_id=track_artist_id,
-                        alias_name=value,
-                        language=lang,
-                        script=script,
-                        alias_type=alias_type,
-                    )
-                    session.add(new_ta_alias)
                 upserted_count += 1
 
             elif entity_type == "track":

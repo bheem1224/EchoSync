@@ -810,9 +810,7 @@ def check_plugin_permission(plugin_id: str, scope: str) -> bool:
                                     return True
                                 if db_perms.get(canonical_scope) or db_perms.get(sub_key):
                                     return True
-                            elif (db_perms.get(clean_scope)) or (
-                                db_perms.get(canonical_scope)
-                            ):
+                            elif (db_perms.get(clean_scope)) or (db_perms.get(canonical_scope)):
                                 return True
                     except Exception:
                         pass
@@ -927,18 +925,56 @@ def _validate_attribute_payload(key: str, value: Any) -> None:
 
 
 def _resolve_plugin_id_int(plugin_name: str) -> int:
+    """Resolve a plugin name to its deterministic CRC32 plugin_id.
+
+    Queries the ``plugin_id`` column of the ``services`` table (which stores
+    the CRC32 computed at registration time).  Falls back to a local CRC32
+    computation so the call is always safe even before the plugin is registered.
+
+    NOTE: We intentionally do NOT call ``get_service_id()`` here because that
+    helper returns the autoincrement primary key (``services.id``), which is a
+    non-deterministic integer that must never be used as an alias provenance
+    stamp.
+    """
     import binascii
+
+    clean_name = str(plugin_name).strip().lower()
 
     try:
         from database.config_database import get_config_database
 
         db = get_config_database()
-        int_id = db.get_service_id(plugin_name)
-        if int_id:
-            return int(int_id)
+        with db._get_connection() as conn:
+            c = conn.cursor()
+            # Resolve by exact name match first (case-insensitive).
+            c.execute(
+                "SELECT plugin_id FROM services WHERE LOWER(name)=?",
+                (clean_name,),
+            )
+            row = c.fetchone()
+            if row and row[0]:
+                return int(row[0])
+
+            # Try canonical EchoSync namespace variants.
+            bare = clean_name.replace("echosync.", "").replace("echosync/", "").strip()
+            for variant in (
+                f"echosync.{bare}",
+                f"echosync/{bare}",
+                bare,
+            ):
+                c.execute(
+                    "SELECT plugin_id FROM services WHERE LOWER(name)=?",
+                    (variant,),
+                )
+                row = c.fetchone()
+                if row and row[0]:
+                    return int(row[0])
     except Exception:
         pass
-    return binascii.crc32(plugin_name.lower().encode("utf-8")) & 0xFFFFFFFF
+
+    # Fallback: compute deterministic CRC32 locally — identical to how
+    # compute_plugin_crc32() and generate_plugin_id() derive the value.
+    return binascii.crc32(clean_name.encode("utf-8")) & 0xFFFFFFFF
 
 
 class _AliasBroker:

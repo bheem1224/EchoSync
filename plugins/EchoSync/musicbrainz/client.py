@@ -80,6 +80,22 @@ class MusicBrainzClient(PluginBase):
         self._batch_task = None
         self._lock = asyncio.Lock()
 
+        # Implement 404 fail-fast to prevent 12-second stall on missing MBIDs
+        original_should_retry = self.http._should_retry
+
+        def fail_fast_should_retry(http_self, resp, exc, attempt):
+            # If the response is a 404 or the exception wraps a 404, NEVER retry.
+            if resp is not None and getattr(resp, "status_code", None) == 404:
+                return False
+            if exc is not None and getattr(exc, "status", None) == 404:
+                return False
+            return original_should_retry(resp, exc, attempt)
+
+        # Bind the function to the instance
+        import types
+
+        self.http._should_retry = types.MethodType(fail_fast_should_retry, self.http)
+
     @plugin_cache(ttl_seconds=2592000)
     def _fetch_artist_track_dicts(self, artist_name: str) -> list[dict[str, Any]]:
         """Cached paginated recording fetch returning JSON-serialisable dicts.

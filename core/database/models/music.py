@@ -12,7 +12,6 @@ from database.music_database import (
     Track,
     TrackAlias,
     TrackArtist,
-    TrackArtistAlias,
     TrackAudioFeatures,
 )
 
@@ -28,6 +27,5 @@ __all__ = [
     "Track",
     "TrackAlias",
     "TrackArtist",
-    "TrackArtistAlias",
     "TrackAudioFeatures",
 ]

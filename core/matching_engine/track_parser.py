@@ -23,8 +23,8 @@ logger = logging.getLogger(__name__)
 
 # Atomic Role Parsing Patterns
 FEATURED_PATTERN = re.compile(r"\s+(?:feat\.?|ft\.?|featuring|with)\s+(.+?)(?=\s*[\(\[]|$)", re.IGNORECASE)
-PRIMARY_SPLIT_PATTERN = re.compile(r"\s*(?:&|/|,|\band\b)\s*", re.IGNORECASE)
-VS_PATTERN = re.compile(r"\s+vs\.?\s+", re.IGNORECASE)
+PRIMARY_SPLIT_PATTERN = re.compile(r"(?:\s+&\s+|\s*[/,]\s*|\s+\band\b\s+)", re.IGNORECASE)
+VS_PATTERN = re.compile(r"\s+(?:vs\.?|x|[\u00d7\u0445\u2715\u2716×✕✖])\s+", re.IGNORECASE)
 
 # Version Extraction Patterns
 VERSION_PATTERNS = {

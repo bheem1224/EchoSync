@@ -100,6 +100,9 @@ def test_musicbrainz_structured_vs_verbose_logging():
     original_level = mb_logger.level
     mb_logger.setLevel(logging.DEBUG)  # Only DEBUG enabled, not VERBOSE (5)
 
+    from core.caching.plugin_cache import get_cache
+    get_cache().clear()
+
     try:
         # Run get_metadata with mb_logger at DEBUG level
         result = client.get_metadata("rec-123")
@@ -114,6 +117,7 @@ def test_musicbrainz_structured_vs_verbose_logging():
 
         # Now enable VERBOSE (level 5) on mb_logger
         records.clear()
+        get_cache().clear()
         mb_logger.setLevel(VERBOSE)
         client.get_metadata("rec-123")
 

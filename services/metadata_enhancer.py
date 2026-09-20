@@ -307,14 +307,13 @@ def normalize_singles_metadata(track: Any, group_standalone_singles: bool = True
             track["release_type"] = "single"
             track["is_single"] = True
         else:
-            if hasattr(track, "album"):
-                track.album = "Singles"
-            if hasattr(track, "album_title"):
-                track.album_title = "Singles"
-            if hasattr(track, "release_type"):
-                track.release_type = "single"
-            if hasattr(track, "is_single"):
-                track.is_single = True
+            for attr in ("album_title", "album", "release_type", "is_single"):
+                if hasattr(track, attr):
+                    try:
+                        val = "single" if attr == "release_type" else (True if attr == "is_single" else "Singles")
+                        setattr(track, attr, val)
+                    except (AttributeError, TypeError):
+                        pass
 
     return track
 
@@ -3003,7 +3002,9 @@ class RetroactiveEnhancer:
                             try:
                                 ensure_path_invariance(session, track, media)
                             except Exception as inv_err:
-                                session.rollback()
+                                # Log but do NOT rollback — the DB metadata update must
+                                # persist even if the physical file relocation fails
+                                # (e.g. IO gatekeeper blocks moves outside authorized roots).
                                 logger.warning(
                                     "[enhancer] Path invariance check failed for media %s: %s",
                                     mid,

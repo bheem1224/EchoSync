@@ -322,6 +322,10 @@ class EchosyncTrack:
     def artist(self) -> str:
         return self.artist_name
 
+    @artist.setter
+    def artist(self, val: str) -> None:
+        self.artist_name = val
+
     @property
     def album(self) -> str:
         return self.album_title
@@ -623,6 +627,22 @@ def _get_artist_name(self) -> str:
 
 def _set_artist_name(self, val: str):
     self.__dict__["artist_name"] = val
+    if val:
+        try:
+            from core.matching_engine.track_parser import decompose_artists
+
+            roles = decompose_artists(str(val))
+            self.primary_artists = roles.get("primary") or [str(val).strip()]
+            self.featured_artists = roles.get("featured") or []
+            self.remixers = roles.get("remixer") or []
+        except Exception:
+            self.primary_artists = [str(val).strip()]
+            self.featured_artists = []
+            self.remixers = []
+    else:
+        self.primary_artists = []
+        self.featured_artists = []
+        self.remixers = []
 
 
 EchosyncTrack.artist_name = property(_get_artist_name, _set_artist_name)

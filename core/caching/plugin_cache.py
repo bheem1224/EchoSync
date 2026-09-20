@@ -163,7 +163,25 @@ class PluginCache:
             return True
         except Exception as e:
             logger.error(f"Error deleting from cache: {e}")
-            return False
+
+    def clear(self) -> int:
+        """
+        Clear all entries from the cache
+
+        Returns:
+            Number of entries deleted
+        """
+        try:
+            from core.task_manager.task_queue import db_write_lease
+
+            query = text("DELETE FROM parsed_tracks")
+            with db_write_lease("cache"), self.db.engine.connect() as conn:
+                res = conn.execute(query)
+                conn.commit()
+                return res.rowcount if hasattr(res, "rowcount") else 0
+        except Exception as e:
+            logger.error(f"Error clearing cache: {e}")
+            return 0
 
     def clear_expired(self) -> int:
         """

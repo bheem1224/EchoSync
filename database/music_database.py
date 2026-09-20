@@ -281,6 +281,15 @@ class Track(Base):
 
         return func.json_extract(cls.metadata_status, "$.echosync_signature")
 
+    @property
+    def is_verified(self) -> bool:
+        if self.metadata_status and isinstance(self.metadata_status, dict):
+            if "is_verified" in self.metadata_status:
+                return bool(self.metadata_status["is_verified"])
+            if "verified" in self.metadata_status:
+                return bool(self.metadata_status["verified"])
+        return bool(self.musicbrainz_id or (self.artist_id and self.album_id))
+
     __table_args__ = (UniqueConstraint("sync_id", name="uq_tracks_sync_id"),)
 
     album: Mapped[Album | None] = relationship(back_populates="tracks")
@@ -458,9 +467,6 @@ class TrackArtist(Base):
 
     track: Mapped[Track] = relationship(back_populates="artist_associations")
     artist: Mapped[Artist] = relationship(back_populates="track_associations")
-    aliases: Mapped[list[TrackArtistAlias]] = relationship(
-        "TrackArtistAlias", back_populates="track_artist", cascade="all, delete-orphan"
-    )
 
 
 class LocalMedia(Base):
@@ -630,48 +636,6 @@ class AlbumAttribute(Base):
     value: Mapped[dict | list | str | int | float | bool | None] = mapped_column(JSON, nullable=True)
 
     album: Mapped[Album] = relationship(back_populates="attributes")
-
-
-class TrackArtistAlias(Base):
-    """Localised / transliterated names for a collaborating track artist."""
-
-    __tablename__ = "track_artist_aliases"
-    __table_args__ = (
-        UniqueConstraint(
-            "track_artist_id",
-            "language",
-            "script",
-            "alias_name",
-            name="uq_track_artist_alias",
-        ),
-    )
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    track_artist_id: Mapped[int] = mapped_column(
-        ForeignKey("track_artists.id", ondelete="CASCADE"), nullable=False, index=True
-    )
-    language: Mapped[str | None] = mapped_column(String(10))
-    script: Mapped[str | None] = mapped_column(String(10))
-    alias_type: Mapped[str | None] = mapped_column(String(30))
-    alias_name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
-
-    track_artist: Mapped[TrackArtist] = relationship(back_populates="aliases")
-
-    @property
-    def name(self) -> str:
-        return self.alias_name
-
-    @name.setter
-    def name(self, val: str) -> None:
-        self.alias_name = val
-
-    @property
-    def locale(self) -> str | None:
-        return self.language
-
-    @locale.setter
-    def locale(self, val: str | None) -> None:
-        self.language = val
 
 
 class TrackAudioFeatures(Base):

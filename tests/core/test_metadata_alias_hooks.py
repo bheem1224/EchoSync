@@ -29,7 +29,6 @@ from database.music_database import (
     Base,
     Track,
     TrackArtist,
-    TrackArtistAlias,
 )
 
 
@@ -193,22 +192,17 @@ def test_track_artist_alias_persistence(memory_session):
     assert artist_alias.script == "Latn"
     assert artist_alias.alias_type == "official_romanization"
 
-    # 5. Verify track_artist alias for remixer
-    ta_alias = (
-        memory_session.query(TrackArtistAlias)
-        .filter_by(track_artist_id=ta_remixer.id, alias_name="Yasutaka Nakata")
+    # 5. Verify artist alias for remixer
+    remixer_alias = (
+        memory_session.query(ArtistAlias)
+        .filter_by(artist_id=remixer_artist.id, name="Yasutaka Nakata")
         .first()
     )
-    assert ta_alias is not None
-    assert ta_alias.language == "ja"
-    assert ta_alias.script == "Latn"
-    assert ta_alias.alias_type == "official_romanization"
-    assert ta_alias.name == "Yasutaka Nakata"
-
-    # Verify ORM relationship on TrackArtist
-    memory_session.refresh(ta_remixer)
-    assert len(ta_remixer.aliases) == 1
-    assert ta_remixer.aliases[0].alias_name == "Yasutaka Nakata"
+    assert remixer_alias is not None
+    assert remixer_alias.language == "ja"
+    assert remixer_alias.script == "Latn"
+    assert remixer_alias.alias_type == "official_romanization"
+    assert remixer_alias.name == "Yasutaka Nakata"
 
 
 def test_physical_tags_remain_native_script_despite_aliases(monkeypatch, tmp_path):

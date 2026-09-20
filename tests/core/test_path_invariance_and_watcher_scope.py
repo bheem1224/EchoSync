@@ -123,8 +123,9 @@ def test_ensure_path_invariance_aborts_without_signature_or_verification(tmp_pat
         album_id=valid_album.id,
         echosync_signature=None,  # No signature
         track_number=1,
+        musicbrainz_id=None,  # Ensure fallback does not return True
+        metadata_status={"is_verified": False},  # Override is_verified @property
     )
-    track.is_verified = False  # Not verified
     session.add(track)
     session.flush()
 
