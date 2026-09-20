@@ -240,6 +240,12 @@ def _serialize_task(
         or track_data.get("raw_title")
         or track_data.get("display_title")
     )
+    edition_val = (
+        (detected_metadata.get("edition") if isinstance(detected_metadata, dict) else None)
+        or (detected_metadata.get("version") if isinstance(detected_metadata, dict) else None)
+        or track_data.get("edition")
+        or track_data.get("version")
+    )
     album_val = (
         (detected_metadata.get("album") if isinstance(detected_metadata, dict) else None)
         or track_data.get("album_title")
@@ -251,6 +257,7 @@ def _serialize_task(
         if detected_metadata is not None
         else {
             "title": title_val,
+            "edition": edition_val,
             "artist": artist_val,
             "album": album_val,
             "year": track_data.get("release_year") or track_data.get("year"),
@@ -268,6 +275,8 @@ def _serialize_task(
             detected["artist"] = artist_val
         if not detected.get("title") and title_val:
             detected["title"] = title_val
+        if not detected.get("edition") and edition_val:
+            detected["edition"] = edition_val
         if not detected.get("album") and album_val:
             detected["album"] = album_val
 
@@ -422,6 +431,7 @@ def _build_track_from_metadata(file_path: Path, metadata: dict[str, Any]):
         raw_title=title,
         artist_name=artist,
         album_title=album,
+        edition=cast(str | None, metadata.get("edition") or metadata.get("version")),
         duration=_coerce_int(metadata.get("duration_ms") or metadata.get("duration")),
         isrc=cast(str | None, metadata.get("isrc")),
         musicbrainz_id=cast(str | None, metadata.get("recording_id") or metadata.get("musicbrainz_id")),
@@ -443,7 +453,6 @@ def _build_track_from_metadata(file_path: Path, metadata: dict[str, Any]):
 def _import_single_file(file_path: Path, metadata: dict[str, Any], old_file_path: Path | None = None) -> int:
     db = get_database()
     from core.database.repositories.track_repo import TrackRepository
-    from core.matching_engine.text_utils import normalize_title
     from database import _canonicalize_path
     from database.music_database import AudioFingerprint, LocalMedia, Track
 
@@ -605,7 +614,6 @@ def get_review_queue():
             for task in tasks:
                 detected_metadata = _normalize_detected_metadata(getattr(task, "detected_metadata", None))
                 current_metadata = _read_current_metadata(task)
-                resolved_file = _resolve_task_file(task)
 
                 serialized_tasks.append(
                     _serialize_task(
@@ -650,7 +658,7 @@ def update_review_queue_item(task_id: int, payload: UpdateReviewQueueRequest, _=
                 task.track_data[k] = v
 
             # Standardize properties through detected_metadata setter (backward compatibility)
-            if any(k in metadata for k in ["title", "artist", "album", "year", "musicbrainz_id"]):
+            if any(k in metadata for k in ["title", "artist", "album", "edition", "version", "year", "musicbrainz_id"]):
                 task.detected_metadata = metadata
 
             return {"success": True, "id": task.id}
@@ -726,7 +734,6 @@ def approve_review_queue_item(
             def _background_approval_task():
                 try:
                     from core.db.echo_sync_track import EchosyncTrack
-                    from database import _canonicalize_path
 
                     # 1. Resolve task details in fresh working DB session
                     working_db = get_working_database()
@@ -770,6 +777,10 @@ def approve_review_queue_item(
                             staged_track.raw_title = final_metadata["title"]
                             staged_track.title = final_metadata["title"]
                             staged_track.display_title = final_metadata["title"]
+                        if "edition" in final_metadata:
+                            staged_track.edition = final_metadata["edition"]
+                        elif "version" in final_metadata:
+                            staged_track.edition = final_metadata["version"]
                         if final_metadata.get("artist"):
                             staged_track.artist_name = final_metadata["artist"]
                         if final_metadata.get("album"):
@@ -807,6 +818,7 @@ def approve_review_queue_item(
                     # Merge the finalized metadata back to dict for tagging
                     metadata_to_tag = {
                         "title": staged_track.title,
+                        "edition": staged_track.edition,
                         "artist": staged_track.artist_name,
                         "album": staged_track.album_title,
                         "year": str(staged_track.release_year) if staged_track.release_year else None,
@@ -855,8 +867,6 @@ def approve_review_queue_item(
                         while destination_path.exists() and destination_path.resolve() != file_path_obj.resolve():
                             destination_path = parent / f"{stem} ({counter}){ext_with_dot}"
                             counter += 1
-
-                    canonical_target_path = _canonicalize_path(str(destination_path))
 
                     from core.io_gatekeeper import Gatekeeper
                     from services.library_watcher import suppress_path
@@ -1338,6 +1348,8 @@ def lookup_review_queue_item_acoustid(task_id: int, _=Depends(require_auth)):
             updated_fields = []
             if track_obj.title:
                 updated_fields.append("title")
+            if track_obj.edition:
+                updated_fields.append("edition")
             if track_obj.artist_name:
                 updated_fields.append("artist")
             if track_obj.album_title:
@@ -1544,6 +1556,8 @@ def lookup_review_queue_item_musicbrainz(task_id: int, payload: MusicBrainzLooku
             updated_fields = []
             if found_track.title:
                 updated_fields.append("title")
+            if found_track.edition:
+                updated_fields.append("edition")
             if found_track.artist_name:
                 updated_fields.append("artist")
             if found_track.album_title:
@@ -1622,6 +1636,10 @@ def lookup_review_queue_item_isrc(task_id: int, payload: ISRCLookupRequest | Non
             if hasattr(track, "title") and track.title:
                 track_obj.title = track.title
                 track_obj.raw_title = track.title
+            if hasattr(track, "edition") and track.edition:
+                track_obj.edition = track.edition
+            elif hasattr(track, "version") and track.version:
+                track_obj.edition = track.version
             if hasattr(track, "artist_name") and track.artist_name:
                 track_obj.artist_name = track.artist_name
             elif hasattr(track, "artist") and track.artist:
@@ -1650,6 +1668,8 @@ def lookup_review_queue_item_isrc(task_id: int, payload: ISRCLookupRequest | Non
             updated_fields = []
             if track_obj.title:
                 updated_fields.append("title")
+            if track_obj.edition:
+                updated_fields.append("edition")
             if track_obj.artist_name:
                 updated_fields.append("artist")
             if track_obj.album_title:

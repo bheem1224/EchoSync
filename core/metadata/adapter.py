@@ -67,18 +67,36 @@ class ResolutionAdapter:
         if clean_title:
             track.title = clean_title
 
-        if ext_edition:
+        # Cleanse album release title (e.g. "Dusk Till Dawn (radio edit)" -> "Dusk Till Dawn")
+        raw_album = (
+            getattr(result, "album_title", None)
+            or getattr(result, "album", None)
+            or (track.album.title if track.album else "")
+        )
+        clean_album, alb_version, alb_edition = (
+            extract_version_descriptors(raw_album) if raw_album else (None, None, None)
+        )
+        if clean_album and track.album:
+            track.album.title = clean_album
+
+        if getattr(result, "edition", None):
+            track.edition = result.edition
+        elif ext_edition:
             track.edition = ext_edition
         elif ext_version:
             track.edition = ext_version
-        elif getattr(result, "edition", None):
-            track.edition = result.edition
+        elif alb_edition:
+            track.edition = alb_edition
+        elif alb_version:
+            track.edition = alb_version
         elif getattr(result, "version", None):
             track.edition = result.version
 
         try:
             if ext_version:
                 track.version = ext_version
+            elif alb_version:
+                track.version = alb_version
             elif getattr(result, "version", None):
                 track.version = result.version
         except Exception:

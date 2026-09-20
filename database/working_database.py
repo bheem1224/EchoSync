@@ -126,6 +126,7 @@ class ReviewTask(WorkingBase):
             return None
         return {
             "title": self.track_data.get("title") or self.track_data.get("raw_title"),
+            "edition": self.track_data.get("edition") or self.track_data.get("version"),
             "artist": self.track_data.get("artist"),
             "album": self.track_data.get("album_title") or self.track_data.get("album"),
             "year": self.track_data.get("release_year") or self.track_data.get("year"),
@@ -150,6 +151,7 @@ class ReviewTask(WorkingBase):
             self.track_data = {}
         self.track_data["title"] = val.get("title")
         self.track_data["raw_title"] = val.get("title") or val.get("raw_title")
+        self.track_data["edition"] = val.get("edition") or val.get("version")
         self.track_data["artist"] = val.get("artist") or val.get("artist_name")
         self.track_data["album_title"] = val.get("album") or val.get("album_title")
         self.track_data["release_year"] = val.get("year") or val.get("release_year")
@@ -168,6 +170,8 @@ class ReviewTask(WorkingBase):
             if k not in [
                 "title",
                 "raw_title",
+                "edition",
+                "version",
                 "artist",
                 "artist_name",
                 "album",

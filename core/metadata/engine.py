@@ -71,6 +71,11 @@ def _create_resolved_track(
     from core.matching_engine.track_parser import decompose_artists, extract_version_descriptors
 
     clean_t, ext_ver, ext_ed = extract_version_descriptors(title or "")
+    clean_alb, alb_ver, alb_ed = extract_version_descriptors(album or "") if album else (None, None, None)
+    edition = ext_ed or alb_ed
+    version = ext_ver or alb_ver
+    final_album = clean_alb if clean_alb else (album or "")
+
     roles = decompose_artists(artist or "")
     primary = roles.get("primary", [artist]) if artist else []
     featured = roles.get("featured", [])
@@ -79,9 +84,9 @@ def _create_resolved_track(
     track = EchosyncTrack(
         raw_title=title or "",
         artist_name=artist or "",
-        album_title=album or "",
-        edition=ext_ed,
-        version=ext_ver,
+        album_title=final_album,
+        edition=edition,
+        version=version,
         sync_id=sync_id,
         duration=duration_ms,
         track_number=track_number,

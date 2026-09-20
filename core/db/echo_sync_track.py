@@ -283,6 +283,19 @@ class EchosyncTrack:
             if ext_version and not self.version:
                 self.version = ext_version
 
+        # 2b. Album Title & Version normalization (cleanse edition from release names e.g. "Dusk Till Dawn (radio edit)")
+        if self.album_title:
+            clean_album, alb_version, alb_edition = extract_version_descriptors(self.album_title)
+            if clean_album:
+                self.album_title = clean_album
+            if not self.edition:
+                if alb_edition:
+                    self.edition = alb_edition
+                elif alb_version:
+                    self.edition = alb_version
+            if not self.version and alb_version:
+                self.version = alb_version
+
         # 3. Artist decomposition
         if self.artist_name and not self.primary_artists:
             roles = decompose_artists(self.artist_name)
