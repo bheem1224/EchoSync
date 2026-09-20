@@ -633,7 +633,10 @@ class JobQueue:
 
             job.manual_next_run = time.time()
             if params:
-                job.params = params
+                if job.params:
+                    job.params = {**job.params, **params}
+                else:
+                    job.params = params
 
             self._remove_from_heap(name)
             job.next_run = job.manual_next_run

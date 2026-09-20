@@ -113,10 +113,66 @@ async def run_job(request: Request, payload: JobRunRequest = None):
         or request.query_params.get("job_name")
     )
     params = dict(payload.params or {})
+    if hasattr(payload, "__pydantic_extra__") and payload.__pydantic_extra__:
+        params.update(payload.__pydantic_extra__)
+
     if payload.scan_mode:
         params["scan_mode"] = payload.scan_mode
     elif request.query_params.get("scan_mode"):
         params["scan_mode"] = request.query_params.get("scan_mode")
+
+    # Extract and normalize force / force_refresh
+    force_val = None
+    if payload.force_refresh is not None:
+        force_val = payload.force_refresh
+    elif payload.force is not None:
+        force_val = payload.force
+    elif "force_refresh" in params:
+        force_val = params["force_refresh"]
+    elif "force" in params:
+        force_val = params["force"]
+    elif request.query_params.get("force_refresh") is not None:
+        force_val = request.query_params.get("force_refresh")
+    elif request.query_params.get("force") is not None:
+        force_val = request.query_params.get("force")
+
+    if force_val is not None:
+        is_force = force_val if isinstance(force_val, bool) else (str(force_val).lower() in ("true", "1", "yes"))
+        params["force_refresh"] = is_force
+        params["force"] = is_force
+
+    # Extract and normalize check_all_files
+    check_all_val = None
+    if payload.check_all_files is not None:
+        check_all_val = payload.check_all_files
+    elif "check_all_files" in params:
+        check_all_val = params["check_all_files"]
+    elif request.query_params.get("check_all_files") is not None:
+        check_all_val = request.query_params.get("check_all_files")
+
+    if check_all_val is not None:
+        is_check_all = (
+            check_all_val if isinstance(check_all_val, bool) else (str(check_all_val).lower() in ("true", "1", "yes"))
+        )
+        params["check_all_files"] = is_check_all
+
+    # Extract batch_size
+    if payload.batch_size is not None:
+        params["batch_size"] = payload.batch_size
+    elif "batch_size" not in params and request.query_params.get("batch_size") is not None:
+        try:
+            params["batch_size"] = int(request.query_params.get("batch_size"))
+        except ValueError:
+            pass
+
+    # Extract limit
+    if payload.limit is not None:
+        params["limit"] = payload.limit
+    elif "limit" not in params and request.query_params.get("limit") is not None:
+        try:
+            params["limit"] = int(request.query_params.get("limit"))
+        except ValueError:
+            pass
 
     if not job_name:
         raise HTTPException(status_code=400, detail={"error": "job name required"})

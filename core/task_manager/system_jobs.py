@@ -890,6 +890,20 @@ def register_retroactive_metadata_enhancement_job(
         force_refresh: bool = False,
         **kwargs,
     ):
+        force_val = kwargs.get("force_refresh", kwargs.get("force", force_refresh))
+        if isinstance(force_val, str):
+            force_refresh = force_val.lower() in ("true", "1", "yes")
+        else:
+            force_refresh = bool(force_val)
+
+        if "check_all_files" in kwargs:
+            val = kwargs["check_all_files"]
+            check_all_files = val.lower() in ("true", "1", "yes") if isinstance(val, str) else bool(val)
+        if "batch_size" in kwargs and kwargs["batch_size"] is not None:
+            batch_size = int(kwargs["batch_size"])
+        if "limit" in kwargs and kwargs["limit"] is not None:
+            limit = int(kwargs["limit"])
+
         def _worker(batch_size, check_all_files, limit, force_refresh):
             try:
                 from services.retroactive_metadata_worker import (
@@ -952,7 +966,12 @@ def register_retroactive_metadata_enhancement_job(
         category=category,
         tags=["system", "metadata", "library"],
         max_retries=1,
-        params={"batch_size": batch_size, "check_all_files": check_all_files},
+        params={
+            "batch_size": batch_size,
+            "check_all_files": check_all_files,
+            "limit": limit,
+            "force_refresh": force_refresh,
+        },
     )
 
     logger.info(
