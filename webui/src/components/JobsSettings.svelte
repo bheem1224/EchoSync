@@ -1,27 +1,39 @@
 <script>
-  import { onMount, onDestroy } from 'svelte';
-  import apiClient from '../api/client';
-  import { feedback } from '../stores/feedback';
+  import { onMount, onDestroy } from "svelte";
+  import apiClient from "../api/client";
+  import { feedback } from "../stores/feedback";
 
   let jobs = [];
   let loading = true;
   let refreshInterval;
   let editingInterval = null;
-  let newInterval = '';
+  let newInterval = "";
   let showAutoImportSettings = false;
   let forceScan = false;
   let showDbUpdateSettings = false;
-  let dbScanMode = 'incremental';
+  let dbScanMode = "incremental";
   let showEnhanceSettings = false;
   let enhanceBatchSize = 50;
-  let enhanceLimit = '';
+  let enhanceLimit = "";
   let enhanceCheckAll = false;
 
   // Category definitions
   const categories = {
-    user: { label: 'User Tasks', order: 1, description: 'User-configured tasks and plugin operations' },
-    echosync: { label: 'Echosync Tasks', order: 2, description: 'Recurring background tasks managed by Echosync' },
-    system: { label: 'System Tasks', order: 3, description: 'Core system operations and maintenance' }
+    user: {
+      label: "User Tasks",
+      order: 1,
+      description: "User-configured tasks and plugin operations",
+    },
+    echosync: {
+      label: "Echosync Tasks",
+      order: 2,
+      description: "Recurring background tasks managed by Echosync",
+    },
+    system: {
+      label: "System Tasks",
+      order: 3,
+      description: "Core system operations and maintenance",
+    },
   };
 
   onMount(async () => {
@@ -36,82 +48,98 @@
 
   async function loadJobs() {
     try {
-      const response = await apiClient.get('/system/jobs');
+      const response = await apiClient.get("/system/jobs");
       if (response.data && response.data.items) {
-        jobs = response.data.items.map(job => ({
+        jobs = response.data.items.map((job) => ({
           ...job,
-          category: categorizeJob(job)
+          category: categorizeJob(job),
         }));
       }
       loading = false;
     } catch (error) {
-      console.error('Failed to load jobs:', error);
-      feedback.addToast('Failed to load jobs', 'error');
+      console.error("Failed to load jobs:", error);
+      feedback.addToast("Failed to load jobs", "error");
       loading = false;
     }
   }
 
   function categorizeJob(job) {
     // Categorize based on tags
-    if (job.tags && job.tags.includes('system')) return 'system';
-    if (job.tags && job.tags.includes('echosync')) return 'echosync';
-    if (job.plugin || (job.tags && job.tags.includes('user'))) return 'user';
-    
+    if (job.tags && job.tags.includes("system")) return "system";
+    if (job.tags && job.tags.includes("echosync")) return "echosync";
+    if (job.plugin || (job.tags && job.tags.includes("user"))) return "user";
+
     // Fallback: heuristic based on job name
-    if (job.name.startsWith('health_check') || job.name.startsWith('system:')) return 'system';
-    if (job.name.startsWith('download:') || job.name.startsWith('scan:') || job.name.startsWith('provider:')) return 'echosync';
-    
-    return 'user';
+    if (job.name.startsWith("health_check") || job.name.startsWith("system:"))
+      return "system";
+    if (
+      job.name.startsWith("download:") ||
+      job.name.startsWith("scan:") ||
+      job.name.startsWith("provider:")
+    )
+      return "echosync";
+
+    return "user";
   }
 
   function formatTimestamp(timestamp) {
-    if (!timestamp) return 'Never';
+    if (!timestamp) return "Never";
     const date = new Date(timestamp * 1000);
     const now = Date.now();
     const diff = now - date.getTime();
-    
+
     // Less than 1 hour: show relative
     if (diff < 3600000) {
       const minutes = Math.floor(diff / 60000);
-      return minutes < 1 ? 'Just now' : `${minutes}m ago`;
+      return minutes < 1 ? "Just now" : `${minutes}m ago`;
     }
-    
+
     // Today: show time
     if (date.toDateString() === new Date().toDateString()) {
-      return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+      return date.toLocaleTimeString("en-US", {
+        hour: "numeric",
+        minute: "2-digit",
+        hour12: true,
+      });
     }
-    
+
     // Otherwise: show date and time
-    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true });
+    return date.toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
+    });
   }
 
   function formatNextRun(timestamp) {
-    if (!timestamp) return 'Not scheduled';
+    if (!timestamp) return "Not scheduled";
     const date = new Date(timestamp * 1000);
     const now = Date.now();
     const diff = date.getTime() - now;
-    
-    if (diff < 0) return 'Pending';
-    
+
+    if (diff < 0) return "Pending";
+
     // Less than 1 hour: show relative
     if (diff < 3600000) {
       const minutes = Math.floor(diff / 60000);
-      return minutes < 1 ? 'Now' : `in ${minutes}m`;
+      return minutes < 1 ? "Now" : `in ${minutes}m`;
     }
-    
+
     // Less than 24 hours: show hours
     if (diff < 86400000) {
       const hours = Math.floor(diff / 3600000);
       return `in ${hours}h`;
     }
-    
+
     // Otherwise: show days
     const days = Math.floor(diff / 86400000);
     return `in ${days}d`;
   }
 
   function formatInterval(seconds) {
-    if (!seconds) return 'One-time';
+    if (!seconds) return "One-time";
     if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
     if (seconds < 86400) return `${Math.floor(seconds / 3600)}h`;
     return `${Math.floor(seconds / 86400)}d`;
@@ -120,73 +148,93 @@
   async function runJob(jobName) {
     try {
       const payload = { name: jobName, job_name: jobName };
-      if (jobName === 'auto_import_scan' && forceScan) {
+      if (jobName === "auto_import_scan" && forceScan) {
         payload.params = { force_scan: true };
       }
-      if (jobName === 'database_update') {
+      if (jobName === "database_update") {
         payload.scan_mode = dbScanMode;
         payload.params = { scan_mode: dbScanMode };
       }
-      if (jobName === 'retroactive_metadata_enhancement' || jobName === 'metadata_enhancement') {
+      if (
+        jobName === "retroactive_metadata_enhancement" ||
+        jobName === "metadata_enhancement"
+      ) {
         payload.params = {
           batch_size: enhanceBatchSize ? parseInt(enhanceBatchSize) : 50,
           limit: enhanceLimit ? parseInt(enhanceLimit) : null,
-          check_all_files: enhanceCheckAll
+          check_all_files: enhanceCheckAll,
+          force_refresh: enhanceCheckAll,
+          force: enhanceCheckAll,
         };
       }
-      await apiClient.post('/system/jobs/run', payload);
-      const modeSuffix = jobName === 'database_update' && dbScanMode !== 'incremental' 
-        ? ` (${dbScanMode})` 
-        : (jobName === 'retroactive_metadata_enhancement' && enhanceLimit ? ` (limit: ${enhanceLimit})` : '');
-      feedback.addToast(`Job "${jobName}" started${modeSuffix}`, 'success');
+      await apiClient.post("/system/jobs/run", payload);
+      const modeSuffix =
+        jobName === "database_update" && dbScanMode !== "incremental"
+          ? ` (${dbScanMode})`
+          : jobName === "retroactive_metadata_enhancement" && enhanceLimit
+            ? ` (limit: ${enhanceLimit})`
+            : "";
+      feedback.addToast(`Job "${jobName}" started${modeSuffix}`, "success");
       await loadJobs(); // Refresh to show updated status
     } catch (error) {
       console.error(`Failed to run job ${jobName}:`, error);
       const errorMsg = error.response?.data?.error || error.message;
       const reason = error.response?.data?.reason;
-      
+
       // Show user-friendly error message
       if (error.response?.status === 409) {
         // Job is already running
-        feedback.addToast(`Job is already running. ${reason || 'Please wait for it to complete.'}`, 'warning');
+        feedback.addToast(
+          `Job is already running. ${reason || "Please wait for it to complete."}`,
+          "warning",
+        );
       } else {
-        feedback.addToast(`Failed to run job: ${errorMsg}`, 'error');
+        feedback.addToast(`Failed to run job: ${errorMsg}`, "error");
       }
     }
   }
 
   function startEditInterval(job) {
     editingInterval = job.name;
-    newInterval = job.interval_seconds ? String(job.interval_seconds / 60) : '60'; // Show in minutes
+    newInterval = job.interval_seconds
+      ? String(job.interval_seconds / 60)
+      : "60"; // Show in minutes
   }
 
   function cancelEditInterval() {
     editingInterval = null;
-    newInterval = '';
+    newInterval = "";
   }
 
   async function saveInterval(jobName) {
     const intervalSeconds = parseInt(newInterval) * 60;
-    
+
     if (intervalSeconds < 60) {
-      feedback.addToast('Interval must be at least 1 minute', 'error');
+      feedback.addToast("Interval must be at least 1 minute", "error");
       return;
     }
 
     try {
-      await apiClient.post(`/system/jobs/${jobName}/interval`, { interval_seconds: intervalSeconds });
-      feedback.addToast('Interval updated', 'success');
+      await apiClient.post(`/system/jobs/${jobName}/interval`, {
+        interval_seconds: intervalSeconds,
+      });
+      feedback.addToast("Interval updated", "success");
       editingInterval = null;
-      newInterval = '';
+      newInterval = "";
       await loadJobs();
     } catch (error) {
       console.error(`Failed to update interval for ${jobName}:`, error);
-      feedback.addToast(`Failed to update interval: ${error.response?.data?.error || error.message}`, 'error');
+      feedback.addToast(
+        `Failed to update interval: ${error.response?.data?.error || error.message}`,
+        "error",
+      );
     }
   }
 
   $: jobsByCategory = Object.keys(categories).reduce((acc, cat) => {
-    acc[cat] = jobs.filter(j => j.category === cat).sort((a, b) => a.name.localeCompare(b.name));
+    acc[cat] = jobs
+      .filter((j) => j.category === cat)
+      .sort((a, b) => a.name.localeCompare(b.name));
     return acc;
   }, {});
 </script>
@@ -201,8 +249,20 @@
       <h2>Scheduled Jobs</h2>
       <p class="subtitle">Manage recurring tasks and background operations</p>
     </div>
-    <button class="btn-refresh active:scale-95 transition-all duration-200" on:click={loadJobs} disabled={loading}>
-      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+    <button
+      class="btn-refresh active:scale-95 transition-all duration-200"
+      on:click={loadJobs}
+      disabled={loading}
+    >
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        width="16"
+        height="16"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+      >
         <polyline points="23 4 23 10 17 10"></polyline>
         <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
       </svg>
@@ -224,7 +284,11 @@
 
           <div class="jobs-list">
             {#each jobsByCategory[catId] as job}
-              <div class="job-card" class:running={job.running} class:error={job.last_error}>
+              <div
+                class="job-card"
+                class:running={job.running}
+                class:error={job.last_error}
+              >
                 <div class="job-main">
                   <div class="job-info">
                     <div class="job-name">
@@ -240,44 +304,81 @@
                         <span class="status-badge error">
                           Error
                           {#if job.total_failures > 1}
-                            <span class="failure-count">({job.total_failures})</span>
+                            <span class="failure-count"
+                              >({job.total_failures})</span
+                            >
                           {/if}
                         </span>
                       {/if}
                     </div>
-                    
+
                     <div class="job-meta">
                       {#if job.total_successes > 0}
                         <span class="meta-item success">
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                          <svg
+                            width="14"
+                            height="14"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                          >
                             <polyline points="20 6 9 17 4 12"></polyline>
                           </svg>
-                          {job.total_successes} successful run{job.total_successes !== 1 ? 's' : ''}
+                          {job.total_successes} successful run{job.total_successes !==
+                          1
+                            ? "s"
+                            : ""}
                         </span>
                       {/if}
-                      
+
                       {#if job.last_success || job.last_finished}
                         <span class="meta-item">
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                          <svg
+                            width="14"
+                            height="14"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                          >
                             <circle cx="12" cy="12" r="10"></circle>
                             <polyline points="12 6 12 12 16 14"></polyline>
                           </svg>
-                          Last run: {formatTimestamp(job.last_success || job.last_finished)}
+                          Last run: {formatTimestamp(
+                            job.last_success || job.last_finished,
+                          )}
                         </span>
                       {/if}
-                      
+
                       {#if job.next_run && job.enabled}
                         <span class="meta-item">
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"></path>
+                          <svg
+                            width="14"
+                            height="14"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                          >
+                            <path
+                              d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"
+                            ></path>
                           </svg>
                           Next run: {formatNextRun(job.next_run)}
                         </span>
                       {/if}
-                      
+
                       {#if job.interval_seconds}
                         <span class="meta-item interval">
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                          <svg
+                            width="14"
+                            height="14"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                          >
                             <path d="M21 10H3M21 6H3M21 14H3M21 18H3"></path>
                           </svg>
                           Interval: {formatInterval(job.interval_seconds)}
@@ -287,7 +388,14 @@
 
                     {#if job.last_error}
                       <div class="job-error">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <svg
+                          width="14"
+                          height="14"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="2"
+                        >
                           <circle cx="12" cy="12" r="10"></circle>
                           <line x1="12" y1="8" x2="12" y2="12"></line>
                           <line x1="12" y1="16" x2="12.01" y2="16"></line>
@@ -295,7 +403,9 @@
                         <div class="error-content">
                           <div class="error-message">{job.last_error}</div>
                           {#if job.last_error_time}
-                            <div class="error-time">Failed {formatTimestamp(job.last_error_time)}</div>
+                            <div class="error-time">
+                              Failed {formatTimestamp(job.last_error_time)}
+                            </div>
                           {/if}
                         </div>
                       </div>
@@ -312,137 +422,282 @@
                           placeholder="Minutes"
                           class="interval-input"
                         />
-                        <button class="btn-icon success active:scale-95 transition-all duration-200" on:click={() => saveInterval(job.name)} title="Save">
+                        <button
+                          class="btn-icon success active:scale-95 transition-all duration-200"
+                          on:click={() => saveInterval(job.name)}
+                          title="Save"
+                        >
                           ✓
                         </button>
-                        <button class="btn-icon active:scale-95 transition-all duration-200" on:click={cancelEditInterval} title="Cancel">
+                        <button
+                          class="btn-icon active:scale-95 transition-all duration-200"
+                          on:click={cancelEditInterval}
+                          title="Cancel"
+                        >
                           ✕
                         </button>
                       </div>
                     {:else}
-                      {#if job.name === 'auto_import_scan'}
-                        <div style="position: relative; display: flex; align-items: center; gap: 4px;">
+                      {#if job.name === "auto_import_scan"}
+                        <div
+                          style="position: relative; display: flex; align-items: center; gap: 4px;"
+                        >
                           <button
                             class="btn-action active:scale-95 transition-all duration-200"
                             on:click={() => runJob(job.name)}
                             disabled={job.running}
-                            title={job.running ? 'Job is already running' : 'Run now'}
+                            title={job.running
+                              ? "Job is already running"
+                              : "Run now"}
                           >
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <svg
+                              width="16"
+                              height="16"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              stroke-width="2"
+                            >
                               <polygon points="5 3 19 12 5 21 5 3"></polygon>
                             </svg>
-                            {job.running ? 'Running...' : 'Run'}
+                            {job.running ? "Running..." : "Run"}
                           </button>
-                          
+
                           <button
                             class="btn-action btn-cog active:scale-95 transition-all duration-200"
-                            on:click={() => showAutoImportSettings = !showAutoImportSettings}
+                            on:click={() =>
+                              (showAutoImportSettings =
+                                !showAutoImportSettings)}
                             title="Job parameters"
                             style="padding: 6px;"
                           >
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <svg
+                              width="16"
+                              height="16"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              stroke-width="2"
+                            >
                               <circle cx="12" cy="12" r="3"></circle>
-                              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                              <path
+                                d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"
+                              ></path>
                             </svg>
                           </button>
-                          
+
                           {#if showAutoImportSettings}
                             <div class="job-settings-dropdown">
                               <label class="dropdown-item">
-                                <input type="checkbox" bind:checked={forceScan} style="cursor: pointer;" />
+                                <input
+                                  type="checkbox"
+                                  bind:checked={forceScan}
+                                  style="cursor: pointer;"
+                                />
                                 <span>Bypass Cooldown Queue (Force Scan)</span>
                               </label>
                             </div>
                           {/if}
                         </div>
-                      {:else if job.name === 'database_update'}
-                        <div style="position: relative; display: flex; align-items: center; gap: 4px;">
+                      {:else if job.name === "database_update"}
+                        <div
+                          style="position: relative; display: flex; align-items: center; gap: 4px;"
+                        >
                           <button
                             class="btn-action active:scale-95 transition-all duration-200"
                             on:click={() => runJob(job.name)}
                             disabled={job.running}
-                            title={job.running ? 'Job is already running' : 'Run now'}
+                            title={job.running
+                              ? "Job is already running"
+                              : "Run now"}
                           >
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <svg
+                              width="16"
+                              height="16"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              stroke-width="2"
+                            >
                               <polygon points="5 3 19 12 5 21 5 3"></polygon>
                             </svg>
-                            {job.running ? 'Running...' : 'Run'}
+                            {job.running ? "Running..." : "Run"}
                           </button>
-                          
+
                           <button
                             class="btn-action btn-cog active:scale-95 transition-all duration-200"
-                            on:click={() => showDbUpdateSettings = !showDbUpdateSettings}
+                            on:click={() =>
+                              (showDbUpdateSettings = !showDbUpdateSettings)}
                             title="Scan mode options"
                             style="padding: 6px;"
                           >
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <svg
+                              width="16"
+                              height="16"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              stroke-width="2"
+                            >
                               <circle cx="12" cy="12" r="3"></circle>
-                              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                              <path
+                                d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"
+                              ></path>
                             </svg>
                           </button>
-                          
+
                           {#if showDbUpdateSettings}
-                            <div class="job-settings-dropdown" style="min-width: 270px; display: flex; flex-direction: column; gap: 8px;">
-                              <div style="font-size: 11px; font-weight: 600; text-transform: uppercase; color: var(--muted); padding-bottom: 4px; border-bottom: 1px solid rgba(255,255,255,0.08);">
+                            <div
+                              class="job-settings-dropdown"
+                              style="min-width: 270px; display: flex; flex-direction: column; gap: 8px;"
+                            >
+                              <div
+                                style="font-size: 11px; font-weight: 600; text-transform: uppercase; color: var(--muted); padding-bottom: 4px; border-bottom: 1px solid rgba(255,255,255,0.08);"
+                              >
                                 Library Scan Mode
                               </div>
-                              <label class="dropdown-item" style="align-items: flex-start;">
-                                <input type="radio" name="dbScanMode" value="incremental" bind:group={dbScanMode} style="margin-top: 3px; cursor: pointer;" />
-                                <div style="display: flex; flex-direction: column; gap: 2px;">
-                                  <span style="font-weight: 500; color: var(--text);">Incremental (Default)</span>
-                                  <span style="font-size: 11px; color: var(--muted); line-height: 1.2;">Fast mtime check; scans new & modified files</span>
+                              <label
+                                class="dropdown-item"
+                                style="align-items: flex-start;"
+                              >
+                                <input
+                                  type="radio"
+                                  name="dbScanMode"
+                                  value="incremental"
+                                  bind:group={dbScanMode}
+                                  style="margin-top: 3px; cursor: pointer;"
+                                />
+                                <div
+                                  style="display: flex; flex-direction: column; gap: 2px;"
+                                >
+                                  <span
+                                    style="font-weight: 500; color: var(--text);"
+                                    >Incremental (Default)</span
+                                  >
+                                  <span
+                                    style="font-size: 11px; color: var(--muted); line-height: 1.2;"
+                                    >Fast mtime check; scans new & modified
+                                    files</span
+                                  >
                                 </div>
                               </label>
-                              <label class="dropdown-item" style="align-items: flex-start;">
-                                <input type="radio" name="dbScanMode" value="force_rescan" bind:group={dbScanMode} style="margin-top: 3px; cursor: pointer;" />
-                                <div style="display: flex; flex-direction: column; gap: 2px;">
-                                  <span style="font-weight: 500; color: var(--text);">Force Rescan</span>
-                                  <span style="font-size: 11px; color: var(--muted); line-height: 1.2;">Re-evaluates all tags without clearing tables</span>
+                              <label
+                                class="dropdown-item"
+                                style="align-items: flex-start;"
+                              >
+                                <input
+                                  type="radio"
+                                  name="dbScanMode"
+                                  value="force_rescan"
+                                  bind:group={dbScanMode}
+                                  style="margin-top: 3px; cursor: pointer;"
+                                />
+                                <div
+                                  style="display: flex; flex-direction: column; gap: 2px;"
+                                >
+                                  <span
+                                    style="font-weight: 500; color: var(--text);"
+                                    >Force Rescan</span
+                                  >
+                                  <span
+                                    style="font-size: 11px; color: var(--muted); line-height: 1.2;"
+                                    >Re-evaluates all tags without clearing
+                                    tables</span
+                                  >
                                 </div>
                               </label>
-                              <label class="dropdown-item" style="align-items: flex-start;">
-                                <input type="radio" name="dbScanMode" value="full_rebuild" bind:group={dbScanMode} style="margin-top: 3px; cursor: pointer;" />
-                                <div style="display: flex; flex-direction: column; gap: 2px;">
-                                  <span style="font-weight: 500; color: #f87171;">Full Rebuild</span>
-                                  <span style="font-size: 11px; color: var(--muted); line-height: 1.2;">Clears music library tables and runs cold scan</span>
+                              <label
+                                class="dropdown-item"
+                                style="align-items: flex-start;"
+                              >
+                                <input
+                                  type="radio"
+                                  name="dbScanMode"
+                                  value="full_rebuild"
+                                  bind:group={dbScanMode}
+                                  style="margin-top: 3px; cursor: pointer;"
+                                />
+                                <div
+                                  style="display: flex; flex-direction: column; gap: 2px;"
+                                >
+                                  <span
+                                    style="font-weight: 500; color: #f87171;"
+                                    >Full Rebuild</span
+                                  >
+                                  <span
+                                    style="font-size: 11px; color: var(--muted); line-height: 1.2;"
+                                    >Clears music library tables and runs cold
+                                    scan</span
+                                  >
                                 </div>
                               </label>
                             </div>
                           {/if}
                         </div>
-                      {:else if job.name === 'retroactive_metadata_enhancement' || job.name === 'metadata_enhancement'}
-                        <div style="position: relative; display: flex; align-items: center; gap: 4px;">
+                      {:else if job.name === "retroactive_metadata_enhancement" || job.name === "metadata_enhancement"}
+                        <div
+                          style="position: relative; display: flex; align-items: center; gap: 4px;"
+                        >
                           <button
                             class="btn-action active:scale-95 transition-all duration-200"
                             on:click={() => runJob(job.name)}
                             disabled={job.running}
-                            title={job.running ? 'Job is already running' : 'Run now'}
+                            title={job.running
+                              ? "Job is already running"
+                              : "Run now"}
                           >
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <svg
+                              width="16"
+                              height="16"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              stroke-width="2"
+                            >
                               <polygon points="5 3 19 12 5 21 5 3"></polygon>
                             </svg>
-                            {job.running ? 'Running...' : 'Run'}
+                            {job.running ? "Running..." : "Run"}
                           </button>
-                          
+
                           <button
                             class="btn-action btn-cog active:scale-95 transition-all duration-200"
-                            on:click={() => showEnhanceSettings = !showEnhanceSettings}
+                            on:click={() =>
+                              (showEnhanceSettings = !showEnhanceSettings)}
                             title="Enhancement parameters"
                             style="padding: 6px;"
                           >
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <svg
+                              width="16"
+                              height="16"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              stroke-width="2"
+                            >
                               <circle cx="12" cy="12" r="3"></circle>
-                              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                              <path
+                                d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"
+                              ></path>
                             </svg>
                           </button>
-                          
+
                           {#if showEnhanceSettings}
-                            <div class="job-settings-dropdown" style="min-width: 270px; display: flex; flex-direction: column; gap: 10px;">
-                              <div style="font-size: 11px; font-weight: 600; text-transform: uppercase; color: var(--muted); padding-bottom: 4px; border-bottom: 1px solid rgba(255,255,255,0.08);">
+                            <div
+                              class="job-settings-dropdown"
+                              style="min-width: 270px; display: flex; flex-direction: column; gap: 10px;"
+                            >
+                              <div
+                                style="font-size: 11px; font-weight: 600; text-transform: uppercase; color: var(--muted); padding-bottom: 4px; border-bottom: 1px solid rgba(255,255,255,0.08);"
+                              >
                                 Enhancement Options
                               </div>
-                              <div style="display: flex; flex-direction: column; gap: 4px;">
-                                <label style="font-size: 11px; color: var(--text); font-weight: 500;">Batch Size</label>
+                              <div
+                                style="display: flex; flex-direction: column; gap: 4px;"
+                              >
+                                <label
+                                  style="font-size: 11px; color: var(--text); font-weight: 500;"
+                                  >Batch Size</label
+                                >
                                 <input
                                   type="number"
                                   bind:value={enhanceBatchSize}
@@ -452,8 +707,13 @@
                                   style="width: 100%; border-radius: 6px; padding: 4px 8px;"
                                 />
                               </div>
-                              <div style="display: flex; flex-direction: column; gap: 4px;">
-                                <label style="font-size: 11px; color: var(--text); font-weight: 500;">Item Limit (Test Cap)</label>
+                              <div
+                                style="display: flex; flex-direction: column; gap: 4px;"
+                              >
+                                <label
+                                  style="font-size: 11px; color: var(--text); font-weight: 500;"
+                                  >Item Limit (Test Cap)</label
+                                >
                                 <input
                                   type="number"
                                   bind:value={enhanceLimit}
@@ -463,9 +723,18 @@
                                   style="width: 100%; border-radius: 6px; padding: 4px 8px;"
                                 />
                               </div>
-                              <label class="dropdown-item" style="margin-top: 2px;">
-                                <input type="checkbox" bind:checked={enhanceCheckAll} style="cursor: pointer;" />
-                                <span style="font-size: 12px;">Check All Tracks (Force Pass)</span>
+                              <label
+                                class="dropdown-item"
+                                style="margin-top: 2px;"
+                              >
+                                <input
+                                  type="checkbox"
+                                  bind:checked={enhanceCheckAll}
+                                  style="cursor: pointer;"
+                                />
+                                <span style="font-size: 12px;"
+                                  >Check All Tracks (Force Pass)</span
+                                >
                               </label>
                             </div>
                           {/if}
@@ -475,24 +744,44 @@
                           class="btn-action active:scale-95 transition-all duration-200"
                           on:click={() => runJob(job.name)}
                           disabled={job.running}
-                          title={job.running ? 'Job is already running' : 'Run now'}
+                          title={job.running
+                            ? "Job is already running"
+                            : "Run now"}
                         >
-                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                          <svg
+                            width="16"
+                            height="16"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                          >
                             <polygon points="5 3 19 12 5 21 5 3"></polygon>
                           </svg>
-                          {job.running ? 'Running...' : 'Run'}
+                          {job.running ? "Running..." : "Run"}
                         </button>
                       {/if}
-                      
+
                       {#if job.interval_seconds}
                         <button
                           class="btn-action active:scale-95 transition-all duration-200"
                           on:click={() => startEditInterval(job)}
                           title="Edit interval"
                         >
-                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
-                            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                          <svg
+                            width="16"
+                            height="16"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                          >
+                            <path
+                              d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"
+                            ></path>
+                            <path
+                              d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"
+                            ></path>
                           </svg>
                           Edit
                         </button>

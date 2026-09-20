@@ -155,6 +155,9 @@ async def run_job(request: Request, payload: JobRunRequest = None):
             check_all_val if isinstance(check_all_val, bool) else (str(check_all_val).lower() in ("true", "1", "yes"))
         )
         params["check_all_files"] = is_check_all
+        if is_check_all and force_val is None:
+            params["force_refresh"] = True
+            params["force"] = True
 
     # Extract batch_size
     if payload.batch_size is not None:

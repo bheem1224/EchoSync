@@ -102,6 +102,112 @@ async def test_run_job_query_params_propagation():
         })
 
 
+@pytest.mark.asyncio
+async def test_run_job_check_all_files_infers_force_refresh():
+    """Verify run_job infers force_refresh=True when check_all_files=True is passed without explicit force flag."""
+    with patch.object(job_queue, "execute_job_now", return_value=True) as mock_exec, \
+         patch("web.routes.jobs.jq_list_jobs", return_value=[{"name": "retroactive_metadata_enhancement", "running": False}]):
+
+        scope = {
+            "type": "http",
+            "method": "POST",
+            "path": "/api/v1/system/jobs/run",
+            "headers": [],
+            "query_string": b"",
+        }
+        req = Request(scope)
+        payload = JobRunRequest(
+            job_name="retroactive_metadata_enhancement",
+            params={"check_all_files": True, "batch_size": 50},
+        )
+        await run_job(req, payload)
+        mock_exec.assert_called_with("retroactive_metadata_enhancement", params={
+            "check_all_files": True,
+            "force_refresh": True,
+            "force": True,
+            "batch_size": 50,
+        })
+
+
+def test_get_tracks_for_enhancement_pagination_with_exclude_ids(tmp_path):
+    """Verify get_tracks_for_enhancement properly paginates using exclude_ids across batches."""
+    from database.music_database import (
+        Album,
+        Artist,
+        Base,
+        LocalMedia,
+        MusicDatabase,
+        Track,
+    )
+    from core.database.repositories.track_repo import TrackRepository
+
+    db = MusicDatabase(tmp_path / "test_pagination.db")
+    Base.metadata.create_all(db.engine)
+
+    with db.session_scope() as session:
+        artist = Artist(name="Artist Test")
+        album = Album(title="Album Test", artist=artist)
+        session.add_all([artist, album])
+        session.flush()
+
+        # Add 5 tracks
+        for i in range(1, 6):
+            t = Track(
+                id=i,
+                title=f"Track {i}",
+                artist=artist,
+                album=album,
+                musicbrainz_id=f"mbid-{i}",
+                metadata_status={"enhanced": True},
+            )
+            session.add(t)
+            session.flush()
+
+            m = LocalMedia(
+                track_id=t.id,
+                file_path=str(tmp_path / f"track_{i}.flac"),
+                file_format="flac",
+                media_id=f"m_{i}",
+            )
+            session.add(m)
+
+    with db.session_scope() as session:
+        processed_ids = set()
+
+        # Batch 1 (size=2)
+        batch1 = TrackRepository.get_tracks_for_enhancement(
+            session, batch_size=2, force_refresh=True, exclude_ids=processed_ids
+        )
+        assert len(batch1) == 2
+        for t in batch1:
+            processed_ids.add(t.id)
+        assert processed_ids == {1, 2}
+
+        # Batch 2 (size=2, exclude {1, 2})
+        batch2 = TrackRepository.get_tracks_for_enhancement(
+            session, batch_size=2, force_refresh=True, exclude_ids=processed_ids
+        )
+        assert len(batch2) == 2
+        for t in batch2:
+            processed_ids.add(t.id)
+        assert processed_ids == {1, 2, 3, 4}
+
+        # Batch 3 (size=2, exclude {1, 2, 3, 4})
+        batch3 = TrackRepository.get_tracks_for_enhancement(
+            session, batch_size=2, force_refresh=True, exclude_ids=processed_ids
+        )
+        assert len(batch3) == 1
+        for t in batch3:
+            processed_ids.add(t.id)
+        assert processed_ids == {1, 2, 3, 4, 5}
+
+        # Batch 4 (all excluded) -> 0 items
+        batch4 = TrackRepository.get_tracks_for_enhancement(
+            session, batch_size=2, force_refresh=True, exclude_ids=processed_ids
+        )
+        assert len(batch4) == 0
+
+
 def test_system_job_run_metadata_enhancement_kwargs():
     """Verify run_metadata_enhancement in system_jobs extracts force/force_refresh and launches worker process."""
     from core.task_manager import system_jobs, task_queue
@@ -133,3 +239,4 @@ def test_system_job_run_metadata_enhancement_kwargs():
             assert target_args[1] is True
             assert target_args[2] is None
             assert target_args[3] is True
+

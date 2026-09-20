@@ -184,6 +184,8 @@ class TrackRepository:
         force_refresh: bool = False,
         require_signature: bool = False,
         missing_plugin: str | None = None,
+        exclude_ids: set[int] | list[int] | None = None,
+        offset: int = 0,
     ) -> list[Track]:
         from sqlalchemy import case
 
@@ -253,16 +255,18 @@ class TrackRepository:
                 func.json_extract(Track.metadata_status, "$.enhanced") == "true",
                 func.json_extract(Track.metadata_status, "$.enhanced") == 1,
             )
-            if require_signature:
-                query = query.filter(or_(missing_sig, missing_supplemental, placeholder_track))
-            elif not check_all_files:
-                query = query.filter(or_(missing_supplemental, placeholder_track))
+            if not check_all_files:
+                if require_signature:
+                    query = query.filter(or_(missing_sig, missing_supplemental, placeholder_track))
+                else:
+                    query = query.filter(or_(missing_supplemental, placeholder_track))
             else:
                 query = query.filter(
                     or_(
                         Track.metadata_status.is_(None),
                         func.json_extract(Track.metadata_status, "$.enhanced").is_(None),
                         not_(is_enhanced),
+                        missing_sig,
                         missing_supplemental,
                         placeholder_track,
                     )
@@ -281,6 +285,16 @@ class TrackRepository:
                     )
                 )
             )
+
+        if exclude_ids:
+            ex_list = list(exclude_ids)
+            if len(ex_list) <= 30000:
+                query = query.filter(Track.id.notin_(ex_list))
+            else:
+                query = query.filter(Track.id.notin_(ex_list[-30000:]))
+
+        if offset > 0:
+            query = query.offset(offset)
 
         return query.order_by(priority_case.asc(), Track.id.asc()).limit(batch_size).all()
 

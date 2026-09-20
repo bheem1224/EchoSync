@@ -957,6 +957,8 @@ class RetroactiveEnhancer:
         check_all_files: bool = False,
         force_refresh: bool = False,
         require_signature: bool = False,
+        exclude_ids: set[int] | list[int] | None = None,
+        offset: int = 0,
     ) -> list[Any]:
         """Fetch candidate tracks for metadata enhancement, optionally bypassing enhanced: true flags."""
         from core.database.repositories.track_repo import TrackRepository
@@ -969,6 +971,8 @@ class RetroactiveEnhancer:
                 check_all_files=check_all_files,
                 force_refresh=force_refresh,
                 require_signature=require_signature,
+                exclude_ids=exclude_ids,
+                offset=offset,
             )
         else:
             db = get_database()
@@ -979,6 +983,8 @@ class RetroactiveEnhancer:
                     check_all_files=check_all_files,
                     force_refresh=force_refresh,
                     require_signature=require_signature,
+                    exclude_ids=exclude_ids,
+                    offset=offset,
                 )
 
     def get_tracks_needing_enhancement(
@@ -988,6 +994,8 @@ class RetroactiveEnhancer:
         check_all_files: bool = False,
         force_refresh: bool = False,
         require_signature: bool = True,
+        exclude_ids: set[int] | list[int] | None = None,
+        offset: int = 0,
     ) -> list[Any]:
         """Fetch candidate tracks needing metadata enhancement, prioritizing missing signatures."""
         return self.get_tracks_for_enhancement(
@@ -996,6 +1004,8 @@ class RetroactiveEnhancer:
             check_all_files=check_all_files,
             force_refresh=force_refresh,
             require_signature=require_signature,
+            exclude_ids=exclude_ids,
+            offset=offset,
         )
 
     def revert_track_metadata_from_disk(self, track_id: int, session: Any | None = None) -> bool:
@@ -1976,7 +1986,7 @@ class RetroactiveEnhancer:
 
         total_processed = 0
         processed_track_ids: set[int] = set()
-        MAX_ITERATIONS = 500  # safety cap — prevents infinite loops on persistent failures
+        MAX_ITERATIONS = 50000  # safety cap — prevents infinite loops on persistent failures
 
         required_keys = hook_manager.apply_filters("register_metadata_requirements", [])
         for _iteration in range(MAX_ITERATIONS):
@@ -2008,6 +2018,7 @@ class RetroactiveEnhancer:
                         check_all_files,
                         force_refresh=force_refresh,
                         require_signature=require_signature,
+                        exclude_ids=processed_track_ids,
                     )
                     tracks_to_process = [t for t in candidates if t.id not in processed_track_ids]
                 except OperationalError as _oe:
