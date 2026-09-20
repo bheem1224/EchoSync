@@ -776,6 +776,8 @@ class TrackRepository:
                         bit_depth=getattr(t, "bit_depth", None),
                         channels=getattr(t, "channels", None),
                         file_size_bytes=getattr(t, "file_size_bytes", None) or getattr(t, "file_size", None),
+                        inode=getattr(t, "inode", None),
+                        mtime=getattr(t, "mtime", None),
                     )
                 )
 

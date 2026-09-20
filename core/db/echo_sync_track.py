@@ -288,13 +288,11 @@ class EchosyncTrack:
             clean_album, alb_version, alb_edition = extract_version_descriptors(self.album_title)
             if clean_album:
                 self.album_title = clean_album
-            if not self.edition:
-                if alb_edition:
-                    self.edition = alb_edition
-                elif alb_version:
-                    self.edition = alb_version
-            if not self.version and alb_version:
-                self.version = alb_version
+            if not self.edition and (alb_edition or alb_version):
+                if clean_title and clean_album and clean_title.strip().lower() == clean_album.strip().lower():
+                    self.edition = alb_edition or alb_version
+                    if not self.version and alb_version:
+                        self.version = alb_version
 
         # 3. Artist decomposition
         if self.artist_name and not self.primary_artists:

@@ -77,6 +77,8 @@ def _parse_telemetry_dict(raw_dict: dict[str, Any]) -> EchosyncTrack | None:
         flat_bit_depth = raw_dict.pop("bit_depth", None)
         flat_channels = raw_dict.pop("channels", None)
         flat_file_size = raw_dict.pop("file_size_bytes", None) or raw_dict.pop("file_size", None)
+        flat_mtime = raw_dict.pop("mtime", None)
+        flat_inode = raw_dict.pop("inode", None)
 
         if flat_file_path and not media_list:
             media_list.append(
@@ -88,6 +90,8 @@ def _parse_telemetry_dict(raw_dict: dict[str, Any]) -> EchosyncTrack | None:
                     bit_depth=flat_bit_depth,
                     channels=flat_channels,
                     file_size_bytes=flat_file_size,
+                    inode=flat_inode,
+                    mtime=flat_mtime,
                 )
             )
 

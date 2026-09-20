@@ -321,6 +321,14 @@ class LibrarySyncService:
                 if not raw_dict.get("file_path"):
                     raw_dict["file_path"] = file_path
 
+                if raw_dict.get("mtime") is None and os.path.exists(file_path):
+                    try:
+                        st = os.stat(file_path)
+                        raw_dict["mtime"] = st.st_mtime
+                        raw_dict["inode"] = getattr(st, "st_ino", None)
+                    except Exception:
+                        pass
+
                 track = _parse_telemetry_dict(raw_dict)
                 if track:
                     chunk.append(track)
