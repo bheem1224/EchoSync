@@ -9,6 +9,18 @@ use std::path::Path;
 
 pub struct MetadataWriter;
 
+/// Safe byte truncation that respects UTF-8 char boundaries.
+pub fn truncate_to_byte_boundary(s: &str, mut max_bytes: usize) -> &str {
+    if max_bytes >= s.len() {
+        return s;
+    }
+    // Walk backwards until we hit a valid char boundary
+    while max_bytes > 0 && !s.is_char_boundary(max_bytes) {
+        max_bytes -= 1;
+    }
+    &s[..max_bytes]
+}
+
 fn populate_tag_items(tag: &mut Tag, tags: &HashMap<String, String>) {
     let version_str = tags
         .get("version")
@@ -16,6 +28,8 @@ fn populate_tag_items(tag: &mut Tag, tags: &HashMap<String, String>) {
         .or_else(|| tags.get("edition"))
         .map(|s| s.trim())
         .filter(|s| !s.is_empty());
+
+    let is_id3v1 = tag.tag_type() == TagType::Id3v1;
 
     // Extract and set title with version injection
     if let Some(title_val) = tags.get("title") {
@@ -30,22 +44,29 @@ fn populate_tag_items(tag: &mut Tag, tags: &HashMap<String, String>) {
             } else {
                 st.to_string()
             };
-            tag.insert_text(ItemKey::TrackTitle, final_title);
+            if is_id3v1 {
+                let safe_title = truncate_to_byte_boundary(&final_title, 30);
+                tag.insert_text(ItemKey::TrackTitle, safe_title.to_string());
+            } else {
+                tag.insert_text(ItemKey::TrackTitle, final_title);
+            }
         }
     }
 
     // Set version in container-specific tags (TIT3 for ID3v2, SUBTITLE / VERSION for Vorbis, freeform for MP4)
     if let Some(ver) = version_str {
-        tag.insert_text(ItemKey::TrackSubtitle, ver.to_string());
-        let version_key = if tag.tag_type() == TagType::Mp4Ilst {
-            "----:com.apple.iTunes:VERSION".to_string()
-        } else {
-            "VERSION".to_string()
-        };
-        tag.insert_unchecked(TagItem::new(
-            ItemKey::Unknown(version_key),
-            ItemValue::Text(ver.to_string()),
-        ));
+        if !is_id3v1 {
+            tag.insert_text(ItemKey::TrackSubtitle, ver.to_string());
+            let version_key = if tag.tag_type() == TagType::Mp4Ilst {
+                "----:com.apple.iTunes:VERSION".to_string()
+            } else {
+                "VERSION".to_string()
+            };
+            tag.insert_unchecked(TagItem::new(
+                ItemKey::Unknown(version_key),
+                ItemValue::Text(ver.to_string()),
+            ));
+        }
     }
 
     // Extract and set artist / artist_name
@@ -55,7 +76,12 @@ fn populate_tag_items(tag: &mut Tag, tags: &HashMap<String, String>) {
         .map(|s| s.trim())
         .filter(|s| !s.is_empty());
     if let Some(st) = artist_val {
-        tag.insert_text(ItemKey::TrackArtist, st.to_string());
+        if is_id3v1 {
+            let safe_artist = truncate_to_byte_boundary(st, 30);
+            tag.insert_text(ItemKey::TrackArtist, safe_artist.to_string());
+        } else {
+            tag.insert_text(ItemKey::TrackArtist, st.to_string());
+        }
     }
 
     // Extract and set album / album_title
@@ -65,7 +91,12 @@ fn populate_tag_items(tag: &mut Tag, tags: &HashMap<String, String>) {
         .map(|s| s.trim())
         .filter(|s| !s.is_empty());
     if let Some(st) = album_val {
-        tag.insert_text(ItemKey::AlbumTitle, st.to_string());
+        if is_id3v1 {
+            let safe_album = truncate_to_byte_boundary(st, 30);
+            tag.insert_text(ItemKey::AlbumTitle, safe_album.to_string());
+        } else {
+            tag.insert_text(ItemKey::AlbumTitle, st.to_string());
+        }
     }
 
     // Extract and set album_artist
@@ -75,7 +106,12 @@ fn populate_tag_items(tag: &mut Tag, tags: &HashMap<String, String>) {
         .map(|s| s.trim())
         .filter(|s| !s.is_empty());
     if let Some(st) = album_artist_val {
-        tag.insert_text(ItemKey::AlbumArtist, st.to_string());
+        if is_id3v1 {
+            let safe_aa = truncate_to_byte_boundary(st, 30);
+            tag.insert_text(ItemKey::AlbumArtist, safe_aa.to_string());
+        } else {
+            tag.insert_text(ItemKey::AlbumArtist, st.to_string());
+        }
     }
 
     // Extract and set track number
@@ -417,6 +453,12 @@ pub fn write_tags_to_file(path_str: &str, tags: &HashMap<String, String>) -> Res
         let mut tag = Tag::new(tag_type);
         populate_tag_items(&mut tag, tags);
         tagged_file.insert_tag(tag);
+
+        if tagged_file.file_type() == FileType::Mpeg && tagged_file.tag(TagType::Id3v1).is_some() {
+            let mut id3v1_tag = Tag::new(TagType::Id3v1);
+            populate_tag_items(&mut id3v1_tag, tags);
+            tagged_file.insert_tag(id3v1_tag);
+        }
     }
 
     tagged_file
@@ -444,5 +486,38 @@ impl MetadataWriter {
             }
         }
         write_tags_to_file(&path_str, &map)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_truncate_to_byte_boundary_ascii() {
+        let text = "Hello World";
+        assert_eq!(truncate_to_byte_boundary(text, 5), "Hello");
+        assert_eq!(truncate_to_byte_boundary(text, 50), "Hello World");
+        assert_eq!(truncate_to_byte_boundary(text, 0), "");
+    }
+
+    #[test]
+    fn test_truncate_to_byte_boundary_cjk_boundary_snapping() {
+        // "09 - 斷尾鳥（《大夢歸離》影視劇宸玖·同行曲） (5)"
+        // Byte 30 falls in the middle of '離' (3-byte char at indices 29..32)
+        let text = "09 - 斷尾鳥（《大夢歸離》影視劇宸玖·同行曲） (5)";
+        let truncated = truncate_to_byte_boundary(text, 30);
+        assert!(truncated.len() <= 30);
+        assert_eq!(truncated.len(), 29);
+        assert_eq!(truncated, "09 - 斷尾鳥（《大夢歸");
+    }
+
+    #[test]
+    fn test_truncate_to_byte_boundary_exact_boundary() {
+        let text = "中文测试"; // 4 chars * 3 bytes = 12 bytes
+        assert_eq!(truncate_to_byte_boundary(text, 6), "中文");
+        assert_eq!(truncate_to_byte_boundary(text, 7), "中文");
+        assert_eq!(truncate_to_byte_boundary(text, 8), "中文");
+        assert_eq!(truncate_to_byte_boundary(text, 9), "中文测");
     }
 }

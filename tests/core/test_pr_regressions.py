@@ -765,7 +765,7 @@ def test_plex_blueprint_and_router_mounting(regression_env):
         plugins_dir = regression_env["plugins_dir"]
         target_plex_dir = plugins_dir / "EchoSync" / "plex"
         if not target_plex_dir.exists():
-            src_plex = Path("plugins/EchoSync/plex").resolve()
+            src_plex = (Path(__file__).resolve().parents[2] / "plugins" / "EchoSync" / "plex").resolve()
             shutil.copytree(src_plex, target_plex_dir)
 
         config_db.register_service(

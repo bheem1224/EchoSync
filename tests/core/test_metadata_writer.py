@@ -440,3 +440,28 @@ def test_wav_tag_file_verified_does_not_abort_when_container_drops_isrc(tmp_path
     verified = enhancer.tag_file_verified(wav_path, metadata)
     assert verified.get("title") == "JUSTIN BIEBER!!!!!"
 
+
+def test_mp3_cjk_boundary_tag_writing(tmp_path):
+    """Verify that writing multi-byte CJK tags with lengths crossing ID3v1 30-byte boundary does not panic."""
+    mp3_path = _create_minimal_mp3_file(tmp_path / "cjk_test.mp3")
+    enhancer = RetroactiveEnhancer()
+
+    # Specifically tests CJK multi-byte boundary spanning byte 30
+    cjk_title = "09 - 斷尾鳥（《大夢歸離》影視劇宸玖·同行曲） (5)"
+    cjk_artist = "侯明昊 / 郭敬明 (William Guo)"
+    cjk_album = "大夢歸離 影視原聲帶"
+
+    metadata = {
+        "title": cjk_title,
+        "artist": cjk_artist,
+        "album": cjk_album,
+        "year": "2024",
+    }
+
+    # Must complete cleanly without pyo3 PanicException: byte index 30 is not a char boundary
+    verified = enhancer.tag_file_verified(mp3_path, metadata)
+    assert verified.get("title") == cjk_title
+    assert verified.get("artist") == cjk_artist
+    assert verified.get("album") == cjk_album
+
+
