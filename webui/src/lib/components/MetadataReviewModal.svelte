@@ -222,6 +222,8 @@
     }, 1000);
   }
 
+  const handleAutosave = queueAutosave;
+
   function undoLastChange() {
     if (metadataHistory.length < 2 || savingDraft || approving) {
       return;
@@ -931,22 +933,27 @@
               />
             </label>
 
-            <label class="sm:col-span-2">
-              <span class="block text-xs text-slate-400 mb-1"
-                >Edition / Version</span
+            <div class="sm:col-span-2 space-y-1.5">
+              <label for="edition" class="text-xs font-semibold text-slate-300"
+                >Edition / Version</label
               >
               <input
-                class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-slate-100"
+                id="edition"
+                type="text"
                 placeholder="e.g. Radio Edit, Remix, Deluxe Edition"
                 bind:value={proposedMetadata.edition}
+                on:input={handleAutosave}
                 on:keydown={handleInputKeydown}
+                class="w-full px-3 py-2 bg-slate-900/80 border border-slate-700/60 rounded-lg text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-cyan-500/60 transition-colors"
               />
               {#if proposedMetadata.edition}
-                <span class="block text-xs text-slate-400 mt-1">
-                  Physical tag: {proposedMetadata.title || "Untitled"} ({proposedMetadata.edition})
-                </span>
+                <p class="text-[11px] text-slate-400">
+                  Physical tag preview: <span class="text-cyan-400 font-mono"
+                    >{proposedMetadata.title} ({proposedMetadata.edition})</span
+                  >
+                </p>
               {/if}
-            </label>
+            </div>
 
             <label class="sm:col-span-2">
               <span class="block text-xs text-slate-400 mb-1">Artist</span>

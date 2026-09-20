@@ -561,7 +561,7 @@ def test_step_d_duration_veto_rejects_mismatch_and_logs(tmp_path, monkeypatch, c
 
     # Step D duration veto should reject candidate and log clear diagnostics
     assert any("Step D duration veto DROPPED MBID mbid-mismatch-1" in rec.message for rec in caplog.records)
-    assert any("delta=15.00s > 2.0s threshold" in rec.message for rec in caplog.records)
+    assert any("delta=15.00s > 5.00s threshold" in rec.message for rec in caplog.records)
     assert any("All AcoustID candidate(s)" in rec.message for rec in caplog.records)
     # Result must not be from acoustid
     if result:

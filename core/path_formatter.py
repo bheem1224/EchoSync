@@ -107,6 +107,34 @@ def get_prefer_canonical_studio_album() -> bool:
     return True
 
 
+def get_reorganize_library_on_enhancement() -> bool:
+    """Query preference for automatically reorganizing library files on metadata enhancement."""
+    try:
+        from database.config_database import get_config_database
+
+        db = get_config_database()
+        val = db.get_system_setting("metadata_enhancement.reorganize_library_on_enhancement")
+        if val is not None:
+            if isinstance(val, bool):
+                return val
+            return str(val).strip().lower() in ("1", "true", "yes", "on")
+    except Exception:
+        pass
+
+    try:
+        from core.settings import config_manager
+
+        val = config_manager.get("metadata_enhancement.reorganize_library_on_enhancement")
+        if val is not None:
+            if isinstance(val, bool):
+                return val
+            return str(val).strip().lower() in ("1", "true", "yes", "on")
+    except Exception:
+        pass
+
+    return True
+
+
 def get_library_preferences() -> tuple[str, str]:
     """
     Query active library root and renaming pattern preferences.
@@ -371,6 +399,9 @@ def ensure_path_invariance(session: Any, track: Any, local_media: Any) -> Path:
 
     logger = get_logger("path_formatter")
 
+    if not get_reorganize_library_on_enhancement():
+        return Path(local_media.file_path) if local_media and getattr(local_media, "file_path", None) else Path("")
+
     if not local_media or not getattr(local_media, "file_path", None):
         return Path("")
 
@@ -406,7 +437,10 @@ def ensure_path_invariance(session: Any, track: Any, local_media: Any) -> Path:
         )
         return current_path
 
-    if not getattr(track, "echosync_signature", None) and not getattr(track, "is_verified", False):
+    sig = getattr(track, "echosync_signature", None) or (getattr(track, "metadata_status", None) or {}).get(
+        "echosync_signature"
+    )
+    if not sig and not getattr(track, "is_verified", False):
         logger.debug(
             "[path_formatter] Aborting path invariance: track %s lacks ECHOSYNC_SIGNATURE or verification",
             getattr(track, "id", None),
@@ -479,6 +513,12 @@ def ensure_path_invariance(session: Any, track: Any, local_media: Any) -> Path:
                     destination=str(target_path),
                 )
             local_media.file_path = str(target_path)
+            try:
+                st = target_path.stat()
+                local_media.mtime = st.st_mtime
+                local_media.file_size_bytes = st.st_size
+            except Exception:
+                pass
             session.flush()
 
             # Clean up empty source parent directories up to library root

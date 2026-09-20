@@ -38,6 +38,26 @@ from database.music_database import (
 )
 
 
+class MediaTrackTuple(tuple):
+    """Tuple (LocalMedia, Track) with transparent attribute proxying for backward compatibility."""
+
+    def __new__(cls, media: Any, track: Any = None):
+        if track is None and hasattr(media, "track"):
+            track = getattr(media, "track", None)
+        return super().__new__(cls, (media, track))
+
+    @property
+    def media(self) -> Any:
+        return self[0]
+
+    @property
+    def track(self) -> Any:
+        return self[1]
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self[0], name)
+
+
 class TrackRepository:
     """
     Repository providing batched SQLite UPSERT queries using SQLAlchemy 2.0 Core expressions.
@@ -251,7 +271,7 @@ class TrackRepository:
             query = query.filter(missing_plugin_cond)
         elif not force_refresh:
             is_enhanced = or_(
-                func.json_extract(Track.metadata_status, "$.enhanced") == True,
+                func.json_extract(Track.metadata_status, "$.enhanced").is_(True),
                 func.json_extract(Track.metadata_status, "$.enhanced") == "true",
                 func.json_extract(Track.metadata_status, "$.enhanced") == 1,
             )
@@ -297,6 +317,187 @@ class TrackRepository:
             query = query.offset(offset)
 
         return query.order_by(priority_case.asc(), Track.id.asc()).limit(batch_size).all()
+
+    @classmethod
+    def get_media_for_enhancement(
+        cls,
+        session: Session,
+        batch_size: int = 50,
+        check_all_files: bool = False,
+        force_refresh: bool = False,
+        require_signature: bool = False,
+        missing_plugin: str | None = None,
+        exclude_ids: set[int] | list[int] | None = None,
+        offset: int = 0,
+        limit: int | None = None,
+        force_mode: bool = False,
+    ) -> list[MediaTrackTuple]:
+        from sqlalchemy import case, Integer, and_, or_, func, not_
+        from sqlalchemy.orm import joinedload, selectinload
+        from database.music_database import LocalMedia, Track, Artist, Album
+
+        force_refresh = force_refresh or force_mode
+
+        query = (
+            session.query(LocalMedia)
+            .join(Track, LocalMedia.track_id == Track.id)
+            .outerjoin(Artist, Track.artist_id == Artist.id)
+            .outerjoin(Album, Track.album_id == Album.id)
+        )
+        query = query.options(
+            joinedload(LocalMedia.track).joinedload(Track.artist),
+            joinedload(LocalMedia.track).joinedload(Track.album),
+            selectinload(LocalMedia.audio_fingerprints),
+        )
+
+        default_artist = session.query(Artist).filter(Artist.name.in_(["Unknown Artist", "Unknown"])).first()
+        default_artist_id = default_artist.id if default_artist else 1533
+        default_album = session.query(Album).filter(Album.title.in_(["Unknown Album", "Unknown"])).first()
+        default_album_id = default_album.id if default_album else 1804
+        placeholder_track = or_(
+            Track.artist_id == default_artist_id,
+            Track.album_id == default_album_id,
+        )
+
+        unknown_artist = or_(
+            Track.artist_id == default_artist_id,
+            Artist.name.ilike("unknown%"),
+            Artist.name.is_(None),
+        )
+        unknown_album = or_(
+            Track.album_id == default_album_id,
+            Album.title.ilike("unknown%"),
+            Track.album_id.is_(None),
+        )
+        missing_mbid = Track.musicbrainz_id.is_(None)
+
+        missing_sig = or_(
+            Track.echosync_signature.is_(None),
+            Track.echosync_signature == "",
+            func.json_extract(Track.metadata_status, "$.echosync_signature").is_(None),
+            func.json_extract(Track.metadata_status, "$.echosync_signature") == "",
+        )
+
+        missing_supplemental = or_(
+            unknown_artist,
+            unknown_album,
+            missing_mbid,
+        )
+
+        priority_case = case(
+            (unknown_artist, 1),
+            (unknown_album, 2),
+            (missing_sig, 3),
+            (missing_mbid, 4),
+            else_=5,
+        )
+
+        if missing_plugin:
+            missing_plugin_cond = or_(
+                func.json_extract(Track.metadata_status, "$.satisfied_plugins").is_(None),
+                not_(func.json_extract(Track.metadata_status, "$.satisfied_plugins").like(f'%"{missing_plugin}"%')),
+            )
+            query = query.filter(missing_plugin_cond)
+        elif not force_refresh:
+            is_enhanced = or_(
+                func.json_extract(Track.metadata_status, "$.enhanced").is_(True),
+                func.json_extract(Track.metadata_status, "$.enhanced") == "true",
+                func.json_extract(Track.metadata_status, "$.enhanced") == 1,
+            )
+            if not check_all_files:
+                if require_signature:
+                    query = query.filter(or_(missing_sig, missing_supplemental, placeholder_track))
+                else:
+                    query = query.filter(or_(missing_supplemental, placeholder_track))
+            else:
+                query = query.filter(
+                    or_(
+                        Track.metadata_status.is_(None),
+                        func.json_extract(Track.metadata_status, "$.enhanced").is_(None),
+                        not_(is_enhanced),
+                        missing_sig,
+                        missing_supplemental,
+                        placeholder_track,
+                    )
+                )
+
+            MAX_REATTEMPTS = 5
+            query = query.filter(
+                not_(
+                    and_(
+                        Track.musicbrainz_id == "NOT_FOUND",
+                        func.coalesce(
+                            func.json_extract(Track.metadata_status, "$.enhancement_attempts"),
+                            0,
+                        ).cast(Integer)
+                        >= MAX_REATTEMPTS,
+                    )
+                )
+            )
+
+        if exclude_ids:
+            ex_list = list(exclude_ids)
+            if len(ex_list) <= 30000:
+                query = query.filter(LocalMedia.id.notin_(ex_list))
+            else:
+                query = query.filter(LocalMedia.id.notin_(ex_list[-30000:]))
+
+        query = query.order_by(priority_case.asc(), LocalMedia.id.asc())
+        if offset > 0:
+            query = query.offset(offset)
+
+        fetch_limit = min(batch_size, limit) if limit is not None else batch_size
+        rows = query.limit(fetch_limit).all()
+        return [MediaTrackTuple(m, m.track) for m in rows]
+
+    @classmethod
+    def stream_media_for_enhancement(
+        cls,
+        session: Session,
+        batch_size: int = 50,
+        limit: int | None = None,
+        check_all_files: bool = False,
+        force_refresh: bool = False,
+        force_mode: bool = False,
+        require_signature: bool = False,
+        missing_plugin: str | None = None,
+        exclude_ids: set[int] | list[int] | None = None,
+    ):
+        """Stream candidate LocalMedia files with their parent Tracks in memory-bounded batches (< 300 MiB)."""
+        current_offset = 0
+        total_yielded = 0
+        while True:
+            current_batch_size = batch_size
+            if limit is not None:
+                remaining = limit - total_yielded
+                if remaining <= 0:
+                    break
+                current_batch_size = min(batch_size, remaining)
+
+            batch = cls.get_media_for_enhancement(
+                session=session,
+                batch_size=current_batch_size,
+                limit=current_batch_size,
+                check_all_files=check_all_files,
+                force_refresh=force_refresh,
+                force_mode=force_mode,
+                require_signature=require_signature,
+                missing_plugin=missing_plugin,
+                exclude_ids=exclude_ids,
+                offset=current_offset,
+            )
+            if not batch:
+                break
+
+            for item in batch:
+                yield item
+                total_yielded += 1
+                if limit is not None and total_yielded >= limit:
+                    return
+
+            current_offset += len(batch)
+            if len(batch) < current_batch_size:
+                break
 
     # --- Core Upsert ---
 

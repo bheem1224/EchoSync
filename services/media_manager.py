@@ -258,88 +258,167 @@ class MediaManagerService:
         logger.warning(f"File path for track {track_id} does not exist: {file_path}")
         return None
 
-    def execute_delete(self, track_ids: list[int]) -> bool:
+    def delete_track(self, track_id: int | str, delete_physical: bool = True) -> bool:
         """
-        The strict, protected central execution point for deleting tracks.
-        This is the ONLY place in the backend where physical os.remove() and
-        local track database deletions are executed.
+        Delete a Track, its linked LocalMedia records, and optionally its physical files.
+        Also triggers remote deletion on active media servers.
         """
         from pathlib import Path
 
         from core.nexus_framework.plugin_loader import PluginRegistry
+        from database.music_database import Track
 
-        # Fetch library pool for safety check
+        _lib = config_manager.get("storage.library_dir") or config_manager.get("library_dir")
+        library_root = Path(_lib).resolve() if _lib else None
+        active_servers = PluginRegistry.get_active_services_by_type("media_server")
+
+        try:
+            with self.db.session_scope() as session:
+                query = session.query(Track)
+                if isinstance(track_id, int) or (isinstance(track_id, str) and track_id.isdigit()):
+                    track = query.filter((Track.id == int(track_id)) | (Track.sync_id == str(track_id))).first()
+                else:
+                    track = query.filter(Track.sync_id == str(track_id)).first()
+
+                if not track:
+                    logger.warning(f"Track {track_id} not found for deletion")
+                    return False
+
+                resolved_track_id = track.id
+
+                # 1. Remote Deletion
+                if active_servers:
+                    for active_server in active_servers:
+                        try:
+                            server_type = active_server.split(".")[-1]
+                            plugin_item_id = self.db.get_external_identifier(server_type, resolved_track_id)
+                            if plugin_item_id:
+                                provider = PluginRegistry.create_instance(active_server)
+                                if hasattr(provider, "delete_track"):
+                                    provider.delete_track(plugin_item_id)
+                                    logger.info(f"Successfully deleted track {resolved_track_id} from {active_server}")
+                        except Exception as e:
+                            logger.error(f"Error remote delete on {active_server}: {e}")
+
+                # 2. Physical Deletion
+                if delete_physical:
+                    for media in list(track.media_files):
+                        if media.file_path and not media.file_path.startswith("virtual://"):
+                            try:
+                                track_path = Path(media.file_path).resolve()
+                                if library_root and not str(track_path).startswith(str(library_root)):
+                                    logger.critical(
+                                        f"Aborting deletion! Path {track_path} is OUTSIDE library pool {library_root}."
+                                    )
+                                    continue
+                                elif track_path.exists():
+                                    from core.hook_manager import hook_manager
+
+                                    plugin_decision = hook_manager.apply_filters(
+                                        "ON_CORRUPTION_DETECTED",
+                                        None,
+                                        file_path=str(track_path),
+                                    )
+                                    if plugin_decision == "SKIP":
+                                        logger.info(f"Plugin quarantined/skipped deletion for file: {track_path}")
+                                        continue
+
+                                    from core.io_gatekeeper import Gatekeeper
+
+                                    Gatekeeper.authorize_and_execute({"operation": "delete_file", "target": track_path})
+                                    logger.info(f"Deleted physical file: {track_path}")
+                            except FileNotFoundError:
+                                pass
+                            except Exception as e:
+                                logger.error(f"Failed to remove physical file {media.file_path}: {e}")
+
+                # 3. Database Deletion (cascades to LocalMedia and TrackArtist)
+                session.delete(track)
+                logger.info(f"Deleted track {resolved_track_id} from local database")
+
+            return True
+        except Exception as e:
+            logger.error(f"Failed to delete local track {track_id}: {e}", exc_info=True)
+            return False
+
+    def delete_media_file(self, local_media_id: int | str, delete_physical: bool = True) -> bool:
+        """
+        Delete a single LocalMedia record and its physical file without deleting
+        the parent Track (unless no other media files remain on the Track).
+        """
+        from pathlib import Path
+
+        from database.music_database import LocalMedia, Track
+
         _lib = config_manager.get("storage.library_dir") or config_manager.get("library_dir")
         library_root = Path(_lib).resolve() if _lib else None
 
-        active_servers = PluginRegistry.get_active_services_by_type("media_server")
-        all_success = True
+        try:
+            with self.db.session_scope() as session:
+                query = session.query(LocalMedia)
+                if isinstance(local_media_id, int) or (isinstance(local_media_id, str) and local_media_id.isdigit()):
+                    media = query.filter(
+                        (LocalMedia.id == int(local_media_id)) | (LocalMedia.media_id == str(local_media_id))
+                    ).first()
+                else:
+                    media = query.filter(LocalMedia.media_id == str(local_media_id)).first()
 
-        for track_id in track_ids:
-            # 1. Remote Deletion
-            if active_servers:
-                for active_server in active_servers:
+                if not media:
+                    logger.warning(f"LocalMedia {local_media_id} not found for deletion")
+                    return False
+
+                track_id = media.track_id
+
+                if delete_physical and media.file_path and not media.file_path.startswith("virtual://"):
                     try:
-                        server_type = active_server.split(".")[-1]
-                        plugin_item_id = self.db.get_external_identifier(server_type, track_id)
-                        if plugin_item_id:
-                            provider = PluginRegistry.create_instance(active_server)
-                            if hasattr(provider, "delete_track"):
-                                provider.delete_track(plugin_item_id)
-                                logger.info(f"Successfully deleted track {track_id} from {active_server}")
-                    except Exception as e:
-                        logger.error(f"Error remote delete on {active_server}: {e}")
-
-            # 2. Local Deletion
-            try:
-                with self.db.session_scope() as session:
-                    track = session.query(Track).filter(Track.id == track_id).first()
-                    if not track:
-                        continue
-
-                    # Safety Check and Physical Deletion
-                    for media in track.media_files:
-                        if (
-                            media.file_path
-                            and not media.file_path.startswith("virtual://")
-                            and os.path.exists(media.file_path)
-                        ):
-                            track_path = Path(media.file_path).resolve()
-
-                            if library_root and not str(track_path).startswith(str(library_root)):
-                                logger.critical(
-                                    f"Aborting deletion! Path {track_path} is OUTSIDE the library pool {library_root}."
-                                )
-                                all_success = False
-                                continue
-
+                        m_path = Path(media.file_path).resolve()
+                        if library_root and not str(m_path).startswith(str(library_root)):
+                            logger.critical(
+                                f"Aborting deletion! Path {m_path} is OUTSIDE the library pool {library_root}."
+                            )
+                        elif m_path.exists():
                             from core.hook_manager import hook_manager
 
                             plugin_decision = hook_manager.apply_filters(
-                                "ON_CORRUPTION_DETECTED",
-                                None,
-                                file_path=str(track_path),
+                                "ON_CORRUPTION_DETECTED", None, file_path=str(m_path)
                             )
-                            if plugin_decision == "SKIP":
-                                logger.info(f"Plugin quarantined/skipped deletion for file: {track_path}")
-                                all_success = False
-                                continue
-
-                            try:
+                            if plugin_decision != "SKIP":
                                 from core.io_gatekeeper import Gatekeeper
 
-                                Gatekeeper.authorize_and_execute({"operation": "delete_file", "target": track_path})
-                                logger.info(f"Deleted physical file: {track_path}")
-                            except Exception as e:
-                                logger.error(f"Failed to remove physical file {track_path}: {e}")
+                                Gatekeeper.authorize_and_execute({"operation": "delete_file", "target": m_path})
+                                logger.info(f"Deleted physical media file: {m_path}")
+                            else:
+                                logger.info(f"Plugin quarantined/skipped deletion for file: {m_path}")
+                    except FileNotFoundError:
+                        pass
+                    except Exception as e:
+                        logger.error(f"Failed to remove physical file {media.file_path}: {e}")
 
-                    # Database Deletion
-                    session.delete(track)
-                    logger.info(f"Deleted track {track_id} from local database")
-            except Exception as e:
-                logger.error(f"Failed to delete local track {track_id}: {e}", exc_info=True)
+                session.delete(media)
+                session.flush()
+
+                # If no media remains on the parent track, delete the parent track
+                if track_id:
+                    remaining = session.query(LocalMedia).filter(LocalMedia.track_id == track_id).count()
+                    if remaining == 0:
+                        parent_track = session.query(Track).filter(Track.id == track_id).first()
+                        if parent_track:
+                            session.delete(parent_track)
+                            logger.info(f"Deleted parent track {track_id} because all media files were deleted.")
+
+            return True
+        except Exception as e:
+            logger.error(f"Failed to delete media {local_media_id}: {e}", exc_info=True)
+            return False
+
+    def execute_delete(self, track_ids: list[int]) -> bool:
+        """
+        The strict, protected central execution point for deleting tracks.
+        """
+        all_success = True
+        for track_id in track_ids:
+            if not self.delete_track(track_id, delete_physical=True):
                 all_success = False
-
         return all_success
 
     def execute_delete_media(self, media_ids: list[str]) -> bool:
@@ -347,62 +426,8 @@ class MediaManagerService:
         Delete specific LocalMedia records and their physical files without deleting
         the parent Track (unless no other media files remain).
         """
-        from pathlib import Path
-
-        from database.music_database import LocalMedia
-
-        _lib = config_manager.get("storage.library_dir") or config_manager.get("library_dir")
-        library_root = Path(_lib).resolve() if _lib else None
         all_success = True
-
         for m_id in media_ids:
-            try:
-                with self.db.session_scope() as session:
-                    media = session.query(LocalMedia).filter(LocalMedia.media_id == m_id).first()
-                    if not media:
-                        continue
-
-                    track = media.track
-                    if (
-                        media.file_path
-                        and not media.file_path.startswith("virtual://")
-                        and os.path.exists(media.file_path)
-                    ):
-                        m_path = Path(media.file_path).resolve()
-                        if library_root and not str(m_path).startswith(str(library_root)):
-                            logger.critical(
-                                f"Aborting deletion! Path {m_path} is OUTSIDE the library pool {library_root}."
-                            )
-                            all_success = False
-                            continue
-
-                        from core.hook_manager import hook_manager
-
-                        plugin_decision = hook_manager.apply_filters(
-                            "ON_CORRUPTION_DETECTED", None, file_path=str(m_path)
-                        )
-                        if plugin_decision == "SKIP":
-                            logger.info(f"Plugin quarantined/skipped deletion for file: {m_path}")
-                            all_success = False
-                            continue
-
-                        from core.io_gatekeeper import Gatekeeper
-
-                        Gatekeeper.authorize_and_execute({"operation": "delete_file", "target": m_path})
-                        logger.info(f"Deleted physical media file: {m_path}")
-
-                    session.delete(media)
-                    session.flush()
-
-                    # If no media remains on the track, delete track as well
-                    if track and len(track.media_files) <= 1:  # session count before commit
-                        remaining = session.query(LocalMedia).filter(LocalMedia.track_id == track.id).count()
-                        if remaining == 0:
-                            session.delete(track)
-                            logger.info(f"Deleted track {track.id} because all media was deleted.")
-
-            except Exception as e:
-                logger.error(f"Failed to delete media {m_id}: {e}", exc_info=True)
+            if not self.delete_media_file(m_id, delete_physical=True):
                 all_success = False
-
         return all_success

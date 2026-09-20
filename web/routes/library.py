@@ -149,7 +149,6 @@ def update_database(request: Request):
 
     try:
         mode = request.query_params.get("mode", "incremental").lower()
-        full_refresh = mode == "full"
 
         # Get active media server
         try:
@@ -242,11 +241,11 @@ def update_database(request: Request):
                 detail={"error": f"Could not connect to {active_server}: {e!s}"},
             )
 
-        # Import LibrarySyncService
-        try:
-            from services.library_sync_service import LibrarySyncService
-        except ImportError as e:
-            logger.error(f"Failed to import LibrarySyncService: {e}")
+        # Import LibrarySyncService check
+        import importlib.util
+
+        if not importlib.util.find_spec("services.library_sync_service"):
+            logger.error("Failed to find services.library_sync_service")
             raise HTTPException(
                 status_code=500,
                 detail={"error": "Database update module not available"},
@@ -463,13 +462,30 @@ def stream_track(track_id: str):
 
         import mimetypes
 
-        ext = Path(file_path).suffix.lower()
         media_type = mimetypes.guess_type(file_path)[0] or "audio/mpeg"
         return FileResponse(file_path, media_type=media_type, filename=Path(file_path).name)
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Error streaming track {track_id}: {e}")
+        raise HTTPException(status_code=500, detail={"error": str(e)})
+
+
+@router.delete("/media/{media_id}")
+def delete_media_endpoint(media_id: str):
+    """Delete a specific physical media file / edition."""
+    try:
+        success = media_manager.delete_media_file(media_id)
+        if success:
+            return {"success": True, "message": f"Media file {media_id} deleted"}
+        else:
+            raise HTTPException(
+                status_code=404, detail={"error": f"Media file {media_id} not found or failed to delete"}
+            )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting media {media_id}: {e}")
         raise HTTPException(status_code=500, detail={"error": str(e)})
 
 
@@ -481,7 +497,9 @@ def delete_track_endpoint(track_id):
         if success:
             return {"success": True, "message": f"Track {track_id} deleted"}
         else:
-            raise HTTPException(status_code=500, detail={"error": "Failed to delete track"})
+            raise HTTPException(status_code=404, detail={"error": f"Track {track_id} not found or failed to delete"})
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error deleting track {track_id}: {e}")
         raise HTTPException(status_code=500, detail={"error": str(e)})

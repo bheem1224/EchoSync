@@ -6,6 +6,7 @@
     onPlay = null,
     onplay = null,
     onDelete = null,
+    onDeleteEdition = null,
     onFetchMetadata = null,
     openMetadataEditor = null,
     onedit = null,
@@ -96,6 +97,26 @@
       openMetadataEditor(trackRef, mediaId);
     } else if (onFetchMetadata) {
       onFetchMetadata(trackRef, mediaId);
+    }
+  }
+
+  function handleDeleteEdition(mediaId) {
+    if (onDeleteEdition) {
+      onDeleteEdition(mediaId, track);
+      return;
+    }
+    if (confirm("Are you sure you want to delete this edition file?")) {
+      fetch(`/api/v1/core/library/media/${mediaId}`, { method: "DELETE" })
+        .then((res) => {
+          if (res.ok) {
+            window.dispatchEvent(
+              new CustomEvent("echosync:media-deleted", {
+                detail: { mediaId, trackId: track?.id },
+              }),
+            );
+          }
+        })
+        .catch((err) => console.error("Error deleting media edition:", err));
     }
   }
 
@@ -351,6 +372,17 @@
               }}
             >
               ✏ Edit
+            </button>
+            <button
+              type="button"
+              class="px-2.5 py-1 text-xs font-medium rounded bg-red-950/60 hover:bg-red-900/80 text-red-300 border border-red-800/50 transition-colors flex items-center gap-1"
+              onclick={(e) => {
+                e.stopPropagation();
+                handleDeleteEdition(media.media_id || media.id);
+              }}
+              title="Delete this physical file edition"
+            >
+              🗑 Delete
             </button>
           </div>
         </div>

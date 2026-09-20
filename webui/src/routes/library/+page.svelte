@@ -255,6 +255,33 @@
     if (selectedArtist) selectedArtist = { ...selectedArtist };
   }
 
+  async function deleteMediaEdition(mediaId, track, album) {
+    if (
+      !confirm(
+        "Are you sure you want to delete this specific file edition? This action cannot be undone.",
+      )
+    )
+      return;
+    try {
+      await apiClient.delete(`/core/library/media/${mediaId}`);
+      if (track.local_media) {
+        track.local_media = track.local_media.filter(
+          (m) => (m.media_id || m.id) !== mediaId && m.id !== mediaId,
+        );
+        if (track.local_media.length === 0) {
+          updateLocalStateAfterDelete(track.id, album);
+        } else {
+          libraryIndex = [...libraryIndex];
+          if (selectedArtist) selectedArtist = { ...selectedArtist };
+        }
+      } else {
+        await loadLibrary();
+      }
+    } catch (err) {
+      alert(`Failed to delete media edition: ${err.message}`);
+    }
+  }
+
   async function forceUpgradeTrack(trackId) {
     if (
       !confirm("Force Upgrade? This will mark the track as needing an upgrade.")
@@ -429,6 +456,8 @@
                     onPlay={playTrack}
                     onedit={openMetadataEditor}
                     onDelete={deleteTrack}
+                    onDeleteEdition={(mediaId, t) =>
+                      deleteMediaEdition(mediaId, t, album)}
                     {openMetadataEditor}
                     onFetchMetadata={openMetadataEditor}
                     onForceUpgrade={forceUpgradeTrack}

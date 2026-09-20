@@ -3,7 +3,7 @@
 Unifies the 5-stage resolution waterfall:
 1. Physical DSP (probe channel count > 2 to skip Chromaprint; extract duration + chromaprint)
 2. Local Chromaprint Cache (short-circuit via music_library.db peer tracks with title trust gate)
-3. AcoustID Resolution with Picard Disambiguation (filter/penalize remixes, boost studio albums, enforce ±2000ms duration window)
+3. AcoustID Resolution with Picard Disambiguation (filter/penalize remixes, boost studio albums, enforce dynamic duration window)
 4. ISRC Resolution (provider-agnostic ISRC lookup if Stage 3 misses)
 5. Scoped Text Waterfall (sanitized title prefix, strict recording: + artist: search, block artist-only discography leaks)
 """
@@ -264,7 +264,23 @@ def extract_filename_title(file_path: str) -> str:
     # 3. Strip trailing copy markers e.g. " (21)", " [1]"
     cleaned = re.sub(r"\s*[\(\[]\d+[\)\]]$", "", cleaned).strip()
 
-    return cleaned or base
+
+def compute_dynamic_duration_threshold(sim_score: float) -> float:
+    """Compute dynamic duration threshold based on waveform similarity score.
+
+    - Waveform similarity <= 80% => threshold = 2.0s.
+    - Waveform similarity >= 95% => threshold = 5.0s.
+    - Linearly interpolate between 2.0s and 5.0s for similarities between 80% and 95%.
+    """
+    # Normalize to 0.0 - 1.0
+    norm_sim = sim_score / 100.0 if sim_score > 1.0 else sim_score
+    if norm_sim <= 0.80:
+        return 2.0
+    if norm_sim >= 0.95:
+        return 5.0
+    # Lerp between 0.80 and 0.95
+    progress = (norm_sim - 0.80) / 0.15
+    return 2.0 + (progress * 3.0)
 
 
 class MetadataResolutionEngine:
@@ -1374,30 +1390,6 @@ class MetadataResolutionEngine:
 
                 rec_meta = rec_by_mbid.get(mbid_str) or {}
 
-                # Step A: Hard duration gate (pre-network, in seconds)
-                cand_dur_raw = rec_meta.get("duration")
-                if cand_dur_raw is not None:
-                    try:
-                        cand_dur_sec = float(cand_dur_raw)
-                        # AcoustID durations are in seconds; guard against ms-scale values
-                        if cand_dur_sec > 10000:
-                            cand_dur_sec /= 1000.0
-                        dur_delta_sec = abs(cand_dur_sec - file_duration_sec)
-                        if dur_delta_sec > 2.0:
-                            logger.debug(
-                                "[resolution_engine] Step A DROPPED MBID %s: "
-                                "duration delta %.2fs > 2.0s (candidate=%.1fs, file=%.1fs)",
-                                mbid_str,
-                                dur_delta_sec,
-                                cand_dur_sec,
-                                file_duration_sec,
-                            )
-                            continue
-                    except (ValueError, TypeError):
-                        dur_delta_sec = 0.0  # Unknown duration — pass through
-                else:
-                    dur_delta_sec = 0.0  # Unknown duration — pass through
-
                 # Candidate AcoustID match score (normalized 0.0 - 1.0)
                 raw_score_val = rec_meta.get("score") if rec_meta.get("score") is not None else details.get("score")
                 if raw_score_val is None:
@@ -1408,6 +1400,33 @@ class MetadataResolutionEngine:
                         cand_acoustid_score = raw_score / 100.0 if raw_score > 1.0 else raw_score
                     except (ValueError, TypeError):
                         cand_acoustid_score = 0.0
+
+                # Step A: Dynamic duration gate (pre-network, in seconds)
+                cand_dur_raw = rec_meta.get("duration")
+                if cand_dur_raw is not None:
+                    try:
+                        cand_dur_sec = float(cand_dur_raw)
+                        # AcoustID durations are in seconds; guard against ms-scale values
+                        if cand_dur_sec > 10000:
+                            cand_dur_sec /= 1000.0
+                        dur_delta_sec = abs(cand_dur_sec - file_duration_sec)
+                        dynamic_threshold_a = compute_dynamic_duration_threshold(cand_acoustid_score)
+                        if dur_delta_sec > dynamic_threshold_a:
+                            logger.debug(
+                                "[resolution_engine] Step A DROPPED MBID %s: "
+                                "duration delta %.2fs > %.2fs threshold (sim=%.2f, candidate=%.1fs, file=%.1fs)",
+                                mbid_str,
+                                dur_delta_sec,
+                                dynamic_threshold_a,
+                                cand_acoustid_score,
+                                cand_dur_sec,
+                                file_duration_sec,
+                            )
+                            continue
+                    except (ValueError, TypeError):
+                        dur_delta_sec = 0.0  # Unknown duration — pass through
+                else:
+                    dur_delta_sec = 0.0  # Unknown duration — pass through
 
                 # Veto authority evaluation (Rule A / B)
                 veto_applies = should_bypass_filename_trust_gate(
@@ -1549,17 +1568,15 @@ class MetadataResolutionEngine:
                             mb_dur_val *= 1000.0  # seconds → ms
                         mb_dur_sec = mb_dur_val / 1000.0
                         dur_delta = abs(mb_dur_sec - file_duration_sec)
-                        if dur_delta > 2.0:
+                        norm_sim = cand_acoustid_score / 100.0 if cand_acoustid_score > 1.0 else cand_acoustid_score
+                        dynamic_threshold = compute_dynamic_duration_threshold(norm_sim)
+                        if dur_delta > dynamic_threshold:
                             logger.info(
-                                "[resolution_engine] Step D duration veto DROPPED MBID %s ('%s' by '%s'): "
-                                "candidate_duration=%.2fs, file_duration=%.2fs, delta=%.2fs > 2.0s threshold. "
-                                "Falling back to subsequent candidates/methods.",
-                                mbid_str,
-                                cand_meta.get("title") or "Unknown Title",
-                                cand_meta.get("artist") or cand_meta.get("artist_name") or "Unknown Artist",
-                                mb_dur_sec,
-                                file_duration_sec,
-                                dur_delta,
+                                f"[resolution_engine] Step D duration veto DROPPED MBID {mbid_str} "
+                                f"('{cand_meta.get('title') or 'Unknown Title'}' by "
+                                f"'{cand_meta.get('artist') or cand_meta.get('artist_name') or 'Unknown Artist'}'): "
+                                f"candidate_duration={mb_dur_sec:.2f}s, file_duration={file_duration_sec:.2f}s, "
+                                f"delta={dur_delta:.2f}s > {dynamic_threshold:.2f}s threshold (sim={norm_sim:.2f})."
                             )
                             continue
                     except (ValueError, TypeError):
