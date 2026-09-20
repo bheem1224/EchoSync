@@ -529,6 +529,212 @@ pub fn fingerprint_and_hash_audio(
     Ok((encoded_fingerprint, duration_seconds, pcm_hash))
 }
 
+/// Decompress a Chromaprint compressed byte slice into a vector of u32 subfingerprints.
+pub fn decompress_chromaprint(compressed: &[u8]) -> Result<Vec<u32>, String> {
+    if compressed.len() < 4 {
+        return Err("Compressed fingerprint data too short (must be at least 4 bytes)".to_string());
+    }
+
+    let num_subfingerprints = ((compressed[1] as usize) << 16)
+        | ((compressed[2] as usize) << 8)
+        | (compressed[3] as usize);
+
+    if num_subfingerprints == 0 {
+        return Ok(Vec::new());
+    }
+
+    // Helper bit reader
+    struct BitReader<'a> {
+        data: &'a [u8],
+        bit_pos: usize,
+    }
+
+    impl<'a> BitReader<'a> {
+        fn new(data: &'a [u8]) -> Self {
+            Self { data, bit_pos: 0 }
+        }
+
+        fn read_bits(&mut self, n: usize) -> Option<u32> {
+            let mut val = 0u32;
+            for i in 0..n {
+                let byte_idx = self.bit_pos / 8;
+                let bit_idx = self.bit_pos % 8;
+                if byte_idx >= self.data.len() {
+                    return None;
+                }
+                let bit = (self.data[byte_idx] >> bit_idx) & 1;
+                val |= (bit as u32) << i;
+                self.bit_pos += 1;
+            }
+            Some(val)
+        }
+    }
+
+    // 1. Read normal 3-bit values until we encounter `num_subfingerprints` zeros
+    let mut normal_reader = BitReader::new(&compressed[4..]);
+    let mut normal_values = Vec::new();
+    let mut zero_count = 0;
+
+    while zero_count < num_subfingerprints {
+        let bits = normal_reader
+            .read_bits(3)
+            .ok_or_else(|| "Unexpected end of normal bits stream".to_string())?;
+        if bits == 0 {
+            zero_count += 1;
+        }
+        normal_values.push(bits as u8);
+    }
+
+    let normal_bytes = (normal_values.len() * 3 + 7) / 8;
+    let exceptional_offset = 4 + normal_bytes;
+    if exceptional_offset > compressed.len() {
+        return Err("Exceptional bits offset exceeds buffer size".to_string());
+    }
+
+    let mut exp_reader = BitReader::new(&compressed[exceptional_offset..]);
+
+    let mut fingerprint = Vec::with_capacity(num_subfingerprints);
+    let mut last_subfp: u32 = 0;
+    let mut current_xor: u32 = 0;
+    let mut last_bit_index: u32 = 0;
+
+    for val in normal_values {
+        if val == 0 {
+            let current_subfp = last_subfp ^ current_xor;
+            fingerprint.push(current_subfp);
+            last_subfp = current_subfp;
+            current_xor = 0;
+            last_bit_index = 0;
+        } else {
+            let delta = if val == 7 {
+                let exp = exp_reader
+                    .read_bits(5)
+                    .ok_or_else(|| "Unexpected end of exceptional bits stream".to_string())?;
+                7 + exp
+            } else {
+                val as u32
+            };
+            let bit_index = last_bit_index + delta;
+            last_bit_index = bit_index;
+            if bit_index >= 1 && bit_index <= 32 {
+                current_xor |= 1 << (bit_index - 1);
+            }
+        }
+    }
+
+    Ok(fingerprint)
+}
+
+/// Decode a base64 string (URL-safe or standard, with or without padding) into bytes.
+pub fn base64_decode(input: &str) -> Result<Vec<u8>, String> {
+    let mut clean_bytes = Vec::with_capacity(input.len());
+    for b in input.bytes() {
+        if b.is_ascii_whitespace() || b == b'=' {
+            continue;
+        }
+        let val = match b {
+            b'A'..=b'Z' => b - b'A',
+            b'a'..=b'z' => b - b'a' + 26,
+            b'0'..=b'9' => b - b'0' + 52,
+            b'+' | b'-' => 62,
+            b'/' | b'_' => 63,
+            _ => return Err(format!("Invalid base64 character: {}", b as char)),
+        };
+        clean_bytes.push(val);
+    }
+
+    let mut out = Vec::with_capacity(clean_bytes.len() * 3 / 4);
+    let chunks = clean_bytes.chunks_exact(4);
+    let rem = chunks.remainder();
+
+    for c in chunks {
+        let b =
+            ((c[0] as u32) << 18) | ((c[1] as u32) << 12) | ((c[2] as u32) << 6) | (c[3] as u32);
+        out.push(((b >> 16) & 0xFF) as u8);
+        out.push(((b >> 8) & 0xFF) as u8);
+        out.push((b & 0xFF) as u8);
+    }
+
+    match rem.len() {
+        0 => {}
+        2 => {
+            let b = ((rem[0] as u32) << 18) | ((rem[1] as u32) << 12);
+            out.push(((b >> 16) & 0xFF) as u8);
+        }
+        3 => {
+            let b = ((rem[0] as u32) << 18) | ((rem[1] as u32) << 12) | ((rem[2] as u32) << 6);
+            out.push(((b >> 16) & 0xFF) as u8);
+            out.push(((b >> 8) & 0xFF) as u8);
+        }
+        1 => return Err("Invalid base64 length (1 trailing character)".to_string()),
+        _ => unreachable!(),
+    }
+
+    Ok(out)
+}
+
+/// Compares two Chromaprint base64 fingerprint strings using native Rust rusty_chromaprint.
+/// Returns a similarity confidence score in [0.0, 1.0].
+pub fn compare_chromaprints(fp1_str: &str, fp2_str: &str) -> Result<f64, String> {
+    let s1 = fp1_str.trim();
+    let s2 = fp2_str.trim();
+
+    if s1.is_empty() || s2.is_empty() {
+        return Ok(0.0);
+    }
+
+    if s1 == s2 {
+        return Ok(1.0);
+    }
+
+    let b1 = match base64_decode(s1) {
+        Ok(b) => b,
+        Err(_) => return Ok(0.0),
+    };
+    let b2 = match base64_decode(s2) {
+        Ok(b) => b,
+        Err(_) => return Ok(0.0),
+    };
+
+    let subfps1 = match decompress_chromaprint(&b1) {
+        Ok(fps) => fps,
+        Err(_) => return Ok(0.0),
+    };
+    let subfps2 = match decompress_chromaprint(&b2) {
+        Ok(fps) => fps,
+        Err(_) => return Ok(0.0),
+    };
+
+    if subfps1.is_empty() || subfps2.is_empty() {
+        return Ok(0.0);
+    }
+
+    if subfps1 == subfps2 {
+        return Ok(1.0);
+    }
+
+    let config = Configuration::preset_test2();
+    let segments = match rusty_chromaprint::match_fingerprints(&subfps1, &subfps2, &config) {
+        Ok(segs) => segs,
+        Err(_) => return Ok(0.0),
+    };
+
+    if segments.is_empty() {
+        return Ok(0.0);
+    }
+
+    let min_len = subfps1.len().min(subfps2.len()) as f64;
+    let mut total_matched_score = 0.0;
+
+    for seg in &segments {
+        let bit_similarity = (1.0 - (seg.score / 32.0)).clamp(0.0, 1.0);
+        total_matched_score += bit_similarity * (seg.items_count as f64);
+    }
+
+    let confidence = (total_matched_score / min_len).clamp(0.0, 1.0);
+    Ok(confidence)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -559,5 +765,96 @@ mod tests {
             "Fingerprint length ({}) exceeded 4,000 characters for 120s of audio",
             encoded.len()
         );
+    }
+
+    #[test]
+    fn test_decompress_chromaprint() {
+        const INPUT: [u32; 32] = [
+            0x0FCAF446, 0xE3519E89, 0xD3494DD6, 0x8F219806, 0x9200D530, 0x06B1D52F, 0xB48CC681,
+            0x428991C3, 0x59AFBD6B, 0x6ECFB2E5, 0xE8EB7BC3, 0x99A44270, 0x31FFEC13, 0x4A4D81DA,
+            0x53887C82, 0x2BB7BEC2, 0xAB895A65, 0x9D7C0AE4, 0xDA356857, 0xE030F7D8, 0x4D428EEE,
+            0x0558E019, 0xC3278998, 0xA1D035E4, 0x582E98E5, 0x44C8B708, 0x2E8BA9E2, 0xCB13BC48,
+            0xB169A3D8, 0x861274AF, 0x1213EF1C, 0x1F9F06B8,
+        ];
+
+        const OUTPUT: [u8; 220] = [
+            0x01, 0x00, 0x00, 0x20, 0x0A, 0xA9, 0x24, 0xD2, 0x92, 0x24, 0x48, 0x92, 0x45, 0x52,
+            0x14, 0x65, 0x8B, 0x12, 0x24, 0x49, 0xA4, 0x4C, 0x61, 0x1E, 0x54, 0x89, 0xA4, 0x50,
+            0x61, 0x22, 0x28, 0xCA, 0x94, 0xA9, 0x53, 0x82, 0x24, 0xC9, 0x19, 0x4D, 0x83, 0x12,
+            0x29, 0x19, 0x95, 0x84, 0x8B, 0xA0, 0x2A, 0x91, 0xA4, 0x47, 0x49, 0x40, 0x69, 0x11,
+            0xB3, 0x45, 0x81, 0x12, 0x26, 0xC9, 0xA3, 0x44, 0x81, 0xB2, 0x6D, 0xD9, 0x98, 0x22,
+            0x59, 0x94, 0x25, 0x4B, 0x32, 0x31, 0x41, 0xC2, 0x2C, 0x91, 0x12, 0x45, 0x95, 0x90,
+            0x2D, 0x51, 0x94, 0x2D, 0x4A, 0x94, 0x04, 0x8C, 0xA4, 0x24, 0x49, 0xC4, 0x64, 0xC1,
+            0xD7, 0x24, 0x49, 0xE2, 0x24, 0x48, 0x32, 0x6D, 0x89, 0x92, 0xE4, 0xC8, 0x2B, 0x49,
+            0x49, 0x14, 0x05, 0xC9, 0x22, 0x31, 0xDA, 0x94, 0x10, 0x49, 0xC2, 0x24, 0xC9, 0xA2,
+            0x2B, 0x81, 0xA2, 0x6C, 0x49, 0xB6, 0x44, 0x8A, 0x84, 0x24, 0x4A, 0xA2, 0x44, 0x99,
+            0xF2, 0x21, 0xCF, 0x14, 0x25, 0x49, 0xB2, 0x30, 0x58, 0x92, 0x30, 0x89, 0x92, 0x28,
+            0x89, 0x18, 0xE4, 0x8A, 0xA4, 0x24, 0x49, 0xB2, 0x24, 0x41, 0x14, 0x25, 0x49, 0x22,
+            0x66, 0xC9, 0x12, 0x48, 0x4A, 0x94, 0x84, 0xE9, 0xA4, 0x40, 0x92, 0x22, 0x3D, 0x8B,
+            0x96, 0xA0, 0x4B, 0x92, 0x54, 0x49, 0xA6, 0x24, 0x48, 0xA2, 0x44, 0x89, 0x94, 0x44,
+            0x49, 0x94, 0x28, 0x48, 0x16, 0x25, 0xCA, 0x72, 0x0D, 0x9B, 0x32, 0x25, 0x0B, 0xA3,
+            0x00, 0xA1, 0x80, 0x01, 0x06, 0x00, 0x00, 0x04, 0x30, 0x00,
+        ];
+
+        let decompressed = decompress_chromaprint(&OUTPUT).expect("Decompression failed");
+        assert_eq!(decompressed, INPUT);
+    }
+
+    #[test]
+    fn test_match_fingerprints_behavior() {
+        const INPUT: [u32; 32] = [
+            0x0FCAF446, 0xE3519E89, 0xD3494DD6, 0x8F219806, 0x9200D530, 0x06B1D52F, 0xB48CC681,
+            0x428991C3, 0x59AFBD6B, 0x6ECFB2E5, 0xE8EB7BC3, 0x99A44270, 0x31FFEC13, 0x4A4D81DA,
+            0x53887C82, 0x2BB7BEC2, 0xAB895A65, 0x9D7C0AE4, 0xDA356857, 0xE030F7D8, 0x4D428EEE,
+            0x0558E019, 0xC3278998, 0xA1D035E4, 0x582E98E5, 0x44C8B708, 0x2E8BA9E2, 0xCB13BC48,
+            0xB169A3D8, 0x861274AF, 0x1213EF1C, 0x1F9F06B8,
+        ];
+        let config = Configuration::preset_test2();
+        let segments = rusty_chromaprint::match_fingerprints(&INPUT, &INPUT, &config).unwrap();
+        println!("Segments for identical fingerprints: {:?}", segments);
+        assert!(!segments.is_empty());
+    }
+
+    #[test]
+    fn test_base64_encode_decode_roundtrip() {
+        let original = b"Hello, Chromaprint world! 1234567890_+/-=";
+        let encoded = base64_encode(original);
+        let decoded = base64_decode(&encoded).expect("base64_decode failed");
+        assert_eq!(decoded, original);
+    }
+
+    #[test]
+    fn test_compare_chromaprints() {
+        const OUTPUT: [u8; 220] = [
+            0x01, 0x00, 0x00, 0x20, 0x0A, 0xA9, 0x24, 0xD2, 0x92, 0x24, 0x48, 0x92, 0x45, 0x52,
+            0x14, 0x65, 0x8B, 0x12, 0x24, 0x49, 0xA4, 0x4C, 0x61, 0x1E, 0x54, 0x89, 0xA4, 0x50,
+            0x61, 0x22, 0x28, 0xCA, 0x94, 0xA9, 0x53, 0x82, 0x24, 0xC9, 0x19, 0x4D, 0x83, 0x12,
+            0x29, 0x19, 0x95, 0x84, 0x8B, 0xA0, 0x2A, 0x91, 0xA4, 0x47, 0x49, 0x40, 0x69, 0x11,
+            0xB3, 0x45, 0x81, 0x12, 0x26, 0xC9, 0xA3, 0x44, 0x81, 0xB2, 0x6D, 0xD9, 0x98, 0x22,
+            0x59, 0x94, 0x25, 0x4B, 0x32, 0x31, 0x41, 0xC2, 0x2C, 0x91, 0x12, 0x45, 0x95, 0x90,
+            0x2D, 0x51, 0x94, 0x2D, 0x4A, 0x94, 0x04, 0x8C, 0xA4, 0x24, 0x49, 0xC4, 0x64, 0xC1,
+            0xD7, 0x24, 0x49, 0xE2, 0x24, 0x48, 0x32, 0x6D, 0x89, 0x92, 0xE4, 0xC8, 0x2B, 0x49,
+            0x49, 0x14, 0x05, 0xC9, 0x22, 0x31, 0xDA, 0x94, 0x10, 0x49, 0xC2, 0x24, 0xC9, 0xA2,
+            0x2B, 0x81, 0xA2, 0x6C, 0x49, 0xB6, 0x44, 0x8A, 0x84, 0x24, 0x4A, 0xA2, 0x44, 0x99,
+            0xF2, 0x21, 0xCF, 0x14, 0x25, 0x49, 0xB2, 0x30, 0x58, 0x92, 0x30, 0x89, 0x92, 0x28,
+            0x89, 0x18, 0xE4, 0x8A, 0xA4, 0x24, 0x49, 0xB2, 0x24, 0x41, 0x14, 0x25, 0x49, 0x22,
+            0x66, 0xC9, 0x12, 0x48, 0x4A, 0x94, 0x84, 0xE9, 0xA4, 0x40, 0x92, 0x22, 0x3D, 0x8B,
+            0x96, 0xA0, 0x4B, 0x92, 0x54, 0x49, 0xA6, 0x24, 0x48, 0xA2, 0x44, 0x89, 0x94, 0x44,
+            0x49, 0x94, 0x28, 0x48, 0x16, 0x25, 0xCA, 0x72, 0x0D, 0x9B, 0x32, 0x25, 0x0B, 0xA3,
+            0x00, 0xA1, 0x80, 0x01, 0x06, 0x00, 0x00, 0x04, 0x30, 0x00,
+        ];
+
+        let fp_str = base64_encode(&OUTPUT);
+
+        // Identical fingerprints must return 1.0
+        let score_same = compare_chromaprints(&fp_str, &fp_str).unwrap();
+        assert!((score_same - 1.0).abs() < 1e-6);
+
+        // Empty fingerprints must return 0.0
+        let score_empty = compare_chromaprints(&fp_str, "").unwrap();
+        assert_eq!(score_empty, 0.0);
+
+        let score_empty2 = compare_chromaprints("", "").unwrap();
+        assert_eq!(score_empty2, 0.0);
     }
 }

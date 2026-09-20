@@ -2,7 +2,7 @@
 Chromaprint Fingerprinting Module for Echosync
 
 Handles audio fingerprint generation and comparison for high-accuracy track matching.
-Uses Chromaprint via pyacoustid to generate and compare fingerprints.
+Uses Chromaprint via native echosync_core Rust FFI to generate and compare fingerprints.
 
 Fingerprints are useful for:
 1. Identifying the same song across different quality/version/release versions
@@ -56,12 +56,6 @@ class FingerprintGenerator:
     def _compute_fingerprint_and_duration(
         file_path: str,
     ) -> tuple[str | None, int | None]:
-        try:
-            import acoustid
-        except ImportError:
-            logger.warning("pyacoustid not installed. Fingerprinting unavailable. Install with: pip install pyacoustid")
-            return None, None
-
         # Check file existence and try PathMapper fallback if needed
         path_obj = Path(file_path)
         if not path_obj.exists() or not path_obj.is_file():
@@ -102,9 +96,11 @@ class FingerprintGenerator:
                 if fp:
                     return fp, int(round(dur)) if dur is not None else None
         except Exception as e:
-            logger.debug(f"Native Rust fingerprinting fallback to pyacoustid for {file_path}: {e}")
+            logger.debug(f"Native Rust fingerprinting fallback for {file_path}: {e}")
 
         try:
+            import acoustid
+
             raw_duration, fingerprint = acoustid.fingerprint_file(file_path, maxlength=120)
 
             if isinstance(fingerprint, bytes):
@@ -116,6 +112,9 @@ class FingerprintGenerator:
             duration_sec = int(round(float(raw_duration))) if raw_duration is not None else None
             logger.debug(f"Generated fingerprint for {file_path}: length={len(fingerprint)}, duration={duration_sec}s")
             return fingerprint, duration_sec
+        except ImportError:
+            logger.debug("pyacoustid not installed; native Rust engine was tried.")
+            return None, None
         except FileNotFoundError as e:
             target = getattr(e, "filename", None) or str(e)
             if target and "fpcalc" not in str(target).lower():
@@ -167,10 +166,10 @@ _ORIG_GENERATE = FingerprintGenerator.generate
 
 
 class FingerprintMatcher:
-    """Compare fingerprints to detect identical/similar audio"""
+    """Compare fingerprints to detect identical/similar audio using native echosync_core Rust FFI."""
 
     # Minimum confidence for fingerprint to be considered reliable (0-1)
-    # Chromaprint confidence is the number of matching bits in fingerprint
+    # Chromaprint confidence is the proportion of matching bits in fingerprint
     MIN_CONFIDENCE = 0.85
 
     @staticmethod
@@ -189,46 +188,35 @@ class FingerprintMatcher:
         if not fp1 or not fp2:
             return False
 
-        try:
-            import acoustid
-        except ImportError:
-            return False
-
-        try:
-            # Compare fingerprints using acoustid library
-            # This uses the AcousticID API or local comparison
-            score = acoustid.compare(fp1, fp2)
-            return score >= confidence_threshold
-        except Exception as e:
-            logger.debug(f"Fingerprint comparison failed: {e}")
-            return False
+        score = FingerprintMatcher.get_confidence_score(fp1, fp2)
+        return score >= confidence_threshold
 
     @staticmethod
     def get_confidence_score(fp1: str | None, fp2: str | None) -> float:
         """
-        Get confidence score for fingerprint match (0-1)
+        Get confidence score for fingerprint match (0-1) using native Rust FFI echosync_core.
 
         Args:
             fp1: First fingerprint (or None)
             fp2: Second fingerprint (or None)
 
         Returns:
-            Confidence score (0-1), or 0 if comparison fails
+            Confidence score (0-1), or 0.0 if comparison fails
         """
         if not fp1 or not fp2:
             return 0.0
 
         try:
-            import acoustid
-        except ImportError:
+            import echosync_core
+
+            if hasattr(echosync_core, "compare_chromaprints"):
+                score = echosync_core.compare_chromaprints(str(fp1), str(fp2))
+                return max(0.0, min(1.0, float(score)))
+        except Exception as e:
+            logger.debug(f"Fingerprint confidence calculation failed via echosync_core: {e}")
             return 0.0
 
-        try:
-            score = acoustid.compare(fp1, fp2)
-            return max(0.0, min(1.0, score))  # Clamp to 0-1
-        except Exception as e:
-            logger.debug(f"Fingerprint confidence calculation failed: {e}")
-            return 0.0
+        return 0.0
 
 
 class FingerprintCache:

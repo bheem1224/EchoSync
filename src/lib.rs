@@ -443,6 +443,17 @@ pub fn fingerprint_and_hash_audio<'py>(
     }
 }
 
+/// Compare two Chromaprint base64 fingerprint strings using native Rust rusty_chromaprint.
+/// Returns a similarity confidence score in [0.0, 1.0].
+#[pyfunction]
+pub fn compare_chromaprints(py: Python<'_>, fp1: String, fp2: String) -> PyResult<f64> {
+    let result = py.allow_threads(|| audio::fingerprint::compare_chromaprints(&fp1, &fp2));
+    match result {
+        Ok(score) => Ok(score),
+        Err(err) => Err(pyo3::exceptions::PyRuntimeError::new_err(err)),
+    }
+}
+
 /// Compute deterministic BLAKE3 hash strictly over raw decoded PCM audio frames.
 #[pyfunction]
 pub fn hash_pcm_stream(py: Python<'_>, file_path: String) -> PyResult<String> {
@@ -535,6 +546,7 @@ fn echosync_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(delete_file, m)?)?;
     m.add_function(wrap_pyfunction!(fingerprint_audio, m)?)?;
     m.add_function(wrap_pyfunction!(fingerprint_and_hash_audio, m)?)?;
+    m.add_function(wrap_pyfunction!(compare_chromaprints, m)?)?;
     m.add_function(wrap_pyfunction!(hash_pcm_stream, m)?)?;
     m.add_function(wrap_pyfunction!(generate_audio_signature, m)?)?;
     m.add_function(wrap_pyfunction!(verify_audio_signature, m)?)?;
