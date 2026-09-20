@@ -37,7 +37,7 @@ def test_musicbrainz_fetch_artist_tracks_graceful_503(monkeypatch):
 
     monkeypatch.setattr(client.http, "get", mock_get)
 
-    tracks = client._fetch_artist_track_dicts("rihanna")
+    tracks = client._fetch_artist_track_dicts("rihanna_graceful_503")
     assert tracks == []
 
 
@@ -77,6 +77,7 @@ def test_musicbrainz_fetch_artist_tracks_partial_on_subsequent_503(monkeypatch):
 
     monkeypatch.setattr(client.http, "get", mock_get)
 
-    tracks = client._fetch_artist_track_dicts("rihanna")
+    tracks = client._fetch_artist_track_dicts("rihanna_partial_503")
     assert len(tracks) == 1
     assert tracks[0]["title"] == "Umbrella"
+

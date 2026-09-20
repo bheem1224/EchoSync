@@ -127,9 +127,7 @@ def resolve_plugin_directory(
         if path in seen:
             continue
         seen.add(path)
-        if path.exists() and (
-            (path / "plugin.json").is_file() or (path / "manifest.json").is_file()
-        ):
+        if path.exists() and ((path / "plugin.json").is_file() or (path / "manifest.json").is_file()):
             return path, channel
 
     return base_dir / effective_channel, effective_channel
@@ -1305,6 +1303,12 @@ class PluginLoader:
         """
         with self._load_lock:
             try:
+                if isinstance(plugin_id, str):
+                    if plugin_id.isdigit():
+                        plugin_id = int(plugin_id)
+                    else:
+                        plugin_id = generate_plugin_id(plugin_id.lower())
+
                 # Query the database for the path if not provided
                 if not absolute_install_path:
                     from database.config_database import get_config_database
@@ -1475,7 +1479,6 @@ class PluginLoader:
                     sys.path.insert(0, str(plugins_root))
 
                 sys.path.insert(0, str(package_dir))
-
 
                 plugins_root_resolved = str(plugins_root.resolve())
                 if "plugins" in sys.modules and hasattr(sys.modules["plugins"], "__path__"):

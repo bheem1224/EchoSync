@@ -8,10 +8,38 @@ Verifies:
 
 from pathlib import Path
 
+import pytest
 from alembic.config import Config
 from alembic.script import ScriptDirectory
+from sqlalchemy import text
 
 from core.db.migrations import run_auto_migrations
+from database.music_database import get_database
+from database.working_database import get_working_database
+
+
+@pytest.fixture(autouse=True)
+def cleanup_orphaned_alembic_tables():
+    """Teardown/setup hook that explicitly drops orphaned _alembic_tmp_external_identifiers tables."""
+    for db_getter in (get_database, get_working_database):
+        try:
+            db = db_getter()
+            with db.engine.connect() as conn:
+                conn.execute(text("DROP TABLE IF EXISTS _alembic_tmp_external_identifiers;"))
+                conn.commit()
+        except Exception:
+            pass
+
+    yield
+
+    for db_getter in (get_database, get_working_database):
+        try:
+            db = db_getter()
+            with db.engine.connect() as conn:
+                conn.execute(text("DROP TABLE IF EXISTS _alembic_tmp_external_identifiers;"))
+                conn.commit()
+        except Exception:
+            pass
 
 
 def test_music_migrations_single_head():

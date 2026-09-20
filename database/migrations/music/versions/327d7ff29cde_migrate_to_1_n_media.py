@@ -26,45 +26,54 @@ def upgrade() -> None:
         alphabet = string.ascii_letters + string.digits
         return "".join(random.choices(alphabet, k=size))
 
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+
     # 1. Create local_media table
-    op.create_table(
-        "local_media",
-        sa.Column("id", sa.Integer(), primary_key=True),
-        sa.Column("media_id", sa.String(length=8), nullable=False),
-        sa.Column(
-            "track_id",
-            sa.Integer(),
-            sa.ForeignKey("tracks.id", ondelete="CASCADE"),
-            nullable=False,
-        ),
-        sa.Column("file_path", sa.String(), nullable=False),
-        sa.Column("file_format", sa.String(), nullable=True),
-        sa.Column("bitrate", sa.Integer(), nullable=True),
-        sa.Column("sample_rate", sa.Integer(), nullable=True),
-        sa.Column("bit_depth", sa.Integer(), nullable=True),
-        sa.Column("file_size_bytes", sa.BigInteger(), nullable=True),
-        sa.Column("inode", sa.BigInteger(), nullable=True),
-        sa.Column("mtime", sa.Float(), nullable=True),
-        sa.Column("added_at", sa.DateTime(), nullable=True),
-    )
-    op.create_index(
-        op.f("ix_local_media_media_id"), "local_media", ["media_id"], unique=True
-    )
-    op.create_index(
-        op.f("ix_local_media_track_id"), "local_media", ["track_id"], unique=False
-    )
-    op.create_index(
-        op.f("ix_local_media_inode"), "local_media", ["inode"], unique=False
-    )
-    op.create_index(
-        "ix_local_media_file_path", "local_media", ["file_path"], unique=True
-    )
+    if not inspector.has_table("local_media"):
+        op.create_table(
+            "local_media",
+            sa.Column("id", sa.Integer(), primary_key=True),
+            sa.Column("media_id", sa.String(length=8), nullable=False),
+            sa.Column(
+                "track_id",
+                sa.Integer(),
+                sa.ForeignKey("tracks.id", ondelete="CASCADE"),
+                nullable=False,
+            ),
+            sa.Column("file_path", sa.String(), nullable=False),
+            sa.Column("file_format", sa.String(), nullable=True),
+            sa.Column("bitrate", sa.Integer(), nullable=True),
+            sa.Column("sample_rate", sa.Integer(), nullable=True),
+            sa.Column("bit_depth", sa.Integer(), nullable=True),
+            sa.Column("file_size_bytes", sa.BigInteger(), nullable=True),
+            sa.Column("inode", sa.BigInteger(), nullable=True),
+            sa.Column("mtime", sa.Float(), nullable=True),
+            sa.Column("added_at", sa.DateTime(), nullable=True),
+        )
+        op.create_index(op.f("ix_local_media_media_id"), "local_media", ["media_id"], unique=True)
+        op.create_index(op.f("ix_local_media_track_id"), "local_media", ["track_id"], unique=False)
+        op.create_index(op.f("ix_local_media_inode"), "local_media", ["inode"], unique=False)
+        op.create_index("ix_local_media_file_path", "local_media", ["file_path"], unique=True)
 
     # 2. Add media_id to audio_fingerprints and external_identifiers
-    with op.batch_alter_table("audio_fingerprints") as batch_op:
-        batch_op.add_column(sa.Column("media_id", sa.String(length=8), nullable=True))
-    with op.batch_alter_table("external_identifiers") as batch_op:
-        batch_op.add_column(sa.Column("media_id", sa.String(length=8), nullable=True))
+    af_cols = (
+        [c["name"] for c in inspector.get_columns("audio_fingerprints")]
+        if inspector.has_table("audio_fingerprints")
+        else []
+    )
+    if "media_id" not in af_cols:
+        with op.batch_alter_table("audio_fingerprints") as batch_op:
+            batch_op.add_column(sa.Column("media_id", sa.String(length=8), nullable=True))
+
+    ei_cols = (
+        [c["name"] for c in inspector.get_columns("external_identifiers")]
+        if inspector.has_table("external_identifiers")
+        else []
+    )
+    if "media_id" not in ei_cols:
+        with op.batch_alter_table("external_identifiers") as batch_op:
+            batch_op.add_column(sa.Column("media_id", sa.String(length=8), nullable=True))
 
     # 3. Data migration
     connection = op.get_bind()
@@ -129,13 +138,9 @@ def upgrade() -> None:
 
     # Strictly delete proprietary identifiers (not mapped to media_server)
     connection.execute(
-        sa.text(
-            "DELETE FROM external_identifiers WHERE plugin_source IN ('spotify', 'deezer', 'tidal', 'apple_music')"
-        )
+        sa.text("DELETE FROM external_identifiers WHERE plugin_source IN ('spotify', 'deezer', 'tidal', 'apple_music')")
     )
-    connection.execute(
-        sa.text("DELETE FROM external_identifiers WHERE media_id IS NULL")
-    )
+    connection.execute(sa.text("DELETE FROM external_identifiers WHERE media_id IS NULL"))
 
     # 4. Alter columns to NOT NULL and add ForeignKeys
     with op.batch_alter_table("audio_fingerprints") as batch_op:
@@ -149,9 +154,7 @@ def upgrade() -> None:
             ["media_id"],
             ondelete="CASCADE",
         )
-        batch_op.create_index(
-            batch_op.f("ix_audio_fingerprints_media_id"), ["media_id"], unique=False
-        )
+        batch_op.create_index(batch_op.f("ix_audio_fingerprints_media_id"), ["media_id"], unique=False)
 
     with op.batch_alter_table("external_identifiers") as batch_op:
         batch_op.drop_index("ix_external_identifiers_track_id")
@@ -164,9 +167,7 @@ def upgrade() -> None:
             ["media_id"],
             ondelete="CASCADE",
         )
-        batch_op.create_index(
-            batch_op.f("ix_external_identifiers_media_id"), ["media_id"], unique=False
-        )
+        batch_op.create_index(batch_op.f("ix_external_identifiers_media_id"), ["media_id"], unique=False)
 
     # 5. Alter tracks table
     with op.batch_alter_table("tracks") as batch_op:

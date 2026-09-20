@@ -1717,6 +1717,9 @@ class MetadataResolutionEngine:
                     filename=filename,
                     tag_title=tag_title,
                     min_similarity=0.60,
+                    # ISRC is a deterministic ISO identifier — filename similarity
+                    # confirmation is not applicable for ISRC-sourced candidates.
+                    bypass_filename_check=True,
                 )
             ):
                 logger.warning(

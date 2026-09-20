@@ -118,12 +118,14 @@ fn populate_tag_items(tag: &mut Tag, tags: &HashMap<String, String>) {
         .map(|s| s.trim())
         .filter(|s| !s.is_empty());
     if let Some(s) = year_val {
-        let year_4 = if s.len() >= 4 && s[..4].chars().all(|c| c.is_ascii_digit()) {
-            &s[..4]
-        } else {
-            s
-        };
-        if let Ok(num) = year_4.parse::<u32>() {
+        let first_four: String = s.chars().take(4).collect();
+        if first_four.chars().count() == 4 && first_four.chars().all(|c| c.is_ascii_digit()) {
+            if let Ok(num) = first_four.parse::<u32>() {
+                tag.set_year(num);
+            } else {
+                tag.insert_text(ItemKey::RecordingDate, s.to_string());
+            }
+        } else if let Ok(num) = s.parse::<u32>() {
             tag.set_year(num);
         } else {
             tag.insert_text(ItemKey::RecordingDate, s.to_string());
@@ -239,6 +241,10 @@ fn populate_tag_items(tag: &mut Tag, tags: &HashMap<String, String>) {
     }
 }
 
+pub fn truncate_utf8(s: &str, max_chars: usize) -> String {
+    s.chars().take(max_chars).collect()
+}
+
 fn populate_riff_items(tag: &mut Tag, tags: &HashMap<String, String>) {
     let version_str = tags
         .get("version")
@@ -301,12 +307,12 @@ fn populate_riff_items(tag: &mut Tag, tags: &HashMap<String, String>) {
         .map(|s| s.trim())
         .filter(|s| !s.is_empty());
     if let Some(s) = year_val {
-        let year_4 = if s.len() >= 4 && s[..4].chars().all(|c| c.is_ascii_digit()) {
-            &s[..4]
-        } else {
-            s
-        };
-        if let Ok(num) = year_4.parse::<u32>() {
+        let first_four: String = s.chars().take(4).collect();
+        if first_four.chars().count() == 4 && first_four.chars().all(|c| c.is_ascii_digit()) {
+            if let Ok(num) = first_four.parse::<u32>() {
+                tag.set_year(num);
+            }
+        } else if let Ok(num) = s.parse::<u32>() {
             tag.set_year(num);
         }
     }

@@ -137,8 +137,13 @@ def _engine_for_env(env: str):
 #                    possible for that environment.
 _ENV_LEGACY_BASELINE = {
     # (sentinel_table, baseline_rev, v2_4_0_sentinel, v2_4_0_rev)
-    "alembic:working": ("downloads", "0560a1c7fa89", "accounts", "head"),
-    "alembic:music": ("artists", "7b7461716632", "track_aliases", "7b7461716632"),
+    "alembic:working": ("downloads", "0560a1c7fa89", ("accounts", "review_tasks"), "head"),
+    "alembic:music": (
+        "artists",
+        "7b7461716632",
+        ("track_aliases", "local_media", "track_artists", "artist_aliases", "audio_fingerprints"),
+        "head",
+    ),
     # alembic:config has no application tables — no legacy adoption needed.
 }
 
@@ -206,10 +211,21 @@ def run_auto_migrations() -> None:
                 script_path = (Path(__file__).resolve().parents[2] / raw_script_loc).resolve()
             alembic_cfg.set_main_option("script_location", str(script_path))
 
-        # ── Smart Inspector ───────────────────────────────────────────────────
+        # ── Clean up leftover _alembic_tmp_* tables and inspect schema ────────
+        engine = _engine_for_env(env)
+        if engine is not None:
+            with engine.connect() as conn:
+                from sqlalchemy import text
+
+                insp = sa_inspect(engine)
+                for t_name in insp.get_table_names():
+                    if t_name.startswith("_alembic_tmp_"):
+                        logger.warning("Dropping orphaned temporary table '%s' in %s", t_name, env)
+                        conn.execute(text(f"DROP TABLE IF EXISTS {t_name}"))
+                        conn.commit()
+
         if env in _ENV_LEGACY_BASELINE:
             sentinel_table, baseline_rev, v2_4_0_sentinel, v2_4_0_rev = _ENV_LEGACY_BASELINE[env]
-            engine = _engine_for_env(env)
 
             if engine is not None:
                 inspector = sa_inspect(engine)
@@ -255,7 +271,13 @@ def run_auto_migrations() -> None:
                 else:
                     # Legacy or pre-created database: has tables but no stamped alembic_version.
                     # Check whether the modern / partial upgrade tables exist.
-                    has_v2_4_0 = (v2_4_0_sentinel in user_tables) if v2_4_0_sentinel is not None else False
+                    if v2_4_0_sentinel is not None:
+                        if isinstance(v2_4_0_sentinel, (tuple, list, set)):
+                            has_v2_4_0 = any(t in user_tables for t in v2_4_0_sentinel)
+                        else:
+                            has_v2_4_0 = v2_4_0_sentinel in user_tables
+                    else:
+                        has_v2_4_0 = False
 
                     if has_v2_4_0:
                         # ── Case 3: Partial upgrade or modern schema ──────────

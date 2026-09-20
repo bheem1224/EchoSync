@@ -753,27 +753,37 @@ async def test_telemetry_stream_endpoint():
 
 def test_plex_blueprint_and_router_mounting(regression_env):
     """Verifies that Plex (3021005569) initializes with APIRouter without Blueprint errors."""
+    import shutil
     from pathlib import Path
 
     from core.nexus_framework.plugin_loader import PluginLoader, PluginRegistry
     from web.api_app import create_app
 
-    config_db = regression_env["config_db"]
-    plex_dir = Path("plugins/EchoSync/plex").resolve()
-    config_db.register_service(
-        name="EchoSync.plex",
-        service_type="media_server",
-        description="Plex service",
-        absolute_install_path=str(plex_dir),
-        plugin_id=3021005569,
-        version="2.4.2",
-    )
+    PluginRegistry.unregister(3021005569)
+    try:
+        config_db = regression_env["config_db"]
+        plugins_dir = regression_env["plugins_dir"]
+        target_plex_dir = plugins_dir / "EchoSync" / "plex"
+        if not target_plex_dir.exists():
+            src_plex = Path("plugins/EchoSync/plex").resolve()
+            shutil.copytree(src_plex, target_plex_dir)
 
-    app = create_app(testing=True)
-    loader = PluginLoader(Path("."), main_app=app)
-    success = loader._load_plugin_package("3021005569")
-    assert success is True
-    assert PluginRegistry.get_plugin_class("3021005569") is not None
+        config_db.register_service(
+            name="EchoSync.plex",
+            service_type="media_server",
+            description="Plex service",
+            absolute_install_path=str(target_plex_dir),
+            plugin_id=3021005569,
+            version="2.4.2",
+        )
+
+        app = create_app(testing=True)
+        loader = PluginLoader(Path("."), main_app=app)
+        success = loader._load_plugin_package(3021005569)
+        assert success is True
+        assert PluginRegistry.get_plugin_class("3021005569") is not None
+    finally:
+        PluginRegistry.unregister(3021005569)
 
 
 def test_scheduler_daemon_registered_in_lifespan(regression_env):

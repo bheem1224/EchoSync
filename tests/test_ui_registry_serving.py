@@ -171,8 +171,12 @@ def test_static_serving(tmp_path):
     assert resp.content == b"console.log('spotify');"
 
 
-def test_plugin_uninstall_cleanup(tmp_path):
+def test_plugin_uninstall_cleanup(tmp_path, monkeypatch):
     from core.nexus_framework.plugin_store import plugin_store
+
+    # Redirect plugin_store's authorized root to tmp_path so the boundary guard
+    # allows deletion of the test plugin folder (which lives in tmp_path).
+    monkeypatch.setattr(plugin_store, "plugins_dir", tmp_path)
 
     # Setup mock plugin folder structure
     author_dir = tmp_path / "EchoSync"
