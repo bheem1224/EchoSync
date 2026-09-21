@@ -28,15 +28,6 @@
   let isDrawerOpen = $state(false);
 
   const sortedMedia = $derived(
-    [...(track?.local_media || track?.media || [])].sort((a, b) => {
-      if ((b.bitrate || 0) !== (a.bitrate || 0)) {
-        return (b.bitrate || 0) - (a.bitrate || 0);
-      }
-      if ((b.sample_rate || 0) !== (a.sample_rate || 0)) {
-        return (b.sample_rate || 0) - (a.sample_rate || 0);
-      }
-      return (b.bit_depth || 0) - (a.bit_depth || 0);
-    }),
     [...(track?.local_media || track?.media || track?.media_files || [])].sort(
       (a, b) => {
         if ((b.bitrate || 0) !== (a.bitrate || 0)) {
@@ -63,7 +54,6 @@
     activeMenuMedia = null;
   }
 
-  function handleContextMenu(event) {
   function handleContextMenu(event, media = null) {
     event.preventDefault();
     event.stopPropagation();
@@ -142,7 +132,6 @@
       onDeleteEdition(mediaId, track);
       return;
     }
-    if (confirm("Are you sure you want to delete this edition file?")) {
     if (
       confirm(
         "Delete this file edition from disk? This action cannot be undone.",
@@ -439,7 +428,6 @@
               class="px-2.5 py-1 text-xs font-medium rounded bg-red-950/60 hover:bg-red-900/80 text-red-300 border border-red-800/50 transition-colors flex items-center gap-1"
               onclick={(e) => {
                 e.stopPropagation();
-                handleDeleteEdition(media.media_id || media.id);
                 if (!media?.media_id) {
                   console.error(
                     "Cannot delete edition: missing canonical media_id NanoID",
@@ -449,7 +437,6 @@
                 }
                 handleDeleteEdition(media.media_id);
               }}
-              title="Delete this physical file edition"
               title="Delete this file edition from disk"
             >
               🗑 Delete
@@ -463,41 +450,9 @@
 
 {#if showMenu && menuPos}
   <div
-    class="context-menu fixed bg-gray-800 border border-gray-700 rounded-lg shadow-2xl z-[9999] overflow-hidden text-sm w-48 py-1"
     class="context-menu fixed bg-gray-800 border border-gray-700 rounded-lg shadow-2xl z-[9999] overflow-hidden text-sm w-56 py-1"
     style="left: {menuPos.x}px; top: {menuPos.y}px;"
   >
-    <button
-      class="w-full text-left px-4 py-2 hover:bg-gray-700 text-blue-400 flex items-center gap-2 active:scale-95 transition-all duration-200"
-      onclick={() => handleAction("play")}
-    >
-      <span>▶️</span> Play
-    </button>
-    <button
-      class="w-full text-left px-4 py-2 hover:bg-gray-700 text-white flex items-center gap-2 active:scale-95 transition-all duration-200"
-      onclick={() => handleAction("metadata")}
-    >
-      <span>✏️</span> Edit Metadata
-    </button>
-    <button
-      class="w-full text-left px-4 py-2 hover:bg-gray-700 text-blue-300 flex items-center gap-2 active:scale-95 transition-all duration-200"
-      onclick={() => handleAction("upgrade")}
-    >
-      <span>⬆️</span> Force Upgrade
-    </button>
-    <div class="border-t border-gray-700 my-1"></div>
-    <button
-      class="w-full text-left px-4 py-2 hover:bg-red-900/50 text-red-400 flex items-center gap-2 active:scale-95 transition-all duration-200"
-      onclick={() => handleAction("delete")}
-    >
-      <span>🗑️</span> Delete
-    </button>
-    <button
-      class="w-full text-left px-4 py-2 hover:bg-red-900/50 text-red-500 flex items-center gap-2 active:scale-95 transition-all duration-200"
-      onclick={() => handleAction("force_delete")}
-    >
-      <span>⚠️</span> Force System Delete
-    </button>
     {#if activeMenuMedia}
       <button
         class="w-full text-left px-4 py-2 hover:bg-gray-700 text-blue-400 flex items-center gap-2 active:scale-95 transition-all duration-200"
