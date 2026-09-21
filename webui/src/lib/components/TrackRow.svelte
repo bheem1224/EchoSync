@@ -24,6 +24,7 @@
 
   let showMenu = $state(false);
   let menuPos = $state(null); // null for popover attached to button, or { x, y } for contextmenu
+  let activeMenuMedia = $state(null);
   let isDrawerOpen = $state(false);
 
   const sortedMedia = $derived(
@@ -36,10 +37,22 @@
       }
       return (b.bit_depth || 0) - (a.bit_depth || 0);
     }),
+    [...(track?.local_media || track?.media || track?.media_files || [])].sort(
+      (a, b) => {
+        if ((b.bitrate || 0) !== (a.bitrate || 0)) {
+          return (b.bitrate || 0) - (a.bitrate || 0);
+        }
+        if ((b.sample_rate || 0) !== (a.sample_rate || 0)) {
+          return (b.sample_rate || 0) - (a.sample_rate || 0);
+        }
+        return (b.bit_depth || 0) - (a.bit_depth || 0);
+      },
+    ),
   );
 
   function toggleMenu(e) {
     if (e) e.stopPropagation();
+    activeMenuMedia = null;
     menuPos = null;
     showMenu = !showMenu;
   }
@@ -47,11 +60,14 @@
   function closeMenu() {
     showMenu = false;
     menuPos = null;
+    activeMenuMedia = null;
   }
 
   function handleContextMenu(event) {
+  function handleContextMenu(event, media = null) {
     event.preventDefault();
     event.stopPropagation();
+    activeMenuMedia = media;
     menuPos = { x: event.clientX, y: event.clientY };
     showMenu = true;
   }
@@ -81,6 +97,13 @@
   }
 
   function handlePlayEdition(mediaId) {
+    if (!mediaId || typeof mediaId !== "string") {
+      console.error(
+        "Cannot play edition: missing canonical media_id NanoID",
+        mediaId,
+      );
+      return;
+    }
     const trackRef = track.sync_id || track.id;
     if (onplay) {
       onplay(trackRef, mediaId);
@@ -90,6 +113,13 @@
   }
 
   function handleEditEdition(mediaId) {
+    if (!mediaId || typeof mediaId !== "string") {
+      console.error(
+        "Cannot edit edition: missing canonical media_id NanoID",
+        mediaId,
+      );
+      return;
+    }
     const trackRef = track.sync_id || track.id;
     if (onedit) {
       onedit(trackRef, mediaId);
@@ -101,11 +131,23 @@
   }
 
   function handleDeleteEdition(mediaId) {
+    if (!mediaId || typeof mediaId !== "string") {
+      console.error(
+        "Cannot delete edition: missing canonical media_id NanoID",
+        mediaId,
+      );
+      return;
+    }
     if (onDeleteEdition) {
       onDeleteEdition(mediaId, track);
       return;
     }
     if (confirm("Are you sure you want to delete this edition file?")) {
+    if (
+      confirm(
+        "Delete this file edition from disk? This action cannot be undone.",
+      )
+    ) {
       fetch(`/api/v1/core/library/media/${mediaId}`, { method: "DELETE" })
         .then((res) => {
           if (res.ok) {
@@ -302,6 +344,8 @@
             onclick={() => handleAction("delete")}
           >
             <span>🗑️</span> Delete
+            <span>🗑️</span>
+            {sortedMedia.length > 1 ? "Delete Track (All Editions)" : "Delete"}
           </button>
           <button
             class="w-full text-left px-4 py-2 hover:bg-red-900/50 text-red-500 flex items-center gap-2 active:scale-95 transition-all duration-200"
@@ -329,6 +373,7 @@
       {#each sortedMedia as media, idx}
         <div
           class="flex items-center justify-between py-1.5 px-3 rounded-lg bg-slate-900/60 border border-slate-800/40 hover:border-slate-700/60 transition-colors"
+          oncontextmenu={(e) => handleContextMenu(e, media)}
         >
           <div class="flex items-center gap-3">
             <span class="text-xs font-bold font-mono text-cyan-400"
@@ -359,6 +404,14 @@
               onclick={(e) => {
                 e.stopPropagation();
                 handlePlayEdition(media.media_id || media.id);
+                if (!media?.media_id) {
+                  console.error(
+                    "Cannot play edition: missing canonical media_id NanoID",
+                    media,
+                  );
+                  return;
+                }
+                handlePlayEdition(media.media_id);
               }}
             >
               ▶ Play
@@ -369,6 +422,14 @@
               onclick={(e) => {
                 e.stopPropagation();
                 handleEditEdition(media.media_id || media.id);
+                if (!media?.media_id) {
+                  console.error(
+                    "Cannot edit edition: missing canonical media_id NanoID",
+                    media,
+                  );
+                  return;
+                }
+                handleEditEdition(media.media_id);
               }}
             >
               ✏ Edit
@@ -379,8 +440,17 @@
               onclick={(e) => {
                 e.stopPropagation();
                 handleDeleteEdition(media.media_id || media.id);
+                if (!media?.media_id) {
+                  console.error(
+                    "Cannot delete edition: missing canonical media_id NanoID",
+                    media,
+                  );
+                  return;
+                }
+                handleDeleteEdition(media.media_id);
               }}
               title="Delete this physical file edition"
+              title="Delete this file edition from disk"
             >
               🗑 Delete
             </button>
@@ -394,6 +464,7 @@
 {#if showMenu && menuPos}
   <div
     class="context-menu fixed bg-gray-800 border border-gray-700 rounded-lg shadow-2xl z-[9999] overflow-hidden text-sm w-48 py-1"
+    class="context-menu fixed bg-gray-800 border border-gray-700 rounded-lg shadow-2xl z-[9999] overflow-hidden text-sm w-56 py-1"
     style="left: {menuPos.x}px; top: {menuPos.y}px;"
   >
     <button
@@ -427,5 +498,98 @@
     >
       <span>⚠️</span> Force System Delete
     </button>
+    {#if activeMenuMedia}
+      <button
+        class="w-full text-left px-4 py-2 hover:bg-gray-700 text-blue-400 flex items-center gap-2 active:scale-95 transition-all duration-200"
+        onclick={() => {
+          const mId = activeMenuMedia.media_id;
+          closeMenu();
+          if (!mId) {
+            console.error(
+              "Cannot play edition: missing canonical media_id NanoID",
+              activeMenuMedia,
+            );
+            return;
+          }
+          handlePlayEdition(mId);
+        }}
+      >
+        <span>▶️</span> Play This Edition
+      </button>
+      <button
+        class="w-full text-left px-4 py-2 hover:bg-gray-700 text-white flex items-center gap-2 active:scale-95 transition-all duration-200"
+        onclick={() => {
+          const mId = activeMenuMedia.media_id;
+          closeMenu();
+          if (!mId) {
+            console.error(
+              "Cannot edit edition: missing canonical media_id NanoID",
+              activeMenuMedia,
+            );
+            return;
+          }
+          handleEditEdition(mId);
+        }}
+      >
+        <span>✏️</span> Edit Edition Metadata
+      </button>
+      <div class="border-t border-gray-700 my-1"></div>
+      <button
+        class="w-full text-left px-4 py-2 hover:bg-red-900/50 text-red-400 flex items-center gap-2 active:scale-95 transition-all duration-200"
+        onclick={() => {
+          const mId = activeMenuMedia.media_id;
+          closeMenu();
+          if (!mId) {
+            console.error(
+              "Cannot delete edition: missing canonical media_id NanoID",
+              activeMenuMedia,
+            );
+            return;
+          }
+          handleDeleteEdition(mId);
+        }}
+      >
+        <span>🗑️</span> Delete File Edition
+      </button>
+      <button
+        class="w-full text-left px-4 py-2 hover:bg-red-900/50 text-red-500 flex items-center gap-2 active:scale-95 transition-all duration-200"
+        onclick={() => handleAction("delete")}
+      >
+        <span>⚠️</span> Delete Track (All Editions)
+      </button>
+    {:else}
+      <button
+        class="w-full text-left px-4 py-2 hover:bg-gray-700 text-blue-400 flex items-center gap-2 active:scale-95 transition-all duration-200"
+        onclick={() => handleAction("play")}
+      >
+        <span>▶️</span> Play
+      </button>
+      <button
+        class="w-full text-left px-4 py-2 hover:bg-gray-700 text-white flex items-center gap-2 active:scale-95 transition-all duration-200"
+        onclick={() => handleAction("metadata")}
+      >
+        <span>✏️</span> Edit Metadata
+      </button>
+      <button
+        class="w-full text-left px-4 py-2 hover:bg-gray-700 text-blue-300 flex items-center gap-2 active:scale-95 transition-all duration-200"
+        onclick={() => handleAction("upgrade")}
+      >
+        <span>⬆️</span> Force Upgrade
+      </button>
+      <div class="border-t border-gray-700 my-1"></div>
+      <button
+        class="w-full text-left px-4 py-2 hover:bg-red-900/50 text-red-400 flex items-center gap-2 active:scale-95 transition-all duration-200"
+        onclick={() => handleAction("delete")}
+      >
+        <span>🗑️</span>
+        {sortedMedia.length > 1 ? "Delete Track (All Editions)" : "Delete"}
+      </button>
+      <button
+        class="w-full text-left px-4 py-2 hover:bg-red-900/50 text-red-500 flex items-center gap-2 active:scale-95 transition-all duration-200"
+        onclick={() => handleAction("force_delete")}
+      >
+        <span>⚠️</span> Force System Delete
+      </button>
+    {/if}
   </div>
 {/if}

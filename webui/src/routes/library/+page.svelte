@@ -215,6 +215,7 @@
     if (
       !confirm(
         "Are you sure you want to delete this track? This action cannot be undone.",
+        "Delete track and ALL associated files? This action cannot be undone.",
       )
     )
       return;
@@ -230,6 +231,7 @@
     if (
       !confirm(
         "⚠️ FORCE DELETE: This will set the system flag to DELETE (0.1). Continue?",
+        "⚠️ FORCE SYSTEM DELETE: Delete track and ALL associated files permanently? This will set the system flag to DELETE (0.1). Continue?",
       )
     )
       return;
@@ -255,18 +257,35 @@
     if (selectedArtist) selectedArtist = { ...selectedArtist };
   }
 
+  /**
+   * Delete a specific physical media edition via its canonical NanoID.
+   * @param {string} mediaId - Canonical string NanoID (no integer PK fallback allowed).
+   * @param {object} track - Parent track entity.
+   * @param {object} album - Parent album entity.
+   */
   async function deleteMediaEdition(mediaId, track, album) {
+    if (!mediaId || typeof mediaId !== "string") {
+      console.error(
+        "deleteMediaEdition aborted: mediaId must be a valid non-empty string NanoID",
+        mediaId,
+      );
+      return;
+    }
     if (
       !confirm(
         "Are you sure you want to delete this specific file edition? This action cannot be undone.",
+        "Delete this file edition from disk? This action cannot be undone.",
       )
     )
       return;
     try {
       await apiClient.delete(`/core/library/media/${mediaId}`);
+
+      // Strict NanoID filtering across all media collections
       if (track.local_media) {
         track.local_media = track.local_media.filter(
           (m) => (m.media_id || m.id) !== mediaId && m.id !== mediaId,
+          (m) => m.media_id !== mediaId,
         );
         if (track.local_media.length === 0) {
           updateLocalStateAfterDelete(track.id, album);
@@ -274,8 +293,38 @@
           libraryIndex = [...libraryIndex];
           if (selectedArtist) selectedArtist = { ...selectedArtist };
         }
+      }
+      if (track.media) {
+        track.media = track.media.filter((m) => m.media_id !== mediaId);
+      }
+      if (track.media_files) {
+        track.media_files = track.media_files.filter(
+          (m) => m.media_id !== mediaId,
+        );
+      }
+
+      const currentEditionsCount = Math.max(
+        track.media ? track.media.length : 0,
+        track.local_media ? track.local_media.length : 0,
+        track.media_files ? track.media_files.length : 0,
+      );
+
+      if (currentEditionsCount === 0) {
+        updateLocalStateAfterDelete(track.id, album);
       } else {
         await loadLibrary();
+        album.tracks = album.tracks.map((t) =>
+          t.id === track.id || (t.sync_id && t.sync_id === track.sync_id)
+            ? {
+                ...t,
+                media: track.media,
+                local_media: track.local_media,
+                media_files: track.media_files,
+              }
+            : t,
+        );
+        libraryIndex = [...libraryIndex];
+        if (selectedArtist) selectedArtist = { ...selectedArtist };
       }
     } catch (err) {
       alert(`Failed to delete media edition: ${err.message}`);
@@ -337,6 +386,54 @@
   }
 
   onMount(loadLibrary);
+  onMount(() => {
+    loadLibrary();
+
+    const handleMediaDeleted = (e) => {
+      const { mediaId, trackId } = e.detail || {};
+      if (!mediaId || typeof mediaId !== "string" || !selectedArtist) return;
+      for (const album of selectedArtist.albums || []) {
+        const trk = album.tracks?.find(
+          (t) => t.id === trackId || t.sync_id === trackId,
+        );
+        if (trk) {
+          if (trk.local_media) {
+            trk.local_media = trk.local_media.filter(
+              (m) => m.media_id !== mediaId,
+            );
+          }
+          if (trk.media) {
+            trk.media = trk.media.filter((m) => m.media_id !== mediaId);
+          }
+          if (trk.media_files) {
+            trk.media_files = trk.media_files.filter(
+              (m) => m.media_id !== mediaId,
+            );
+          }
+          const count = Math.max(
+            trk.media ? trk.media.length : 0,
+            trk.local_media ? trk.local_media.length : 0,
+            trk.media_files ? trk.media_files.length : 0,
+          );
+          if (count === 0) {
+            updateLocalStateAfterDelete(trk.id, album);
+          } else {
+            album.tracks = album.tracks.map((t) =>
+              t.id === trk.id ? { ...t } : t,
+            );
+            libraryIndex = [...libraryIndex];
+            selectedArtist = { ...selectedArtist };
+          }
+          break;
+        }
+      }
+    };
+
+    window.addEventListener("echosync:media-deleted", handleMediaDeleted);
+    return () => {
+      window.removeEventListener("echosync:media-deleted", handleMediaDeleted);
+    };
+  });
 </script>
 
 {#if loading}
