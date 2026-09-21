@@ -6,4 +6,4 @@ You are strictly forbidden from using standard OS shell commands (like `grep`, `
 `uv run --env-file .env graphify`
 
 ## 2. Rule Ingestion
-You must proactively read and adhere to all Markdown rules located in the `.agents/rules/` directory before writing code. Specifically, honor `graphify-reuse-invariant.md` and `separation-of-concerns-invariant.md`.
+You must proactively read and adhere to all Markdown rules located in the `.agents/rules/` directory before writing code. Specifically, honor `graphify-reuse-invariant.md`, `separation-of-concerns-invariant.md`, and `core-capabilities-and-ffi-invariants.md`.
