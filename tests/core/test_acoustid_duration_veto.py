@@ -272,3 +272,106 @@ def test_acoustid_isolated_path_honors_dynamic_duration_veto(monkeypatch, tmp_pa
     assert res.title == "Waterloo"
     assert res.resolution_method == "acoustid"
     assert res.confidence_score == 0.95
+
+
+def test_canonical_release_popularity_bonus_breaks_tie(monkeypatch, tmp_path):
+    """Verify candidate with >=5 release groups receives +5.0 popularity bonus and outscores 1-release cover."""
+    audio_file = tmp_path / "Try.mp3"
+    audio_file.write_bytes(b"dummy audio content")
+
+    file_dur_ms = 247000  # 247.0s (P!nk - Try)
+
+    monkeypatch.setattr(
+        echosync_core,
+        "extract_metadata",
+        lambda p: {
+            "title": "Try",
+            "artist": "P!nk",
+            "duration_ms": file_dur_ms,
+            "channels": 2,
+        },
+    )
+
+    dummy_fp = "D" * 80
+    monkeypatch.setattr(
+        FingerprintGenerator,
+        "generate_with_duration",
+        lambda p: (dummy_fp, file_dur_ms / 1000.0),
+    )
+
+    # AcoustID returns 2 candidate MBIDs:
+    # 1. Cover with closer duration (delta = 0.5s) but only 1 release
+    # 2. Canonical original (delta = 3.5s) with 8 releases
+    mock_acoustid = MagicMock()
+    mock_acoustid.resolve_fingerprint_details.return_value = {
+        "acoustid_id": "acoustid-try",
+        "score": 0.96,  # 96% -> dynamic threshold = 5.0s
+        "recordings": [
+            {
+                "id": "mbid-cover-try",
+                "title": "Try",
+                "artist": "Cover Artist",
+                "duration": 247.5,
+                "score": 0.96,
+            },
+            {
+                "id": "mbid-pink-try",
+                "title": "Try",
+                "artist": "P!nk",
+                "duration": 250.5,  # 3.5s delta
+                "score": 0.96,
+            },
+        ],
+        "mbids": ["mbid-cover-try", "mbid-pink-try"],
+    }
+
+    mock_mb = MagicMock()
+
+    def _get_meta(mbid):
+        if mbid == "mbid-cover-try":
+            return {
+                "id": "mbid-cover-try",
+                "title": "Try",
+                "artist": "Cover Artist",
+                "album": "Acoustic Covers",
+                "length": 247500,  # 0.5s delta
+                "release_id": "rel-cover",
+                "releases": [{"id": "rel-1", "release-group": {"id": "rg-1", "primary_type": "Single"}}],
+            }
+        else:
+            return {
+                "id": "mbid-pink-try",
+                "title": "Try",
+                "artist": "P!nk",
+                "album": "The Truth About Love",
+                "length": 250500,  # 3.5s delta
+                "release_id": "rel-pink",
+                "releases": [
+                    {"id": f"rel-{i}", "release-group": {"id": f"rg-{i}", "primary_type": "Album"}}
+                    for i in range(1, 8)
+                ],
+            }
+
+    mock_mb.get_metadata.side_effect = _get_meta
+
+    engine = MetadataResolutionEngine(
+        acoustid_provider=mock_acoustid,
+        metadata_provider=mock_mb,
+    )
+
+    req = ResolutionRequest(
+        media_id="media_try",
+        file_path=audio_file,
+        baseline_title="Try",
+        baseline_artist="P!nk",
+        chromaprint=dummy_fp,
+        duration_ms=file_dur_ms,
+        ignore_cache=True,
+    )
+
+    res = engine.resolve_track(req)
+
+    # Canonical P!nk recording wins because of artist match, album bonus, and popularity bonus
+    assert res.musicbrainz_id == "mbid-pink-try"
+    assert res.artist_name == "P!nk"
+

@@ -283,6 +283,9 @@ def compute_dynamic_duration_threshold(sim_score: float) -> float:
     return 2.0 + (progress * 3.0)
 
 
+_calculate_dynamic_duration_threshold = compute_dynamic_duration_threshold
+
+
 class MetadataResolutionEngine:
     """Authoritative metadata resolution engine ensuring uniform behavior across
 
@@ -1620,25 +1623,44 @@ class MetadataResolutionEngine:
                 prefer_studio = request.prefer_studio_album if request else True
                 album_bonus = 5.0 if prefer_studio and p_type == "Album" else 0.0
 
-                # Duration proximity weight (parabolic)
+                # Duration proximity weight (quadratic decay with dynamic max_sec)
                 if cand_dur_ms is not None and file_duration_ms > 0:
-                    dur_weight = calculate_acoustid_duration_weight(file_duration_sec, cand_dur_ms / 1000.0)
+                    max_threshold = compute_dynamic_duration_threshold(cand_acoustid_score)
+                    dur_weight = calculate_acoustid_duration_weight(
+                        file_duration_sec,
+                        cand_dur_ms / 1000.0,
+                        max_sec=max_threshold,
+                    )
                 else:
                     dur_weight = 1.0  # Unknown duration — no penalty
 
-                # Final score: candidate scoring combines matcher score (70%), duration weight (30%), and album bonus
-                cand_score = (matcher_score * 0.7) + (dur_weight * 30.0) + album_bonus
+                # Release group popularity bonus (tie-breaker against obscure 1-release covers)
+                rg_set = set()
+                for r in cand_meta.get("releases") or []:
+                    if isinstance(r, dict):
+                        rg = r.get("release-group") or r.get("release_group") or {}
+                        rg_id = rg.get("id") or r.get("release_group_id") or r.get("id")
+                        if rg_id:
+                            rg_set.add(rg_id)
+                rg_count = max(len(rg_set), cand_meta.get("release_group_count", 0), cand_meta.get("release_count", 0))
+                if not rg_count and cand_meta.get("releases"):
+                    rg_count = len(cand_meta.get("releases"))
+                popularity_bonus = 5.0 if rg_count >= 5 else (1.0 * rg_count if rg_count > 0 else 0.0)
+
+                # Final score: candidate scoring combines matcher score (70%), duration weight (30%), album bonus, and popularity bonus
+                cand_score = (matcher_score * 0.7) + (dur_weight * 30.0) + album_bonus + popularity_bonus
                 if veto_applies:
                     cand_sim = max(cand_sim, 0.65)
 
                 logger.debug(
                     "[resolution_engine] Stage 3 candidate MBID %s '%s': "
-                    "matcher=%.1f dur_weight=%.3f album_bonus=%.1f veto=%s => score=%.2f",
+                    "matcher=%.1f dur_weight=%.3f album_bonus=%.1f pop_bonus=%.1f veto=%s => score=%.2f",
                     mbid_str,
                     c_title,
                     matcher_score,
                     dur_weight,
                     album_bonus,
+                    popularity_bonus,
                     veto_applies,
                     cand_score,
                 )
@@ -1688,7 +1710,7 @@ class MetadataResolutionEngine:
                     "musicbrainz_release_id": best_candidate.get("release_id") or best_candidate.get("mb_release_id"),
                     "acoustid_id": acoustid_id,
                     "isrc": best_candidate.get("isrc"),
-                    "candidate_score": best_score,
+                    "candidate_score": min(100.0, max(0.0, best_score)),
                     "acoustid_score": best_acoustid_score,
                     "duration_delta_sec": best_dur_delta,
                     "veto_applied": best_veto_applied,

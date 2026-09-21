@@ -3,12 +3,36 @@ from core.db.echo_sync_track import EchosyncTrack
 from core.matching_engine.trust_gate import clean_title_from_filename, is_generic_title
 
 
-def calculate_acoustid_duration_weight(track_duration: float, candidate_duration: float) -> float:
-    delta = abs(track_duration - candidate_duration)
-    if delta > 2.0:
+def calculate_bounded_duration_weight(delta_sec: float, base_sec: float, max_sec: float) -> float:
+    if max_sec <= base_sec:
         return 0.0
-    # Progressive parabolic curve: 1.0 at 0s, 0.75 at 1s, 0.0 at 2s
-    return max(0.0, 1.0 - (delta / 2.0) ** 2)
+    delta = abs(delta_sec)
+    if delta <= base_sec:
+        return 1.0
+    if delta >= max_sec:
+        return 0.0
+    ratio = (delta - base_sec) / (max_sec - base_sec)
+    return max(0.0, 1.0 - (ratio * ratio))
+
+
+def calculate_acoustid_duration_weight(
+    track_duration_or_delta: float,
+    candidate_duration: float | None = None,
+    max_sec: float = 2.0,
+    base_sec: float = 2.0,
+) -> float:
+    if candidate_duration is not None:
+        delta = abs(track_duration_or_delta - candidate_duration)
+    else:
+        delta = abs(track_duration_or_delta)
+
+    if max_sec <= 2.0:
+        if delta > 2.0:
+            return 0.0
+        # Progressive parabolic curve: 1.0 at 0s, 0.75 at 1s, 0.0 at 2s
+        return max(0.0, 1.0 - (delta / 2.0) ** 2)
+
+    return calculate_bounded_duration_weight(delta, base_sec=base_sec, max_sec=max_sec)
 
 
 def calculate_text_duration_weight(track_duration: float, candidate_duration: float) -> float:
@@ -27,6 +51,7 @@ def score_acoustid_candidate(
     baseline_album: str | None = None,
     filename: str | None = None,
     prefer_studio_album: bool = True,
+    max_sec: float = 2.0,
 ) -> float:
     """Score AcoustID recording candidate by duration proximity, variant disambiguation penalties,
     and canonical studio release weighting using WeightedMatchingEngine(PROFILE_EXACT_SYNC).
@@ -45,9 +70,9 @@ def score_acoustid_candidate(
                 track_dur_sec = file_duration_ms / 1000.0
                 cand_dur_sec = cand_dur_ms / 1000.0
                 delta_sec = abs(track_dur_sec - cand_dur_sec)
-                duration_weight = calculate_acoustid_duration_weight(track_dur_sec, cand_dur_sec)
-                if duration_weight <= 0.0 or delta_sec > 2.0:
-                    return 0.0  # Hard AcoustID duration gate (reject delta > 2.0s)
+                duration_weight = calculate_acoustid_duration_weight(track_dur_sec, cand_dur_sec, max_sec=max_sec)
+                if duration_weight <= 0.0 or delta_sec > max_sec:
+                    return 0.0  # AcoustID duration gate (reject delta > max_sec)
         except (ValueError, TypeError):
             pass
 

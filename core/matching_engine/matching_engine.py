@@ -47,15 +47,14 @@ from difflib import SequenceMatcher
 from ..db.echo_sync_track import EchosyncTrack
 from .fingerprinting import FingerprintMatcher
 from .scoring_profile import ScoringProfile
+from .text_utils import _cmp_artists
 
 logger = logging.getLogger(__name__)
 
 # DEV_MODE killswitch: set ECHOSYNC_DEV_MODE=1 (or "true"/"yes") in the environment
 # to bypass the ISRC instant-match fast-path during development/testing.
 # Uses .get() with a safe default so the app never raises if the variable is absent.
-_ISRC_FAST_PATH_ENABLED = os.environ.get(
-    "ECHOSYNC_DEV_MODE", ""
-).strip().lower() not in ("1", "true", "yes")
+_ISRC_FAST_PATH_ENABLED = os.environ.get("ECHOSYNC_DEV_MODE", "").strip().lower() not in ("1", "true", "yes")
 
 
 @dataclass
@@ -84,9 +83,7 @@ class MatchResult:
     is_near_miss: bool = False
 
 
-REMASTER_STRIP_REGEX = re.compile(
-    r"\s*[-–—\(\[]\s*(?:\d{4}\s+)?remaster(?:ed)?(?:\s+\d{4})?\s*[\)\]]?", re.IGNORECASE
-)
+REMASTER_STRIP_REGEX = re.compile(r"\s*[-–—\(\[]\s*(?:\d{4}\s+)?remaster(?:ed)?(?:\s+\d{4})?\s*[\)\]]?", re.IGNORECASE)
 
 
 def get_version_family(version_str: str | None) -> str | None:
@@ -129,16 +126,29 @@ def get_version_family(version_str: str | None) -> str | None:
     return v
 
 
-def calculate_duration_score(delta_ms: int, strict: bool = False) -> float:
+def calculate_duration_score(
+    delta_ms: int,
+    strict: bool = False,
+    t_base_ms: int | None = None,
+    t_limit_ms: int | None = None,
+) -> float:
     """
     Continuous polynomial duration penalty decay curve (k=6).
 
     - Standard (strict=False, Tier 1): T_base = 5000ms, Limit = 6000ms, k = 6.
     - Strict (strict=True, Tier 2): T_base = 2000ms, Limit = 3000ms, k = 6.
+    - Dynamic: custom t_base_ms and t_limit_ms if provided.
     """
     delta = abs(delta_ms)
-    t_base = 2000 if strict else 5000
-    t_limit = 3000 if strict else 6000
+    if t_base_ms is not None and t_limit_ms is not None:
+        t_base = t_base_ms
+        t_limit = t_limit_ms
+    elif t_base_ms is not None:
+        t_base = t_base_ms
+        t_limit = max(t_base + 1000, int(t_base * 1.25))
+    else:
+        t_base = 2000 if strict else 5000
+        t_limit = 3000 if strict else 6000
     k = 6
 
     if delta <= t_base:
@@ -202,9 +212,7 @@ def evaluate_version_compatibility(
 
             import re
 
-            src_remixer = re.sub(
-                r"\b(remixes|remix|rmx|club mix|mix|edit|bootleg|flip)\b", "", src_clean
-            ).strip()
+            src_remixer = re.sub(r"\b(remixes|remix|rmx|club mix|mix|edit|bootleg|flip)\b", "", src_clean).strip()
             cand_remixer = re.sub(
                 r"\b(remixes|remix|rmx|club mix|mix|edit|bootleg|flip)\b",
                 "",
@@ -229,9 +237,7 @@ def evaluate_version_compatibility(
         return True, 0.0, f"Version family match ({src_fam}): '{src_v}' ≡ '{cand_v}'"
 
     # Subtitle / Genre Descriptor Equivalence (e.g. "Sea Shanty")
-    if (src_fam in ("sea_shanty", "shanty") and not cand_fam) or (
-        cand_fam in ("sea_shanty", "shanty") and not src_fam
-    ):
+    if (src_fam in ("sea_shanty", "shanty") and not cand_fam) or (cand_fam in ("sea_shanty", "shanty") and not src_fam):
         return True, 0.0, "Subtitle descriptor equivalence"
 
     # Studio release formats & collaborator version equivalence against unannotated original
@@ -363,10 +369,6 @@ class WeightedMatchingEngine:
     """
 
     @staticmethod
-    def sanitize_title_for_comparison(title: str) -> str:
-        return sanitize_title_for_comparison(title)
-
-    @staticmethod
     def _normalize_string_for_comparison(s: str) -> str:
         if not s:
             return ""
@@ -477,14 +479,8 @@ class WeightedMatchingEngine:
 
         # weights should be a dict-like or have a dict we can update, let's see.
         # But wait, weights might be a dataclass. Let's convert to dict, let hook update it, then set back.
-        weights_dict = (
-            self.weights.__dict__.copy()
-            if hasattr(self.weights, "__dict__")
-            else self.weights
-        )
-        hook_result = hook_manager.apply_filters(
-            "ON_SCORING_WEIGHTS_CALCULATE", weights_dict
-        )
+        weights_dict = self.weights.__dict__.copy() if hasattr(self.weights, "__dict__") else self.weights
+        hook_result = hook_manager.apply_filters("ON_SCORING_WEIGHTS_CALCULATE", weights_dict)
         if hook_result and isinstance(hook_result, dict):
             if hasattr(self.weights, "__dict__"):
                 self.weights.__dict__.update(hook_result)
@@ -501,6 +497,7 @@ class WeightedMatchingEngine:
         target_source: str | None = None,
         target_identifier: str | None = None,
         context: str = "sync",
+        tolerance_override_ms: int | None = None,
     ) -> MatchResult:
         """
         Calculate match confidence between source and candidate tracks
@@ -519,13 +516,6 @@ class WeightedMatchingEngine:
         if hook_result and isinstance(hook_result, dict) and hook_result.get("skip"):
             return hook_result.get("result")
 
-        # Initialize scoring components
-        score = 0.0
-        max_possible_score = 0.0
-        version_penalty = 0.0
-        edition_penalty = 0.0
-        quality_bonus = 0.0
-        fingerprint_score = 0.0
         reasoning_parts = []
 
         # ===== STEP 0a: ISRC INSTANT MATCH or AUTO-FAIL (highest confidence) =====
@@ -558,9 +548,7 @@ class WeightedMatchingEngine:
                         target_identifier,
                     )
                 else:
-                    reasoning_parts.append(
-                        "ISRC mismatch (both present, different codes) - auto-fail"
-                    )
+                    reasoning_parts.append("ISRC mismatch (both present, different codes) - auto-fail")
                     return self._attach_target_context(
                         MatchResult(
                             confidence_score=0.0,
@@ -579,7 +567,9 @@ class WeightedMatchingEngine:
 
         # Continue with standard matching...
         return self._attach_target_context(
-            self._calculate_standard_match(source, candidate, context=context),
+            self._calculate_standard_match(
+                source, candidate, context=context, tolerance_override_ms=tolerance_override_ms
+            ),
             target_source,
             target_identifier,
         )
@@ -590,6 +580,7 @@ class WeightedMatchingEngine:
         candidate: EchosyncTrack,
         target_source: str | None = None,
         target_identifier: str | None = None,
+        tolerance_override_ms: int | None = None,
     ) -> MatchResult:
         """
         Calculate match for Tier 2 fallback: exact title + duration only (ignores artist).
@@ -648,18 +639,12 @@ class WeightedMatchingEngine:
 
         # Title must be exact match (normalized, ignoring remaster suffixes)
         source_title_clean = self.sanitize_title_for_comparison(source.title or "")
-        candidate_title_clean = self.sanitize_title_for_comparison(
-            candidate.title or ""
-        )
+        candidate_title_clean = self.sanitize_title_for_comparison(candidate.title or "")
         source_title_norm = self._normalize_string_for_comparison(source_title_clean)
-        candidate_title_norm = self._normalize_string_for_comparison(
-            candidate_title_clean
-        )
+        candidate_title_norm = self._normalize_string_for_comparison(candidate_title_clean)
 
         if source_title_norm != candidate_title_norm:
-            reasoning_parts.append(
-                f"Title mismatch: '{source.title}' != '{candidate.title}'"
-            )
+            reasoning_parts.append(f"Title mismatch: '{source.title}' != '{candidate.title}'")
             return self._attach_target_context(
                 MatchResult(
                     confidence_score=0.0,
@@ -698,7 +683,12 @@ class WeightedMatchingEngine:
             )
 
         duration_diff_ms = abs(source.duration - candidate.duration)
-        duration_score = calculate_duration_score(duration_diff_ms, strict=True)
+        if tolerance_override_ms is not None:
+            t_base = int(tolerance_override_ms)
+            t_limit = max(t_base + 1000, int(t_base * 1.25))
+            duration_score = calculate_duration_score(duration_diff_ms, t_base_ms=t_base, t_limit_ms=t_limit)
+        else:
+            duration_score = calculate_duration_score(duration_diff_ms, strict=True)
 
         # Allow plugins to boost score
         from core.hook_manager import hook_manager as _hm_t2
@@ -709,9 +699,7 @@ class WeightedMatchingEngine:
             source=source,
             candidate=candidate,
         )
-        _t2_score_boost: float = (
-            float(_t2_mod.get("boost", 0.0)) if isinstance(_t2_mod, dict) else 0.0
-        )
+        _t2_score_boost: float = float(_t2_mod.get("boost", 0.0)) if isinstance(_t2_mod, dict) else 0.0
 
         if duration_score == 0.0:
             reasoning_parts.append(
@@ -737,17 +725,11 @@ class WeightedMatchingEngine:
         # Calculate confidence based on polynomial duration decay score
         confidence = 90.0 + (duration_score * 10.0)  # 90-100% range
 
-        reasoning_parts.append(
-            f"Duration match: {duration_diff_ms}ms difference (duration_score={duration_score:.4f})"
-        )
+        reasoning_parts.append(f"Duration match: {duration_diff_ms}ms difference (duration_score={duration_score:.4f})")
         if _t2_score_boost:
             confidence = min(100.0, confidence + _t2_score_boost)
-            reasoning_parts.append(
-                f"Plugin boost applied: +{_t2_score_boost:.1f} → {confidence:.1f}%"
-            )
-        reasoning_parts.append(
-            f"Tier 2: Title+Duration match (artist ignored) → {confidence:.1f}%"
-        )
+            reasoning_parts.append(f"Plugin boost applied: +{_t2_score_boost:.1f} → {confidence:.1f}%")
+        reasoning_parts.append(f"Tier 2: Title+Duration match (artist ignored) → {confidence:.1f}%")
 
         return self._attach_target_context(
             MatchResult(
@@ -770,6 +752,7 @@ class WeightedMatchingEngine:
         source: EchosyncTrack,
         candidate: EchosyncTrack,
         context: str = "sync",
+        tolerance_override_ms: int | None = None,
     ) -> MatchResult:
         """
         Standard matching logic (original calculate_match implementation)
@@ -785,15 +768,11 @@ class WeightedMatchingEngine:
         # ===== STEP 0b: FINGERPRINT MATCHING (if available) =====
         # Check fingerprints first - if they match, we can be very confident
         if source.fingerprint and candidate.fingerprint:
-            if FingerprintMatcher.fingerprints_match(
-                source.fingerprint, candidate.fingerprint
-            ):
+            if FingerprintMatcher.fingerprints_match(source.fingerprint, candidate.fingerprint):
                 fingerprint_score = self.weights.fingerprint_weight * 100
                 score += fingerprint_score
                 max_possible_score += self.weights.fingerprint_weight * 100
-                reasoning_parts.append(
-                    f"Fingerprint match: {fingerprint_score:.1f} points (high confidence)"
-                )
+                reasoning_parts.append(f"Fingerprint match: {fingerprint_score:.1f} points (high confidence)")
                 # Fingerprint match is authoritative - skip other checks
                 return MatchResult(
                     confidence_score=min(100.0, score),
@@ -810,21 +789,15 @@ class WeightedMatchingEngine:
                 reasoning_parts.append("Fingerprint available but no match")
 
         # ===== STEP 1: VERSION CHECK =====
-        version_match, version_reasoning, ver_penalty = self._check_version_match(
-            source, candidate, context=context
-        )
+        version_match, version_reasoning, ver_penalty = self._check_version_match(source, candidate, context=context)
 
         if not version_match:
             version_penalty = self.weights.version_mismatch_penalty
-            reasoning_parts.append(
-                f"Version mismatch: {version_reasoning} (-{version_penalty})"
-            )
+            reasoning_parts.append(f"Version mismatch: {version_reasoning} (-{version_penalty})")
 
             # Version mismatch is ALWAYS a critical failure - reject immediately
             # Duration filtering at search time should prevent remix/live versions from appearing
-            logger.debug(
-                f"REJECTING candidate due to version mismatch: {version_reasoning}"
-            )
+            logger.debug(f"REJECTING candidate due to version mismatch: {version_reasoning}")
             return MatchResult(
                 confidence_score=0.0,  # Hard fail on version mismatch
                 passed_version_check=False,
@@ -834,8 +807,7 @@ class WeightedMatchingEngine:
                 quality_bonus_applied=0.0,
                 version_penalty_applied=version_penalty,
                 edition_penalty_applied=0.0,
-                reasoning=" | ".join(reasoning_parts)
-                + f" | REJECTED: {version_reasoning}",
+                reasoning=" | ".join(reasoning_parts) + f" | REJECTED: {version_reasoning}",
             )
         else:
             if ver_penalty > 0.0:
@@ -847,9 +819,7 @@ class WeightedMatchingEngine:
 
         if not edition_match:
             edition_penalty = self.weights.edition_mismatch_penalty
-            reasoning_parts.append(
-                f"Edition mismatch: {edition_reasoning} (-{edition_penalty})"
-            )
+            reasoning_parts.append(f"Edition mismatch: {edition_reasoning} (-{edition_penalty})")
         else:
             reasoning_parts.append(f"Edition match: {edition_reasoning}")
 
@@ -866,29 +836,16 @@ class WeightedMatchingEngine:
         if source.artist_name and candidate.artist_name:
             from core.matching_engine.text_utils import is_franchise_entity
 
-            if (
-                source.artist_name.lower() != "various artists"
-                and candidate.artist_name.lower() == "various artists"
-            ):
+            if source.artist_name.lower() != "various artists" and candidate.artist_name.lower() == "various artists":
                 artist_fuzzy_score = 0.0
-            elif is_franchise_entity(source.artist_name) or is_franchise_entity(
-                candidate.artist_name
-            ):
+            elif is_franchise_entity(source.artist_name) or is_franchise_entity(candidate.artist_name):
                 artist_fuzzy_score = 0.90
             else:
-                artist_fuzzy_score = self._fuzzy_match(
-                    source.artist_name, candidate.artist_name
-                )
+                artist_fuzzy_score = self._fuzzy_match(source.artist_name, candidate.artist_name)
                 if artist_fuzzy_score < 0.8:
-                    is_subset, subset_score, _ = self._check_artist_subset_match(
-                        source, candidate
-                    )
+                    is_subset, subset_score, _ = self._check_artist_subset_match(source, candidate)
                     if is_subset:
-                        if (
-                            source.duration
-                            and candidate.duration
-                            and abs(source.duration - candidate.duration) <= 2000
-                        ):
+                        if source.duration and candidate.duration and abs(source.duration - candidate.duration) <= 2000:
                             artist_fuzzy_score = subset_score
                     else:
                         source_tokens = self._tokenize_artists(source.artist_name)
@@ -898,8 +855,7 @@ class WeightedMatchingEngine:
                             and candidate_tokens
                             and not (source_tokens & candidate_tokens)
                             and source.artist_name.strip().lower() != "various artists"
-                            and candidate.artist_name.strip().lower()
-                            != "various artists"
+                            and candidate.artist_name.strip().lower() != "various artists"
                             and artist_fuzzy_score < 0.6
                         ):
                             artist_fuzzy_score = 0.0
@@ -933,9 +889,7 @@ class WeightedMatchingEngine:
         )
         _force_artist: bool = bool(_pre_mod.get("force_artist_score_to_100", False))
         _pre_dur_override: int | None = (
-            int(_pre_mod["duration_override"])
-            if _pre_mod.get("duration_override")
-            else None
+            int(_pre_mod["duration_override"]) if _pre_mod.get("duration_override") else None
         )
         if _force_artist:
             artist_fuzzy_score = 1.0
@@ -999,12 +953,8 @@ class WeightedMatchingEngine:
                         performer_matched = True
                         break
 
-                src_alb = getattr(source, "album_title", None) or getattr(
-                    source, "album_name", None
-                )
-                cand_alb = getattr(candidate, "album_title", None) or getattr(
-                    candidate, "album_name", None
-                )
+                src_alb = getattr(source, "album_title", None) or getattr(source, "album_name", None)
+                cand_alb = getattr(candidate, "album_title", None) or getattr(candidate, "album_name", None)
                 album_matched = False
                 if src_alb and cand_alb:
                     alb_ratio = SequenceMatcher(
@@ -1016,9 +966,7 @@ class WeightedMatchingEngine:
                         album_matched = True
 
                 dur_matched = bool(
-                    source.duration
-                    and candidate.duration
-                    and abs(source.duration - candidate.duration) <= 5000
+                    source.duration and candidate.duration and abs(source.duration - candidate.duration) <= 5000
                 )
 
                 if performer_matched or (album_matched and dur_matched):
@@ -1044,8 +992,7 @@ class WeightedMatchingEngine:
             if title_fuzzy_score >= 0.95 and artist_fuzzy_score >= 0.95:
                 ta_total_w = self.weights.title_weight + self.weights.artist_weight
                 ta_norm = (
-                    title_fuzzy_score * self.weights.title_weight
-                    + artist_fuzzy_score * self.weights.artist_weight
+                    title_fuzzy_score * self.weights.title_weight + artist_fuzzy_score * self.weights.artist_weight
                 ) / ta_total_w
                 # Artist is already confirmed ≥ 0.95 (the enclosing condition).
                 # Use the plugin's duration_override if supplied (e.g. 15000ms when
@@ -1053,15 +1000,10 @@ class WeightedMatchingEngine:
                 # 8500ms Artist Match Escalation.  This ensures tracks with TV-edit /
                 # trailer-length differences (up to ~15 s) are not rejected here.
                 _rescue_a_tol: int = max(8500, _pre_dur_override or 0)
-                dur_score_a = self._calculate_duration_match(
-                    source, candidate, _rescue_a_tol
-                )
+                dur_score_a = self._calculate_duration_match(source, candidate, _rescue_a_tol)
                 # Score is album-free text component + duration component
                 rescued_a = (
-                    (
-                        ta_norm * self.weights.text_weight * 100
-                        + dur_score_a * self.weights.duration_weight * 100
-                    )
+                    (ta_norm * self.weights.text_weight * 100 + dur_score_a * self.weights.duration_weight * 100)
                     / ((self.weights.text_weight + self.weights.duration_weight) * 100)
                     * 100
                 )
@@ -1149,7 +1091,7 @@ class WeightedMatchingEngine:
         max_possible_score += self.weights.text_weight * 100
 
         # ===== STEP 4: DURATION MATCHING =====
-        duration_score = self._calculate_duration_match(source, candidate)
+        duration_score = self._calculate_duration_match(source, candidate, tolerance_override_ms=tolerance_override_ms)
         duration_contribution = duration_score * self.weights.duration_weight * 100
 
         reasoning_parts.append(
@@ -1172,11 +1114,7 @@ class WeightedMatchingEngine:
             source=source,
             candidate=candidate,
         )
-        _score_boost: float = (
-            float(_plugin_mod.get("boost", 0.0))
-            if isinstance(_plugin_mod, dict)
-            else 0.0
-        )
+        _score_boost: float = float(_plugin_mod.get("boost", 0.0)) if isinstance(_plugin_mod, dict) else 0.0
         if _score_boost:
             reasoning_parts.append(f"Plugin boost queued: +{_score_boost:.1f}")
         # ── End plugin modifiers ───────────────────────────────────────────────
@@ -1187,16 +1125,8 @@ class WeightedMatchingEngine:
         # alternate edition (Radio Edit, Single Mix, Album Version) rather than a
         # wrong track.  Flag it so the caller can route it to the Suggestion Engine.
         # The match MUST still fail — we return 0.0 confidence.
-        if (
-            duration_score == 0.0
-            and title_fuzzy_score >= 0.95
-            and artist_fuzzy_score >= 0.95
-        ):
-            dur_diff_ms = (
-                abs(source.duration - candidate.duration)
-                if source.duration and candidate.duration
-                else None
-            )
+        if duration_score == 0.0 and title_fuzzy_score >= 0.95 and artist_fuzzy_score >= 0.95:
+            dur_diff_ms = abs(source.duration - candidate.duration) if source.duration and candidate.duration else None
             reasoning_parts.append(
                 f"NEAR-MISS: duration outside tolerance (diff={dur_diff_ms}ms) "
                 f"but title={title_fuzzy_score:.2f} artist={artist_fuzzy_score:.2f} — "
@@ -1223,9 +1153,7 @@ class WeightedMatchingEngine:
             quality_bonus = self.weights.quality_bonus * 100
             score += quality_bonus
             max_possible_score += self.weights.quality_bonus * 100
-            reasoning_parts.append(
-                f"Quality bonus applied: +{quality_bonus:.1f} points"
-            )
+            reasoning_parts.append(f"Quality bonus applied: +{quality_bonus:.1f} points")
         else:
             reasoning_parts.append("No quality bonus (candidate has no quality tags)")
 
@@ -1242,12 +1170,8 @@ class WeightedMatchingEngine:
         # ===== NON-DESTRUCTIVE ALBUM MATCH BONUS =====
         # Normalized album similarity >= 0.85 grants an additive bonus (+2.0 pts clamped to 100.0).
         # Missing or non-matching albums incur zero penalty.
-        src_album = getattr(source, "album_title", None) or getattr(
-            source, "album_name", None
-        )
-        cand_album = getattr(candidate, "album_title", None) or getattr(
-            candidate, "album_name", None
-        )
+        src_album = getattr(source, "album_title", None) or getattr(source, "album_name", None)
+        cand_album = getattr(candidate, "album_title", None) or getattr(candidate, "album_name", None)
         if src_album and cand_album:
             from core.matching_engine.text_utils import normalize_text
 
@@ -1257,9 +1181,7 @@ class WeightedMatchingEngine:
                 alb_sim = SequenceMatcher(None, src_alb_norm, cand_alb_norm).ratio()
                 if alb_sim >= 0.85:
                     normalized_score = min(100.0, normalized_score + 2.0)
-                    reasoning_parts.append(
-                        f"Non-destructive album bonus: +2.0 (album_sim={alb_sim:.2f} >= 0.85)"
-                    )
+                    reasoning_parts.append(f"Non-destructive album bonus: +2.0 (album_sim={alb_sim:.2f} >= 0.85)")
 
         # ===== SAFE DURATION BONUS =====
         # If duration is near-perfect match (<= 1500ms) AND artist fuzzy score >= 60%,
@@ -1276,17 +1198,12 @@ class WeightedMatchingEngine:
                         f"Safe duration bonus: +{duration_bonus:.1f} (duration_diff={duration_diff_ms}ms, artist_score={artist_fuzzy_score:.1%})"
                     )
                 else:
-                    reasoning_parts.append(
-                        f"Duration bonus NOT applied (artist_score={artist_fuzzy_score:.1%} < 60%)"
-                    )
+                    reasoning_parts.append(f"Duration bonus NOT applied (artist_score={artist_fuzzy_score:.1%} < 60%)")
 
         # Clamp to 0-100 range
         if _score_boost:
             normalized_score += _score_boost
-            reasoning_parts.append(
-                f"Plugin score_boost applied: +{_score_boost:.1f} → "
-                f"adjusted={normalized_score:.1f}"
-            )
+            reasoning_parts.append(f"Plugin score_boost applied: +{_score_boost:.1f} → adjusted={normalized_score:.1f}")
         final_score = max(0.0, min(100.0, normalized_score))
 
         reasoning_parts.append(f"FINAL SCORE: {final_score:.1f}/100")
@@ -1327,12 +1244,8 @@ class WeightedMatchingEngine:
         Returns:
             (matches: bool, reasoning: str, penalty: float)
         """
-        source_edition = (
-            source.edition or getattr(source, "version", None) or ""
-        ).strip()
-        candidate_edition = (
-            candidate.edition or getattr(candidate, "version", None) or ""
-        ).strip()
+        source_edition = (source.edition or getattr(source, "version", None) or "").strip()
+        candidate_edition = (candidate.edition or getattr(candidate, "version", None) or "").strip()
 
         duration_delta_ms = None
         if source.duration and candidate.duration:
@@ -1351,28 +1264,20 @@ class WeightedMatchingEngine:
         candidate_version_lower = candidate_edition.lower()
 
         # Check keyword extraction overlap for other custom variant strings
-        if (
-            source_version_lower
-            and candidate_version_lower
-            and source_version_lower != candidate_version_lower
-        ):
+        if source_version_lower and candidate_version_lower and source_version_lower != candidate_version_lower:
             source_keywords = self._extract_version_keywords(source_version_lower)
             candidate_keywords = self._extract_version_keywords(candidate_version_lower)
 
             if source_keywords and candidate_keywords:
                 overlap = source_keywords & candidate_keywords
-                if not overlap and (
-                    ("remix" in source_keywords) != ("remix" in candidate_keywords)
-                ):
+                if not overlap and (("remix" in source_keywords) != ("remix" in candidate_keywords)):
                     return False, "One is remix, other is original", 0.0
                 if overlap:
                     return True, f"Version keywords match: {overlap}", penalty
 
         return True, reason, penalty
 
-    def _check_edition_match(
-        self, source: EchosyncTrack, candidate: EchosyncTrack
-    ) -> tuple[bool, str]:
+    def _check_edition_match(self, source: EchosyncTrack, candidate: EchosyncTrack) -> tuple[bool, str]:
         """
         Check if editions match (disc_number, etc)
 
@@ -1432,9 +1337,7 @@ class WeightedMatchingEngine:
 
         return normalized
 
-    def _check_artist_subset_match(
-        self, source: EchosyncTrack, candidate: EchosyncTrack
-    ) -> tuple[bool, float, str]:
+    def _check_artist_subset_match(self, source: EchosyncTrack, candidate: EchosyncTrack) -> tuple[bool, float, str]:
         """
         Check if one artist list is a subset of the other (tokenized intersection).
         Used as a rescue mechanism when fuzzy matching fails.
@@ -1477,11 +1380,7 @@ class WeightedMatchingEngine:
             # Check partial intersection
             intersection = source_tokens & candidate_tokens
             if intersection:
-                overlap_pct = (
-                    len(intersection)
-                    / min(len(source_tokens), len(candidate_tokens))
-                    * 100
-                )
+                overlap_pct = len(intersection) / min(len(source_tokens), len(candidate_tokens)) * 100
                 return (
                     False,
                     0.0,
@@ -1490,9 +1389,7 @@ class WeightedMatchingEngine:
             else:
                 return False, 0.0, "No artist token overlap"
 
-    def _calculate_fuzzy_text_match(
-        self, source: EchosyncTrack, candidate: EchosyncTrack
-    ) -> float:
+    def _calculate_fuzzy_text_match(self, source: EchosyncTrack, candidate: EchosyncTrack) -> float:
         """
         Calculate fuzzy text match score for title, artist, album.
         Includes artist subset rescue mechanism and dual-pass base string matching.
@@ -1535,46 +1432,32 @@ class WeightedMatchingEngine:
             )
 
             # Prevent "Various Artists" from partially matching real names
-            if (
-                source.artist_name.lower() != "various artists"
-                and candidate.artist_name.lower() == "various artists"
-            ):
+            if source.artist_name.lower() != "various artists" and candidate.artist_name.lower() == "various artists":
                 artist_score = 0.0
-            elif is_franchise_entity(source.artist_name) or is_franchise_entity(
-                candidate.artist_name
-            ):
+            elif is_franchise_entity(source.artist_name) or is_franchise_entity(candidate.artist_name):
                 artist_score = 0.90
             else:
-                artist_score = self._fuzzy_match(
-                    source.artist_name, candidate.artist_name
-                )
+                artist_score = self._fuzzy_match(source.artist_name, candidate.artist_name)
 
             # Remixer Collaborator Matching:
             # If source_artist matches a remixer named inside candidate.edition or candidate title subtitle frames
             # (e.g. "Tommee Profitt" inside "Mellen Gi & Tommee Profitt Remix"), award artist_score = 0.95.
-            cand_remix_credit = (
-                (candidate.edition or "") + " " + (candidate.title or "")
-            )
+            cand_remix_credit = (candidate.edition or "") + " " + (candidate.title or "")
             if _cmp_artists(source.artist_name, cand_remix_credit) >= 0.85 or any(
-                _cmp_artists(source.artist_name, tok) >= 0.85
-                for tok in split_artists(candidate.edition or "")
+                _cmp_artists(source.artist_name, tok) >= 0.85 for tok in split_artists(candidate.edition or "")
             ):
                 artist_score = max(artist_score, 0.95)
 
             # If fuzzy match is low, check for artist subset match
             # Rescue mechanism: if one artist list is subset of other AND duration is tight (within 2s)
             if artist_score < 0.8:  # Only attempt rescue if fuzzy score is low
-                is_subset, subset_score, subset_reason = (
-                    self._check_artist_subset_match(source, candidate)
-                )
+                is_subset, subset_score, subset_reason = self._check_artist_subset_match(source, candidate)
 
                 if is_subset:
                     # Check duration as guard rail (must be within 2 seconds)
                     if source.duration and candidate.duration:
                         duration_diff_ms = abs(source.duration - candidate.duration)
-                        if (
-                            duration_diff_ms <= 2000
-                        ):  # 2 second tolerance for subset rescue
+                        if duration_diff_ms <= 2000:  # 2 second tolerance for subset rescue
                             artist_score = subset_score  # Promote to 1.0
                             # Note: reasoning will be logged in the main matching flow
                 else:
@@ -1604,9 +1487,7 @@ class WeightedMatchingEngine:
         if total_weight == 0:
             return self.weights.text_match_fallback
 
-        weighted_score = (
-            sum(score * weight for _, score, weight in scores) / total_weight
-        )
+        weighted_score = sum(score * weight for _, score, weight in scores) / total_weight
         return weighted_score
 
     def _calculate_duration_match(
@@ -1617,14 +1498,17 @@ class WeightedMatchingEngine:
     ) -> float:
         """
         Calculate duration match score using continuous polynomial decay curve (k=6).
-        Base threshold T=5000ms, Limit=6000ms in Standard mode.
+        Dynamic threshold based on tolerance_override_ms or self.weights.duration_tolerance_ms.
         """
         if not source.duration or not candidate.duration:
             # If either has no duration, return neutral score to avoid inflating confidence
             return 0.5
 
         diff_ms = abs(source.duration - candidate.duration)
-        return calculate_duration_score(diff_ms, strict=False)
+        tol_ms = tolerance_override_ms or getattr(self.weights, "duration_tolerance_ms", None) or 5000
+        base_ms = int(tol_ms)
+        limit_ms = max(base_ms + 1000, int(base_ms * 1.25))
+        return calculate_duration_score(diff_ms, t_base_ms=base_ms, t_limit_ms=limit_ms)
 
     def _fuzzy_match(self, a: str, b: str) -> float:
         """
@@ -1727,11 +1611,7 @@ class WeightedMatchingEngine:
 
         for candidate in candidates:
             # --- Duration Gating (if enabled) ---
-            if (
-                self.weights.enforce_duration_match
-                and target_track.duration
-                and candidate.duration
-            ):
+            if self.weights.enforce_duration_match and target_track.duration and candidate.duration:
                 diff_ms = abs(target_track.duration - candidate.duration)
                 if diff_ms > self.weights.duration_tolerance_ms:
                     rejected_count += 1
@@ -1808,9 +1688,7 @@ class WeightedMatchingEngine:
                     candidates=[c.to_dict() for c in candidates],
                 )
                 if plugin_match is not None and isinstance(plugin_match, dict):
-                    logger.info(
-                        f"Plugin salvaged failed match for: '{target_track.title}'"
-                    )
+                    logger.info(f"Plugin salvaged failed match for: '{target_track.title}'")
                     return EchosyncTrack.from_dict(plugin_match)
             except Exception as e:
                 logger.error(f"Error in ON_MATCH_FAILED hook: {e}")
@@ -1833,17 +1711,9 @@ class WeightedMatchingEngine:
             score, cand = item
 
             # Extract attributes safely with defaults from canonical media[0] or identifiers
-            first_media = (
-                cand.media[0]
-                if getattr(cand, "media", None) and len(cand.media) > 0
-                else None
-            )
+            first_media = cand.media[0] if getattr(cand, "media", None) and len(cand.media) > 0 else None
             size = (
-                (
-                    first_media.file_size_bytes
-                    if first_media and first_media.file_size_bytes
-                    else None
-                )
+                (first_media.file_size_bytes if first_media and first_media.file_size_bytes else None)
                 or cand.identifiers.get("size", 0)
                 or 0
             )
@@ -1854,17 +1724,11 @@ class WeightedMatchingEngine:
             )
             # Safe extraction: missing queue_length means we don't know, so penalize it heavily.
             raw_queue = cand.identifiers.get("queue_length")
-            queue_length = (
-                int(raw_queue)
-                if raw_queue is not None and str(raw_queue).strip()
-                else 999999
-            )
+            queue_length = int(raw_queue) if raw_queue is not None and str(raw_queue).strip() else 999999
 
             upload_speed = cand.identifiers.get("upload_speed", 0) or 0
 
-            tie_breaker = getattr(
-                self.weights, "tie_breaker", MatchingConstants.TIE_BREAKER_MAX_QUALITY
-            )
+            tie_breaker = getattr(self.weights, "tie_breaker", MatchingConstants.TIE_BREAKER_MAX_QUALITY)
 
             # Since reverse=True is used globally for the sort:
             # - We return values so that higher is better.

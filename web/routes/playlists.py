@@ -1107,26 +1107,22 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                         ).lower()
                         _title_exact = bool(_ss_src_title and _ss_cand_title and _ss_src_title == _ss_cand_title)
 
-                        _orig_dur_tol = None
+                        _duration_override_ms = None
                         if _best_artist_score >= 0.95 and _title_exact:
-                            _orig_dur_tol = matching_engine.weights.duration_tolerance_ms
-                            matching_engine.weights.duration_tolerance_ms = 90000
+                            _duration_override_ms = 90000
                             logger.debug(
                                 "Duration expansion (Tier A): artist_score=%.2f + exact title '%s' — "
-                                "duration_tolerance raised from %d ms to 90000 ms.",
+                                "duration_tolerance override set to 90000 ms.",
                                 _best_artist_score,
                                 candidate_track.title,
-                                _orig_dur_tol,
                             )
                         elif _best_artist_score >= 0.95:
-                            _orig_dur_tol = matching_engine.weights.duration_tolerance_ms
-                            matching_engine.weights.duration_tolerance_ms = 15000
+                            _duration_override_ms = 15000
                             logger.debug(
                                 "Duration expansion (Tier B): artist_score=%.2f for '%s' — "
-                                "duration_tolerance raised from %d ms to 15000 ms.",
+                                "duration_tolerance override set to 15000 ms.",
                                 _best_artist_score,
                                 candidate_track.title,
-                                _orig_dur_tol,
                             )
                         # ── End Dynamic Duration Expansion ────────────────────────────────
 
@@ -1136,6 +1132,7 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                                 candidate_track,
                                 target_source=target_source_canonical,
                                 target_identifier=candidate_target_id,
+                                tolerance_override_ms=_duration_override_ms,
                             )
                         else:
                             result = matching_engine.calculate_match(
@@ -1143,10 +1140,8 @@ def _analyze_playlists_internal(source, target_source, playlists, quality_profil
                                 candidate_track,
                                 target_source=target_source_canonical,
                                 target_identifier=candidate_target_id,
+                                tolerance_override_ms=_duration_override_ms,
                             )
-
-                        if _orig_dur_tol is not None:
-                            matching_engine.weights.duration_tolerance_ms = _orig_dur_tol
 
                         logger.debug(
                             f"Match score for '{track_title}' vs '{candidate_track.title}': {result.confidence_score}"
