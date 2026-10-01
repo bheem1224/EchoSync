@@ -460,6 +460,18 @@
           message: warnMsg,
           timestamp: Date.now(),
         };
+        pipelineDiagnostics = {
+          winningStage: "Stage 5: MusicBrainz (No Match)",
+          resolvedMetadata: {},
+          diagnostics: [
+            {
+              stage: "Stage 5: Text Waterfall",
+              status: "miss",
+              message: warnMsg,
+              candidates: [],
+            },
+          ],
+        };
         feedback.addToast({
           type: "warning",
           message: warnMsg,
@@ -469,6 +481,28 @@
 
       const updatedMetadata = getLookupMetadata(response);
       if (updatedMetadata && response?.data?.match_found) {
+        pipelineDiagnostics = {
+          winningStage: "Stage 5: MusicBrainz Text Search",
+          resolvedMetadata: updatedMetadata,
+          diagnostics: [
+            {
+              stage: "Stage 5: Text Waterfall",
+              status: "hit",
+              message: `MusicBrainz catalog matched recording: "${updatedMetadata.title || "Track"}" by "${updatedMetadata.artist || "Artist"}"`,
+              candidates: [
+                {
+                  mbid: updatedMetadata.mbid || updatedMetadata.musicbrainz_id,
+                  title: updatedMetadata.title,
+                  artist: updatedMetadata.artist,
+                  status: "WINNER",
+                  total_score: 90.0,
+                  reason: "Text query matched MusicBrainz catalog recording",
+                },
+              ],
+            },
+          ],
+        };
+
         const { changed, fieldsChanged } = applyMetadataUpdate(updatedMetadata);
         if (changed && fieldsChanged.length > 0) {
           const changedKeys = fieldsChanged.map((f) => f.replace("_", " "));
@@ -503,6 +537,18 @@
           message: noRecordMsg,
           timestamp: Date.now(),
         };
+        pipelineDiagnostics = {
+          winningStage: "Stage 5: MusicBrainz (No Match)",
+          resolvedMetadata: {},
+          diagnostics: [
+            {
+              stage: "Stage 5: Text Waterfall",
+              status: "miss",
+              message: noRecordMsg,
+              candidates: [],
+            },
+          ],
+        };
         feedback.addToast({
           type: "warning",
           message: noRecordMsg,
@@ -528,6 +574,18 @@
         }
       }
       lookupStatus = { type: "error", message: errMsg, timestamp: Date.now() };
+      pipelineDiagnostics = {
+        winningStage: "Stage 5: MusicBrainz (Error)",
+        resolvedMetadata: {},
+        diagnostics: [
+          {
+            stage: "Stage 5: Text Waterfall",
+            status: "rejected",
+            message: errMsg,
+            candidates: [],
+          },
+        ],
+      };
       feedback.addToast({
         type: "error",
         message: errMsg,
@@ -570,6 +628,18 @@
           message: noMatchMsg,
           timestamp: Date.now(),
         };
+        pipelineDiagnostics = {
+          winningStage: "Stage 3: AcoustID (No Match)",
+          resolvedMetadata: updatedMetadata || {},
+          diagnostics: [
+            {
+              stage: "Stage 3: AcoustID",
+              status: "miss",
+              message: noMatchMsg,
+              candidates: [],
+            },
+          ],
+        };
         feedback.addToast({
           type: "warning",
           message: response?.data?.message || noMatchMsg,
@@ -579,6 +649,36 @@
 
       const updatedMetadata = getLookupMetadata(response);
       if (updatedMetadata && response?.data?.match_found) {
+        const resResult = response.data?.resolution_result;
+        pipelineDiagnostics = {
+          winningStage: resResult?.resolution_stage || "Stage 3: AcoustID",
+          resolvedMetadata: updatedMetadata,
+          diagnostics:
+            resResult?.diagnostics && resResult.diagnostics.length > 0
+              ? resResult.diagnostics
+              : [
+                  {
+                    stage: "Stage 3: AcoustID",
+                    status: "hit",
+                    message: `AcoustID matched: "${updatedMetadata.title || "Track"}" by "${updatedMetadata.artist || "Artist"}"`,
+                    candidates: [
+                      {
+                        mbid:
+                          updatedMetadata.mbid || updatedMetadata.musicbrainz_id,
+                        title: updatedMetadata.title,
+                        artist: updatedMetadata.artist,
+                        status: "WINNER",
+                        total_score: resResult?.confidence_score
+                          ? resResult.confidence_score * 100
+                          : 95.0,
+                        reason:
+                          "Acoustic fingerprint matched in AcoustID library",
+                      },
+                    ],
+                  },
+                ],
+        };
+
         const { changed, fieldsChanged } = applyMetadataUpdate(updatedMetadata);
         if (changed && fieldsChanged.length > 0) {
           const changedKeys = fieldsChanged.map((f) => f.replace("_", " "));
@@ -613,6 +713,18 @@
           message: noMatchMsg,
           timestamp: Date.now(),
         };
+        pipelineDiagnostics = {
+          winningStage: "Stage 3: AcoustID (No Match)",
+          resolvedMetadata: {},
+          diagnostics: [
+            {
+              stage: "Stage 3: AcoustID",
+              status: "miss",
+              message: noMatchMsg,
+              candidates: [],
+            },
+          ],
+        };
         feedback.addToast({
           type: "warning",
           message: noMatchMsg,
@@ -637,6 +749,18 @@
         }
       }
       lookupStatus = { type: "error", message: errMsg, timestamp: Date.now() };
+      pipelineDiagnostics = {
+        winningStage: "Stage 3: AcoustID (Error)",
+        resolvedMetadata: {},
+        diagnostics: [
+          {
+            stage: "Stage 3: AcoustID",
+            status: "rejected",
+            message: errMsg,
+            candidates: [],
+          },
+        ],
+      };
       feedback.addToast({
         type: "error",
         message: errMsg,
@@ -686,6 +810,18 @@
           message: noMatchMsg,
           timestamp: Date.now(),
         };
+        pipelineDiagnostics = {
+          winningStage: "Stage 4: ISRC (No Match)",
+          resolvedMetadata: {},
+          diagnostics: [
+            {
+              stage: "Stage 4: ISRC",
+              status: "miss",
+              message: noMatchMsg,
+              candidates: [],
+            },
+          ],
+        };
         feedback.addToast({
           type: "warning",
           message: response?.data?.message || noMatchMsg,
@@ -695,6 +831,28 @@
 
       const updatedMetadata = getLookupMetadata(response);
       if (updatedMetadata && response?.data?.match_found) {
+        pipelineDiagnostics = {
+          winningStage: "Stage 4: ISRC Direct Match",
+          resolvedMetadata: updatedMetadata,
+          diagnostics: [
+            {
+              stage: "Stage 4: ISRC",
+              status: "hit",
+              message: `ISRC code ${isrc} resolved recording: "${updatedMetadata.title || "Track"}" by "${updatedMetadata.artist || "Artist"}"`,
+              candidates: [
+                {
+                  mbid: updatedMetadata.mbid || updatedMetadata.musicbrainz_id,
+                  title: updatedMetadata.title,
+                  artist: updatedMetadata.artist,
+                  status: "WINNER",
+                  total_score: 100.0,
+                  reason: `Exact ISRC code match (${isrc})`,
+                },
+              ],
+            },
+          ],
+        };
+
         const { changed, fieldsChanged } = applyMetadataUpdate(updatedMetadata);
         if (changed && fieldsChanged.length > 0) {
           const changedKeys = fieldsChanged.map((f) => f.replace("_", " "));
@@ -728,6 +886,18 @@
           message: noMatchMsg,
           timestamp: Date.now(),
         };
+        pipelineDiagnostics = {
+          winningStage: "Stage 4: ISRC (No Match)",
+          resolvedMetadata: {},
+          diagnostics: [
+            {
+              stage: "Stage 4: ISRC",
+              status: "miss",
+              message: noMatchMsg,
+              candidates: [],
+            },
+          ],
+        };
         feedback.addToast({
           type: "warning",
           message: noMatchMsg,
@@ -747,6 +917,18 @@
         errMsg = error.response.data.detail;
       }
       lookupStatus = { type: "error", message: errMsg, timestamp: Date.now() };
+      pipelineDiagnostics = {
+        winningStage: "Stage 4: ISRC (Error)",
+        resolvedMetadata: {},
+        diagnostics: [
+          {
+            stage: "Stage 4: ISRC",
+            status: "rejected",
+            message: errMsg,
+            candidates: [],
+          },
+        ],
+      };
       feedback.addToast({
         type: "error",
         message: errMsg,
@@ -857,7 +1039,7 @@
   class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
 >
   <div
-    class="relative flex flex-col w-full max-w-5xl max-h-[90vh] bg-slate-900 rounded-xl border border-slate-700 shadow-2xl overflow-hidden"
+    class={`relative flex flex-col w-full ${showDiagnosticsDrawer ? "max-w-7xl" : "max-w-5xl"} max-h-[90vh] bg-slate-900 rounded-xl border border-slate-700 shadow-2xl overflow-hidden transition-all duration-300`}
   >
     <!-- 1. Header (Fixed Height) -->
     <header
@@ -874,140 +1056,37 @@
           Task #{task?.id} - {getFilename(task?.file_path)}
         </p>
       </div>
-      <button
-        class="px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-sm active:scale-95 transition-all duration-200"
-        on:click={closeModal}
-        disabled={savingDraft || approving || rejecting}
-      >
-        Close
-      </button>
+      <div class="flex items-center gap-2">
+        <button
+          type="button"
+          class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs rounded-lg flex items-center gap-1.5 transition-colors border border-slate-700/60 {showDiagnosticsDrawer ? 'ring-1 ring-cyan-500/50 bg-slate-700 text-cyan-300' : ''}"
+          on:click={() => (showDiagnosticsDrawer = !showDiagnosticsDrawer)}
+        >
+          <span>🔍 Diagnostics</span>
+          {#if pipelineDiagnostics?.winning_stage || pipelineDiagnostics?.winningStage}
+            <span
+              class="px-1.5 py-0.5 text-[10px] bg-cyan-950 text-cyan-400 border border-cyan-800 rounded font-mono"
+            >
+              {pipelineDiagnostics.winning_stage || pipelineDiagnostics.winningStage}
+            </span>
+          {/if}
+        </button>
+
+        <button
+          class="px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-sm active:scale-95 transition-all duration-200"
+          on:click={closeModal}
+          disabled={savingDraft || approving || rejecting}
+        >
+          Close
+        </button>
+      </div>
     </header>
 
-    <!-- 2. Scrollable Body (Takes Remaining Height) -->
-    <main class="flex-1 min-h-0 overflow-y-auto p-6 space-y-6">
-      {#if pipelineDiagnostics}
-        <div class="rounded-xl border border-indigo-500/40 bg-indigo-950/20 p-4 space-y-3">
-          <div class="flex flex-wrap items-center justify-between gap-3">
-            <div class="flex items-center gap-3">
-              <span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
-                ⚡ Full Pipeline Simulation
-              </span>
-              <div class="flex items-center gap-2">
-                <span class="text-xs text-slate-400">Winning Stage:</span>
-                <span class="text-xs font-bold px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                  {pipelineDiagnostics.winningStage}
-                </span>
-              </div>
-            </div>
-
-            <button
-              type="button"
-              class="px-3 py-1 rounded-lg bg-indigo-900/60 hover:bg-indigo-800 text-indigo-200 text-xs font-medium border border-indigo-700/50 flex items-center gap-1.5 transition-colors"
-              on:click={() => (showDiagnosticsDrawer = !showDiagnosticsDrawer)}
-            >
-              <span>{showDiagnosticsDrawer ? "Hide" : "Inspect"} Trace Details</span>
-              <span class="text-slate-400">({pipelineDiagnostics.diagnostics?.length || 0} stages)</span>
-              <span>{showDiagnosticsDrawer ? "▲" : "▼"}</span>
-            </button>
-          </div>
-
-          {#if showDiagnosticsDrawer}
-            <div class="mt-4 pt-4 border-t border-indigo-800/40 space-y-4">
-              <div class="text-xs text-slate-300 font-semibold uppercase tracking-wider">
-                Waterfall Stage Trace & Candidate Scoring
-              </div>
-
-              {#if pipelineDiagnostics.diagnostics && pipelineDiagnostics.diagnostics.length > 0}
-                <div class="space-y-3">
-                  {#each pipelineDiagnostics.diagnostics as stage (stage.stage)}
-                    <div class="rounded-lg border border-slate-800 bg-slate-900/80 p-3 space-y-2">
-                      <div class="flex items-center justify-between gap-2">
-                        <div class="flex items-center gap-2">
-                          <span class="text-xs font-bold text-slate-200">{stage.stage}</span>
-                          <span class="text-[10px] px-1.5 py-0.5 rounded uppercase font-semibold
-                            {stage.status === 'hit' || stage.status === 'MATCH' ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' :
-                             stage.status === 'miss' || stage.status === 'NO_MATCH' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' :
-                             stage.status === 'rejected' ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30' :
-                             'bg-slate-700/50 text-slate-400 border border-slate-600/30'}">
-                            {stage.status}
-                          </span>
-                        </div>
-                      </div>
-
-                      {#if stage.message}
-                        <p class="text-xs text-slate-300">{stage.message}</p>
-                      {/if}
-
-                      {#if stage.candidates && stage.candidates.length > 0}
-                        <div class="mt-2 space-y-1.5">
-                          <span class="text-[11px] font-semibold text-slate-400">Candidates Evaluated:</span>
-                          <div class="overflow-x-auto">
-                            <table class="w-full text-left text-xs text-slate-300 border-collapse">
-                              <thead>
-                                <tr class="border-b border-slate-800 text-[10px] uppercase text-slate-400">
-                                  <th class="py-1 px-2">MBID</th>
-                                  <th class="py-1 px-2">Title / Artist</th>
-                                  <th class="py-1 px-2">Status</th>
-                                  <th class="py-1 px-2">Score</th>
-                                  <th class="py-1 px-2">Details / Drops</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {#each stage.candidates as cand (cand.mbid || cand.title)}
-                                  <tr class="border-b border-slate-800/40 hover:bg-slate-800/30 {cand.status === 'WINNER' ? 'bg-emerald-950/20' : ''}">
-                                    <td class="py-1.5 px-2 font-mono text-[10px] text-slate-400 truncate max-w-[100px]" title={cand.mbid}>
-                                      {cand.mbid ? cand.mbid.slice(0, 8) + '...' : '-'}
-                                    </td>
-                                    <td class="py-1.5 px-2">
-                                      <div class="font-medium text-slate-200">{cand.title || 'Unknown'}</div>
-                                      <div class="text-[10px] text-slate-400">{cand.artist || 'Unknown'}</div>
-                                    </td>
-                                    <td class="py-1.5 px-2">
-                                      <span class="text-[10px] px-1.5 py-0.5 rounded font-medium
-                                        {cand.status === 'WINNER' ? 'bg-emerald-500/20 text-emerald-300' :
-                                         cand.status === 'RUNNER_UP' ? 'bg-blue-500/20 text-blue-300' :
-                                         cand.status?.startsWith('DROPPED') ? 'bg-rose-500/20 text-rose-300' :
-                                         'bg-slate-700 text-slate-300'}">
-                                        {cand.status}
-                                      </span>
-                                    </td>
-                                    <td class="py-1.5 px-2 font-mono text-xs">
-                                      {#if cand.total_score !== undefined}
-                                        <span class="font-bold text-cyan-300">{cand.total_score.toFixed(1)}</span>
-                                      {:else}
-                                        <span class="text-slate-500">-</span>
-                                      {/if}
-                                    </td>
-                                    <td class="py-1.5 px-2 text-[10px] text-slate-400 max-w-[200px]">
-                                      {#if cand.reason}
-                                        <span>{cand.reason}</span>
-                                      {:else if cand.matcher_score !== undefined}
-                                        <span>matcher={cand.matcher_score?.toFixed(0)} dur_w={cand.duration_weight?.toFixed(2)} album_b={cand.album_bonus || 0} pop_b={cand.popularity_bonus || 0} veto={cand.veto_applied}</span>
-                                      {:else if cand.candidate_duration !== undefined}
-                                        <span>cand_dur={cand.candidate_duration?.toFixed(1)}s delta={cand.duration_delta?.toFixed(1)}s thr={cand.threshold?.toFixed(1)}s</span>
-                                      {:else}
-                                        <span>-</span>
-                                      {/if}
-                                    </td>
-                                  </tr>
-                                {/each}
-                              </tbody>
-                            </table>
-                          </div>
-                        </div>
-                      {/if}
-                    </div>
-                  {/each}
-                </div>
-              {:else}
-                <p class="text-xs text-slate-400 italic">No stage diagnostics recorded.</p>
-              {/if}
-            </div>
-          {/if}
-        </div>
-      {/if}
-
-      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+    <!-- 2. Scrollable Side-by-Side Body Container -->
+    <div class="flex-1 min-h-0 flex flex-row overflow-hidden relative">
+      <!-- Left: Metadata Editor (Independent Scroll) -->
+      <main class="flex-1 min-h-0 overflow-y-auto p-6 space-y-6">
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <section class="rounded-xl border border-slate-800 bg-slate-950/50 p-4">
           <div class="flex items-start gap-4 mb-4">
             {#if coverUrl}
@@ -1294,6 +1373,313 @@
         </section>
       </div>
     </main>
+
+    <!-- Right: Slide-out Diagnostic Drawer -->
+    {#if showDiagnosticsDrawer}
+      <aside
+        class="w-96 lg:w-[480px] shrink-0 border-l border-slate-800 bg-slate-950 flex flex-col min-h-0 h-full overflow-hidden z-20 shadow-2xl transition-all duration-200"
+      >
+        <!-- Drawer Header -->
+        <div
+          class="p-4 border-b border-slate-800 flex items-center justify-between bg-slate-900/60 shrink-0"
+        >
+          <div class="flex items-center gap-2">
+            <span class="text-sm font-semibold text-slate-200"
+              >Stage Diagnostics</span
+            >
+            {#if pipelineDiagnostics?.winning_stage || pipelineDiagnostics?.winningStage}
+              <span
+                class="px-2 py-0.5 text-xs font-mono font-bold bg-cyan-950 text-cyan-300 border border-cyan-800/80 rounded"
+              >
+                {pipelineDiagnostics.winning_stage ||
+                  pipelineDiagnostics.winningStage}
+              </span>
+            {/if}
+          </div>
+          <button
+            type="button"
+            class="w-6 h-6 flex items-center justify-center text-slate-400 hover:text-slate-100 hover:bg-slate-800 rounded transition-colors text-xs"
+            on:click={() => (showDiagnosticsDrawer = false)}
+            title="Close Drawer"
+          >
+            ✕
+          </button>
+        </div>
+
+        <!-- Drawer Content (Scrollable) -->
+        <div
+          class="flex-1 min-h-0 overflow-y-auto p-4 space-y-4 text-xs font-sans"
+        >
+          {#if pipelineDiagnostics}
+            <!-- Waterfall Timeline -->
+            {#if Array.isArray(pipelineDiagnostics.diagnostics) && pipelineDiagnostics.diagnostics.length > 0}
+              <div class="space-y-2">
+                <h4
+                  class="text-xs font-semibold text-slate-400 uppercase tracking-wider"
+                >
+                  Waterfall Timeline
+                </h4>
+                <div class="space-y-1.5">
+                  {#each pipelineDiagnostics.diagnostics as diag}
+                    <div
+                      class="p-2.5 rounded-lg border border-slate-800 bg-slate-900/50 flex flex-col gap-1"
+                    >
+                      <div class="flex items-center justify-between">
+                        <span class="font-mono font-medium text-slate-200"
+                          >{diag.stage || "Stage"}</span
+                        >
+                        <span
+                          class="px-1.5 py-0.5 rounded text-[10px] font-mono uppercase {diag.status ===
+                            'success' || diag.status === 'hit'
+                            ? 'bg-emerald-950 text-emerald-400 border border-emerald-800/50'
+                            : diag.status === 'skipped'
+                              ? 'bg-slate-800 text-slate-400'
+                              : diag.status === 'miss' ||
+                                  diag.status === 'untrusted' ||
+                                  diag.status === 'dropped'
+                                ? 'bg-amber-950 text-amber-400 border border-amber-800/50'
+                                : diag.status === 'error'
+                                  ? 'bg-rose-950 text-rose-400 border border-rose-800/50'
+                                  : 'bg-slate-800 text-slate-300'}"
+                        >
+                          {diag.status || "info"}
+                        </span>
+                      </div>
+                      {#if diag.reason || diag.message}
+                        <p class="text-[11px] text-slate-400">
+                          {diag.reason || diag.message}
+                        </p>
+                      {/if}
+                      {#if diag.execution_time_ms !== undefined}
+                        <span
+                          class="text-[10px] text-slate-500 font-mono self-end"
+                          >{diag.execution_time_ms.toFixed(1)} ms</span
+                        >
+                      {/if}
+                    </div>
+                  {/each}
+                </div>
+              </div>
+            {/if}
+
+            <!-- Candidates Evaluation from Diagnostics -->
+            {#each (pipelineDiagnostics.diagnostics || []).filter((d) => d.candidates && d.candidates.length > 0) as diag}
+              <div class="space-y-2">
+                <div class="flex items-center justify-between">
+                  <h4
+                    class="text-xs font-semibold text-slate-400 uppercase tracking-wider"
+                  >
+                    {diag.stage} Candidates ({diag.candidates.length})
+                  </h4>
+                </div>
+                <div class="space-y-2">
+                  {#each diag.candidates as cand}
+                    <div
+                      class="p-2.5 rounded-lg border {cand.status === 'WINNER'
+                        ? 'border-cyan-700/60 bg-cyan-950/20'
+                        : 'border-slate-800 bg-slate-900/60'} space-y-1.5"
+                    >
+                      <div class="flex items-start justify-between gap-2">
+                        <div class="min-w-0">
+                          <p class="font-semibold text-slate-200 truncate">
+                            {cand.title || "Unknown Title"}
+                          </p>
+                          <p class="text-[11px] text-slate-400 truncate">
+                            {cand.artist || "Unknown Artist"}
+                            {#if cand.album} • {cand.album}{/if}
+                          </p>
+                        </div>
+                        {#if cand.status}
+                          <span
+                            class="shrink-0 px-1.5 py-0.5 rounded text-[10px] font-mono font-bold {cand.status ===
+                            'WINNER'
+                              ? 'bg-cyan-950 text-cyan-300 border border-cyan-800'
+                              : 'bg-slate-800 text-slate-400'}"
+                          >
+                            {cand.status}
+                          </span>
+                        {/if}
+                      </div>
+
+                      <div
+                        class="text-[10px] text-slate-400 font-mono space-y-0.5 border-t border-slate-800/60 pt-1"
+                      >
+                        {#if cand.total_score !== undefined || cand.score !== undefined}
+                          <div>
+                            Total Score: {(cand.total_score !== undefined
+                              ? cand.total_score
+                              : cand.score * 100
+                            ).toFixed(1)}
+                          </div>
+                        {/if}
+                        {#if cand.acoustid_score !== undefined}
+                          <div>
+                            Acoustic Sim: {(cand.acoustid_score * 100).toFixed(
+                              1
+                            )}%
+                          </div>
+                        {/if}
+                        {#if cand.duration_diff !== undefined}
+                          <div>
+                            Duration Diff: {cand.duration_diff.toFixed(1)}s
+                          </div>
+                        {/if}
+                        {#if cand.mbid}
+                          <div class="truncate text-slate-500">
+                            MBID: {cand.mbid}
+                          </div>
+                        {/if}
+                        {#if cand.reason || cand.reasons}
+                          <div class="text-slate-400 italic font-sans">
+                            {cand.reason || cand.reasons}
+                          </div>
+                        {/if}
+                      </div>
+                    </div>
+                  {/each}
+                </div>
+              </div>
+            {/each}
+
+            <!-- Root Candidates (fallback if not in diagnostics) -->
+            {#if Array.isArray(pipelineDiagnostics.candidates) && pipelineDiagnostics.candidates.length > 0 && !(pipelineDiagnostics.diagnostics || []).some((d) => d.candidates && d.candidates.length > 0)}
+              <div class="space-y-2">
+                <h4
+                  class="text-xs font-semibold text-slate-400 uppercase tracking-wider"
+                >
+                  Candidate Scores ({pipelineDiagnostics.candidates.length})
+                </h4>
+                <div class="space-y-2">
+                  {#each pipelineDiagnostics.candidates as cand}
+                    <div
+                      class="p-2.5 rounded-lg border {cand.status === 'WINNER'
+                        ? 'border-cyan-700/60 bg-cyan-950/20'
+                        : 'border-slate-800 bg-slate-900/60'} space-y-1.5"
+                    >
+                      <div class="flex items-start justify-between gap-2">
+                        <div class="min-w-0">
+                          <p class="font-semibold text-slate-200 truncate">
+                            {cand.title || "Unknown Title"}
+                          </p>
+                          <p class="text-[11px] text-slate-400 truncate">
+                            {cand.artist || "Unknown Artist"}
+                            {#if cand.album} • {cand.album}{/if}
+                          </p>
+                        </div>
+                        {#if cand.status}
+                          <span
+                            class="shrink-0 px-1.5 py-0.5 rounded text-[10px] font-mono font-bold {cand.status ===
+                            'WINNER'
+                              ? 'bg-cyan-950 text-cyan-300 border border-cyan-800'
+                              : 'bg-slate-800 text-slate-400'}"
+                          >
+                            {cand.status}
+                          </span>
+                        {/if}
+                      </div>
+
+                      <div
+                        class="text-[10px] text-slate-400 font-mono space-y-0.5 border-t border-slate-800/60 pt-1"
+                      >
+                        {#if cand.total_score !== undefined || cand.score !== undefined}
+                          <div>
+                            Total Score: {(cand.total_score !== undefined
+                              ? cand.total_score
+                              : cand.score * 100
+                            ).toFixed(1)}
+                          </div>
+                        {/if}
+                        {#if cand.acoustid_score !== undefined}
+                          <div>
+                            Acoustic Sim: {(cand.acoustid_score * 100).toFixed(
+                              1
+                            )}%
+                          </div>
+                        {/if}
+                        {#if cand.duration_diff !== undefined}
+                          <div>
+                            Duration Diff: {cand.duration_diff.toFixed(1)}s
+                          </div>
+                        {/if}
+                        {#if cand.mbid}
+                          <div class="truncate text-slate-500">
+                            MBID: {cand.mbid}
+                          </div>
+                        {/if}
+                        {#if cand.reason || cand.reasons}
+                          <div class="text-slate-400 italic font-sans">
+                            {cand.reason || cand.reasons}
+                          </div>
+                        {/if}
+                      </div>
+                    </div>
+                  {/each}
+                </div>
+              </div>
+            {/if}
+
+            <!-- Resolved Metadata Preview -->
+            {#if pipelineDiagnostics.resolved_metadata || pipelineDiagnostics.resolvedMetadata}
+              {@const meta =
+                pipelineDiagnostics.resolved_metadata ||
+                pipelineDiagnostics.resolvedMetadata}
+              {#if meta && Object.keys(meta).length > 0}
+                <div class="space-y-1.5 border-t border-slate-800/80 pt-3">
+                  <h4
+                    class="text-xs font-semibold text-slate-400 uppercase tracking-wider"
+                  >
+                    Resolved Data
+                  </h4>
+                  <div
+                    class="bg-slate-900/80 rounded-lg p-2.5 border border-slate-800 font-mono text-[11px] space-y-1 text-slate-300"
+                  >
+                    {#if meta.title}<div>
+                        <span class="text-slate-500">Title:</span> {meta.title}
+                      </div>{/if}
+                    {#if meta.artist}<div>
+                        <span class="text-slate-500">Artist:</span> {meta.artist}
+                      </div>{/if}
+                    {#if meta.album}<div>
+                        <span class="text-slate-500">Album:</span> {meta.album}
+                      </div>{/if}
+                    {#if meta.edition}<div>
+                        <span class="text-slate-500">Edition:</span> {meta.edition}
+                      </div>{/if}
+                    {#if meta.year}<div>
+                        <span class="text-slate-500">Year:</span> {meta.year}
+                      </div>{/if}
+                    {#if meta.musicbrainz_track_id || meta.musicbrainz_id || meta.mbid}
+                      <div>
+                        <span class="text-slate-500">MBID:</span> {meta.musicbrainz_track_id ||
+                          meta.musicbrainz_id ||
+                          meta.mbid}
+                      </div>
+                    {/if}
+                    {#if meta.isrc}<div>
+                        <span class="text-slate-500">ISRC:</span> {meta.isrc}
+                      </div>{/if}
+                    {#if meta.acoustid_fingerprint || meta.acoustid}
+                      <div>
+                        <span class="text-slate-500">AcoustID:</span> {meta.acoustid_fingerprint ||
+                          meta.acoustid}
+                      </div>
+                    {/if}
+                  </div>
+                </div>
+              {/if}
+            {/if}
+          {:else}
+            <div class="text-center py-12 text-slate-500">
+              <p class="text-sm">No diagnostic trace available.</p>
+              <p class="text-[11px] mt-1 text-slate-600">
+                Run a lookup or pipeline simulation to inspect stage execution.
+              </p>
+            </div>
+          {/if}
+        </div>
+      </aside>
+    {/if}
+  </div>
 
     <!-- Track Preview -->
     {#if streamUrl}

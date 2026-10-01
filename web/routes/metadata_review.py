@@ -435,10 +435,13 @@ def _build_track_from_metadata(file_path: Path, metadata: dict[str, Any]):
         edition=cast(str | None, metadata.get("edition") or metadata.get("version")),
         duration=_coerce_int(metadata.get("duration_ms") or metadata.get("duration")),
         isrc=cast(str | None, metadata.get("isrc")),
-        musicbrainz_id=cast(str | None, metadata.get("recording_id") or metadata.get("musicbrainz_id")),
+        musicbrainz_id=cast(
+            str | None,
+            metadata.get("recording_id") or metadata.get("musicbrainz_id") or metadata.get("mbid"),
+        ),
         mb_release_id=cast(
             str | None,
-            metadata.get("release_id") or metadata.get("musicbrainz_album_id"),
+            metadata.get("release_id") or metadata.get("musicbrainz_album_id") or metadata.get("mb_release_id"),
         ),
         release_year=release_year,
         track_number=_coerce_int(metadata.get("track_number")),
@@ -446,7 +449,9 @@ def _build_track_from_metadata(file_path: Path, metadata: dict[str, Any]):
         media=[media_item],
         identifiers={source: str(provider_id)} if provider_id else {},
     )
-    track.fingerprint = metadata.get("fingerprint") or metadata.get("chromaprint")
+    track.fingerprint = (
+        metadata.get("fingerprint") or metadata.get("chromaprint") or metadata.get("acoustid_fingerprint")
+    )
     track.acoustid_id = metadata.get("acoustid_id") or metadata.get("acoustid")
     return track
 
@@ -659,7 +664,21 @@ def update_review_queue_item(task_id: int, payload: UpdateReviewQueueRequest, _=
                 task.track_data[k] = v
 
             # Standardize properties through detected_metadata setter (backward compatibility)
-            if any(k in metadata for k in ["title", "artist", "album", "edition", "version", "year", "musicbrainz_id"]):
+            if any(
+                k in metadata
+                for k in [
+                    "title",
+                    "artist",
+                    "album",
+                    "edition",
+                    "version",
+                    "year",
+                    "musicbrainz_id",
+                    "mbid",
+                    "acoustid",
+                    "acoustid_id",
+                ]
+            ):
                 task.detected_metadata = metadata
 
             return {"success": True, "id": task.id}
@@ -801,10 +820,21 @@ def approve_review_queue_item(
                                 staged_track.disc_number = int(final_metadata["disc_number"])
                             except Exception:
                                 pass
-                        if final_metadata.get("musicbrainz_id"):
-                            staged_track.musicbrainz_id = final_metadata["musicbrainz_id"]
+                        mbid_val = final_metadata.get("musicbrainz_id") or final_metadata.get("mbid")
+                        if mbid_val:
+                            staged_track.musicbrainz_id = str(mbid_val).strip()
                         if final_metadata.get("isrc"):
                             staged_track.isrc = final_metadata["isrc"]
+                        acoustid_val = final_metadata.get("acoustid_id") or final_metadata.get("acoustid")
+                        if acoustid_val:
+                            staged_track.acoustid_id = str(acoustid_val).strip()
+                        fp_val = (
+                            final_metadata.get("fingerprint")
+                            or final_metadata.get("chromaprint")
+                            or final_metadata.get("acoustid_fingerprint")
+                        )
+                        if fp_val:
+                            staged_track.fingerprint = str(fp_val).strip()
 
                     # Derive physical properties purely from DSP inspection of container
                     import echosync_core
