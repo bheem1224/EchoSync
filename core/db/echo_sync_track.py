@@ -177,6 +177,7 @@ class EchosyncTrack:
     resolution_method: str | None = None
     alias_proposals: list[Any] = field(default_factory=list)
     extra_metadata: dict[str, Any] = field(default_factory=dict)
+    diagnostics: list[dict[str, Any]] = field(default_factory=list)
 
     def __post_init__(self):
         """
@@ -396,6 +397,27 @@ class EchosyncTrack:
     @property
     def success(self) -> bool:
         return bool(self.musicbrainz_id and self.confidence_score > 0.0)
+
+    @property
+    def resolution_stage(self) -> str:
+        stage_map = {
+            "signature_verified": "Stage 0: Signature Verified",
+            "embedded_mbid": "Fast-Path: Embedded MBID",
+            "local_cache": "Stage 2: Local Cache",
+            "acoustid": "Stage 3: AcoustID",
+            "isrc": "Stage 4: ISRC",
+            "text_waterfall": "Stage 5: Text Waterfall",
+            "embedded_mbid_fallback": "Fallback: Embedded MBID",
+        }
+        if self.resolution_method in stage_map:
+            return stage_map[self.resolution_method]
+        if self.resolution_method and self.resolution_method.startswith("signature_verified_merged_with_"):
+            sub = self.resolution_method.replace("signature_verified_merged_with_", "")
+            sub_name = stage_map.get(sub, sub)
+            return f"Stage 0 (Merged with {sub_name})"
+        if not self.confidence_score or self.confidence_score <= 0.0:
+            return "Unresolved (Manual Review Needed)"
+        return self.resolution_method or "Unresolved"
 
     def get(self, key: str, default: Any = None) -> Any:
         key_map = {

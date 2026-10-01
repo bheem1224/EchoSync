@@ -47,6 +47,29 @@ from core.metadata.cache import ChromaprintCache
 from core.metadata.dsp import extract_physical_tags, probe_physical_audio
 
 
+def _add_diagnostic(
+    request: Any,
+    stage: str,
+    status: str,
+    message: str,
+    details: dict[str, Any] | None = None,
+    candidates: list[dict[str, Any]] | None = None,
+) -> None:
+    if request is None:
+        return
+    if not hasattr(request, "_diagnostics") or request._diagnostics is None:
+        request._diagnostics = []
+    entry: dict[str, Any] = {
+        "stage": stage,
+        "status": status,
+        "message": message,
+        "details": details or {},
+    }
+    if candidates is not None:
+        entry["candidates"] = candidates
+    request._diagnostics.append(entry)
+
+
 def _create_resolved_track(
     media_id: str | None = None,
     sync_id: str | None = None,
@@ -66,6 +89,8 @@ def _create_resolved_track(
     resolution_method: str | None = None,
     extra_metadata: dict[str, Any] | None = None,
     file_path: str | Path | None = None,
+    diagnostics: list[dict[str, Any]] | None = None,
+    request: Any = None,
 ) -> EchosyncTrack:
     from core.db.echo_sync_track import EchosyncMedia
     from core.matching_engine.track_parser import decompose_artists, extract_version_descriptors
@@ -80,6 +105,10 @@ def _create_resolved_track(
     primary = roles.get("primary", [artist]) if artist else []
     featured = roles.get("featured", [])
     remixers = roles.get("remixer", [])
+
+    final_diagnostics = diagnostics if diagnostics is not None else (
+        list(request._diagnostics) if (request and hasattr(request, "_diagnostics") and request._diagnostics) else []
+    )
 
     track = EchosyncTrack(
         raw_title=title or "",
@@ -103,6 +132,7 @@ def _create_resolved_track(
         confidence_score=confidence_score,
         resolution_method=resolution_method,
         extra_metadata=extra_metadata or {},
+        diagnostics=final_diagnostics,
         media=[
             EchosyncMedia(
                 media_id=media_id,
@@ -553,6 +583,8 @@ class MetadataResolutionEngine:
             return []
 
     def _execute_waterfall(self, request: ResolutionRequest) -> EchosyncTrack:
+        if not hasattr(request, "_diagnostics") or request._diagnostics is None:
+            request._diagnostics = []
         result = self._execute_waterfall_inner(request)
         if hasattr(request, "_signature_locked_title") and hasattr(request, "_signature_locked_artist"):
             result.raw_title = request._signature_locked_title
@@ -561,6 +593,8 @@ class MetadataResolutionEngine:
             if result.resolution_method and not str(result.resolution_method).startswith("signature_verified"):
                 result.resolution_method = f"signature_verified_merged_with_{result.resolution_method}"
             result.confidence_score = 1.0
+        if (not result.diagnostics or len(result.diagnostics) == 0) and hasattr(request, "_diagnostics") and request._diagnostics:
+            result.diagnostics = list(request._diagnostics)
         return result
 
     def _execute_waterfall_inner(self, request: ResolutionRequest) -> EchosyncTrack:
@@ -575,6 +609,13 @@ class MetadataResolutionEngine:
                 "[resolution_engine] File not found on disk and no metadata: %s",
                 request.file_path,
             )
+            _add_diagnostic(
+                request,
+                "Stage 1: Physical Inspection",
+                "miss",
+                f"File not found on disk ({request.file_path}) and no baseline metadata provided.",
+                {"file_path": str(request.file_path)},
+            )
             return _create_resolved_track(
                 media_id=request.media_id,
                 sync_id=request.sync_id,
@@ -583,6 +624,7 @@ class MetadataResolutionEngine:
                 album=request.baseline_album,
                 confidence_score=0.0,
                 resolution_method="text_waterfall",
+                request=request,
             )
 
         # Determine channel count: probe header tags or assume stereo
@@ -626,6 +668,19 @@ class MetadataResolutionEngine:
         duration_ms = baseline_track.duration or duration_ms
         if chromaprint:
             request.chromaprint = chromaprint
+
+        _add_diagnostic(
+            request,
+            "Stage 1: Physical Inspection",
+            "executed",
+            f"Physical audio inspection complete for {file_path.name}. Channels: {channels}, Duration: {duration_ms}ms, Chromaprint: {'present' if chromaprint else 'missing'}.",
+            {
+                "file_path": str(file_path),
+                "channels": channels,
+                "duration_ms": duration_ms,
+                "chromaprint_present": bool(chromaprint),
+            },
+        )
 
         tag_title = raw_tags.get("title")
         tag_artist = raw_tags.get("artist") or raw_tags.get("artist_name")
@@ -708,10 +763,24 @@ class MetadataResolutionEngine:
                         # Lock the title and artist for partial merge at the end
                         request._signature_locked_title = baseline_title
                         request._signature_locked_artist = baseline_artist
+                        _add_diagnostic(
+                            request,
+                            "Stage 0: Signature Gate",
+                            "hit",
+                            f"Verified ECHOSYNC_SIGNATURE on {file_path.name}. Title and Artist locked for merge.",
+                            {"signature": str(sig_tag), "valid": True},
+                        )
                     else:
                         logger.warning(
                             "[resolution_engine] Stage 0 FAILED: ECHOSYNC_SIGNATURE mismatch/tampering detected on %s",
                             file_path.name,
+                        )
+                        _add_diagnostic(
+                            request,
+                            "Stage 0: Signature Gate",
+                            "failed",
+                            f"Signature verification failed on {file_path.name}: mismatch or tampering detected.",
+                            {"signature": str(sig_tag), "valid": False},
                         )
             except Exception as sig_err:
                 logger.debug(
@@ -719,6 +788,21 @@ class MetadataResolutionEngine:
                     sig_err,
                 )
                 signature_valid = False
+                _add_diagnostic(
+                    request,
+                    "Stage 0: Signature Gate",
+                    "error",
+                    f"Signature verification error: {sig_err}",
+                    {"error": str(sig_err)},
+                )
+        elif not sig_tag:
+            _add_diagnostic(
+                request,
+                "Stage 0: Signature Gate",
+                "miss",
+                "No ECHOSYNC_SIGNATURE tag found in physical file.",
+                {"has_signature": False},
+            )
 
         # If forced, we explicitly mark signature_valid as False so we don't bypass trust gates
         if force_mode:
@@ -738,6 +822,13 @@ class MetadataResolutionEngine:
                 file_path.name,
                 embedded_mbid,
             )
+            _add_diagnostic(
+                request,
+                "Fast-Path: Embedded MBID",
+                "hit",
+                f"Verified signature with embedded MBID: {file_path.name} -> {embedded_mbid}",
+                {"mbid": str(embedded_mbid)},
+            )
             return _create_resolved_track(
                 media_id=request.media_id,
                 sync_id=request.sync_id,
@@ -756,6 +847,7 @@ class MetadataResolutionEngine:
                 confidence_score=1.0,
                 resolution_method="signature_verified",
                 file_path=file_path,
+                request=request,
             )
 
         has_identifiable_tags = bool(
@@ -770,10 +862,24 @@ class MetadataResolutionEngine:
                     embedded_mbid,
                 )
                 deferred_embedded_mbid = str(embedded_mbid).strip()
+                _add_diagnostic(
+                    request,
+                    "Fast-Path: Embedded MBID",
+                    "demoted",
+                    f"Signature unverified; demoting embedded MBID '{embedded_mbid}' to AcoustID acoustic verification.",
+                    {"mbid": str(embedded_mbid)},
+                )
             elif not has_identifiable_tags:
                 logger.info(
                     "[resolution_engine] Skipping embedded MBID %s (tags missing/unknown); dropping straight to Chromaprint/AcoustID",
                     embedded_mbid,
+                )
+                _add_diagnostic(
+                    request,
+                    "Fast-Path: Embedded MBID",
+                    "skipped",
+                    f"Tags missing/unknown; skipping embedded MBID '{embedded_mbid}' in favor of acoustic verification.",
+                    {"mbid": str(embedded_mbid)},
                 )
             else:
                 mb_plugin = self._get_mb_plugin()
@@ -817,6 +923,13 @@ class MetadataResolutionEngine:
                                     f"(Candidate: '{c_title or ''}' vs Baseline: '{request.baseline_title}'). "
                                     "Falling through to AcoustID."
                                 )
+                                _add_diagnostic(
+                                    request,
+                                    "Fast-Path: Embedded MBID",
+                                    "rejected",
+                                    f"Embedded MBID {embedded_mbid} candidate '{c_title or ''}' rejected by Trust Gate against baseline '{baseline_check}'.",
+                                    {"mbid": str(embedded_mbid), "candidate_title": c_title},
+                                )
                             else:
                                 c_artist = (
                                     (meta.get("artist") or meta.get("artist_name"))
@@ -845,6 +958,13 @@ class MetadataResolutionEngine:
                                     file_path.name,
                                     embedded_mbid,
                                 )
+                                _add_diagnostic(
+                                    request,
+                                    "Fast-Path: Embedded MBID",
+                                    "hit",
+                                    f"Embedded MBID fast-path verified: {file_path.name} -> {embedded_mbid} ('{c_title}')",
+                                    {"mbid": str(embedded_mbid), "title": c_title},
+                                )
                                 return _create_resolved_track(
                                     media_id=request.media_id,
                                     sync_id=request.sync_id,
@@ -862,17 +982,40 @@ class MetadataResolutionEngine:
                                     isrc=tag_isrc,
                                     confidence_score=0.99,
                                     resolution_method="embedded_mbid",
+                                    request=request,
                                 )
                         else:
                             logger.info(
                                 "[resolution_engine] Embedded MBID %s returned no metadata; falling through to AcoustID.",
                                 embedded_mbid,
                             )
+                            _add_diagnostic(
+                                request,
+                                "Fast-Path: Embedded MBID",
+                                "miss",
+                                f"Embedded MBID {embedded_mbid} returned no metadata from provider.",
+                                {"mbid": str(embedded_mbid)},
+                            )
                     except Exception as e_mb:
                         logger.debug(
                             "[resolution_engine] Embedded MBID lookup failed: %s; falling through to AcoustID.",
                             e_mb,
                         )
+                        _add_diagnostic(
+                            request,
+                            "Fast-Path: Embedded MBID",
+                            "error",
+                            f"Embedded MBID lookup error: {e_mb}",
+                            {"mbid": str(embedded_mbid), "error": str(e_mb)},
+                        )
+        elif not embedded_mbid:
+            _add_diagnostic(
+                request,
+                "Fast-Path: Embedded MBID",
+                "miss",
+                "No embedded MusicBrainz recording ID in file tags.",
+                {},
+            )
 
         # ── Stage 2: Local Chromaprint Cache ──────────────────────────────────
         if chromaprint and not request.ignore_cache and not force_mode:
@@ -894,6 +1037,13 @@ class MetadataResolutionEngine:
                             f"'{sanitized_file_title}' (similarity={sim:.2f}). Rejecting cached hit and invalidating cache."
                         )
                         self.invalidate_cache(chromaprint)
+                        _add_diagnostic(
+                            request,
+                            "Stage 2: Local Cache",
+                            "rejected",
+                            f"Cached candidate '{cand_title}' contradicts physical filename '{sanitized_file_title}' (similarity={sim:.2f}). Cache invalidated.",
+                            {"cand_title": cand_title, "similarity": sim},
+                        )
 
                 if cand_title and (
                     signature_valid
@@ -912,6 +1062,13 @@ class MetadataResolutionEngine:
                         "[resolution_engine] Stage 2 HIT (local chromaprint cache): %s → MBID %s",
                         file_path.name,
                         cached_meta.get("musicbrainz_id"),
+                    )
+                    _add_diagnostic(
+                        request,
+                        "Stage 2: Local Cache",
+                        "hit",
+                        f"Stage 2 HIT (local cache): {file_path.name} -> MBID {cached_meta.get('musicbrainz_id')} ('{cached_meta.get('title')}')",
+                        {"mbid": cached_meta.get("musicbrainz_id"), "title": cached_meta.get("title")},
                     )
                     c_year, c_track, c_disc = _extract_release_details(
                         cached_meta,
@@ -939,7 +1096,24 @@ class MetadataResolutionEngine:
                         isrc=cached_meta.get("isrc") or tag_isrc,
                         confidence_score=0.95,
                         resolution_method="local_cache",
+                        request=request,
                     )
+            else:
+                _add_diagnostic(
+                    request,
+                    "Stage 2: Local Cache",
+                    "miss",
+                    "Chromaprint not found in local cache.",
+                    {},
+                )
+        else:
+            _add_diagnostic(
+                request,
+                "Stage 2: Local Cache",
+                "skipped",
+                "Local cache bypassed or chromaprint unavailable.",
+                {},
+            )
 
         # ── Stage 3: AcoustID Resolution with Picard Disambiguation ───────────
         if chromaprint and duration_ms > 0:
@@ -1037,6 +1211,7 @@ class MetadataResolutionEngine:
                     isrc=acoustid_res.get("isrc") or tag_isrc,
                     confidence_score=1.0 if signature_valid else 0.95,
                     resolution_method="signature_verified" if signature_valid else "acoustid",
+                    request=request,
                 )
 
         # ── Stage 4: ISRC Resolution ──────────────────────────────────────────
@@ -1053,6 +1228,13 @@ class MetadataResolutionEngine:
                     "[resolution_engine] Stage 4 HIT (ISRC): %s → %s",
                     file_path.name,
                     tag_isrc,
+                )
+                _add_diagnostic(
+                    request,
+                    "Stage 4: ISRC",
+                    "hit",
+                    f"Stage 4 HIT (ISRC {tag_isrc}): {isrc_res.get('title')}",
+                    {"isrc": tag_isrc, "title": isrc_res.get("title")},
                 )
                 return _create_resolved_track(
                     media_id=request.media_id,
@@ -1071,7 +1253,24 @@ class MetadataResolutionEngine:
                     isrc=tag_isrc,
                     confidence_score=0.92,
                     resolution_method="isrc",
+                    request=request,
                 )
+            else:
+                _add_diagnostic(
+                    request,
+                    "Stage 4: ISRC",
+                    "miss",
+                    f"ISRC lookup for '{tag_isrc}' returned no matches or failed trust gate.",
+                    {"isrc": tag_isrc},
+                )
+        else:
+            _add_diagnostic(
+                request,
+                "Stage 4: ISRC",
+                "skipped",
+                "No ISRC found in physical tags or force mode enabled.",
+                {},
+            )
 
         # ── Stage 5: Scoped Text Waterfall ────────────────────────────────────
         text_res = self._resolve_text_waterfall(
@@ -1083,6 +1282,7 @@ class MetadataResolutionEngine:
             tag_title=tag_title,
             baseline_isrc=tag_isrc or request.baseline_isrc,
             has_signature=signature_valid,
+            request=request,
         )
         if text_res:
             logger.info(
@@ -1108,6 +1308,7 @@ class MetadataResolutionEngine:
                 isrc=text_res.get("isrc") or tag_isrc,
                 confidence_score=text_res["confidence_score"],
                 resolution_method="text_waterfall",
+                request=request,
             )
 
         # ── Secondary Fallback: Demoted Embedded MBID ─────────────────────────
@@ -1173,6 +1374,13 @@ class MetadataResolutionEngine:
                                 file_path.name,
                                 deferred_embedded_mbid,
                             )
+                            _add_diagnostic(
+                                request,
+                                "Fallback: Demoted Embedded MBID",
+                                "hit",
+                                f"Demoted embedded MBID verified as fallback: {deferred_embedded_mbid}",
+                                {"mbid": str(deferred_embedded_mbid)},
+                            )
                             return _create_resolved_track(
                                 media_id=request.media_id,
                                 sync_id=request.sync_id,
@@ -1190,6 +1398,7 @@ class MetadataResolutionEngine:
                                 isrc=tag_isrc,
                                 confidence_score=0.85,
                                 resolution_method="embedded_mbid_fallback",
+                                request=request,
                             )
                         else:
                             logger.warning(
@@ -1197,21 +1406,49 @@ class MetadataResolutionEngine:
                                 deferred_embedded_mbid,
                                 file_path.name,
                             )
+                            _add_diagnostic(
+                                request,
+                                "Fallback: Demoted Embedded MBID",
+                                "rejected",
+                                f"Demoted embedded MBID '{deferred_embedded_mbid}' rejected by trust gate against {file_path.name}.",
+                                {"mbid": str(deferred_embedded_mbid)},
+                            )
                     else:
                         logger.info(
                             "[resolution_engine] Demoted embedded MBID '%s' returned no metadata (404 / dead tag)",
                             deferred_embedded_mbid,
+                        )
+                        _add_diagnostic(
+                            request,
+                            "Fallback: Demoted Embedded MBID",
+                            "miss",
+                            f"Demoted embedded MBID '{deferred_embedded_mbid}' returned no metadata.",
+                            {"mbid": str(deferred_embedded_mbid)},
                         )
                 except Exception as e_mb:
                     logger.debug(
                         "[resolution_engine] Demoted embedded MBID lookup error: %s",
                         e_mb,
                     )
+                    _add_diagnostic(
+                        request,
+                        "Fallback: Demoted Embedded MBID",
+                        "error",
+                        f"Demoted embedded MBID lookup error: {e_mb}",
+                        {"mbid": str(deferred_embedded_mbid), "error": str(e_mb)},
+                    )
 
         # ── Unresolved Fallback ───────────────────────────────────────────────
         logger.info(
             "[resolution_engine] All resolution stages exhausted for %s. Marking for manual review.",
             file_path.name,
+        )
+        _add_diagnostic(
+            request,
+            "Unresolved Fallback",
+            "miss",
+            f"All resolution stages exhausted for {file_path.name}. Marking for manual review.",
+            {},
         )
         return _create_resolved_track(
             media_id=request.media_id,
@@ -1230,6 +1467,7 @@ class MetadataResolutionEngine:
             isrc=tag_isrc,
             confidence_score=0.0,
             resolution_method="text_waterfall",
+            request=request,
         )
 
     # ── Helpers ───────────────────────────────────────────────────────────────
@@ -1258,10 +1496,17 @@ class MetadataResolutionEngine:
         """
         # ── Engine version signature ──────────────────────────────────────────
         logger.info("[resolution_engine] v2.4-filename-priority active")
+        acoustid_candidates_diag: list[dict[str, Any]] = []
 
         acoustid_plugin = self._get_acoustid_plugin()
         mb_plugin = self._get_mb_plugin()
         if not acoustid_plugin or not mb_plugin:
+            _add_diagnostic(
+                request,
+                "Stage 3: AcoustID",
+                "skipped",
+                "AcoustID or MusicBrainz plugin not available.",
+            )
             return None
 
         if request is not None:
@@ -1325,6 +1570,12 @@ class MetadataResolutionEngine:
             chromaprint = None
 
         if not chromaprint:
+            _add_diagnostic(
+                request,
+                "Stage 3: AcoustID",
+                "skipped",
+                "No chromaprint available for AcoustID resolution.",
+            )
             return None
 
         # Derive zero-trust title target from physical filename (ignores embedded tags)
@@ -1343,11 +1594,25 @@ class MetadataResolutionEngine:
             except TypeError:
                 details = acoustid_plugin.resolve_fingerprint_details(chromaprint, duration_sec)
             if not isinstance(details, dict):
+                _add_diagnostic(
+                    request,
+                    "Stage 3: AcoustID",
+                    "miss",
+                    f"No AcoustID details returned for duration={duration_sec}s.",
+                    {"duration_sec": duration_sec},
+                )
                 return None
             acoustid_id = details.get("acoustid_id")
             recordings = details.get("recordings") or []
             candidate_mbids = details.get("mbids") or []
             if not recordings and not candidate_mbids:
+                _add_diagnostic(
+                    request,
+                    "Stage 3: AcoustID",
+                    "miss",
+                    f"No AcoustID recording candidates returned for duration={duration_sec}s.",
+                    {"duration_sec": duration_sec},
+                )
                 return None
 
             # Build enriched recording map keyed by MBID for O(1) lookup
@@ -1415,7 +1680,7 @@ class MetadataResolutionEngine:
                         dur_delta_sec = abs(cand_dur_sec - file_duration_sec)
                         dynamic_threshold_a = compute_dynamic_duration_threshold(cand_acoustid_score)
                         if dur_delta_sec > dynamic_threshold_a:
-                            logger.debug(
+                            logger.info(
                                 "[resolution_engine] Step A DROPPED MBID %s: "
                                 "duration delta %.2fs > %.2fs threshold (sim=%.2f, candidate=%.1fs, file=%.1fs)",
                                 mbid_str,
@@ -1425,6 +1690,16 @@ class MetadataResolutionEngine:
                                 cand_dur_sec,
                                 file_duration_sec,
                             )
+                            acoustid_candidates_diag.append({
+                                "mbid": mbid_str,
+                                "title": rec_meta.get("title") or "Unknown Title",
+                                "artist": rec_meta.get("artist") or "Unknown Artist",
+                                "status": "DROPPED_DURATION_GATE",
+                                "candidate_duration": cand_dur_sec,
+                                "file_duration": file_duration_sec,
+                                "duration_delta": dur_delta_sec,
+                                "threshold": dynamic_threshold_a,
+                            })
                             continue
                     except (ValueError, TypeError):
                         dur_delta_sec = 0.0  # Unknown duration — pass through
@@ -1471,12 +1746,19 @@ class MetadataResolutionEngine:
                         or difflib.SequenceMatcher(None, b_art, c_art).ratio() >= 0.50
                     )
                     if not overlap:
-                        logger.debug(
+                        logger.info(
                             "[resolution_engine] Step B DROPPED MBID %s: artist '%s' disjoint from baseline '%s'",
                             mbid_str,
                             cand_artist,
                             baseline_artist,
                         )
+                        acoustid_candidates_diag.append({
+                            "mbid": mbid_str,
+                            "title": rec_meta.get("title") or "Unknown Title",
+                            "artist": cand_artist,
+                            "status": "DROPPED_ARTIST_FILTER",
+                            "reason": f"Candidate artist '{cand_artist}' conflicts with baseline '{baseline_artist}'",
+                        })
                         continue
 
                 # Step C: Fast in-memory title check against filename stem
@@ -1524,6 +1806,14 @@ class MetadataResolutionEngine:
                     "[resolution_engine] No AcoustID candidate matched filename '%s' with >= 0.35 similarity. "
                     "Skipping MusicBrainz network calls.",
                     filename_stem or "(none)",
+                )
+                _add_diagnostic(
+                    request,
+                    "Stage 3: AcoustID",
+                    "miss",
+                    f"No AcoustID candidate matched filename '{filename_stem or '(none)'}'.",
+                    {"viable_candidates": 0},
+                    candidates=acoustid_candidates_diag,
                 )
                 return None
 
@@ -1581,6 +1871,16 @@ class MetadataResolutionEngine:
                                 f"candidate_duration={mb_dur_sec:.2f}s, file_duration={file_duration_sec:.2f}s, "
                                 f"delta={dur_delta:.2f}s > {dynamic_threshold:.2f}s threshold (sim={norm_sim:.2f})."
                             )
+                            acoustid_candidates_diag.append({
+                                "mbid": mbid_str,
+                                "title": cand_meta.get("title") or "Unknown Title",
+                                "artist": cand_meta.get("artist") or cand_meta.get("artist_name") or "Unknown Artist",
+                                "status": "DROPPED_STEP_D_DURATION_VETO",
+                                "candidate_duration": mb_dur_sec,
+                                "file_duration": file_duration_sec,
+                                "duration_delta": dur_delta,
+                                "threshold": dynamic_threshold,
+                            })
                             continue
                     except (ValueError, TypeError):
                         mb_dur_sec = None
@@ -1652,7 +1952,7 @@ class MetadataResolutionEngine:
                 if veto_applies:
                     cand_sim = max(cand_sim, 0.65)
 
-                logger.debug(
+                logger.info(
                     "[resolution_engine] Stage 3 candidate MBID %s '%s': "
                     "matcher=%.1f dur_weight=%.3f album_bonus=%.1f pop_bonus=%.1f veto=%s => score=%.2f",
                     mbid_str,
@@ -1664,6 +1964,19 @@ class MetadataResolutionEngine:
                     veto_applies,
                     cand_score,
                 )
+                acoustid_candidates_diag.append({
+                    "mbid": mbid_str,
+                    "title": c_title,
+                    "artist": c_artist,
+                    "album": c_album,
+                    "matcher_score": matcher_score,
+                    "duration_weight": dur_weight,
+                    "album_bonus": album_bonus,
+                    "popularity_bonus": popularity_bonus,
+                    "veto_applied": veto_applies,
+                    "total_score": cand_score,
+                    "status": "EVALUATED",
+                })
 
                 if cand_score > 0 and cand_score > best_score:
                     best_score = cand_score
@@ -1699,6 +2012,23 @@ class MetadataResolutionEngine:
                     best_veto_applied,
                     filename_stem,
                 )
+                for c in acoustid_candidates_diag:
+                    if c.get("mbid") == best_mbid and c.get("status") == "EVALUATED":
+                        c["status"] = "WINNER"
+                    elif c.get("status") == "EVALUATED":
+                        c["status"] = "RUNNER_UP"
+                _add_diagnostic(
+                    request,
+                    "Stage 3: AcoustID",
+                    "hit",
+                    f"AcoustID matched recording '{best_candidate.get('title')}' with score {best_score:.2f}",
+                    {
+                        "winner_mbid": best_mbid,
+                        "score": best_score,
+                        "veto_applied": best_veto_applied,
+                    },
+                    candidates=acoustid_candidates_diag,
+                )
                 result_payload = {
                     "title": str(best_candidate.get("title") or baseline_title),
                     "artist": str(best_candidate.get("artist") or best_candidate.get("artist_name") or ""),
@@ -1730,8 +2060,24 @@ class MetadataResolutionEngine:
                 "Falling back to subsequent resolution stages.",
                 filename_stem or filename or "(none)",
             )
+            _add_diagnostic(
+                request,
+                "Stage 3: AcoustID",
+                "miss",
+                "All AcoustID candidate(s) rejected by duration/similarity gates.",
+                {"candidates_evaluated": len(acoustid_candidates_diag)},
+                candidates=acoustid_candidates_diag,
+            )
         except Exception as exc:
             logger.warning("[resolution_engine] AcoustID resolution error: %s", exc)
+            _add_diagnostic(
+                request,
+                "Stage 3: AcoustID",
+                "error",
+                f"AcoustID resolution error: {exc}",
+                {"error": str(exc)},
+                candidates=acoustid_candidates_diag,
+            )
 
         return None
 
@@ -1809,12 +2155,21 @@ class MetadataResolutionEngine:
         tag_title: str | None,
         baseline_isrc: str | None = None,
         has_signature: bool = False,
+        request: ResolutionRequest | None = None,
     ) -> dict[str, Any] | None:
         """Scoped text search waterfall with prefix sanitization and strict recording: + artist: matching.
 
         Blocks artist-only discography leaks ([] fallback).
         """
+        text_candidates_diag: list[dict[str, Any]] = []
+
         if not baseline_title or not baseline_artist:
+            _add_diagnostic(
+                request,
+                "Stage 5: Text Waterfall",
+                "skipped",
+                "Missing baseline title or artist for text search waterfall.",
+            )
             return None
 
         # Sanitize track prefixes (e.g., "01 - Title", "01. Title")
@@ -1824,6 +2179,12 @@ class MetadataResolutionEngine:
 
         mb_client = self._get_mb_plugin()
         if not mb_client:
+            _add_diagnostic(
+                request,
+                "Stage 5: Text Waterfall",
+                "skipped",
+                "MusicBrainz plugin not available for text search waterfall.",
+            )
             return None
 
         query_track = EchosyncTrack(
@@ -1838,6 +2199,13 @@ class MetadataResolutionEngine:
             results = mb_client.search_metadata(query_track, limit=5) if hasattr(mb_client, "search_metadata") else None
             if not results:
                 # Block artist-only discography leaks
+                _add_diagnostic(
+                    request,
+                    "Stage 5: Text Waterfall",
+                    "miss",
+                    f"No MusicBrainz search results found for query '{sanitized_title}' by '{baseline_artist}'.",
+                    {"query_title": sanitized_title, "query_artist": baseline_artist},
+                )
                 return None
 
             results_list = results if isinstance(results, (list, tuple)) else [results]
@@ -1862,6 +2230,13 @@ class MetadataResolutionEngine:
                     candidate_tracks.append((cand_t, mbid))
 
             if not candidate_tracks:
+                _add_diagnostic(
+                    request,
+                    "Stage 5: Text Waterfall",
+                    "miss",
+                    f"No usable candidate tracks in search results for '{sanitized_title}'.",
+                    candidates=text_candidates_diag,
+                )
                 return None
 
             matcher = self.matcher
@@ -1878,6 +2253,13 @@ class MetadataResolutionEngine:
                     tag_title=tag_title,
                     min_similarity=0.60,
                 ):
+                    text_candidates_diag.append({
+                        "mbid": mbid,
+                        "title": cand_title,
+                        "artist": cand.artist_name,
+                        "status": "DROPPED_TRUST_GATE",
+                        "reason": f"Title trust gate failed for candidate '{cand_title}' vs baseline '{baseline_title}'",
+                    })
                     continue
 
                 # Stage 5 MusicBrainz Text Waterfall Duration Decay Curve
@@ -1890,13 +2272,40 @@ class MetadataResolutionEngine:
                         text_dur_weight = calculate_text_duration_weight(track_dur_sec, cand_dur_sec)
                         if text_dur_weight <= 0.0:
                             # Complete failure threshold: delta > 8.0s -> 0.0
+                            text_candidates_diag.append({
+                                "mbid": mbid,
+                                "title": cand_title,
+                                "artist": cand.artist_name,
+                                "status": "DROPPED_DURATION_DELTA",
+                                "candidate_duration": cand_dur_sec,
+                                "file_duration": track_dur_sec,
+                                "reason": f"Duration delta > 8.0s (track: {track_dur_sec:.1f}s, cand: {cand_dur_sec:.1f}s)",
+                            })
                             continue
                     except (ValueError, TypeError):
                         pass
 
                 match_res = matcher.calculate_match(query_track, cand)
-                score = match_res.confidence_score if match_res else 0.0
-                score = score * text_dur_weight
+                raw_score = match_res.confidence_score if match_res else 0.0
+                score = raw_score * text_dur_weight
+                logger.info(
+                    "[resolution_engine] Stage 5 candidate MBID %s '%s': raw_score=%.1f dur_weight=%.2f => score=%.2f",
+                    mbid,
+                    cand_title,
+                    raw_score,
+                    text_dur_weight,
+                    score,
+                )
+                text_candidates_diag.append({
+                    "mbid": mbid,
+                    "title": cand_title,
+                    "artist": cand.artist_name,
+                    "album": cand.album_title,
+                    "raw_score": raw_score,
+                    "duration_weight": text_dur_weight,
+                    "total_score": score,
+                    "status": "EVALUATED",
+                })
                 if score > best_score:
                     best_score = score
                     best_cand = cand
@@ -1951,6 +2360,24 @@ class MetadataResolutionEngine:
                     or baseline_isrc
                 )
 
+                for c in text_candidates_diag:
+                    if c.get("mbid") == best_mbid and c.get("status") == "EVALUATED":
+                        c["status"] = "WINNER"
+                    elif c.get("status") == "EVALUATED":
+                        c["status"] = "RUNNER_UP"
+
+                _add_diagnostic(
+                    request,
+                    "Stage 5: Text Waterfall",
+                    "hit",
+                    f"Text Waterfall matched recording '{final_title}' with score {best_score:.2f}",
+                    {
+                        "winner_mbid": best_mbid,
+                        "score": best_score,
+                    },
+                    candidates=text_candidates_diag,
+                )
+
                 result_payload = {
                     "title": final_title,
                     "artist": final_artist,
@@ -1970,7 +2397,24 @@ class MetadataResolutionEngine:
                 candidate_tracks = None
                 best_cand = None
                 return result_payload
+
+            _add_diagnostic(
+                request,
+                "Stage 5: Text Waterfall",
+                "miss",
+                f"No candidate met the >= 85.0 confidence threshold (best score: {best_score:.2f}).",
+                {"candidates_evaluated": len(text_candidates_diag), "best_score": best_score},
+                candidates=text_candidates_diag,
+            )
         except Exception as exc:
             logger.warning("[resolution_engine] Scoped text waterfall error: %s", exc)
+            _add_diagnostic(
+                request,
+                "Stage 5: Text Waterfall",
+                "error",
+                f"Text waterfall error: {exc}",
+                {"error": str(exc)},
+                candidates=text_candidates_diag,
+            )
 
         return None

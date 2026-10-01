@@ -20,6 +20,7 @@ from web.auth import require_auth
 
 logger = get_logger("metadata_review_route")
 router = APIRouter(prefix="/api/v1/core/metadata_review", tags=["Metadata Review"])
+review_tasks_router = APIRouter(prefix="/api/v1/review/tasks", tags=["Metadata Review Tasks"])
 
 
 class UpdateReviewQueueRequest(BaseModel):
@@ -1702,3 +1703,120 @@ def lookup_review_queue_item_isrc(task_id: int, payload: ISRCLookupRequest | Non
     except Exception as e:
         logger.error(f"Failed ISRC lookup for review task {task_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="ISRC lookup failed")
+
+
+@router.post("/{task_id}/simulate-pipeline")
+@review_tasks_router.post("/{task_id}/simulate-pipeline")
+def simulate_review_pipeline(task_id: int, _=Depends(require_auth)):
+    """Run full read-only metadata resolution waterfall simulation with stage trace diagnostics."""
+    db = get_working_database()
+    try:
+        with db.session_scope() as session:
+            task = session.query(ReviewTask).filter(ReviewTask.id == task_id).first()
+            if not task:
+                raise HTTPException(status_code=404, detail="Task not found")
+
+            resolved_file = _resolve_task_file(task)
+            if not resolved_file or not resolved_file.exists():
+                raise HTTPException(status_code=404, detail=f"Physical file for task {task_id} not found on disk")
+
+            # Extract current baseline tags
+            current_meta = _read_current_metadata(task) or {}
+            detected_meta = _normalize_detected_metadata(task.detected_metadata) or {}
+            track_data = task.track_data if isinstance(task.track_data, dict) else {}
+
+            from core.metadata.engine import extract_physical_tags
+
+            raw_tags = extract_physical_tags(resolved_file) or {}
+
+            # Duration extraction
+            duration_sec = _normalize_duration_seconds(raw_tags, resolved_file)
+            duration_ms = int(duration_sec * 1000) if duration_sec else 0
+            if not duration_ms and raw_tags.get("duration_ms"):
+                try:
+                    duration_ms = int(raw_tags["duration_ms"])
+                except Exception:
+                    pass
+
+            # Chromaprint extraction
+            chromaprint = raw_tags.get("chromaprint") or track_data.get("fingerprint") or detected_meta.get("chromaprint")
+            if not chromaprint:
+                try:
+                    import echosync_core
+
+                    res_fp = echosync_core.fingerprint_and_hash_audio(str(resolved_file), False)
+                    if isinstance(res_fp, tuple) and len(res_fp) >= 1:
+                        chromaprint = res_fp[0]
+                    elif isinstance(res_fp, str):
+                        chromaprint = res_fp
+                except Exception as fp_err:
+                    logger.debug(f"Chromaprint extraction in simulation fallback: {fp_err}")
+
+            baseline_title = (
+                current_meta.get("title")
+                or track_data.get("title")
+                or detected_meta.get("title")
+                or raw_tags.get("title")
+            )
+            baseline_artist = (
+                current_meta.get("artist")
+                or track_data.get("artist")
+                or detected_meta.get("artist")
+                or raw_tags.get("artist")
+            )
+            baseline_album = (
+                current_meta.get("album")
+                or track_data.get("album")
+                or detected_meta.get("album")
+                or raw_tags.get("album")
+            )
+            baseline_isrc = (
+                current_meta.get("isrc")
+                or track_data.get("isrc")
+                or detected_meta.get("isrc")
+                or raw_tags.get("isrc")
+            )
+
+            prefer_studio = bool(config_manager.get("metadata.prefer_canonical_studio_album", True))
+
+            from core.metadata.engine import MetadataResolutionEngine
+            from core.metadata.schemas import ResolutionRequest
+
+            res_req = ResolutionRequest(
+                media_id=str(getattr(task, "media_id", None) or task.id),
+                file_path=resolved_file,
+                baseline_title=baseline_title,
+                baseline_artist=baseline_artist,
+                baseline_album=baseline_album,
+                baseline_isrc=baseline_isrc,
+                chromaprint=chromaprint,
+                duration_ms=duration_ms,
+                prefer_studio_album=prefer_studio,
+                ignore_cache=True,
+            )
+
+            engine = MetadataResolutionEngine()
+            result = engine.resolve_track(res_req)
+
+            resolved_metadata = {
+                "title": result.title or result.raw_title,
+                "artist": result.artist_name or result.artist,
+                "album": result.album_title or result.album,
+                "edition": result.edition,
+                "year": result.release_year,
+                "musicbrainz_id": result.musicbrainz_id,
+                "isrc": result.isrc,
+                "confidence_score": result.confidence_score,
+            }
+
+            return {
+                "status": "success",
+                "winning_stage": result.resolution_stage,
+                "resolved_metadata": resolved_metadata,
+                "diagnostics": result.diagnostics or [],
+            }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed pipeline simulation for task {task_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Pipeline simulation failed: {str(e)}")

@@ -22,6 +22,9 @@
   let isScanningAcoustID = false;
   let isLookingUpMB = false;
   let isLookingUpISRC = false;
+  let isSimulatingPipeline = false;
+  let pipelineDiagnostics = null;
+  let showDiagnosticsDrawer = false;
   let lookupStatus = null; // { type: 'success'|'warning'|'error'|'info', message: string, timestamp: number }
 
   let showIsrcPrompt = false;
@@ -104,6 +107,8 @@
     lastPersistedSignature = initialSignature;
     initializedTaskId = task.id;
     lookupStatus = null;
+    pipelineDiagnostics = null;
+    showDiagnosticsDrawer = false;
     clearAutosaveTimer();
     autosavePending = false;
   }
@@ -763,6 +768,89 @@
     closeIsrcPrompt();
     doRunISRCLookup(isrc);
   }
+
+  async function runFullPipelineSimulation() {
+    if (
+      !task?.id ||
+      isSimulatingPipeline ||
+      isScanningAcoustID ||
+      isLookingUpMB ||
+      isLookingUpISRC ||
+      savingDraft ||
+      approving
+    ) {
+      return;
+    }
+
+    clearAutosaveTimer();
+    isSimulatingPipeline = true;
+    try {
+      const response = await apiClient.post(
+        `/core/metadata_review/${task.id}/simulate-pipeline`,
+        {},
+        { timeout: 90000 },
+      );
+
+      if (response?.data?.status === "success") {
+        const resMeta = response.data.resolved_metadata || {};
+        const diagnostics = response.data.diagnostics || [];
+        const winningStage = response.data.winning_stage || "Unknown";
+
+        pipelineDiagnostics = {
+          winningStage,
+          resolvedMetadata: resMeta,
+          diagnostics,
+        };
+        showDiagnosticsDrawer = true;
+
+        const { changed, fieldsChanged } = applyMetadataUpdate(resMeta);
+        if (changed && fieldsChanged.length > 0) {
+          const changedKeys = fieldsChanged.map((f) => f.replace("_", " "));
+          lookupStatus = {
+            type: "success",
+            message: `Simulation Complete (${winningStage})! Updated: ${changedKeys.join(", ")}`,
+            timestamp: Date.now(),
+          };
+          feedback.addToast({
+            type: "success",
+            message: `Simulation Complete! Winning Stage: ${winningStage}`,
+          });
+        } else {
+          lookupStatus = {
+            type: "info",
+            message: `Simulation Complete (${winningStage}). Metadata already matches winner.`,
+            timestamp: Date.now(),
+          };
+          feedback.addToast({
+            type: "info",
+            message: `Simulation Complete! Winning Stage: ${winningStage}`,
+          });
+        }
+      } else {
+        feedback.addToast({
+          type: "warning",
+          message: response?.data?.detail || "Simulation returned no result",
+        });
+      }
+    } catch (error) {
+      console.error("Pipeline simulation failed:", error);
+      const errMsg =
+        error?.response?.data?.detail ||
+        error?.message ||
+        "Pipeline simulation failed";
+      lookupStatus = {
+        type: "error",
+        message: errMsg,
+        timestamp: Date.now(),
+      };
+      feedback.addToast({
+        type: "error",
+        message: errMsg,
+      });
+    } finally {
+      isSimulatingPipeline = false;
+    }
+  }
 </script>
 
 <div
@@ -797,6 +885,128 @@
 
     <!-- 2. Scrollable Body (Takes Remaining Height) -->
     <main class="flex-1 min-h-0 overflow-y-auto p-6 space-y-6">
+      {#if pipelineDiagnostics}
+        <div class="rounded-xl border border-indigo-500/40 bg-indigo-950/20 p-4 space-y-3">
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <div class="flex items-center gap-3">
+              <span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                ⚡ Full Pipeline Simulation
+              </span>
+              <div class="flex items-center gap-2">
+                <span class="text-xs text-slate-400">Winning Stage:</span>
+                <span class="text-xs font-bold px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                  {pipelineDiagnostics.winningStage}
+                </span>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              class="px-3 py-1 rounded-lg bg-indigo-900/60 hover:bg-indigo-800 text-indigo-200 text-xs font-medium border border-indigo-700/50 flex items-center gap-1.5 transition-colors"
+              on:click={() => (showDiagnosticsDrawer = !showDiagnosticsDrawer)}
+            >
+              <span>{showDiagnosticsDrawer ? "Hide" : "Inspect"} Trace Details</span>
+              <span class="text-slate-400">({pipelineDiagnostics.diagnostics?.length || 0} stages)</span>
+              <span>{showDiagnosticsDrawer ? "▲" : "▼"}</span>
+            </button>
+          </div>
+
+          {#if showDiagnosticsDrawer}
+            <div class="mt-4 pt-4 border-t border-indigo-800/40 space-y-4">
+              <div class="text-xs text-slate-300 font-semibold uppercase tracking-wider">
+                Waterfall Stage Trace & Candidate Scoring
+              </div>
+
+              {#if pipelineDiagnostics.diagnostics && pipelineDiagnostics.diagnostics.length > 0}
+                <div class="space-y-3">
+                  {#each pipelineDiagnostics.diagnostics as stage (stage.stage)}
+                    <div class="rounded-lg border border-slate-800 bg-slate-900/80 p-3 space-y-2">
+                      <div class="flex items-center justify-between gap-2">
+                        <div class="flex items-center gap-2">
+                          <span class="text-xs font-bold text-slate-200">{stage.stage}</span>
+                          <span class="text-[10px] px-1.5 py-0.5 rounded uppercase font-semibold
+                            {stage.status === 'hit' || stage.status === 'MATCH' ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' :
+                             stage.status === 'miss' || stage.status === 'NO_MATCH' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' :
+                             stage.status === 'rejected' ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30' :
+                             'bg-slate-700/50 text-slate-400 border border-slate-600/30'}">
+                            {stage.status}
+                          </span>
+                        </div>
+                      </div>
+
+                      {#if stage.message}
+                        <p class="text-xs text-slate-300">{stage.message}</p>
+                      {/if}
+
+                      {#if stage.candidates && stage.candidates.length > 0}
+                        <div class="mt-2 space-y-1.5">
+                          <span class="text-[11px] font-semibold text-slate-400">Candidates Evaluated:</span>
+                          <div class="overflow-x-auto">
+                            <table class="w-full text-left text-xs text-slate-300 border-collapse">
+                              <thead>
+                                <tr class="border-b border-slate-800 text-[10px] uppercase text-slate-400">
+                                  <th class="py-1 px-2">MBID</th>
+                                  <th class="py-1 px-2">Title / Artist</th>
+                                  <th class="py-1 px-2">Status</th>
+                                  <th class="py-1 px-2">Score</th>
+                                  <th class="py-1 px-2">Details / Drops</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {#each stage.candidates as cand (cand.mbid || cand.title)}
+                                  <tr class="border-b border-slate-800/40 hover:bg-slate-800/30 {cand.status === 'WINNER' ? 'bg-emerald-950/20' : ''}">
+                                    <td class="py-1.5 px-2 font-mono text-[10px] text-slate-400 truncate max-w-[100px]" title={cand.mbid}>
+                                      {cand.mbid ? cand.mbid.slice(0, 8) + '...' : '-'}
+                                    </td>
+                                    <td class="py-1.5 px-2">
+                                      <div class="font-medium text-slate-200">{cand.title || 'Unknown'}</div>
+                                      <div class="text-[10px] text-slate-400">{cand.artist || 'Unknown'}</div>
+                                    </td>
+                                    <td class="py-1.5 px-2">
+                                      <span class="text-[10px] px-1.5 py-0.5 rounded font-medium
+                                        {cand.status === 'WINNER' ? 'bg-emerald-500/20 text-emerald-300' :
+                                         cand.status === 'RUNNER_UP' ? 'bg-blue-500/20 text-blue-300' :
+                                         cand.status?.startsWith('DROPPED') ? 'bg-rose-500/20 text-rose-300' :
+                                         'bg-slate-700 text-slate-300'}">
+                                        {cand.status}
+                                      </span>
+                                    </td>
+                                    <td class="py-1.5 px-2 font-mono text-xs">
+                                      {#if cand.total_score !== undefined}
+                                        <span class="font-bold text-cyan-300">{cand.total_score.toFixed(1)}</span>
+                                      {:else}
+                                        <span class="text-slate-500">-</span>
+                                      {/if}
+                                    </td>
+                                    <td class="py-1.5 px-2 text-[10px] text-slate-400 max-w-[200px]">
+                                      {#if cand.reason}
+                                        <span>{cand.reason}</span>
+                                      {:else if cand.matcher_score !== undefined}
+                                        <span>matcher={cand.matcher_score?.toFixed(0)} dur_w={cand.duration_weight?.toFixed(2)} album_b={cand.album_bonus || 0} pop_b={cand.popularity_bonus || 0} veto={cand.veto_applied}</span>
+                                      {:else if cand.candidate_duration !== undefined}
+                                        <span>cand_dur={cand.candidate_duration?.toFixed(1)}s delta={cand.duration_delta?.toFixed(1)}s thr={cand.threshold?.toFixed(1)}s</span>
+                                      {:else}
+                                        <span>-</span>
+                                      {/if}
+                                    </td>
+                                  </tr>
+                                {/each}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      {/if}
+                    </div>
+                  {/each}
+                </div>
+              {:else}
+                <p class="text-xs text-slate-400 italic">No stage diagnostics recorded.</p>
+              {/if}
+            </div>
+          {/if}
+        </div>
+      {/if}
+
       <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <section class="rounded-xl border border-slate-800 bg-slate-950/50 p-4">
           <div class="flex items-start gap-4 mb-4">
@@ -1232,6 +1442,7 @@
           disabled={isScanningAcoustID ||
             isLookingUpMB ||
             isLookingUpISRC ||
+            isSimulatingPipeline ||
             approving ||
             savingDraft ||
             rejecting}
@@ -1242,6 +1453,28 @@
             ></span> Looking up...
           {:else}
             🎵 ISRC Lookup
+          {/if}
+        </button>
+
+        <button
+          type="button"
+          class="px-4 py-2 rounded-lg bg-indigo-600/90 hover:bg-indigo-500 text-white disabled:opacity-60 inline-flex items-center justify-center gap-2 active:scale-95 transition-all duration-200 text-sm font-medium shadow-sm border border-indigo-400/30"
+          on:click={runFullPipelineSimulation}
+          disabled={isScanningAcoustID ||
+            isLookingUpMB ||
+            isLookingUpISRC ||
+            isSimulatingPipeline ||
+            approving ||
+            savingDraft ||
+            rejecting}
+          title="Run full 6-stage metadata waterfall simulation to inspect stage trace diagnostics"
+        >
+          {#if isSimulatingPipeline}
+            <span
+              class="loading loading-spinner loading-xs animate-spin inline-block w-4 h-4 border-2 border-current border-t-transparent rounded-full"
+            ></span> Simulating Pipeline...
+          {:else}
+            ⚡ Run Full Pipeline
           {/if}
         </button>
 

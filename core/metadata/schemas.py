@@ -89,6 +89,7 @@ class ResolutionResult(EchosyncTrack):
         musicbrainz_artist_id: str | None = None,
         track_artist_ids: list[int] | None = None,
         alias_proposals: list[Any] | None = None,
+        diagnostics: list[dict[str, Any]] | None = None,
         **kwargs: Any,
     ):
         warnings.warn(
@@ -114,5 +115,6 @@ class ResolutionResult(EchosyncTrack):
             resolution_method=resolution_method,
             alias_proposals=alias_proposals or [],
             extra_metadata=extra_metadata or {},
+            diagnostics=diagnostics or kwargs.get("diagnostics") or [],
             media=[EchosyncMedia(media_id=media_id)] if media_id else [],
         )

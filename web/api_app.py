@@ -38,7 +38,10 @@ from web.routes.media_server import router as media_server_bp
 
 # Batch 3A routers
 from web.routes.metadata import router as metadata_bp
-from web.routes.metadata_review import router as metadata_review_bp
+from web.routes.metadata_review import (
+    review_tasks_router as review_tasks_bp,
+    router as metadata_review_bp,
+)
 from web.routes.playlists import api_v1_router as playlists_v1_bp
 from web.routes.playlists import double_v1_router as playlists_double_v1_bp
 from web.routes.playlists import legacy_router as playlists_legacy_bp
@@ -307,6 +310,7 @@ def create_app(testing: bool = False) -> FastAPI:
     app.include_router(jobs_bp)
     app.include_router(metadata_bp)
     app.include_router(metadata_review_bp)
+    app.include_router(review_tasks_bp)
     app.include_router(local_metadata_bp)
     app.include_router(system_library_bp)
 
@@ -340,7 +344,12 @@ def create_app(testing: bool = False) -> FastAPI:
         @app.exception_handler(404)
         async def spa_fallback(request: Request, exc: StarletteHTTPException):
             if request.url.path.startswith("/api/"):
-                return JSONResponse({"detail": "API route not found"}, status_code=404)
+                detail_msg = (
+                    exc.detail
+                    if hasattr(exc, "detail") and exc.detail and exc.detail != "Not Found"
+                    else "API route not found"
+                )
+                return JSONResponse({"detail": detail_msg}, status_code=404)
             return FileResponse(os.path.join(ui_path, "index.html"))
 
     return app
