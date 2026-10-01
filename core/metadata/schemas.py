@@ -59,6 +59,9 @@ class ResolutionRequest:
     ignore_cache: bool = False
     prefer_studio_album: bool = True
     track: EchosyncTrack | None = None
+    untrusted_tags: bool = False
+    is_untrusted_legacy_tags: bool = False
+
 
 
 class ResolutionResult(EchosyncTrack):

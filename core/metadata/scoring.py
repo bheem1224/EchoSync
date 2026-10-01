@@ -42,6 +42,30 @@ def calculate_text_duration_weight(track_duration: float, candidate_duration: fl
     return max(0.0, 1.0 - (delta / 8.0))
 
 
+def compute_cover_penalty(
+    candidate: dict[str, Any],
+    delta_sim: float,
+) -> float:
+    """Compute cover collection demotion penalty (-25.0) under acoustic tie-breaker rules.
+
+    - If delta_sim > 0.08: Decisively higher acoustic similarity means candidate is genuinely
+      the cover recording; do NOT apply cover demotion.
+    - If |delta_sim| <= 0.08 (or worse) AND the album/release group title indicates a cover collection
+      ("Cover", "Tribute", "Karaoke"): Apply -25.0 penalty to prevent the cover from hijacking the original.
+    """
+    if delta_sim > 0.08:
+        return 0.0
+
+    album = str(candidate.get("album") or candidate.get("album_title") or "").lower()
+    rg = candidate.get("release_group") or candidate.get("release-group") or {}
+    rg_title = str(rg.get("title") or "").lower()
+
+    is_cover_collection = any(k in album or k in rg_title for k in ("cover", "tribute", "karaoke"))
+    if is_cover_collection and (abs(delta_sim) <= 0.08 or delta_sim < -0.08):
+        return -25.0
+    return 0.0
+
+
 def score_acoustid_candidate(
     matcher: Any,
     candidate: dict[str, Any],
@@ -52,9 +76,11 @@ def score_acoustid_candidate(
     filename: str | None = None,
     prefer_studio_album: bool = True,
     max_sec: float = 2.0,
+    untrusted_tags: bool = False,
+    delta_sim: float | None = None,
 ) -> float:
     """Score AcoustID recording candidate by duration proximity, variant disambiguation penalties,
-    and canonical studio release weighting using WeightedMatchingEngine(PROFILE_EXACT_SYNC).
+    canonical studio release weighting, and safe cover arbitration.
     """
     cand_dur = candidate.get("length") or candidate.get("duration_ms") or candidate.get("duration")
     cand_dur_ms: int | None = None
@@ -83,9 +109,12 @@ def score_acoustid_candidate(
     clean_file_title = clean_title_from_filename(filename) if filename else ""
     query_title = clean_file_title if (clean_file_title and not is_generic_title(clean_file_title)) else baseline_title
 
+    # When untrusted_tags is True, do not penalize candidate by comparing against contaminated tag artist
+    query_artist = c_artist if untrusted_tags else (baseline_artist or c_artist)
+
     query_track = EchosyncTrack(
         raw_title=query_title or c_title,
-        artist_name=baseline_artist or c_artist,
+        artist_name=query_artist,
         album_title=baseline_album or c_album,
         duration=file_duration_ms if file_duration_ms > 0 else None,
     )
@@ -131,6 +160,10 @@ def score_acoustid_candidate(
     if "various artists" in str(artist_credit).lower():
         penalty -= 10.0
 
+    # Cover disambiguation tie-breaker
+    cover_pen = compute_cover_penalty(candidate, delta_sim) if delta_sim is not None else 0.0
+    penalty += cover_pen
+
     # Base physical acoustic evidence grants high confidence when tags are corrupted
     base_score = matcher_score if matcher_score > 0.0 else 80.0
     score = base_score + bonus + penalty
@@ -144,4 +177,4 @@ def score_acoustid_candidate(
     else:
         score = score * duration_weight
 
-    return max(score, 0.0)
+    return min(100.0, max(score, 0.0))
