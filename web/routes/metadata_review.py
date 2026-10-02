@@ -1823,6 +1823,9 @@ def simulate_review_pipeline(task_id: int, _=Depends(require_auth)):
                 duration_ms=duration_ms,
                 prefer_studio_album=prefer_studio,
                 ignore_cache=True,
+                force_mode=True,
+                force_recheck=True,
+                dry_run=True,
             )
 
             engine = MetadataResolutionEngine()

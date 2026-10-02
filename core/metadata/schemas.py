@@ -61,6 +61,9 @@ class ResolutionRequest:
     track: EchosyncTrack | None = None
     untrusted_tags: bool = False
     is_untrusted_legacy_tags: bool = False
+    force_mode: bool = False
+    force_recheck: bool = False
+    dry_run: bool = False
 
 
 

@@ -586,7 +586,13 @@ class MetadataResolutionEngine:
         if not hasattr(request, "_diagnostics") or request._diagnostics is None:
             request._diagnostics = []
         result = self._execute_waterfall_inner(request)
-        if hasattr(request, "_signature_locked_title") and hasattr(request, "_signature_locked_artist"):
+        is_forced = bool(
+            getattr(request, "force_mode", False)
+            or getattr(request, "force_recheck", False)
+            or getattr(request, "dry_run", False)
+            or getattr(request, "ignore_embedded_mbid", False)
+        )
+        if not is_forced and hasattr(request, "_signature_locked_title") and hasattr(request, "_signature_locked_artist"):
             result.raw_title = request._signature_locked_title
             result.title = request._signature_locked_title
             result.artist_name = request._signature_locked_artist
@@ -743,9 +749,23 @@ class MetadataResolutionEngine:
         signature_valid: bool = False
         sig_tag = raw_tags.get("echosync_signature") or raw_tags.get("ECHOSYNC_SIGNATURE")
 
-        force_mode = request.ignore_embedded_mbid
+        force_mode = bool(
+            getattr(request, "force_mode", False)
+            or getattr(request, "force_recheck", False)
+            or getattr(request, "dry_run", False)
+            or getattr(request, "ignore_embedded_mbid", False)
+        )
 
-        if sig_tag and baseline_title and baseline_artist and not force_mode:
+        if force_mode:
+            logger.info("[resolution_engine] Force mode active; bypassing Stage 0 signature short-circuit.")
+            _add_diagnostic(
+                request,
+                "Stage 0: Signature Gate",
+                "bypassed",
+                "Force mode active; bypassing Stage 0 signature short-circuit.",
+                {"force_mode": True, "signature_present": bool(sig_tag)},
+            )
+        elif sig_tag and baseline_title and baseline_artist:
             try:
                 import echosync_core
 
@@ -817,7 +837,7 @@ class MetadataResolutionEngine:
         )
 
         # ── Inconsistency Detection: Embedded MBID / ISRC vs Embedded Tags ─────
-        if embedded_mbid and not request.ignore_embedded_mbid:
+        if embedded_mbid and not signature_valid and not request.ignore_embedded_mbid:
             mb_plugin = self._get_mb_plugin()
             if mb_plugin and hasattr(mb_plugin, "get_metadata"):
                 try:
@@ -848,7 +868,7 @@ class MetadataResolutionEngine:
                 except Exception as e_mb:
                     logger.debug("[resolution_engine] Embedded MBID pre-check failed: %s", e_mb)
 
-        if tag_isrc and not getattr(request, "untrusted_tags", False):
+        if tag_isrc and not signature_valid and not getattr(request, "untrusted_tags", False):
             try:
                 from services.isrc_lookup_service import dispatch_isrc_lookup
 
@@ -1913,8 +1933,10 @@ class MetadataResolutionEngine:
             best_veto_applied = False
             best_acoustid_score = 0.0
             best_dur_delta = 0.0
+            candidates_scored: list[Any] = []
 
             for cand_info in top_candidates:
+                dur_delta_sec = 0.0
                 mbid_str = cand_info[0]
                 cand_sim = cand_info[3]
                 cand_acoustid_score = cand_info[4]
@@ -1934,6 +1956,7 @@ class MetadataResolutionEngine:
                             mb_dur_val *= 1000.0  # seconds → ms
                         mb_dur_sec = mb_dur_val / 1000.0
                         dur_delta = abs(mb_dur_sec - file_duration_sec)
+                        dur_delta_sec = dur_delta
                         norm_sim = cand_acoustid_score / 100.0 if cand_acoustid_score > 1.0 else cand_acoustid_score
                         dynamic_threshold = compute_dynamic_duration_threshold(norm_sim)
                         if dur_delta > dynamic_threshold:
@@ -2023,10 +2046,20 @@ class MetadataResolutionEngine:
                         rg_id = rg.get("id") or r.get("release_group_id") or r.get("id")
                         if rg_id:
                             rg_set.add(rg_id)
-                rg_count = max(len(rg_set), cand_meta.get("release_group_count", 0), cand_meta.get("release_count", 0))
-                if not rg_count and cand_meta.get("releases"):
-                    rg_count = len(cand_meta.get("releases"))
-                popularity_bonus = 5.0 if rg_count >= 5 else (1.0 * rg_count if rg_count > 0 else 0.0)
+                # Global Release Count / Originality Weighting
+                raw_releases = cand_meta.get("releases") or []
+                rg_count_meta = cand_meta.get("release_group_count") or cand_meta.get("release_count") or 0
+                release_count = len(raw_releases) + (rg_count_meta if isinstance(rg_count_meta, int) else 0)
+                release_count = max(release_count, len(rg_set))
+
+                if release_count >= 20:
+                    canonical_weight = 10.0
+                elif release_count >= 5:
+                    canonical_weight = 5.0
+                else:
+                    canonical_weight = 0.0
+
+                popularity_bonus = 5.0 if release_count >= 5 else (1.0 * release_count if release_count > 0 else 0.0)
 
                 # Cover Disambiguation Gate:
                 # delta_sim = sim_cand - sim_runner_up
@@ -2045,26 +2078,34 @@ class MetadataResolutionEngine:
                 else:
                     cover_penalty = 0.0
 
-                # Final score: candidate scoring combines matcher score (70%), duration weight (30%), album bonus, popularity bonus, and cover penalty
-                cand_score = (matcher_score * 0.7) + (dur_weight * 30.0) + album_bonus + popularity_bonus + cover_penalty
+                # Final score: candidate scoring combines matcher score (70%), duration weight (30%), album bonus, popularity bonus, canonical weight, and cover penalty
+                cand_score = (
+                    (matcher_score * 0.7)
+                    + (dur_weight * 30.0)
+                    + album_bonus
+                    + popularity_bonus
+                    + canonical_weight
+                    + cover_penalty
+                )
                 cand_score = max(0.0, cand_score)
                 if veto_applies:
                     cand_sim = max(cand_sim, 0.65)
 
                 logger.info(
                     "[resolution_engine] Stage 3 candidate MBID %s '%s': "
-                    "matcher=%.1f dur_weight=%.3f album_bonus=%.1f pop_bonus=%.1f cover_pen=%.1f veto=%s => score=%.2f",
+                    "matcher=%.1f dur_weight=%.3f album_bonus=%.1f pop_bonus=%.1f canon_weight=%.1f cover_pen=%.1f veto=%s => score=%.2f",
                     mbid_str,
                     c_title,
                     matcher_score,
                     dur_weight,
                     album_bonus,
                     popularity_bonus,
+                    canonical_weight,
                     cover_penalty,
                     veto_applies,
                     cand_score,
                 )
-                acoustid_candidates_diag.append({
+                cand_diag_entry = {
                     "mbid": mbid_str,
                     "title": c_title,
                     "artist": c_artist,
@@ -2073,34 +2114,26 @@ class MetadataResolutionEngine:
                     "duration_weight": dur_weight,
                     "album_bonus": album_bonus,
                     "popularity_bonus": popularity_bonus,
+                    "canonical_weight": canonical_weight,
+                    "release_count": release_count,
                     "cover_penalty": cover_penalty,
                     "delta_sim": delta_sim,
                     "is_cover_collection": is_cover_collection,
                     "veto_applied": veto_applies,
-                    "total_score": cand_score,
+                    "total_score": min(100.0, max(0.0, cand_score)),
                     "status": "EVALUATED",
-                })
+                }
+                acoustid_candidates_diag.append(cand_diag_entry)
 
-                if cand_score > 0 and cand_score > best_score:
-                    best_score = cand_score
-                    best_candidate = cand_meta
-                    best_mbid = mbid_str
-                    best_veto_applied = veto_applies
-                    best_acoustid_score = cand_acoustid_score
-                    best_dur_delta = dur_delta_sec
+                candidates_scored.append(
+                    (cand_score, mbid_str, cand_meta, veto_applies, cand_acoustid_score, dur_delta_sec, cand_diag_entry)
+                )
 
-                # Short-circuit on clear filename match to enforce HTTP request cap (<= 1 on clear match)
-                if matcher_score >= 80.0 and cand_sim >= 0.60 and not is_cover_collection:
-                    logger.info(
-                        "[resolution_engine] Clear filename match confirmed for MBID %s '%s' "
-                        "(matcher=%.1f, score=%.1f, sim=%.2f). Terminating candidate inspection.",
-                        mbid_str,
-                        c_title,
-                        matcher_score,
-                        cand_score,
-                        cand_sim,
-                    )
-                    break
+            valid_scored = [c for c in candidates_scored if c[0] > 0]
+            if valid_scored:
+                winner_tuple = max(valid_scored, key=lambda x: x[0])
+                best_score, best_mbid, best_candidate, best_veto_applied, best_acoustid_score, best_dur_delta, winner_diag = winner_tuple
+                winner_diag["status"] = "WINNER"
 
             if best_candidate and best_mbid:
                 cand_year, cand_track, cand_disc = _extract_release_details(
