@@ -451,14 +451,32 @@ def get_library_index(request: Request):
         raise HTTPException(status_code=500, detail={"error": str(e)})
 
 
-@router.get("/stream/{track_id}")
-@router.get("/tracks/{track_id}/stream")
-def stream_track(track_id: str):
-    """Stream a track file with HTTP Range support."""
+@router.get("/stream/{sync_id}")
+@router.get("/tracks/{sync_id}/stream")
+def stream_track(sync_id: str):
+    """Stream a track file with HTTP Range support by canonical sync_id (NanoID)."""
+    clean_sync_id = str(sync_id or "").strip().split("?")[0]
+    if not clean_sync_id or clean_sync_id.isdigit():
+        raise HTTPException(
+            status_code=400,
+            detail="Integer primary keys are not allowed. Provide a valid string NanoID sync_id.",
+        )
     try:
-        file_path = media_manager.get_track_stream(track_id)
+        from database.music_database import Track, get_database
+
+        db = get_database()
+        with db.session_scope() as session:
+            track = session.query(Track).filter(Track.sync_id == clean_sync_id).first()
+            if not track:
+                raise HTTPException(status_code=404, detail={"error": f"Track with sync_id {clean_sync_id} not found"})
+            file_path = track.file_path
+
         if not file_path or not Path(file_path).exists():
-            raise HTTPException(status_code=404, detail={"error": "Track not found or file missing"})
+            mapped = media_manager.get_track_stream(clean_sync_id)
+            if mapped and Path(mapped).exists():
+                file_path = mapped
+            else:
+                raise HTTPException(status_code=404, detail={"error": "Track not found or file missing"})
 
         import mimetypes
 
@@ -467,41 +485,107 @@ def stream_track(track_id: str):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error streaming track {track_id}: {e}")
+        logger.error(f"Error streaming track {clean_sync_id}: {e}")
         raise HTTPException(status_code=500, detail={"error": str(e)})
+
+
+@router.get("/media/{media_id}/stream")
+def stream_media_edition_endpoint(media_id: str):
+    """Stream a specific media edition file by media_id (NanoID)."""
+    clean_media_id = str(media_id or "").strip().split("?")[0]
+    if not clean_media_id or clean_media_id.isdigit():
+        raise HTTPException(
+            status_code=400,
+            detail="Integer primary keys are not allowed. Provide a valid string NanoID media_id.",
+        )
+    from database.music_database import LocalMedia, get_database
+
+    db = get_database()
+    with db.session_scope() as session:
+        media = session.query(LocalMedia).filter(LocalMedia.media_id == clean_media_id).first()
+        if not media:
+            raise HTTPException(status_code=404, detail={"error": f"Media file {clean_media_id} not found"})
+        file_path = media.file_path
+
+    if not file_path or not Path(file_path).exists():
+        mapped = media_manager.get_track_stream(clean_media_id)
+        if mapped and Path(mapped).exists():
+            file_path = mapped
+        else:
+            raise HTTPException(status_code=404, detail={"error": "Media file not found on disk"})
+
+    import mimetypes
+
+    ext = Path(file_path).suffix.lower()
+    from web.routes.stream import _AUDIO_MIMETYPES
+
+    media_type = _AUDIO_MIMETYPES.get(ext) or mimetypes.guess_type(file_path)[0] or "audio/mpeg"
+    return FileResponse(file_path, media_type=media_type, filename=Path(file_path).name)
 
 
 @router.delete("/media/{media_id}")
 def delete_media_endpoint(media_id: str):
-    """Delete a specific physical media file / edition."""
+    """Delete a specific physical media file / edition by canonical media_id (NanoID)."""
+    clean_media_id = str(media_id or "").strip().split("?")[0]
+    if not clean_media_id or clean_media_id.isdigit():
+        raise HTTPException(
+            status_code=400,
+            detail="Integer primary keys are not allowed. Provide a valid string NanoID media_id.",
+        )
     try:
-        success = media_manager.delete_media_file(media_id)
+        from database.music_database import LocalMedia, get_database
+
+        db = get_database()
+        with db.session_scope() as session:
+            media = session.query(LocalMedia).filter(LocalMedia.media_id == clean_media_id).first()
+            if not media:
+                raise HTTPException(
+                    status_code=404, detail={"error": f"Media file {clean_media_id} not found"}
+                )
+
+        success = media_manager.delete_media_file(clean_media_id)
         if success:
-            return {"success": True, "message": f"Media file {media_id} deleted"}
+            return {"success": True, "message": f"Media file {clean_media_id} deleted"}
         else:
             raise HTTPException(
-                status_code=404, detail={"error": f"Media file {media_id} not found or failed to delete"}
+                status_code=404, detail={"error": f"Media file {clean_media_id} not found or failed to delete"}
             )
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error deleting media {media_id}: {e}")
+        logger.error(f"Error deleting media {clean_media_id}: {e}")
         raise HTTPException(status_code=500, detail={"error": str(e)})
 
 
-@router.delete("/{track_id}")
-def delete_track_endpoint(track_id):
-    """Delete a track."""
+@router.delete("/{sync_id}")
+def delete_track_endpoint(sync_id: str):
+    """Delete a track by canonical sync_id (NanoID)."""
+    clean_sync_id = str(sync_id or "").strip().split("?")[0]
+    if not clean_sync_id or clean_sync_id.isdigit():
+        raise HTTPException(
+            status_code=400,
+            detail="Integer primary keys are not allowed. Provide a valid string NanoID sync_id.",
+        )
     try:
-        success = media_manager.delete_track(track_id)
+        from database.music_database import Track, get_database
+
+        db = get_database()
+        with db.session_scope() as session:
+            track = session.query(Track).filter(Track.sync_id == clean_sync_id).first()
+            if not track:
+                raise HTTPException(
+                    status_code=404, detail={"error": f"Track {clean_sync_id} not found"}
+                )
+
+        success = media_manager.delete_track(clean_sync_id)
         if success:
-            return {"success": True, "message": f"Track {track_id} deleted"}
+            return {"success": True, "message": f"Track {clean_sync_id} deleted"}
         else:
-            raise HTTPException(status_code=404, detail={"error": f"Track {track_id} not found or failed to delete"})
+            raise HTTPException(status_code=404, detail={"error": f"Track {clean_sync_id} not found or failed to delete"})
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error deleting track {track_id}: {e}")
+        logger.error(f"Error deleting track {clean_sync_id}: {e}")
         raise HTTPException(status_code=500, detail={"error": str(e)})
 
 

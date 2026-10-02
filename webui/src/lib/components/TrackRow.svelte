@@ -64,66 +64,117 @@
 
   function handleAction(action) {
     closeMenu();
+    const syncId = track?.sync_id;
+    if (!syncId || typeof syncId !== "string" || syncId.trim() === "") {
+      console.error(
+        "Action aborted: track.sync_id must be a non-empty string NanoID",
+        syncId,
+      );
+      return;
+    }
+
     if (action === "play") {
       if (onplay) {
-        onplay(track.sync_id || track.id);
+        onplay(syncId);
       } else if (onPlay) {
         onPlay(track, artist, album);
       }
     }
-    if (action === "delete" && onDelete) onDelete(track.id, album);
+    if (action === "delete" && onDelete) onDelete(syncId, album);
     if (action === "metadata" || action === "edit_metadata") {
-      const trackRef = track.sync_id || track.id;
       if (onedit) {
-        onedit(trackRef);
+        onedit(syncId);
       } else if (openMetadataEditor) {
-        openMetadataEditor(trackRef);
+        openMetadataEditor(syncId);
       } else if (onFetchMetadata) {
-        onFetchMetadata(trackRef);
+        onFetchMetadata(syncId);
       }
     }
-    if (action === "upgrade" && onForceUpgrade) onForceUpgrade(track.id);
-    if (action === "force_delete" && onForceDelete) onForceDelete(track.id);
+    if (action === "upgrade" && onForceUpgrade) onForceUpgrade(syncId);
+    if (action === "force_delete" && onForceDelete) onForceDelete(syncId);
   }
 
-  function handlePlayEdition(mediaId) {
-    if (!mediaId || typeof mediaId !== "string") {
+  function handlePlayEdition(media, e = null) {
+    if (e && typeof e.stopPropagation === "function") {
+      e.stopPropagation();
+    }
+    const mediaId = typeof media === "string" ? media : media?.media_id;
+    const syncId = track?.sync_id;
+
+    if (!mediaId || typeof mediaId !== "string" || mediaId.trim() === "") {
       console.error(
-        "Cannot play edition: missing canonical media_id NanoID",
+        "Cannot play edition: media.media_id must be a non-empty string NanoID",
         mediaId,
       );
       return;
     }
-    const trackRef = track.sync_id || track.id;
+    if (!syncId || typeof syncId !== "string" || syncId.trim() === "") {
+      console.error(
+        "Cannot play edition: track.sync_id must be a non-empty string NanoID",
+        syncId,
+      );
+      return;
+    }
+
+    const streamUrl = `/api/v1/core/stream/media/${encodeURIComponent(mediaId)}`;
     if (onplay) {
-      onplay(trackRef, mediaId);
+      onplay(syncId, mediaId);
     } else if (onPlay) {
       onPlay(track, artist, album, mediaId);
     }
+
+    window.dispatchEvent(
+      new CustomEvent("echosync:play-edition", {
+        detail: { mediaId, syncId, streamUrl, track },
+      }),
+    );
   }
 
-  function handleEditEdition(mediaId) {
-    if (!mediaId || typeof mediaId !== "string") {
+  function handleEditEdition(media, e = null) {
+    if (e && typeof e.stopPropagation === "function") {
+      e.stopPropagation();
+    }
+    const mediaId = typeof media === "string" ? media : media?.media_id;
+    const syncId = track?.sync_id;
+
+    if (!mediaId || typeof mediaId !== "string" || mediaId.trim() === "") {
       console.error(
-        "Cannot edit edition: missing canonical media_id NanoID",
+        "Cannot edit edition: media.media_id must be a non-empty string NanoID",
         mediaId,
       );
       return;
     }
-    const trackRef = track.sync_id || track.id;
-    if (onedit) {
-      onedit(trackRef, mediaId);
-    } else if (openMetadataEditor) {
-      openMetadataEditor(trackRef, mediaId);
-    } else if (onFetchMetadata) {
-      onFetchMetadata(trackRef, mediaId);
+    if (!syncId || typeof syncId !== "string" || syncId.trim() === "") {
+      console.error(
+        "Cannot edit edition: track.sync_id must be a non-empty string NanoID",
+        syncId,
+      );
+      return;
     }
+
+    if (onedit) {
+      onedit(syncId, mediaId);
+    } else if (openMetadataEditor) {
+      openMetadataEditor(syncId, mediaId);
+    } else if (onFetchMetadata) {
+      onFetchMetadata(syncId, mediaId);
+    }
+
+    window.dispatchEvent(
+      new CustomEvent("echosync:open-metadata-editor", {
+        detail: { syncId, mediaId, track },
+      }),
+    );
   }
 
-  function handleDeleteEdition(mediaId) {
-    if (!mediaId || typeof mediaId !== "string") {
+  function handleDeleteEdition(media, e = null) {
+    if (e && typeof e.stopPropagation === "function") {
+      e.stopPropagation();
+    }
+    const mediaId = typeof media === "string" ? media : media?.media_id;
+    if (!mediaId || typeof mediaId !== "string" || mediaId.trim() === "") {
       console.error(
-        "Cannot delete edition: missing canonical media_id NanoID",
+        "Cannot delete edition: media.media_id must be a non-empty string NanoID",
         mediaId,
       );
       return;
@@ -137,12 +188,12 @@
         "Delete this file edition from disk? This action cannot be undone.",
       )
     ) {
-      fetch(`/api/v1/core/library/media/${mediaId}`, { method: "DELETE" })
+      fetch(`/api/v1/core/library/media/${encodeURIComponent(mediaId)}`, { method: "DELETE" })
         .then((res) => {
           if (res.ok) {
             window.dispatchEvent(
               new CustomEvent("echosync:media-deleted", {
-                detail: { mediaId, trackId: track?.id },
+                detail: { mediaId, trackSyncId: track?.sync_id },
               }),
             );
           }
@@ -391,16 +442,7 @@
               type="button"
               class="px-2.5 py-1 text-xs font-medium rounded bg-cyan-600 hover:bg-cyan-500 text-white transition-colors flex items-center gap-1"
               onclick={(e) => {
-                e.stopPropagation();
-                handlePlayEdition(media.media_id || media.id);
-                if (!media?.media_id) {
-                  console.error(
-                    "Cannot play edition: missing canonical media_id NanoID",
-                    media,
-                  );
-                  return;
-                }
-                handlePlayEdition(media.media_id);
+                handlePlayEdition(media, e);
               }}
             >
               ▶ Play
@@ -409,16 +451,7 @@
               type="button"
               class="px-2.5 py-1 text-xs font-medium rounded bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-colors flex items-center gap-1"
               onclick={(e) => {
-                e.stopPropagation();
-                handleEditEdition(media.media_id || media.id);
-                if (!media?.media_id) {
-                  console.error(
-                    "Cannot edit edition: missing canonical media_id NanoID",
-                    media,
-                  );
-                  return;
-                }
-                handleEditEdition(media.media_id);
+                handleEditEdition(media, e);
               }}
             >
               ✏ Edit
@@ -427,15 +460,7 @@
               type="button"
               class="px-2.5 py-1 text-xs font-medium rounded bg-red-950/60 hover:bg-red-900/80 text-red-300 border border-red-800/50 transition-colors flex items-center gap-1"
               onclick={(e) => {
-                e.stopPropagation();
-                if (!media?.media_id) {
-                  console.error(
-                    "Cannot delete edition: missing canonical media_id NanoID",
-                    media,
-                  );
-                  return;
-                }
-                handleDeleteEdition(media.media_id);
+                handleDeleteEdition(media, e);
               }}
               title="Delete this file edition from disk"
             >
@@ -456,34 +481,18 @@
     {#if activeMenuMedia}
       <button
         class="w-full text-left px-4 py-2 hover:bg-gray-700 text-blue-400 flex items-center gap-2 active:scale-95 transition-all duration-200"
-        onclick={() => {
-          const mId = activeMenuMedia.media_id;
+        onclick={(e) => {
           closeMenu();
-          if (!mId) {
-            console.error(
-              "Cannot play edition: missing canonical media_id NanoID",
-              activeMenuMedia,
-            );
-            return;
-          }
-          handlePlayEdition(mId);
+          handlePlayEdition(activeMenuMedia, e);
         }}
       >
         <span>▶️</span> Play This Edition
       </button>
       <button
         class="w-full text-left px-4 py-2 hover:bg-gray-700 text-white flex items-center gap-2 active:scale-95 transition-all duration-200"
-        onclick={() => {
-          const mId = activeMenuMedia.media_id;
+        onclick={(e) => {
           closeMenu();
-          if (!mId) {
-            console.error(
-              "Cannot edit edition: missing canonical media_id NanoID",
-              activeMenuMedia,
-            );
-            return;
-          }
-          handleEditEdition(mId);
+          handleEditEdition(activeMenuMedia, e);
         }}
       >
         <span>✏️</span> Edit Edition Metadata
@@ -491,17 +500,9 @@
       <div class="border-t border-gray-700 my-1"></div>
       <button
         class="w-full text-left px-4 py-2 hover:bg-red-900/50 text-red-400 flex items-center gap-2 active:scale-95 transition-all duration-200"
-        onclick={() => {
-          const mId = activeMenuMedia.media_id;
+        onclick={(e) => {
           closeMenu();
-          if (!mId) {
-            console.error(
-              "Cannot delete edition: missing canonical media_id NanoID",
-              activeMenuMedia,
-            );
-            return;
-          }
-          handleDeleteEdition(mId);
+          handleDeleteEdition(activeMenuMedia, e);
         }}
       >
         <span>🗑️</span> Delete File Edition

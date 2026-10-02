@@ -202,12 +202,31 @@ class ReviewTask(WorkingBase):
         self.detected_metadata = val
 
     @property
-    def media_id(self) -> str:
-        return self.file_path
+    def media_id(self) -> str | None:
+        if self.track_data and isinstance(self.track_data, dict):
+            mid = self.track_data.get("media_id")
+            if mid and not ("/" in str(mid) or "\\" in str(mid)):
+                return str(mid)
+        return None
 
     @media_id.setter
-    def media_id(self, val: str):
-        self.file_path = val
+    def media_id(self, val: str | None) -> None:
+        if not self.track_data or not isinstance(self.track_data, dict):
+            self.track_data = {}
+        if val is None:
+            self.track_data.pop("media_id", None)
+        else:
+            val_str = str(val).strip()
+            if "/" in val_str or "\\" in val_str:
+                self.track_data.pop("media_id", None)
+            else:
+                self.track_data["media_id"] = val_str
+        try:
+            from sqlalchemy.orm.attributes import flag_modified
+
+            flag_modified(self, "track_data")
+        except Exception:
+            pass
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize ReviewTask to dictionary representation including proposed_metadata."""

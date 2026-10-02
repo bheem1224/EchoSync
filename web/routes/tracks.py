@@ -133,7 +133,12 @@ async def get_canonical_track(
 
         db = get_database()
         with db.get_session() as session:
-            clean_sync_id = sync_id.split("?")[0]
+            clean_sync_id = str(sync_id or "").strip().split("?")[0]
+            if not clean_sync_id or clean_sync_id.isdigit():
+                raise HTTPException(
+                    status_code=400,
+                    detail="Integer primary keys are not allowed. Provide a valid string NanoID sync_id.",
+                )
             if rich:
                 track = (
                     session.query(Track)
@@ -224,9 +229,16 @@ async def patch_canonical_track(sync_id: str, payload: TrackPatchRequest):
                 },
             )
 
+        clean_sync_id = str(sync_id or "").strip().split("?")[0]
+        if not clean_sync_id or clean_sync_id.isdigit():
+            raise HTTPException(
+                status_code=400,
+                detail="Integer primary keys are not allowed. Provide a valid string NanoID sync_id.",
+            )
+
         db = get_database()
         with db.get_session() as session:
-            track = TrackRepository.get_track_by_sync_id(session, sync_id)
+            track = TrackRepository.get_track_by_sync_id(session, clean_sync_id)
             if not track:
                 raise HTTPException(status_code=404, detail="Track not found")
 

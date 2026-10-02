@@ -23,7 +23,16 @@ router = APIRouter(prefix="/api/v1/core/metadata_review", tags=["Metadata Review
 review_tasks_router = APIRouter(prefix="/api/v1/review/tasks", tags=["Metadata Review Tasks"])
 
 
+class CreateReviewTaskRequest(BaseModel):
+    media_id: str | None = None
+    file_path: str | None = None
+    track_data: dict[str, Any] | None = None
+    metadata: dict[str, Any] | None = None
+    confidence_score: float | None = 0.0
+
+
 class UpdateReviewQueueRequest(BaseModel):
+    media_id: str | None = None
     metadata: dict[str, Any] | None = None
     track_data: dict[str, Any] | None = None
 
@@ -281,10 +290,28 @@ def _serialize_task(
         if not detected.get("album") and album_val:
             detected["album"] = album_val
 
+    media_id_val = None
+    if getattr(task, "media_id", None) and not ("/" in str(task.media_id) or "\\" in str(task.media_id)):
+        media_id_val = str(task.media_id)
+    elif isinstance(task.track_data, dict) and task.track_data.get("media_id"):
+        media_id_val = str(task.track_data.get("media_id"))
+
+    if not media_id_val and task.file_path:
+        db = get_database()
+        try:
+            with db.session_scope() as session:
+                from database.music_database import LocalMedia
+
+                media = session.query(LocalMedia).filter(LocalMedia.file_path == task.file_path).first()
+                if media:
+                    media_id_val = media.media_id
+        except Exception:
+            pass
+
     return {
         "id": task.id,
         "file_path": task.file_path,
-        "media_id": task.file_path,
+        "media_id": media_id_val,
         "detected_metadata": detected,
         "proposed_metadata": detected,
         "current_metadata": current_metadata if current_metadata is not None else _read_current_metadata(task),
@@ -634,6 +661,86 @@ def get_review_queue():
         raise HTTPException(status_code=500, detail="Failed to fetch review queue")
 
 
+@router.post("")
+@router.post("/tasks")
+@review_tasks_router.post("")
+def create_review_task(
+    payload: CreateReviewTaskRequest | None = None,
+    media_id: str | None = None,
+    _=Depends(require_auth),
+):
+    """Initialize a new ReviewTask referencing the targeted physical file via media_id."""
+    req_media_id = None
+    file_path_str = None
+    track_dict = {}
+    conf_score = 0.0
+
+    if payload:
+        req_media_id = payload.media_id
+        file_path_str = payload.file_path
+        track_dict = payload.track_data or {}
+        if payload.metadata:
+            track_dict = _merge_metadata(track_dict, payload.metadata)
+        if payload.confidence_score is not None:
+            conf_score = payload.confidence_score
+
+    if not req_media_id and media_id:
+        req_media_id = media_id
+
+    if req_media_id is not None:
+        req_media_id = str(req_media_id).strip().split("?")[0]
+        if not req_media_id or req_media_id.isdigit():
+            raise HTTPException(
+                status_code=400,
+                detail="Integer primary keys are not allowed. Provide a valid string NanoID media_id.",
+            )
+
+    db = get_database()
+    if req_media_id:
+        with db.session_scope() as session:
+            from database.music_database import LocalMedia
+
+            media = session.query(LocalMedia).filter(LocalMedia.media_id == req_media_id).first()
+            if not media:
+                raise HTTPException(status_code=404, detail=f"LocalMedia with media_id '{req_media_id}' not found")
+            file_path_str = media.file_path
+            track_dict["media_id"] = req_media_id
+            if media.track:
+                track_dict["sync_id"] = media.track.sync_id
+                if not track_dict.get("title"):
+                    track_dict["title"] = media.track.title
+                if not track_dict.get("artist") and media.track.artist:
+                    track_dict["artist"] = media.track.artist.name
+                if not track_dict.get("album") and media.track.album:
+                    track_dict["album"] = media.track.album.title
+
+    if not file_path_str:
+        raise HTTPException(status_code=400, detail="Either media_id or file_path must be provided")
+
+    working_db = get_working_database()
+    with working_db.session_scope() as session:
+        task = session.query(ReviewTask).filter(ReviewTask.file_path == file_path_str).first()
+        if not task:
+            task = ReviewTask(
+                file_path=file_path_str,
+                status="pending",
+                confidence_score=conf_score,
+                track_data=track_dict,
+            )
+            if req_media_id:
+                task.media_id = req_media_id
+            session.add(task)
+            session.flush()
+        else:
+            task.track_data = _merge_metadata(task.track_data, track_dict)
+            if req_media_id:
+                task.media_id = req_media_id
+            session.flush()
+
+        serialized = _serialize_task(task)
+        return {"success": True, "id": task.id, "task": serialized}
+
+
 @router.patch("/{task_id}/save")
 @router.put("/{task_id}")
 def update_review_queue_item(task_id: int, payload: UpdateReviewQueueRequest, _=Depends(require_auth)):
@@ -656,6 +763,15 @@ def update_review_queue_item(task_id: int, payload: UpdateReviewQueueRequest, _=
             task = session.query(ReviewTask).filter(ReviewTask.id == task_id).first()
             if not task:
                 raise HTTPException(status_code=404, detail="Task not found")
+
+            if payload.media_id is not None:
+                cleaned_media_id = str(payload.media_id).strip().split("?")[0]
+                if not cleaned_media_id or cleaned_media_id.isdigit():
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Integer primary keys are not allowed. Provide a valid string NanoID media_id.",
+                    )
+                task.media_id = cleaned_media_id
 
             # Update/Merge into track_data blob incrementally
             if not task.track_data:

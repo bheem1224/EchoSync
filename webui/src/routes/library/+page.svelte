@@ -159,11 +159,12 @@
     trackOrSyncId,
     mediaIdOrArtist = null,
     maybeAlbum = null,
+    maybeMediaId = null,
   ) {
     let track = null;
     let artist = selectedArtist;
     let album = maybeAlbum;
-    let media_id = null;
+    let media_id = typeof maybeMediaId === "string" ? maybeMediaId : null;
 
     if (typeof trackOrSyncId === "object" && trackOrSyncId !== null) {
       track = trackOrSyncId;
@@ -194,8 +195,8 @@
 
     const sync_id = track.sync_id || track.id;
     const streamUrl = media_id
-      ? `/api/v1/stream/${sync_id}?media_id=${encodeURIComponent(media_id)}`
-      : `/api/v1/stream/${sync_id}`;
+      ? `/api/v1/core/stream/media/${encodeURIComponent(media_id)}`
+      : `/api/v1/stream/${encodeURIComponent(sync_id)}`;
 
     const trackMetadata = {
       ...track,
@@ -211,17 +212,29 @@
 
   const playTrack = handlePlayTrack;
 
-  async function deleteTrack(trackId, album) {
+  async function deleteTrack(trackOrSyncId, album) {
+    const syncId =
+      typeof trackOrSyncId === "object" && trackOrSyncId !== null
+        ? trackOrSyncId.sync_id
+        : trackOrSyncId;
+
+    if (!syncId || typeof syncId !== "string" || syncId.trim() === "") {
+      console.error(
+        "deleteTrack aborted: syncId must be a valid non-empty string NanoID",
+        syncId,
+      );
+      return;
+    }
+
     if (
       !confirm(
         "Are you sure you want to delete this track? This action cannot be undone.",
-        "Delete track and ALL associated files? This action cannot be undone.",
       )
     )
       return;
     try {
-      await apiClient.delete(`/core/library/${trackId}`);
-      updateLocalStateAfterDelete(trackId, album);
+      await apiClient.delete(`/core/library/${encodeURIComponent(syncId)}`);
+      updateLocalStateAfterDelete(syncId, album);
     } catch (err) {
       alert(`Failed to delete: ${err.message}`);
     }
@@ -245,8 +258,10 @@
     }
   }
 
-  function updateLocalStateAfterDelete(trackId, album) {
-    album.tracks = album.tracks.filter((t) => t.id !== trackId);
+  function updateLocalStateAfterDelete(syncIdOrId, album) {
+    album.tracks = album.tracks.filter(
+      (t) => t.sync_id !== syncIdOrId && t.id !== syncIdOrId,
+    );
     if (album.tracks.length === 0) {
       selectedArtist.albums = selectedArtist.albums.filter(
         (a) => a.id !== album.id,
@@ -264,7 +279,7 @@
    * @param {object} album - Parent album entity.
    */
   async function deleteMediaEdition(mediaId, track, album) {
-    if (!mediaId || typeof mediaId !== "string") {
+    if (!mediaId || typeof mediaId !== "string" || mediaId.trim() === "") {
       console.error(
         "deleteMediaEdition aborted: mediaId must be a valid non-empty string NanoID",
         mediaId,
@@ -274,21 +289,19 @@
     if (
       !confirm(
         "Are you sure you want to delete this specific file edition? This action cannot be undone.",
-        "Delete this file edition from disk? This action cannot be undone.",
       )
     )
       return;
     try {
-      await apiClient.delete(`/core/library/media/${mediaId}`);
+      await apiClient.delete(`/core/library/media/${encodeURIComponent(mediaId)}`);
 
       // Strict NanoID filtering across all media collections
       if (track.local_media) {
         track.local_media = track.local_media.filter(
-          (m) => (m.media_id || m.id) !== mediaId && m.id !== mediaId,
           (m) => m.media_id !== mediaId,
         );
         if (track.local_media.length === 0) {
-          updateLocalStateAfterDelete(track.id, album);
+          updateLocalStateAfterDelete(track.sync_id || track.id, album);
         } else {
           libraryIndex = [...libraryIndex];
           if (selectedArtist) selectedArtist = { ...selectedArtist };
@@ -310,11 +323,11 @@
       );
 
       if (currentEditionsCount === 0) {
-        updateLocalStateAfterDelete(track.id, album);
+        updateLocalStateAfterDelete(track.sync_id || track.id, album);
       } else {
         await loadLibrary();
         album.tracks = album.tracks.map((t) =>
-          t.id === track.id || (t.sync_id && t.sync_id === track.sync_id)
+          (t.sync_id && track.sync_id && t.sync_id === track.sync_id) || t.id === track.id
             ? {
                 ...t,
                 media: track.media,
@@ -385,16 +398,15 @@
     await loadLibrary();
   }
 
-  onMount(loadLibrary);
   onMount(() => {
     loadLibrary();
 
     const handleMediaDeleted = (e) => {
-      const { mediaId, trackId } = e.detail || {};
+      const { mediaId, trackSyncId, trackId } = e.detail || {};
       if (!mediaId || typeof mediaId !== "string" || !selectedArtist) return;
       for (const album of selectedArtist.albums || []) {
         const trk = album.tracks?.find(
-          (t) => t.id === trackId || t.sync_id === trackId,
+          (t) => (trackSyncId && t.sync_id === trackSyncId) || (trackId && (t.id === trackId || t.sync_id === trackId)),
         );
         if (trk) {
           if (trk.local_media) {
@@ -416,10 +428,10 @@
             trk.media_files ? trk.media_files.length : 0,
           );
           if (count === 0) {
-            updateLocalStateAfterDelete(trk.id, album);
+            updateLocalStateAfterDelete(trk.sync_id || trk.id, album);
           } else {
             album.tracks = album.tracks.map((t) =>
-              t.id === trk.id ? { ...t } : t,
+              (trk.sync_id && t.sync_id === trk.sync_id) || t.id === trk.id ? { ...t } : t,
             );
             libraryIndex = [...libraryIndex];
             selectedArtist = { ...selectedArtist };
@@ -429,9 +441,18 @@
       }
     };
 
+    const handleOpenMetadataEditor = (e) => {
+      const { syncId, mediaId } = e.detail || {};
+      if (syncId) {
+        openMetadataEditor(syncId, mediaId);
+      }
+    };
+
     window.addEventListener("echosync:media-deleted", handleMediaDeleted);
+    window.addEventListener("echosync:open-metadata-editor", handleOpenMetadataEditor);
     return () => {
       window.removeEventListener("echosync:media-deleted", handleMediaDeleted);
+      window.removeEventListener("echosync:open-metadata-editor", handleOpenMetadataEditor);
     };
   });
 </script>
@@ -544,7 +565,7 @@
 
             <div class="tracks-list">
               {#each album.tracks as track, tIndex (track.sync_id ?? track.id ?? `${track.title}_${tIndex}`)}
-                <div id="track-{track.id}">
+                <div id="track-{track.sync_id || track.id}">
                   <TrackRow
                     {track}
                     artist={selectedArtist}
@@ -552,7 +573,7 @@
                     onplay={handlePlayTrack}
                     onPlay={playTrack}
                     onedit={openMetadataEditor}
-                    onDelete={deleteTrack}
+                    onDelete={(syncId) => deleteTrack(syncId, album)}
                     onDeleteEdition={(mediaId, t) =>
                       deleteMediaEdition(mediaId, t, album)}
                     {openMetadataEditor}

@@ -258,6 +258,7 @@ def test_api_endpoints_delete_media_and_track(tmp_path):
         session.add_all([m1, m2])
         session.flush()
         track_id = track.id
+        track_sync_id = track.sync_id
         media_id_1 = m1.media_id
         media_id_2 = m2.media_id
 
@@ -274,16 +275,20 @@ def test_api_endpoints_delete_media_and_track(tmp_path):
         assert len(t.media_files) == 1
         assert t.media_files[0].media_id == media_id_2
 
-    # 2. Delete track via API
-    res = client.delete(f"/api/v1/core/library/{track_id}")
+    # 2. Integer track_id must be rejected with 400
+    res_int = client.delete(f"/api/v1/core/library/{track_id}")
+    assert res_int.status_code == 400
+
+    # 3. Delete track via API using canonical NanoID sync_id
+    res = client.delete(f"/api/v1/core/library/{track_sync_id}")
     assert res.status_code == 200
     assert res.json()["success"] is True
 
     with db.session_scope() as session:
         assert session.query(Track).filter(Track.id == track_id).first() is None
 
-    # 3. Subsequent delete calls should return 404
-    res_404_track = client.delete(f"/api/v1/core/library/{track_id}")
+    # 4. Subsequent delete calls should return 404
+    res_404_track = client.delete(f"/api/v1/core/library/{track_sync_id}")
     assert res_404_track.status_code == 404
 
     res_404_media = client.delete(f"/api/v1/core/library/media/{media_id_1}")

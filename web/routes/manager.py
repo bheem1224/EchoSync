@@ -802,39 +802,68 @@ def fetch_metadata(track_id: int, _=Depends(require_auth)):
 
 
 @router.post("/track/{track_id}/edit_metadata")
-def edit_metadata(track_id: str, _=Depends(require_auth)):
-    """Instantly creates or retrieves a ReviewTask for a library track from its existing metadata
+def edit_metadata(
+    track_id: str,
+    media_id: str | None = Query(None),
+    _=Depends(require_auth),
+):
+    """Instantly creates or retrieves a ReviewTask for a library track/edition from its existing metadata
     WITHOUT triggering the slow background identification waterfall, so the user can immediately
     edit and review metadata in the Metadata Editor."""
     import os
 
     from sqlalchemy.orm.attributes import flag_modified
 
-    from database.music_database import Track, get_database
+    from database.music_database import LocalMedia, Track, get_database
     from database.working_database import ReviewTask, get_working_database
+
+    if not isinstance(media_id, str):
+        media_id = None
+    elif media_id.isdigit():
+        return {"error": "Integer primary keys are not allowed. Provide a valid string NanoID media_id."}
 
     db = get_database()
     working_db = get_working_database()
     try:
         with db.session_scope() as session:
             track = None
-            try:
-                t_int_id = int(track_id)
-                track = session.query(Track).filter(Track.id == t_int_id).first()
-            except (ValueError, TypeError):
-                pass
+            target_media = None
+
+            if media_id:
+                target_media = session.query(LocalMedia).filter(LocalMedia.media_id == media_id).first()
+                if not target_media:
+                    return {"error": f"Media edition {media_id} not found"}
+                track = target_media.track
+
             if not track:
-                track = session.query(Track).filter(Track.sync_id == track_id).first()
+                track_id_str = str(track_id)
+                if not track_id_str.isdigit():
+                    track = session.query(Track).filter(Track.sync_id == track_id_str).first()
+                else:
+                    track = session.query(Track).filter(Track.id == int(track_id_str)).first()
+
             if not track:
                 return {"error": "Track not found"}
 
-            file_path = track.file_path
+            if target_media:
+                file_path = target_media.file_path
+                edition_name = target_media.file_format
+            else:
+                file_path = track.file_path
+                edition_name = track.edition
+
             if not file_path or not os.path.exists(file_path):
                 return {"error": f"Track file not found on disk: {file_path}"}
 
             artist_name = track.artist.name if track.artist else "Unknown Artist"
             album_title = track.album.title if track.album else "Unknown Album"
             release_year = track.album.release_date.year if (track.album and track.album.release_date) else None
+
+            resolved_media_id = (
+                target_media.media_id
+                if target_media
+                else (track.media_ids[0] if track.media_ids else None)
+            )
 
             track_dict = {
                 "title": track.title,
@@ -853,6 +882,8 @@ def edit_metadata(track_id: str, _=Depends(require_auth)):
                 "isrc": track.isrc,
                 "file_path": file_path,
                 "sync_id": track.sync_id,
+                "media_id": resolved_media_id,
+                "edition": track.edition or edition_name,
             }
 
         with working_db.session_scope() as w_session:
@@ -865,12 +896,16 @@ def edit_metadata(track_id: str, _=Depends(require_auth)):
                     confidence_score=1.0,
                     track_data=track_dict,
                 )
+                if resolved_media_id:
+                    task.media_id = resolved_media_id
                 task.detected_metadata = detected
                 w_session.add(task)
                 w_session.flush()
             else:
                 task.status = "pending"
                 task.track_data = track_dict
+                if resolved_media_id:
+                    task.media_id = resolved_media_id
                 if not task.detected_metadata:
                     task.detected_metadata = detected
                 flag_modified(task, "track_data")

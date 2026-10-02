@@ -42,15 +42,23 @@ def get_media(media_id: str):
     GET /api/media/<media_id>
     Response: { media_id, track_id, file_path, file_format, bitrate, ... }
     """
+    clean_media_id = str(media_id or "").strip().split("?")[0]
+    if not clean_media_id or clean_media_id.isdigit():
+        raise HTTPException(
+            status_code=400,
+            detail={"error": "Integer primary keys are not allowed. Provide a valid string NanoID media_id."},
+        )
     try:
         db = get_database()
         with db.get_session() as session:
-            media = TrackRepository.get_media_by_media_id(session, media_id)
+            media = TrackRepository.get_media_by_media_id(session, clean_media_id)
             if not media:
                 raise HTTPException(
                     status_code=404, detail={"error": "Media not found"}
                 )
             return _media_to_dict(media)
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error fetching media {media_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail={"error": "Failed to fetch media"})
