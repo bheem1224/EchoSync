@@ -1,5 +1,5 @@
 from sqlalchemy.orm import Session
-from database.music_database import Track, Artist, TrackArtist, LocalMedia
+from database.music_database import Track, Artist, TrackArtist, LocalMedia, Album
 from core.matching_engine.text_utils import normalize_artist
 from core.matching_engine.track_parser import extract_version_descriptors, decompose_artists
 from core.db.echo_sync_track import EchosyncTrack
@@ -177,13 +177,27 @@ class ResolutionAdapter:
                 session.delete(track)
                 session.flush()
 
-                if album_id and session.query(Track).filter_by(album_id=album_id).count() == 0:
-                    session.query(Album).filter_by(id=album_id).delete()
+                if album_id:
+                    tracks_in_db = session.query(Track.id).filter_by(album_id=album_id).count()
+                    tracks_in_session = any(
+                        isinstance(obj, Track)
+                        and obj.id != track_id
+                        and getattr(obj, "album_id", None) == album_id
+                        for obj in session
+                    )
+                    if tracks_in_db == 0 and not tracks_in_session:
+                        session.query(Album).filter_by(id=album_id).delete()
 
                 if artist_id:
-                    has_tracks = session.query(Track).filter_by(artist_id=artist_id).count() > 0
-                    has_junctions = session.query(TrackArtist).filter_by(artist_id=artist_id).count() > 0
-                    if not has_tracks and not has_junctions:
+                    has_tracks = session.query(Track.id).filter_by(artist_id=artist_id).count() > 0
+                    has_junctions = session.query(TrackArtist.track_id).filter_by(artist_id=artist_id).count() > 0
+                    artists_in_session = any(
+                        isinstance(obj, Track)
+                        and obj.id != track_id
+                        and getattr(obj, "artist_id", None) == artist_id
+                        for obj in session
+                    )
+                    if not has_tracks and not has_junctions and not artists_in_session:
                         session.query(Artist).filter_by(id=artist_id).delete()
                 return True
         return False
@@ -311,6 +325,15 @@ class ResolutionAdapter:
             session.flush()
             if old_track_id and old_track_id != matched_track.id:
                 self.prune_orphaned_track_if_empty(session, old_track_id)
+
+            # Verify matched_track's album_id exists in DB
+            if matched_track.album_id and not session.query(Album.id).filter_by(id=matched_track.album_id).first():
+                logger.warning(
+                    "Matched track %s has invalid/stale album_id %s; resetting to None",
+                    matched_track.id,
+                    matched_track.album_id,
+                )
+                matched_track.album_id = None
             return matched_track
 
         # 2. Check for decoupling from multi-media track
@@ -334,6 +357,19 @@ class ResolutionAdapter:
                     media.file_path,
                     current_track.id,
                 )
+                target_album_id = getattr(enhanced_dto, "album_id", None) or current_track.album_id
+                verified_album_id = None
+                if target_album_id:
+                    if session.query(Album.id).filter_by(id=target_album_id).first():
+                        verified_album_id = target_album_id
+                    elif current_track.album_id and session.query(Album.id).filter_by(id=current_track.album_id).first():
+                        verified_album_id = current_track.album_id
+                    else:
+                        logger.warning(
+                            "Target album_id %s does not exist in DB during decoupling; resetting to None",
+                            target_album_id,
+                        )
+
                 new_track = Track(
                     title=enhanced_dto.title or current_track.title,
                     sync_id=generate_nanoid(8),
@@ -341,7 +377,7 @@ class ResolutionAdapter:
                     isrc=isrc,
                     duration=enhanced_dto.duration or current_track.duration,
                     artist_id=getattr(enhanced_dto, "artist_id", None) or current_track.artist_id,
-                    album_id=getattr(enhanced_dto, "album_id", None) or current_track.album_id,
+                    album_id=verified_album_id,
                     metadata_status=dict(getattr(enhanced_dto, "metadata_status", None) or {}),
                 )
                 session.add(new_track)
@@ -354,8 +390,19 @@ class ResolutionAdapter:
         # 3. In-place track hydration
         if current_track:
             current_track = self.hydrate_track(enhanced_dto, session, current_track)
-            if getattr(enhanced_dto, "album_id", None):
-                current_track.album_id = enhanced_dto.album_id
+            target_album_id = getattr(enhanced_dto, "album_id", None)
+            if target_album_id:
+                if session.query(Album.id).filter_by(id=target_album_id).first():
+                    current_track.album_id = target_album_id
+                else:
+                    logger.warning(
+                        "Target album_id %s does not exist in DB during in-place track hydration; verifying existing album_id",
+                        target_album_id,
+                    )
+                    if current_track.album_id and not session.query(Album.id).filter_by(id=current_track.album_id).first():
+                        current_track.album_id = None
+            elif current_track.album_id and not session.query(Album.id).filter_by(id=current_track.album_id).first():
+                current_track.album_id = None
             return current_track
 
         return None

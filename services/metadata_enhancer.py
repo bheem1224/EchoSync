@@ -2927,8 +2927,47 @@ class RetroactiveEnhancer:
                         reconciled_track.isrc = t_track.isrc
 
                     if res.get("metadata_changed"):
-                        if getattr(t_track, "album_id", None):
-                            reconciled_track.album_id = t_track.album_id
+                        target_album_id = getattr(t_track, "album_id", None)
+                        if target_album_id:
+                            from database.music_database import Album
+                            from core.task_manager import db_write_lease
+
+                            album = None
+                            with session.no_autoflush:
+                                album = session.get(Album, target_album_id)
+
+                            if album:
+                                reconciled_track.album_id = target_album_id
+                            else:
+                                logger.warning(
+                                    "[enhancer] Album ID %s for track '%s' does not exist in DB. Attempting re-hydration or clearing album_id.",
+                                    target_album_id,
+                                    reconciled_track.title,
+                                )
+                                alb_title = getattr(t_track, "album_title", None) or getattr(t_track, "album", None)
+                                alb_artist_id = getattr(t_track, "artist_id", None) or reconciled_track.artist_id
+                                if alb_title and alb_artist_id:
+                                    existing_alb = (
+                                        session.query(Album)
+                                        .filter(
+                                            Album.title.ilike(alb_title.strip()),
+                                            Album.artist_id == alb_artist_id,
+                                        )
+                                        .first()
+                                    )
+                                    if not existing_alb:
+                                        existing_alb = Album(
+                                            title=alb_title.strip(),
+                                            artist_id=alb_artist_id,
+                                        )
+                                        session.add(existing_alb)
+                                        session.flush()
+                                    album = existing_alb
+                                    reconciled_track.album_id = album.id
+                                    t_track.album_id = album.id
+                                else:
+                                    reconciled_track.album_id = None
+                                    t_track.album_id = None
 
                             candidate_year = None
                             if getattr(t_track, "release_year", None):
@@ -2949,19 +2988,28 @@ class RetroactiveEnhancer:
                                             except ValueError:
                                                 pass
 
-                            if candidate_year is not None:
-                                from database.music_database import Album
-                                from core.task_manager import db_write_lease
+                            if candidate_year is not None and album:
+                                album_year = album.release_date.year if album.release_date else None
+                                if album_year != candidate_year:
+                                    with db_write_lease("working"):
+                                        if album.release_date:
+                                            album.release_date = album.release_date.replace(year=candidate_year)
+                                        else:
+                                            album.release_date = datetime.date(candidate_year, 1, 1)
 
-                                album = session.get(Album, t_track.album_id)
-                                if album:
-                                    album_year = album.release_date.year if album.release_date else None
-                                    if album_year != candidate_year:
-                                        with db_write_lease("working"):
-                                            if album.release_date:
-                                                album.release_date = album.release_date.replace(year=candidate_year)
-                                            else:
-                                                album.release_date = datetime.date(candidate_year, 1, 1)
+                    # Safeguard: verify reconciled_track's album_id exists in database
+                    if getattr(reconciled_track, "album_id", None):
+                        from database.music_database import Album
+
+                        with session.no_autoflush:
+                            alb_check = session.get(Album, reconciled_track.album_id)
+                        if not alb_check:
+                            logger.warning(
+                                "[enhancer] Reconciled track ID %s has invalid/stale album_id %s; clearing to avoid FK violation",
+                                reconciled_track.id,
+                                reconciled_track.album_id,
+                            )
+                            reconciled_track.album_id = None
 
                     reconciled_track.metadata_status = res["metadata_status"]
                     flag_modified(reconciled_track, "metadata_status")
