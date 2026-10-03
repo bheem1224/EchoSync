@@ -8,6 +8,7 @@ SQLAlchemy 2.0 High-Performance UPSERT Repository for Track & LocalMedia ingesti
 
 import re
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy import Integer, and_, func, not_, or_, select
@@ -1120,20 +1121,70 @@ class TrackRepository:
                 _, extracted_ver = extract_version_info(path_str)
                 extracted_ed = extracted_ver or parent_track.edition or None
 
+                new_title = parent_track.title
+                new_duration = parent_track.duration
+                new_mbid = parent_track.musicbrainz_id
+                new_isrc = parent_track.isrc
+                new_track_num = parent_track.track_number
+
+                # 1. Proactively probe physical file tags via native accelerator if file exists
+                if path_str and Path(path_str).exists():
+                    try:
+                        import echosync_core
+
+                        raw_meta = echosync_core.read_metadata(path_str)
+                        if raw_meta and isinstance(raw_meta, dict):
+                            file_title = raw_meta.get("title")
+                            if file_title and str(file_title).strip():
+                                new_title = str(file_title).strip()
+                            file_dur = raw_meta.get("duration_ms") or raw_meta.get("duration")
+                            if file_dur:
+                                new_duration = int(file_dur)
+                            if raw_meta.get("track_number"):
+                                try:
+                                    new_track_num = int(raw_meta.get("track_number"))
+                                except Exception:
+                                    pass
+                            if raw_meta.get("musicbrainz_id"):
+                                new_mbid = raw_meta.get("musicbrainz_id")
+                            elif new_title.lower() != parent_track.title.lower():
+                                new_mbid = None
+                            if raw_meta.get("isrc"):
+                                new_isrc = raw_meta.get("isrc")
+                            elif new_title.lower() != parent_track.title.lower():
+                                new_isrc = None
+                    except Exception:
+                        pass
+
+                # 2. Fallback to clean filename stem if title is still identical to parent but filename stem clearly diverges
+                if new_title.lower() == parent_track.title.lower() and path_str:
+                    stem = Path(path_str).stem
+                    clean_stem = re.sub(r"^\d+[\s.-]+", "", stem).strip()
+                    clean_stem_no_ver, stem_ver = extract_version_info(clean_stem)
+                    if clean_stem_no_ver and clean_stem_no_ver.lower() != parent_track.title.lower():
+                        new_title = clean_stem_no_ver
+                        extracted_ed = stem_ver or extracted_ed
+                        new_mbid = None
+                        new_isrc = None
+
+                from core.matching_engine.text_utils import normalize_title
+
+                norm_title = normalize_title(new_title)
+
                 new_sync_id = generate_nanoid(8)
                 new_track = Track(
                     sync_id=new_sync_id,
-                    title=parent_track.title,
-                    normalized_title=parent_track.normalized_title,
-                    sort_title=parent_track.sort_title,
+                    title=new_title,
+                    normalized_title=norm_title,
+                    sort_title=new_title,
                     artist_id=parent_track.artist_id,
                     album_id=parent_track.album_id,
-                    duration=parent_track.duration,
+                    duration=new_duration,
                     edition=extracted_ed,
-                    track_number=parent_track.track_number,
+                    track_number=new_track_num,
                     disc_number=parent_track.disc_number,
-                    musicbrainz_id=parent_track.musicbrainz_id,
-                    isrc=parent_track.isrc,
+                    musicbrainz_id=new_mbid,
+                    isrc=new_isrc,
                     added_at=media.added_at or parent_track.added_at or now,
                 )
                 session.add(new_track)

@@ -118,14 +118,14 @@
 
     const streamUrl = `/api/v1/core/stream/media/${encodeURIComponent(mediaId)}`;
     if (onplay) {
-      onplay(syncId, mediaId);
+      onplay(syncId, mediaId, media);
     } else if (onPlay) {
-      onPlay(track, artist, album, mediaId);
+      onPlay(track, artist, album, mediaId, media);
     }
 
     window.dispatchEvent(
       new CustomEvent("echosync:play-edition", {
-        detail: { mediaId, syncId, streamUrl, track },
+        detail: { mediaId, syncId, streamUrl, track, media },
       }),
     );
   }

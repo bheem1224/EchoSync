@@ -158,13 +158,15 @@
   function handlePlayTrack(
     trackOrSyncId,
     mediaIdOrArtist = null,
-    maybeAlbum = null,
+    maybeAlbumOrMedia = null,
     maybeMediaId = null,
+    maybeMediaObj = null,
   ) {
     let track = null;
     let artist = selectedArtist;
-    let album = maybeAlbum;
-    let media_id = typeof maybeMediaId === "string" ? maybeMediaId : null;
+    let album = null;
+    let media_id = null;
+    let mediaObj = null;
 
     if (typeof trackOrSyncId === "object" && trackOrSyncId !== null) {
       track = trackOrSyncId;
@@ -173,9 +175,36 @@
       } else if (typeof mediaIdOrArtist === "string") {
         media_id = mediaIdOrArtist;
       }
+
+      if (maybeAlbumOrMedia && (maybeAlbumOrMedia.media_id || maybeAlbumOrMedia.file_path)) {
+        mediaObj = maybeAlbumOrMedia;
+      } else if (maybeAlbumOrMedia) {
+        album = maybeAlbumOrMedia;
+      }
+
+      if (typeof maybeMediaId === "string") {
+        media_id = maybeMediaId;
+      }
+      if (maybeMediaObj) {
+        mediaObj = maybeMediaObj;
+      }
     } else {
       const sync_id = trackOrSyncId;
-      media_id = typeof mediaIdOrArtist === "string" ? mediaIdOrArtist : null;
+      if (typeof mediaIdOrArtist === "string") {
+        media_id = mediaIdOrArtist;
+      }
+      if (maybeAlbumOrMedia && (maybeAlbumOrMedia.media_id || maybeAlbumOrMedia.file_path)) {
+        mediaObj = maybeAlbumOrMedia;
+      } else if (maybeAlbumOrMedia) {
+        album = maybeAlbumOrMedia;
+      }
+      if (typeof maybeMediaId === "string") {
+        media_id = maybeMediaId;
+      }
+      if (maybeMediaObj) {
+        mediaObj = maybeMediaObj;
+      }
+
       if (selectedArtist && selectedArtist.albums) {
         for (const a of selectedArtist.albums) {
           const found = a.tracks.find(
@@ -183,13 +212,28 @@
           );
           if (found) {
             track = found;
-            album = a;
+            if (!album) album = a;
             break;
           }
         }
       }
       if (!track) {
         track = { id: sync_id, sync_id: sync_id };
+      }
+    }
+
+    if (media_id && !mediaObj && track) {
+      const mediaList = track.media || track.local_media || track.media_files || [];
+      mediaObj = mediaList.find((m) => m.media_id === media_id);
+    }
+
+    let displayTitle = track.title || "Unknown Track";
+    if (mediaObj && mediaObj.file_path) {
+      const fileName = mediaObj.file_path.split(/[/\\]/).pop() || "";
+      const nameWithoutExt = fileName.replace(/\.[^/.]+$/, "");
+      const cleanName = nameWithoutExt.replace(/^\d+[\s.-]+/, "").trim();
+      if (cleanName) {
+        displayTitle = cleanName;
       }
     }
 
@@ -200,11 +244,13 @@
 
     const trackMetadata = {
       ...track,
+      title: displayTitle,
       artist: artist?.name || track.artist_name || "Unknown Artist",
       album: album?.title || track.album_title || "Unknown Album",
       cover: album?.cover_image_url || artist?.image_url || null,
       streamUrl,
       media_id,
+      media: mediaObj || track.media,
     };
 
     player.playTrack(streamUrl, trackMetadata);

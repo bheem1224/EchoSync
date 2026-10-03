@@ -414,6 +414,86 @@ def test_sync_service_skips_suppressed_paths(tmp_path):
         assert is_path_suppressed(str(test_file)) is True
 
         sync_service = LibrarySyncService()
-        with patch.object(sync_service, "db") as mock_db:
+        with patch.object(sync_service, "db"):
             # When path is suppressed, is_path_suppressed returns True
             assert is_path_suppressed(str(test_file)) is True
+
+
+def test_decouple_collapsed_distinct_songs_natural_and_bad_liar():
+    """Verify collapsed distinct songs sharing track prefix (e.g. 05 - Natural vs 05 - Bad Liar)
+    are properly separated into distinct Track records with their correct titles."""
+    db = get_database()
+    Base.metadata.drop_all(db.engine)
+    Base.metadata.create_all(db.engine)
+
+    session = db.get_session()
+    try:
+        from database import _canonicalize_path
+        from database.music_database import Album, Artist
+
+        artist = Artist(name="Imagine Dragons")
+        album = Album(title="Birds", artist=artist)
+        session.add_all([artist, album])
+        session.flush()
+
+        collapsed_track = Track(
+            id=5001,
+            sync_id="sid_natural_5001",
+            title="Natural",
+            artist_id=artist.id,
+            album_id=album.id,
+            track_number=5,
+            duration=186000,
+            musicbrainz_id="mbid-natural-canonical",
+        )
+        session.add(collapsed_track)
+        session.flush()
+
+        m1 = LocalMedia(
+            media_id="mid_natural_01",
+            track_id=5001,
+            file_path=_canonicalize_path("/music/Imagine Dragons/Birds/05 - Natural.flac"),
+            file_format="FLAC",
+            bitrate=1787,
+        )
+        m2 = LocalMedia(
+            media_id="mid_bad_liar_02",
+            track_id=5001,
+            file_path=_canonicalize_path("/music/Imagine Dragons/Birds/05 - Bad Liar.flac"),
+            file_format="FLAC",
+            bitrate=942,
+        )
+        session.add_all([m1, m2])
+        session.commit()
+
+        # Run decoupling
+        decoupled_count = TrackRepository.decouple_collapsed_media(session)
+        session.commit()
+        session.expire_all()
+
+        assert decoupled_count == 1
+
+        # Check the two tracks
+        tracks = session.query(Track).order_by(Track.id).all()
+        assert len(tracks) == 2
+
+        track_natural = session.query(Track).filter_by(id=5001).first()
+        track_bad_liar = session.query(Track).filter(Track.id != 5001).first()
+
+        assert track_natural.title == "Natural"
+        assert track_natural.musicbrainz_id == "mbid-natural-canonical"
+
+        # Bad Liar must have derived its clean title from the file stem, not inherited Natural
+        assert track_bad_liar.title == "Bad Liar"
+        assert track_bad_liar.normalized_title == "bad liar"
+        # MBID must not be copied from Natural
+        assert track_bad_liar.musicbrainz_id is None
+
+        # Verify media files are assigned to their respective tracks
+        m1_refreshed = session.query(LocalMedia).filter_by(media_id="mid_natural_01").first()
+        m2_refreshed = session.query(LocalMedia).filter_by(media_id="mid_bad_liar_02").first()
+        assert m1_refreshed.track_id == track_natural.id
+        assert m2_refreshed.track_id == track_bad_liar.id
+    finally:
+        session.close()
+

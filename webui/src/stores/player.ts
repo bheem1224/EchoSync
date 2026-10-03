@@ -43,9 +43,9 @@ function createPlayerStore() {
       ...s,
       streamUrl:    url,
       currentTrack: trackMetadata,
-      playCommand:  null,   // BottomPlayer auto-plays on URL change
+      playCommand:  'play',   // Command play so it triggers even when url is identical
       seekTo:       null,
-      isPlaying:    false,  // BottomPlayer sets true once play() resolves
+      isPlaying:    true,
       currentTime:  0,
       duration:     0,
       showPlayer:   true,

@@ -63,7 +63,12 @@
       const cmd = $player.playCommand;
       player.clearPlayCommand();
 
-      if (cmd === 'play') audioEl.play().catch(handlePlaybackError);
+      if (cmd === 'play') {
+        if ($player.streamUrl === lastLoadedUrl) {
+          audioEl.currentTime = 0;
+        }
+        audioEl.play().catch(handlePlaybackError);
+      }
       else if (cmd === 'pause') audioEl.pause();
       else if (cmd === 'stop') { 
         audioEl.pause(); 
