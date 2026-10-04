@@ -337,13 +337,46 @@ class ResolutionAdapter:
             return matched_track
 
         # 2. Check for decoupling from multi-media track
-        if current_track and len(current_track.media_files) > 1:
+        sibling_count = 0
+        if current_track:
+            sibling_count = (
+                session.query(LocalMedia)
+                .filter(LocalMedia.track_id == current_track.id, LocalMedia.id != media.id)
+                .count()
+            )
+
+        if current_track and (sibling_count > 0 or len(current_track.media_files) > 1):
             other_media = [m for m in current_track.media_files if m.id != media.id]
             diverges = False
             if current_track.musicbrainz_id and mbid and current_track.musicbrainz_id != mbid:
                 diverges = True
-            elif not (current_track.musicbrainz_id and mbid and current_track.musicbrainz_id == mbid):
-                if current_chromaprint:
+            else:
+                dto_title = (getattr(enhanced_dto, "title", None) or getattr(enhanced_dto, "raw_title", None) or "").strip().lower()
+                cur_title = (current_track.title or "").strip().lower()
+                if dto_title and cur_title and dto_title != cur_title:
+                    diverges = True
+
+                dto_edition = (getattr(enhanced_dto, "edition", None) or getattr(enhanced_dto, "version", None) or "").strip().lower()
+                cur_edition = (current_track.edition or "").strip().lower()
+                if (dto_edition or cur_edition) and dto_edition != cur_edition:
+                    diverges = True
+
+                dto_artist = (getattr(enhanced_dto, "artist", None) or getattr(enhanced_dto, "artist_name", None) or "").strip().lower()
+                cur_artist = (current_track.artist.name if current_track.artist else "").strip().lower()
+                if dto_artist and cur_artist and dto_artist != cur_artist:
+                    diverges = True
+
+                dto_album = (getattr(enhanced_dto, "album", None) or getattr(enhanced_dto, "album_title", None) or "").strip().lower()
+                cur_album = (current_track.album.title if current_track.album else "").strip().lower()
+                if dto_album and cur_album and dto_album != cur_album:
+                    diverges = True
+
+                dto_isrc = (getattr(enhanced_dto, "isrc", None) or "").strip()
+                cur_isrc = (current_track.isrc or "").strip()
+                if dto_isrc and cur_isrc and dto_isrc != cur_isrc:
+                    diverges = True
+
+                if not diverges and current_chromaprint:
                     other_fps = [fp.chromaprint for m in other_media for fp in m.audio_fingerprints if fp.chromaprint]
                     if other_fps and not any(
                         FingerprintMatcher.get_confidence_score(current_chromaprint, ofp) >= 0.90 for ofp in other_fps
@@ -357,38 +390,47 @@ class ResolutionAdapter:
                     media.file_path,
                     current_track.id,
                 )
-                target_album_id = getattr(enhanced_dto, "album_id", None) or current_track.album_id
+                from core.database.repositories.track_repo import TrackRepository
+                TrackRepository.resolve_artists_and_albums(session, [enhanced_dto])
+
+                target_album_id = getattr(enhanced_dto, "album_id", None)
                 verified_album_id = None
-                if target_album_id:
-                    if session.query(Album.id).filter_by(id=target_album_id).first():
-                        verified_album_id = target_album_id
-                    elif current_track.album_id and session.query(Album.id).filter_by(id=current_track.album_id).first():
+                if target_album_id and session.query(Album.id).filter_by(id=target_album_id).first():
+                    verified_album_id = target_album_id
+                elif current_track.album_id and session.query(Album.id).filter_by(id=current_track.album_id).first():
+                    dto_alb = (getattr(enhanced_dto, "album", None) or getattr(enhanced_dto, "album_title", None) or "").strip().lower()
+                    cur_alb = (current_track.album.title if current_track.album else "").strip().lower()
+                    if not dto_alb or dto_alb == cur_alb:
                         verified_album_id = current_track.album_id
-                    else:
-                        logger.warning(
-                            "Target album_id %s does not exist in DB during decoupling; resetting to None",
-                            target_album_id,
-                        )
+
+                resolved_artist_id = getattr(enhanced_dto, "artist_id", None) or current_track.artist_id
 
                 new_track = Track(
                     title=enhanced_dto.title or current_track.title,
                     sync_id=generate_nanoid(8),
+                    edition=getattr(enhanced_dto, "edition", None) or getattr(enhanced_dto, "version", None),
                     musicbrainz_id=mbid if mbid != "NOT_FOUND" else None,
                     isrc=isrc,
                     duration=enhanced_dto.duration or current_track.duration,
-                    artist_id=getattr(enhanced_dto, "artist_id", None) or current_track.artist_id,
+                    track_number=getattr(enhanced_dto, "track_number", None) or current_track.track_number,
+                    disc_number=getattr(enhanced_dto, "disc_number", None) or current_track.disc_number,
+                    artist_id=resolved_artist_id,
                     album_id=verified_album_id,
                     metadata_status=dict(getattr(enhanced_dto, "metadata_status", None) or {}),
                 )
                 session.add(new_track)
                 session.flush()
                 new_track = self.hydrate_track(enhanced_dto, session, new_track)
+                if verified_album_id:
+                    new_track.album_id = verified_album_id
                 media.track_id = new_track.id
                 session.flush()
                 return new_track
 
         # 3. In-place track hydration
         if current_track:
+            from core.database.repositories.track_repo import TrackRepository
+            TrackRepository.resolve_artists_and_albums(session, [enhanced_dto])
             current_track = self.hydrate_track(enhanced_dto, session, current_track)
             target_album_id = getattr(enhanced_dto, "album_id", None)
             if target_album_id:
@@ -407,6 +449,8 @@ class ResolutionAdapter:
 
         return None
 
+    reconcile_media_for_track = reconcile_media_assignment
+
 
 def reconcile_media_assignment(
     session: Session,
@@ -416,6 +460,9 @@ def reconcile_media_assignment(
 ) -> Track:
     """Convenience functional wrapper for ResolutionAdapter.reconcile_media_assignment."""
     return ResolutionAdapter().reconcile_media_assignment(session, media, enhanced_dto, current_chromaprint)
+
+
+reconcile_media_for_track = reconcile_media_assignment
 
 
 def prune_orphaned_track_if_empty(session: Session, track_id: int | None) -> bool:

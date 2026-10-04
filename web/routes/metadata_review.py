@@ -483,7 +483,12 @@ def _build_track_from_metadata(file_path: Path, metadata: dict[str, Any]):
     return track
 
 
-def _import_single_file(file_path: Path, metadata: dict[str, Any], old_file_path: Path | None = None) -> int:
+def _import_single_file(
+    file_path: Path,
+    metadata: dict[str, Any],
+    old_file_path: Path | None = None,
+    media_id: str | None = None,
+) -> int:
     db = get_database()
     from core.database.repositories.track_repo import TrackRepository
     from database import _canonicalize_path
@@ -497,18 +502,124 @@ def _import_single_file(file_path: Path, metadata: dict[str, Any], old_file_path
     track_dto = _build_track_from_metadata(file_path, metadata)
 
     with db.session_scope() as session:
-        # Check if this physical file was already indexed in music_library.db under either path
-        existing_lm = session.query(LocalMedia).filter(LocalMedia.file_path.in_(paths_to_check)).first()
+        # Check if this physical file was already indexed in music_library.db under media_id or paths
+        target_media_id = media_id or metadata.get("media_id")
+        existing_lm = None
+        if target_media_id:
+            cleaned_mid = str(target_media_id).strip().split("?")[0]
+            existing_lm = session.query(LocalMedia).filter(LocalMedia.media_id == cleaned_mid).first()
+        if not existing_lm:
+            existing_lm = session.query(LocalMedia).filter(LocalMedia.file_path.in_(paths_to_check)).first()
 
         if existing_lm:
             # 1. Update file_path on existing LocalMedia record
             existing_lm.file_path = canonical_new_path
 
-            # 2. Update existing Track record in place if linked
+            # 2. Update existing Track record in place or decouple if sibling media diverge
             if existing_lm.track_id:
                 existing_track = session.get(Track, existing_lm.track_id)
                 if existing_track:
-                    # Hydrate scalars and artists using the adapter
+                    # Check for sibling media under the same track
+                    sibling_count = (
+                        session.query(LocalMedia)
+                        .filter(LocalMedia.track_id == existing_track.id, LocalMedia.id != existing_lm.id)
+                        .count()
+                    )
+
+                    diverges = False
+                    if sibling_count > 0:
+                        dto_title = (track_dto.title or track_dto.raw_title or "").strip().lower()
+                        cur_title = (existing_track.title or "").strip().lower()
+                        if dto_title and cur_title and dto_title != cur_title:
+                            diverges = True
+
+                        dto_edition = (track_dto.edition or "").strip().lower()
+                        cur_edition = (existing_track.edition or "").strip().lower()
+                        if (dto_edition or cur_edition) and dto_edition != cur_edition:
+                            diverges = True
+
+                        dto_artist = (track_dto.artist_name or getattr(track_dto, "artist", None) or "").strip().lower()
+                        cur_artist = (existing_track.artist.name if existing_track.artist else "").strip().lower()
+                        if dto_artist and cur_artist and dto_artist != cur_artist:
+                            diverges = True
+
+                        dto_album = (track_dto.album_title or getattr(track_dto, "album", None) or "").strip().lower()
+                        cur_album = (existing_track.album.title if existing_track.album else "").strip().lower()
+                        if dto_album and cur_album and dto_album != cur_album:
+                            diverges = True
+
+                        dto_mbid = (track_dto.musicbrainz_id or "").strip()
+                        cur_mbid = (existing_track.musicbrainz_id or "").strip()
+                        if dto_mbid and cur_mbid and dto_mbid != cur_mbid:
+                            diverges = True
+
+                        dto_isrc = (track_dto.isrc or "").strip()
+                        cur_isrc = (existing_track.isrc or "").strip()
+                        if dto_isrc and cur_isrc and dto_isrc != cur_isrc:
+                            diverges = True
+
+                    if sibling_count > 0 and diverges:
+                        logger.info(
+                            "Decoupling LocalMedia %s (%s) from Track %s (%s) due to divergent metadata",
+                            existing_lm.id,
+                            existing_lm.file_path,
+                            existing_track.id,
+                            existing_track.title,
+                        )
+                        from core.metadata.adapter import ResolutionAdapter
+
+                        adapter = ResolutionAdapter()
+                        reconciled = adapter.reconcile_media_assignment(
+                            session=session,
+                            media=existing_lm,
+                            enhanced_dto=track_dto,
+                            current_chromaprint=track_dto.fingerprint,
+                        )
+
+                        # Sync multi-artist associations
+                        associations = getattr(track_dto, "_resolved_artist_associations", None)
+                        if not associations and track_dto.artist_id:
+                            associations = [(track_dto.artist_id, "primary", 0)]
+                        if associations and reconciled:
+                            from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+
+                            from database.music_database import TrackArtist
+
+                            for a_id, role, pos in associations:
+                                ta_stmt = sqlite_insert(TrackArtist).values(
+                                    {
+                                        "track_id": reconciled.id,
+                                        "artist_id": a_id,
+                                        "role": role,
+                                        "position": pos,
+                                    }
+                                )
+                                ta_upsert = ta_stmt.on_conflict_do_update(
+                                    index_elements=["track_id", "artist_id", "role"],
+                                    set_={"position": ta_stmt.excluded.position},
+                                )
+                                session.execute(ta_upsert)
+
+                        # If fingerprint exists, attach or update AudioFingerprint
+                        if track_dto.fingerprint:
+                            existing_fp = session.query(AudioFingerprint).filter_by(media_id=existing_lm.media_id).first()
+                            if existing_fp:
+                                existing_fp.chromaprint = track_dto.fingerprint
+                                if track_dto.acoustid_id:
+                                    existing_fp.acoustid_id = track_dto.acoustid_id
+                            else:
+                                session.add(
+                                    AudioFingerprint(
+                                        media_id=existing_lm.media_id,
+                                        chromaprint=track_dto.fingerprint,
+                                        acoustid_id=track_dto.acoustid_id,
+                                    )
+                                )
+
+                        session.flush()
+                        return 1
+
+                    # No siblings or not diverging: update existing Track in place
                     from core.metadata.adapter import ResolutionAdapter
 
                     adapter = ResolutionAdapter()
@@ -827,7 +938,8 @@ def _process_approval_background(task_id: int, final_metadata: dict[str, Any]):
             # even though we are approving, triggering the metadata enhancer tag_file handles the core logic
             enhancer.tag_file(file_path, final_metadata)
 
-            _import_single_file(file_path, final_metadata)
+            task_media_id = getattr(task, "media_id", None)
+            _import_single_file(file_path, final_metadata, media_id=task_media_id)
 
             task.detected_metadata = final_metadata
             task.status = "approved"
@@ -874,6 +986,7 @@ def approve_review_queue_item(
                     # 1. Resolve task details in fresh working DB session
                     working_db = get_working_database()
                     file_path_str = None
+                    task_media_id = None
                     track_dict = None
                     with working_db.session_scope() as w_session:
                         task_row = w_session.query(ReviewTask).filter(ReviewTask.id == task_id).first()
@@ -881,6 +994,7 @@ def approve_review_queue_item(
                             logger.error(f"Task {task_id} not found in working DB")
                             return
                         file_path_str = task_row.file_path
+                        task_media_id = getattr(task_row, "media_id", None)
                         track_dict = task_row.track_data or {}
                         if not track_dict and task_row.detected_metadata:
                             track_dict = task_row.detected_metadata
@@ -1078,6 +1192,7 @@ def approve_review_queue_item(
                             destination_path,
                             metadata_to_tag,
                             old_file_path=file_path_obj,
+                            media_id=task_media_id,
                         )
 
                     # 7. Deletion of the ReviewTask from working.db
