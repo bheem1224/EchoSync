@@ -562,6 +562,7 @@ def _import_single_file(
 
                         # Also check if any sibling media tags/stem diverge from track_dto
                         from core.matching_engine.text_utils import extract_version_info, normalize_title
+
                         dto_norm_title = normalize_title(track_dto.title or track_dto.raw_title or "")
                         for s in siblings:
                             s_path = s.file_path or ""
@@ -628,7 +629,9 @@ def _import_single_file(
 
                         # If fingerprint exists, attach or update AudioFingerprint
                         if track_dto.fingerprint:
-                            existing_fp = session.query(AudioFingerprint).filter_by(media_id=existing_lm.media_id).first()
+                            existing_fp = (
+                                session.query(AudioFingerprint).filter_by(media_id=existing_lm.media_id).first()
+                            )
                             if existing_fp:
                                 existing_fp.chromaprint = track_dto.fingerprint
                                 if track_dto.acoustid_id:
@@ -2029,7 +2032,9 @@ def simulate_review_pipeline(task_id: int, _=Depends(require_auth)):
                     pass
 
             # Chromaprint extraction
-            chromaprint = raw_tags.get("chromaprint") or track_data.get("fingerprint") or detected_meta.get("chromaprint")
+            chromaprint = (
+                raw_tags.get("chromaprint") or track_data.get("fingerprint") or detected_meta.get("chromaprint")
+            )
             if not chromaprint:
                 try:
                     import echosync_core
@@ -2061,10 +2066,7 @@ def simulate_review_pipeline(task_id: int, _=Depends(require_auth)):
                 or raw_tags.get("album")
             )
             baseline_isrc = (
-                current_meta.get("isrc")
-                or track_data.get("isrc")
-                or detected_meta.get("isrc")
-                or raw_tags.get("isrc")
+                current_meta.get("isrc") or track_data.get("isrc") or detected_meta.get("isrc") or raw_tags.get("isrc")
             )
 
             prefer_studio = bool(config_manager.get("metadata.prefer_canonical_studio_album", True))
