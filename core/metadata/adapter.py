@@ -156,13 +156,13 @@ class ResolutionAdapter:
 
     def prune_orphaned_track_if_empty(self, session: Session, track_id: int | None) -> bool:
         """
-        Remove Track row and related junction/parent rows if no LocalMedia rows reference it.
-        Never deletes physical files.
+        Remove Track row and related junction rows if no LocalMedia rows reference it.
+        Never deletes physical files or catalog entities (Albums/Artists).
         """
         if not track_id:
             return False
         import logging
-        from database.music_database import Album, LocalMedia, Track, TrackArtist
+        from database.music_database import LocalMedia, Track, TrackArtist
 
         logger = logging.getLogger(__name__)
 
@@ -170,35 +170,11 @@ class ResolutionAdapter:
         if remaining == 0:
             track = session.get(Track, track_id)
             if track:
-                album_id = track.album_id
-                artist_id = track.artist_id
                 logger.info("Pruning orphaned Track ID %d ('%s') with no remaining LocalMedia", track_id, track.title)
+                track.media_files = []
                 session.query(TrackArtist).filter_by(track_id=track_id).delete()
                 session.delete(track)
                 session.flush()
-
-                if album_id:
-                    tracks_in_db = session.query(Track.id).filter_by(album_id=album_id).count()
-                    tracks_in_session = any(
-                        isinstance(obj, Track)
-                        and obj.id != track_id
-                        and getattr(obj, "album_id", None) == album_id
-                        for obj in session
-                    )
-                    if tracks_in_db == 0 and not tracks_in_session:
-                        session.query(Album).filter_by(id=album_id).delete()
-
-                if artist_id:
-                    has_tracks = session.query(Track.id).filter_by(artist_id=artist_id).count() > 0
-                    has_junctions = session.query(TrackArtist.track_id).filter_by(artist_id=artist_id).count() > 0
-                    artists_in_session = any(
-                        isinstance(obj, Track)
-                        and obj.id != track_id
-                        and getattr(obj, "artist_id", None) == artist_id
-                        for obj in session
-                    )
-                    if not has_tracks and not has_junctions and not artists_in_session:
-                        session.query(Artist).filter_by(id=artist_id).delete()
                 return True
         return False
 
@@ -321,10 +297,21 @@ class ResolutionAdapter:
                 matched_track.id,
                 matched_track.musicbrainz_id,
             )
+            media.track = matched_track
             media.track_id = matched_track.id
             session.flush()
             if old_track_id and old_track_id != matched_track.id:
                 self.prune_orphaned_track_if_empty(session, old_track_id)
+
+            # Verify matched_track still exists in DB
+            db_track = session.get(Track, matched_track.id)
+            if not db_track:
+                logger.warning(
+                    "Matched track %s no longer exists in database after pruning old track %s",
+                    matched_track.id,
+                    old_track_id,
+                )
+                return None
 
             # Verify matched_track's album_id exists in DB
             if matched_track.album_id and not session.query(Album.id).filter_by(id=matched_track.album_id).first():
@@ -423,8 +410,11 @@ class ResolutionAdapter:
                 new_track = self.hydrate_track(enhanced_dto, session, new_track)
                 if verified_album_id:
                     new_track.album_id = verified_album_id
+                media.track = new_track
                 media.track_id = new_track.id
                 session.flush()
+                if old_track_id and old_track_id != new_track.id:
+                    self.prune_orphaned_track_if_empty(session, old_track_id)
                 return new_track
 
         # 3. In-place track hydration

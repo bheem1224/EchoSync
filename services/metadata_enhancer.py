@@ -2889,6 +2889,7 @@ class RetroactiveEnhancer:
             with db.session_scope() as session:
                 from core.database.repositories.track_repo import TrackRepository
                 from core.metadata.adapter import reconcile_media_assignment
+                from database.music_database import Album, Track, TrackArtist
 
                 changed_tracks = [res["track"] for res in results_to_commit if res.get("metadata_changed")]
                 if changed_tracks:
@@ -2997,6 +2998,16 @@ class RetroactiveEnhancer:
                                         else:
                                             album.release_date = datetime.date(candidate_year, 1, 1)
 
+                    # Safeguard: verify reconciled_track still exists in database
+                    with session.no_autoflush:
+                        track_check = session.get(Track, reconciled_track.id)
+                    if not track_check:
+                        logger.warning(
+                            "[enhancer] Reconciled track ID %s no longer exists in database; skipping updates",
+                            getattr(reconciled_track, "id", None),
+                        )
+                        continue
+
                     # Safeguard: verify reconciled_track's album_id exists in database
                     if getattr(reconciled_track, "album_id", None):
                         from database.music_database import Album
@@ -3058,8 +3069,6 @@ class RetroactiveEnhancer:
                     total_processed += 1
 
                 # Prune orphaned tracks left with zero associated LocalMedia rows without deleting physical audio files
-                from database.music_database import Track, TrackArtist
-
                 orphaned_tracks = session.query(Track).filter(~Track.media_files.any()).all()
                 for orphan in orphaned_tracks:
                     session.query(TrackArtist).filter_by(track_id=orphan.id).delete()

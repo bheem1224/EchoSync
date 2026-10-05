@@ -896,13 +896,15 @@ def test_retroactive_enhancer_short_circuits_via_local_fingerprint(
     assert not mock_mb_client.search_metadata.called
     assert not mock_fp_provider.resolve_fingerprint_details.called
 
-    # 2. Track B adopted Track A's canonical tags and MBID
+    # 2. Media B collapsed into Track A and adopted Track A's canonical tags and MBID
     with db.session_scope() as session:
-        t_b = session.query(Track).filter(Track.id == track_b.id).first()
-        assert t_b.musicbrainz_id == "mbid-get-lucky-daft-punk"
-        assert t_b.title == "Get Lucky"
-        assert t_b.isrc == "US1234567890"
-        assert t_b.metadata_status.get("enhanced") is True
+        m_b = session.get(LocalMedia, media_b.id)
+        assert m_b.track_id == track_a.id
+        t_canonical = m_b.track
+        assert t_canonical.musicbrainz_id == "mbid-get-lucky-daft-punk"
+        assert t_canonical.title == "Get Lucky"
+        assert t_canonical.isrc == "US1234567890"
+        assert t_canonical.metadata_status.get("enhanced") is True
 
     # 3. Log was generated
     assert any(

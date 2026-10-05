@@ -244,12 +244,86 @@ def test_prune_orphaned_track_if_empty(tmp_path):
         artist_id = artist.id
         album_id = album.id
 
-        # No LocalMedia attached: pruning should remove track, album, and artist
+        # No LocalMedia attached: pruning should remove track only, preserving catalog Album and Artist
         pruned = prune_orphaned_track_if_empty(session, track_id)
         assert pruned is True
         assert session.get(Track, track_id) is None
-        assert session.get(Album, album_id) is None
-        assert session.get(Artist, artist_id) is None
+        # Catalog entities remain intact so sibling and future tracks are never cascade deleted
+        assert session.get(Album, album_id) is not None
+        assert session.get(Artist, artist_id) is not None
+
+
+def test_reconcile_collapsing_orphan_prune_cascade_safety(tmp_path):
+    """
+    Verify that when collapsing an edition causes the old track to be pruned,
+    shared Album and Artist entities are NOT deleted, and the matched track is NOT cascade deleted.
+    """
+    music_db = MusicDatabase(tmp_path / "music.db")
+    Base.metadata.create_all(music_db.engine)
+
+    with music_db.session_scope() as session:
+        artist = Artist(name="Shared Artist", normalized_name="shared artist")
+        album = Album(title="Shared Album", normalized_title="shared album", artist=artist)
+        session.add_all([artist, album])
+        session.flush()
+
+        # Track 1: Old track
+        t_old = Track(
+            title="Track A",
+            normalized_title="track a",
+            sync_id="sync-old-1",
+            artist_id=artist.id,
+            album_id=album.id,
+        )
+        # Track 2: Target canonical track sharing the same album and artist
+        t_target = Track(
+            title="Track A",
+            normalized_title="track a",
+            sync_id="sync-target-2",
+            artist_id=artist.id,
+            album_id=album.id,
+            musicbrainz_id="mbid-target-123",
+        )
+        session.add_all([t_old, t_target])
+        session.flush()
+
+        media = LocalMedia(
+            track_id=t_old.id,
+            media_id="m-old-1",
+            file_path=str(tmp_path / "song.flac"),
+            file_format="flac",
+        )
+        session.add(media)
+        session.flush()
+
+        old_track_id = t_old.id
+        target_track_id = t_target.id
+        album_id = album.id
+        artist_id = artist.id
+
+        dto = EchosyncTrack()
+        dto.title = "Track A"
+        dto.artist_name = "Shared Artist"
+        dto.musicbrainz_id = "mbid-target-123"
+
+        reconciled = reconcile_media_assignment(session, media, dto)
+        assert reconciled is not None
+        assert reconciled.id == target_track_id
+
+        # Old track should be pruned
+        assert session.get(Track, old_track_id) is None
+
+        # Matched target track must NOT have been cascade-deleted by SQLite!
+        assert session.get(Track, target_track_id) is not None
+
+        # Album and artist must still exist
+        assert session.get(Album, album_id) is not None
+        assert session.get(Artist, artist_id) is not None
+
+        # Mutating reconciled track and flushing must succeed without StaleDataError
+        reconciled.title = "Track A (Enhanced)"
+        session.flush()
+        assert session.get(Track, target_track_id).title == "Track A (Enhanced)"
 
 
 def test_enhancer_loop_updates_media_mtime_and_file_size(tmp_path):
