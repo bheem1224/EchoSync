@@ -520,13 +520,15 @@ def _import_single_file(
                 existing_track = session.get(Track, existing_lm.track_id)
                 if existing_track:
                     # Check for sibling media under the same track
-                    sibling_count = (
+                    siblings = (
                         session.query(LocalMedia)
                         .filter(LocalMedia.track_id == existing_track.id, LocalMedia.id != existing_lm.id)
-                        .count()
+                        .all()
                     )
+                    sibling_count = len(siblings)
 
                     diverges = False
+                    sibling_diverges = False
                     if sibling_count > 0:
                         dto_title = (track_dto.title or track_dto.raw_title or "").strip().lower()
                         cur_title = (existing_track.title or "").strip().lower()
@@ -557,6 +559,30 @@ def _import_single_file(
                         cur_isrc = (existing_track.isrc or "").strip()
                         if dto_isrc and cur_isrc and dto_isrc != cur_isrc:
                             diverges = True
+
+                        # Also check if any sibling media tags/stem diverge from track_dto
+                        from core.matching_engine.text_utils import extract_version_info, normalize_title
+                        dto_norm_title = normalize_title(track_dto.title or track_dto.raw_title or "")
+                        for s in siblings:
+                            s_path = s.file_path or ""
+                            s_title = None
+                            if s_path and Path(s_path).exists():
+                                try:
+                                    import echosync_core
+
+                                    s_meta = echosync_core.read_metadata(s_path)
+                                    if s_meta and isinstance(s_meta, dict) and s_meta.get("title"):
+                                        s_title = str(s_meta["title"]).strip()
+                                except Exception:
+                                    pass
+                            if not s_title and s_path:
+                                stem = Path(s_path).stem
+                                clean_stem = re.sub(r"^\d+[\s.-]+", "", stem).strip()
+                                clean_stem_no_ver, _ = extract_version_info(clean_stem)
+                                s_title = clean_stem_no_ver or clean_stem
+                            if s_title and normalize_title(s_title) != dto_norm_title:
+                                sibling_diverges = True
+                                break
 
                     if sibling_count > 0 and diverges:
                         logger.info(
@@ -675,6 +701,9 @@ def _import_single_file(
                                     acoustid_id=track_dto.acoustid_id,
                                 )
                             )
+
+                    if sibling_count > 0 and sibling_diverges:
+                        TrackRepository.decouple_collapsed_media(session)
 
                     session.flush()
                     return 1

@@ -353,6 +353,17 @@ class LibrarySyncService:
                 f"Upserted {total_extracted_tracks} tracks across {chunk_idx} chunk(s) affecting {total_affected_rows} rows."
             )
 
+            # Audit and decouple any collapsed tracks with divergent media files
+            try:
+                with self.db.session_factory() as session:
+                    decoupled = TrackRepository.decouple_collapsed_media(session)
+                    if decoupled > 0:
+                        with db_write_lease(task_name="library_sync"):
+                            session.commit()
+                        logger.info(f"Decoupled {decoupled} collapsed media file(s) into distinct tracks after sync.")
+            except Exception as dec_err:
+                logger.warning(f"Failed to decouple collapsed media post-sync: {dec_err}")
+
             if ejected_files_count > 0:
                 logger.info(
                     f"Ejected {ejected_files_count} unidentifiable file(s) to quarantine directory: {quarantine_dir}"

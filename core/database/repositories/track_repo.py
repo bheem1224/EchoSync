@@ -745,11 +745,20 @@ class TrackRepository:
 
         existing_track_map = {}  # (norm_title, artist_id, norm_edition) -> (sync_id, duration)
         existing_sync_ids_in_db = set()
-        media_path_to_track_info = {}  # file_path -> (sync_id, track_id, duration)
+        media_path_to_track_info = {}  # file_path -> (sync_id, track_id, duration, norm_title, norm_edition, artist_id)
+        assigned_sync_ids_in_batch: dict[str, tuple[str, int, str]] = {}
 
         if batch_file_paths:
             lm_rows = session.execute(
-                select(LocalMedia.file_path, Track.sync_id, Track.id, Track.duration)
+                select(
+                    LocalMedia.file_path,
+                    Track.sync_id,
+                    Track.id,
+                    Track.duration,
+                    Track.normalized_title,
+                    Track.edition,
+                    Track.artist_id,
+                )
                 .join(Track, LocalMedia.track_id == Track.id)
                 .where(LocalMedia.file_path.in_(list(batch_file_paths)))
             ).all()
@@ -758,6 +767,9 @@ class TrackRepository:
                     row.sync_id,
                     row.id,
                     row.duration,
+                    (row.normalized_title or "").strip().lower(),
+                    (row.edition or "").strip().lower(),
+                    row.artist_id,
                 )
                 existing_sync_ids_in_db.add(row.sync_id)
 
@@ -792,7 +804,17 @@ class TrackRepository:
 
         # Build / resolve sync_id for each track (ensures unique NanoIDs and version separation)
         def _get_or_assign_sync_id(t: EchosyncTrack) -> str:
-            # 1. Prioritize existing physical file_path binding in DB
+            t_norm_title = (
+                (getattr(t, "normalized_title", None) or getattr(t, "title", None) or getattr(t, "raw_title", "") or "")
+                .strip()
+                .lower()
+            )
+            t_a_id = getattr(t, "artist_id", None) or default_artist_id
+            t_norm_ed = (getattr(t, "edition", None) or "").strip().lower()
+            t_identity = (t_norm_title, t_a_id, t_norm_ed)
+            t_dur = getattr(t, "duration_ms", None) or getattr(t, "duration", None)
+
+            # 1. Prioritize existing physical file_path binding in DB (only if title/edition match)
             t_paths = []
             for m in getattr(t, "media", []) or []:
                 if getattr(m, "file_path", None):
@@ -802,35 +824,39 @@ class TrackRepository:
 
             for path in t_paths:
                 if path in media_path_to_track_info:
-                    sid, _, _ = media_path_to_track_info[path]
-                    t.sync_id = sid
-                    return sid
+                    db_sid, _, _, db_norm_title, db_norm_ed, db_art_id = media_path_to_track_info[path]
+                    title_matches = (not db_norm_title) or (t_norm_title == db_norm_title)
+                    artist_matches = (not db_art_id) or (t_a_id == db_art_id)
+                    sid_collision = (
+                        db_sid in assigned_sync_ids_in_batch and assigned_sync_ids_in_batch[db_sid] != t_identity
+                    )
+                    if title_matches and artist_matches and not sid_collision:
+                        t.sync_id = db_sid
+                        assigned_sync_ids_in_batch[db_sid] = t_identity
+                        return db_sid
 
             # 2. Prioritize explicitly known sync_id from DB
             raw_sid = getattr(t, "sync_id", None)
-            if raw_sid and not raw_sid.startswith("ss:") and raw_sid.split("?")[0] in existing_sync_ids_in_db:
-                sid = raw_sid.split("?")[0]
-                t.sync_id = sid
-                return sid
+            if raw_sid and not raw_sid.startswith("ss:"):
+                clean_sid = raw_sid.split("?")[0]
+                if clean_sid in existing_sync_ids_in_db:
+                    sid_collision = (
+                        clean_sid in assigned_sync_ids_in_batch and assigned_sync_ids_in_batch[clean_sid] != t_identity
+                    )
+                    if not sid_collision:
+                        t.sync_id = clean_sid
+                        assigned_sync_ids_in_batch[clean_sid] = t_identity
+                        return clean_sid
 
             # 3. Match against (normalized_title, artist_id, normalized_edition)
-            norm_title = (
-                (getattr(t, "normalized_title", None) or getattr(t, "title", None) or getattr(t, "raw_title", "") or "")
-                .strip()
-                .lower()
-            )
-            a_id = getattr(t, "artist_id", None) or default_artist_id
-            norm_ed = (getattr(t, "edition", None) or "").strip().lower()
-            key = (norm_title, a_id, norm_ed)
-            t_dur = getattr(t, "duration_ms", None) or getattr(t, "duration", None)
-
+            key = t_identity
             if key in existing_track_map:
                 sid, existing_dur = existing_track_map[key]
                 # If duration delta is significant (> 5000ms), decouple into separate track
                 if existing_dur is not None and t_dur is not None and abs(t_dur - existing_dur) > 5000:
                     sid = generate_nanoid()
                     # Store distinct key with duration tag
-                    existing_track_map[(norm_title, a_id, f"{norm_ed}_{t_dur}")] = (
+                    existing_track_map[(t_norm_title, t_a_id, f"{t_norm_ed}_{t_dur}")] = (
                         sid,
                         t_dur,
                     )
@@ -839,15 +865,19 @@ class TrackRepository:
                         sid = generate_nanoid()
                         existing_track_map[key] = (sid, t_dur or existing_dur)
                 t.sync_id = sid
+                assigned_sync_ids_in_batch[sid] = t_identity
                 return sid
 
             # 4. Generate fresh NanoID if not already possessing a valid one
             if raw_sid and not raw_sid.startswith("ss:"):
                 sid = raw_sid.split("?")[0]
+                if sid in assigned_sync_ids_in_batch and assigned_sync_ids_in_batch[sid] != t_identity:
+                    sid = generate_nanoid()
             else:
                 sid = generate_nanoid()
 
             existing_track_map[key] = (sid, t_dur)
+            assigned_sync_ids_in_batch[sid] = t_identity
             t.sync_id = sid
             return sid
 
@@ -1085,14 +1115,13 @@ class TrackRepository:
 
     @classmethod
     def decouple_collapsed_media(cls, session: Session, duration_threshold_ms: int = 5000) -> int:
-        """
-        Scan database for Tracks with multiple LocalMedia files that have distinct
-        editions or significant duration divergence (> threshold_ms), separating them
-        into their own distinct Track entities with unique NanoIDs.
+        """Scan database for Tracks with multiple LocalMedia files that have distinct
+        editions, titles, or tags, separating divergent files into their own distinct
+        Track entities with unique NanoIDs.
         """
         from sqlalchemy.orm import selectinload
 
-        from core.matching_engine.text_utils import extract_version_info
+        from core.matching_engine.text_utils import extract_version_info, normalize_title
 
         tracks_with_multi_media = (
             session.query(Track)
@@ -1114,18 +1143,18 @@ class TrackRepository:
             if len(media_files) <= 1:
                 continue
 
-            # First media file stays with the parent track
-            # Subsequent media files with differing edition or path are decoupled
-            for media in media_files[1:]:
-                path_str = media.file_path or ""
-                _, extracted_ver = extract_version_info(path_str)
-                extracted_ed = extracted_ver or parent_track.edition or None
+            parent_norm_title = (parent_track.normalized_title or parent_track.title or "").strip().lower()
+            parent_norm_edition = (parent_track.edition or "").strip().lower()
 
-                new_title = parent_track.title
-                new_duration = parent_track.duration
-                new_mbid = parent_track.musicbrainz_id
-                new_isrc = parent_track.isrc
-                new_track_num = parent_track.track_number
+            media_info_list = []
+            for media in media_files:
+                path_str = media.file_path or ""
+                m_edition = parent_track.edition or None
+                m_title = None
+                m_duration = parent_track.duration
+                m_mbid = parent_track.musicbrainz_id
+                m_isrc = parent_track.isrc
+                m_track_num = parent_track.track_number
 
                 # 1. Proactively probe physical file tags via native accelerator if file exists
                 if path_str and Path(path_str).exists():
@@ -1136,62 +1165,119 @@ class TrackRepository:
                         if raw_meta and isinstance(raw_meta, dict):
                             file_title = raw_meta.get("title")
                             if file_title and str(file_title).strip():
-                                new_title = str(file_title).strip()
+                                m_title = str(file_title).strip()
                             file_dur = raw_meta.get("duration_ms") or raw_meta.get("duration")
                             if file_dur:
-                                new_duration = int(file_dur)
+                                m_duration = int(file_dur)
                             if raw_meta.get("track_number"):
                                 try:
-                                    new_track_num = int(raw_meta.get("track_number"))
+                                    m_track_num = int(raw_meta.get("track_number"))
                                 except Exception:
                                     pass
                             if raw_meta.get("musicbrainz_id"):
-                                new_mbid = raw_meta.get("musicbrainz_id")
-                            elif new_title.lower() != parent_track.title.lower():
-                                new_mbid = None
+                                m_mbid = raw_meta.get("musicbrainz_id")
                             if raw_meta.get("isrc"):
-                                new_isrc = raw_meta.get("isrc")
-                            elif new_title.lower() != parent_track.title.lower():
-                                new_isrc = None
+                                m_isrc = raw_meta.get("isrc")
                     except Exception:
                         pass
 
-                # 2. Fallback to clean filename stem if title is still identical to parent but filename stem clearly diverges
-                if new_title.lower() == parent_track.title.lower() and path_str:
+                # 2. Check filename stem
+                if path_str:
                     stem = Path(path_str).stem
                     clean_stem = re.sub(r"^\d+[\s.-]+", "", stem).strip()
                     clean_stem_no_ver, stem_ver = extract_version_info(clean_stem)
-                    if clean_stem_no_ver and clean_stem_no_ver.lower() != parent_track.title.lower():
-                        new_title = clean_stem_no_ver
-                        extracted_ed = stem_ver or extracted_ed
-                        new_mbid = None
-                        new_isrc = None
+                    if not m_title:
+                        m_title = clean_stem_no_ver or clean_stem
+                    if stem_ver:
+                        m_edition = stem_ver
 
-                from core.matching_engine.text_utils import normalize_title
+                # Fallback to parent track title if still undetermined
+                if not m_title:
+                    m_title = parent_track.title
 
-                norm_title = normalize_title(new_title)
+                # Check version info on title
+                clean_title, title_ver = extract_version_info(m_title)
+                if title_ver and not m_edition:
+                    m_edition = title_ver
+                    m_title = clean_title
 
-                new_sync_id = generate_nanoid(8)
-                new_track = Track(
-                    sync_id=new_sync_id,
-                    title=new_title,
-                    normalized_title=norm_title,
-                    sort_title=new_title,
-                    artist_id=parent_track.artist_id,
-                    album_id=parent_track.album_id,
-                    duration=new_duration,
-                    edition=extracted_ed,
-                    track_number=new_track_num,
-                    disc_number=parent_track.disc_number,
-                    musicbrainz_id=new_mbid,
-                    isrc=new_isrc,
-                    added_at=media.added_at or parent_track.added_at or now,
+                norm_t = normalize_title(m_title)
+                norm_e = (m_edition or "").strip().lower()
+
+                # If divergent from parent track, do not inherit parent MBID/ISRC unless from file
+                if norm_t != parent_norm_title and not (path_str and Path(path_str).exists()):
+                    m_mbid = None
+                    m_isrc = None
+
+                media_info_list.append(
+                    {
+                        "media": media,
+                        "title": m_title,
+                        "norm_title": norm_t,
+                        "edition": m_edition,
+                        "norm_edition": norm_e,
+                        "duration": m_duration,
+                        "track_num": m_track_num,
+                        "mbid": m_mbid,
+                        "isrc": m_isrc,
+                    }
                 )
-                session.add(new_track)
-                session.flush()
 
-                media.track_id = new_track.id
-                decoupled_count += 1
+            # Group media by (norm_title, norm_edition)
+            groups: dict[tuple[str, str], list[dict]] = {}
+            for item in media_info_list:
+                k = (item["norm_title"], item["norm_edition"])
+                groups.setdefault(k, []).append(item)
+
+            if len(groups) <= 1:
+                continue
+
+            parent_key = (parent_norm_title, parent_norm_edition)
+            if parent_key in groups:
+                staying_key = parent_key
+            else:
+                matching_title_keys = [k for k in groups if k[0] == parent_norm_title]
+                if matching_title_keys:
+                    staying_key = matching_title_keys[0]
+                else:
+                    staying_key = list(groups.keys())[0]
+
+            for key, items in groups.items():
+                if key == staying_key:
+                    rep = items[0]
+                    if parent_track.title != rep["title"] or parent_track.edition != rep["edition"]:
+                        parent_track.title = rep["title"]
+                        parent_track.normalized_title = rep["norm_title"]
+                        parent_track.sort_title = rep["title"]
+                        parent_track.edition = rep["edition"]
+                        parent_track.duration = rep["duration"]
+                        parent_track.track_number = rep["track_num"]
+                        parent_track.musicbrainz_id = rep["mbid"]
+                        parent_track.isrc = rep["isrc"]
+                else:
+                    rep = items[0]
+                    new_sync_id = generate_nanoid(8)
+                    new_track = Track(
+                        sync_id=new_sync_id,
+                        title=rep["title"],
+                        normalized_title=rep["norm_title"],
+                        sort_title=rep["title"],
+                        artist_id=parent_track.artist_id,
+                        album_id=parent_track.album_id,
+                        duration=rep["duration"],
+                        edition=rep["edition"],
+                        track_number=rep["track_num"],
+                        disc_number=parent_track.disc_number,
+                        musicbrainz_id=rep["mbid"],
+                        isrc=rep["isrc"],
+                        added_at=rep["media"].added_at or parent_track.added_at or now,
+                    )
+                    session.add(new_track)
+                    session.flush()
+
+                    for it in items:
+                        it["media"].track_id = new_track.id
+                        decoupled_count += 1
 
         if decoupled_count > 0:
             session.flush()
