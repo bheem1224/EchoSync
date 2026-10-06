@@ -1,8 +1,11 @@
+import logging
 from sqlalchemy.orm import Session
 from database.music_database import Track, Artist, TrackArtist, LocalMedia, Album
 from core.matching_engine.text_utils import normalize_artist
 from core.matching_engine.track_parser import extract_version_descriptors, decompose_artists
 from core.db.echo_sync_track import EchosyncTrack
+
+logger = logging.getLogger(__name__)
 
 
 class ResolutionAdapter:
@@ -122,35 +125,70 @@ class ResolutionAdapter:
         if not primary:
             primary = ["Unknown Artist"]
 
-        # Clear any existing track.artists relationships
+        # Clear any existing track.artists relationships with explicit deletion flush ordering
+        if track.id:
+            session.query(TrackArtist).filter_by(track_id=track.id).delete(synchronize_session="fetch")
+            session.flush()
         track.artist_associations.clear()
 
         main_artist = None
         position = 0
+        seen_associations: set[tuple[int, str]] = set()
 
         # Iterate through primary_artists
         for name in primary:
             artist = self.reconcile_artist(name, session)
             if main_artist is None:
                 main_artist = artist
-            track.artist_associations.append(TrackArtist(artist=artist, role="primary", position=position))
+            pair_key = (artist.id, "primary")
+            if pair_key in seen_associations:
+                logger.debug("Skipping duplicate artist association: artist_id=%s, role=primary", artist.id)
+                continue
+            seen_associations.add(pair_key)
+            ta = (
+                TrackArtist(track_id=track.id, artist_id=artist.id, role="primary", position=position)
+                if track.id
+                else TrackArtist(artist=artist, role="primary", position=position)
+            )
+            track.artist_associations.append(ta)
             position += 1
 
         # Iterate through featured_artists
         for name in featured:
             artist = self.reconcile_artist(name, session)
-            track.artist_associations.append(TrackArtist(artist=artist, role="featured", position=position))
+            pair_key = (artist.id, "featured")
+            if pair_key in seen_associations:
+                logger.debug("Skipping duplicate artist association: artist_id=%s, role=featured", artist.id)
+                continue
+            seen_associations.add(pair_key)
+            ta = (
+                TrackArtist(track_id=track.id, artist_id=artist.id, role="featured", position=position)
+                if track.id
+                else TrackArtist(artist=artist, role="featured", position=position)
+            )
+            track.artist_associations.append(ta)
             position += 1
 
         # Iterate through remixers
         for name in remixers:
             artist = self.reconcile_artist(name, session)
-            track.artist_associations.append(TrackArtist(artist=artist, role="remixer", position=position))
+            pair_key = (artist.id, "remixer")
+            if pair_key in seen_associations:
+                logger.debug("Skipping duplicate artist association: artist_id=%s, role=remixer", artist.id)
+                continue
+            seen_associations.add(pair_key)
+            ta = (
+                TrackArtist(track_id=track.id, artist_id=artist.id, role="remixer", position=position)
+                if track.id
+                else TrackArtist(artist=artist, role="remixer", position=position)
+            )
+            track.artist_associations.append(ta)
             position += 1
 
         # Enforce NOT NULL constraint on Track.artist_id
         if main_artist:
             track.artist = main_artist
+            track.artist_id = main_artist.id
 
         return track
 
