@@ -1,6 +1,16 @@
+import math
 from typing import Any
 from core.db.echo_sync_track import EchosyncTrack
 from core.matching_engine.trust_gate import clean_title_from_filename, is_generic_title
+from core.metadata.isrc_registry import calculate_isrc_penalty_or_bonus
+
+
+def calculate_popularity_bonus(release_group_count: int | float) -> float:
+    """Calculate continuous logarithmic popularity bonus: min(10.0, 3.0 * log10(R + 1)).
+    where R is the unique release-group count from MusicBrainz.
+    """
+    r = max(0.0, float(release_group_count or 0))
+    return min(10.0, 3.0 * math.log10(r + 1.0))
 
 
 def calculate_bounded_duration_weight(delta_sec: float, base_sec: float, max_sec: float) -> float:
@@ -50,7 +60,7 @@ def compute_cover_penalty(
 
     - If delta_sim > 0.08: Decisively higher acoustic similarity means candidate is genuinely
       the cover recording; do NOT apply cover demotion.
-    - If |delta_sim| <= 0.08 (or worse) AND the album/release group title indicates a cover collection
+    - If |delta_sim| <= 0.08 (or worse) AND the album, release group, title, or artist indicates a cover collection
       ("Cover", "Tribute", "Karaoke"): Apply -25.0 penalty to prevent the cover from hijacking the original.
     """
     if delta_sim > 0.08:
@@ -59,8 +69,13 @@ def compute_cover_penalty(
     album = str(candidate.get("album") or candidate.get("album_title") or "").lower()
     rg = candidate.get("release_group") or candidate.get("release-group") or {}
     rg_title = str(rg.get("title") or "").lower()
+    c_title = str(candidate.get("title") or "").lower()
+    c_artist = str(candidate.get("artist") or candidate.get("artist_name") or "").lower()
 
-    is_cover_collection = any(k in album or k in rg_title for k in ("cover", "tribute", "karaoke"))
+    is_cover_collection = any(
+        k in album or k in rg_title or k in c_title or k in c_artist
+        for k in ("cover", "tribute", "karaoke")
+    )
     if is_cover_collection and (abs(delta_sim) <= 0.08 or delta_sim < -0.08):
         return -25.0
     return 0.0
@@ -78,9 +93,10 @@ def score_acoustid_candidate(
     max_sec: float = 2.0,
     untrusted_tags: bool = False,
     delta_sim: float | None = None,
+    file_isrc: str | None = None,
 ) -> float:
     """Score AcoustID recording candidate by duration proximity, variant disambiguation penalties,
-    canonical studio release weighting, and safe cover arbitration.
+    canonical studio release weighting, logarithmic popularity bonus, and safe cover arbitration.
     """
     cand_dur = candidate.get("length") or candidate.get("duration_ms") or candidate.get("duration")
     cand_dur_ms: int | None = None
@@ -159,6 +175,48 @@ def score_acoustid_candidate(
     artist_credit = candidate.get("artist-credit") or candidate.get("artists") or []
     if "various artists" in str(artist_credit).lower():
         penalty -= 10.0
+
+    # Release group popularity bonus (continuous logarithmic scaling)
+    rg_set = set()
+    for r in candidate.get("releases") or []:
+        if isinstance(r, dict):
+            rg = r.get("release-group") or r.get("release_group") or {}
+            rg_id = rg.get("id") or r.get("release_group_id") or r.get("id")
+            if rg_id:
+                rg_set.add(rg_id)
+
+    raw_releases = candidate.get("releases") or []
+    rg_count_meta = candidate.get("release_group_count") or candidate.get("release_count") or 0
+    release_count = len(raw_releases) + (rg_count_meta if isinstance(rg_count_meta, int) else 0)
+    release_count = max(release_count, len(rg_set))
+
+    R = len(rg_set)
+    if isinstance(candidate.get("release_group_count"), int):
+        R = max(R, candidate["release_group_count"])
+    elif isinstance(candidate.get("release_groups"), list):
+        R = max(R, len(candidate["release_groups"]))
+    if R == 0 and release_count > 0:
+        R = release_count
+
+    popularity_bonus = calculate_popularity_bonus(R)
+    bonus += popularity_bonus
+
+    # ISRC penalty or bonus
+    cand_isrcs: list[str] = []
+    raw_isrcs = candidate.get("isrcs") or candidate.get("isrc_list") or []
+    if isinstance(raw_isrcs, list):
+        cand_isrcs.extend([str(i) for i in raw_isrcs if i])
+    elif isinstance(raw_isrcs, str):
+        cand_isrcs.append(raw_isrcs)
+    if candidate.get("isrc"):
+        cand_isrcs.append(str(candidate["isrc"]))
+
+    if file_isrc:
+        isrc_adj = calculate_isrc_penalty_or_bonus(file_isrc, cand_isrcs)
+        if isrc_adj < 0:
+            penalty += isrc_adj
+        else:
+            bonus += isrc_adj
 
     # Cover disambiguation tie-breaker
     cover_pen = compute_cover_penalty(candidate, delta_sim) if delta_sim is not None else 0.0

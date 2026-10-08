@@ -12,7 +12,7 @@ Main components:
 
 from ..db.echo_sync_track import EchosyncTrack, QualityTag
 from .fingerprinting import FingerprintMatcher
-from .matching_engine import MatchResult, WeightedMatchingEngine
+from .matching_engine import MatchingEngine, MatchResult, WeightedMatchingEngine
 from .scoring_profile import (
     PROFILE_DOWNLOAD_SEARCH,
     PROFILE_EXACT_SYNC,
@@ -34,6 +34,7 @@ __all__ = [
     "parse_file",
     # Matching engine
     "WeightedMatchingEngine",
+    "MatchingEngine",
     "MatchResult",
     # Scoring profiles
     "ScoringProfile",

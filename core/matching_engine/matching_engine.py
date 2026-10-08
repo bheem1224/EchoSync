@@ -43,6 +43,7 @@ import logging
 import os
 from dataclasses import dataclass
 from difflib import SequenceMatcher
+from typing import Any
 
 from ..db.echo_sync_track import EchosyncTrack
 from .fingerprinting import FingerprintMatcher
@@ -833,7 +834,21 @@ class WeightedMatchingEngine:
 
         # Store individual component scores for later use (e.g., duration bonus)
         artist_fuzzy_score = 0.0
-        if source.artist_name and candidate.artist_name:
+        junction_role = None
+        junction_matched_name = None
+        if getattr(source, "artist_name", None):
+            j_score, j_role, j_name = self._check_track_artists_junction_match(source.artist_name, candidate)
+            if j_score == 0.0 and getattr(candidate, "artist_name", None):
+                j_score, j_role, j_name = self._check_track_artists_junction_match(candidate.artist_name, source)
+            if j_score > 0.0:
+                artist_fuzzy_score = j_score
+                junction_role = j_role
+                junction_matched_name = j_name
+                reasoning_parts.append(
+                    f"Artist matched via track_artists junction: '{j_name}' (role={j_role}) -> artist_score={j_score:.2f}"
+                )
+
+        if source.artist_name and candidate.artist_name and junction_role is None:
             from core.matching_engine.text_utils import is_franchise_entity
 
             if source.artist_name.lower() != "various artists" and candidate.artist_name.lower() == "various artists":
@@ -1149,7 +1164,7 @@ class WeightedMatchingEngine:
         max_possible_score += self.weights.duration_weight * 100
 
         # ===== STEP 5: QUALITY TIE-BREAKER =====
-        if candidate.quality_tags:
+        if getattr(candidate, "quality_tags", None):
             quality_bonus = self.weights.quality_bonus * 100
             score += quality_bonus
             max_possible_score += self.weights.quality_bonus * 100
@@ -1424,7 +1439,15 @@ class WeightedMatchingEngine:
             scores.append(("title", title_score, self.weights.title_weight))
 
         # Artist match with subset rescue & remixer collaborator credit
-        if source.artist_name and candidate.artist_name:
+        j_score, j_role, j_name = 0.0, None, None
+        if getattr(source, "artist_name", None):
+            j_score, j_role, j_name = self._check_track_artists_junction_match(source.artist_name, candidate)
+            if j_score == 0.0 and getattr(candidate, "artist_name", None):
+                j_score, j_role, j_name = self._check_track_artists_junction_match(candidate.artist_name, source)
+
+        if j_score > 0.0:
+            scores.append(("artist", j_score, self.weights.artist_weight))
+        elif source.artist_name and candidate.artist_name:
             from core.matching_engine.text_utils import (
                 _cmp_artists,
                 is_franchise_entity,
@@ -1756,6 +1779,121 @@ class WeightedMatchingEngine:
             )
 
         return ranked_candidates[0][1]
+
+    @staticmethod
+    def _extract_artist_collaborators(track: Any) -> list[tuple[str, str]]:
+        """Extract list of (artist_name, role) from a Track or EchosyncTrack object.
+        Inspects artist_associations (TrackArtist junction), all_artists, remixers,
+        featured_artists, and primary_artists.
+        """
+        results: list[tuple[str, str]] = []
+
+        # 1. Track.artist_associations (TrackArtist junction table)
+        assocs = getattr(track, "artist_associations", None)
+        if assocs:
+            for assoc in assocs:
+                role = str(getattr(assoc, "role", "primary") or "primary").lower()
+                art_obj = getattr(assoc, "artist", None)
+                art_name = getattr(art_obj, "name", None) if art_obj else None
+                if not art_name:
+                    art_name = getattr(assoc, "artist_name", None)
+                if art_name:
+                    results.append((str(art_name), role))
+
+        # 2. Track.all_artists
+        all_arts = getattr(track, "all_artists", None)
+        if all_arts:
+            for art in all_arts:
+                art_name = getattr(art, "name", None)
+                if art_name and not any(r[0].lower() == str(art_name).lower() for r in results):
+                    results.append((str(art_name), "collaborator"))
+
+        # 3. EchosyncTrack role lists
+        for r_name in getattr(track, "remixers", []) or []:
+            if r_name and not any(r[0].lower() == str(r_name).lower() for r in results):
+                results.append((str(r_name), "remixer"))
+        for f_name in getattr(track, "featured_artists", []) or []:
+            if f_name and not any(r[0].lower() == str(f_name).lower() for r in results):
+                results.append((str(f_name), "featured"))
+        for p_name in getattr(track, "primary_artists", []) or []:
+            if p_name and not any(r[0].lower() == str(p_name).lower() for r in results):
+                results.append((str(p_name), "primary"))
+
+        return results
+
+    def _check_track_artists_junction_match(
+        self, query_artist: str, candidate_track: Any
+    ) -> tuple[float, str | None, str | None]:
+        """Check if query_artist matches an artist in candidate_track's artist associations.
+        Returns: (artist_score_bonus, role, matched_name)
+        """
+        if not query_artist or not candidate_track:
+            return 0.0, None, None
+
+        from core.matching_engine.text_utils import _cmp_artists
+
+        collabs = self._extract_artist_collaborators(candidate_track)
+        if not collabs:
+            return 0.0, None, None
+
+        clean_query = query_artist.strip().lower()
+
+        for art_name, role in collabs:
+            clean_art = art_name.strip().lower()
+            if clean_query == clean_art:
+                cmp_score = 1.0
+            else:
+                cmp_score = max(_cmp_artists(query_artist, art_name), self._fuzzy_match(query_artist, art_name))
+
+            if cmp_score >= 0.85:
+                if role == "remixer":
+                    return 0.95, "remixer", art_name
+                elif role == "featured":
+                    return 0.90, "featured", art_name
+                elif role == "primary":
+                    return 1.0, "primary", art_name
+                else:
+                    return 0.90, role, art_name
+
+        return 0.0, None, None
+
+    @staticmethod
+    def query_candidates_by_artist(session: Any, artist_name: str) -> list[Any]:
+        """Search for candidate tracks across the track_artists junction table
+        rather than relying exclusively on tracks.artist_id.
+        Matches Artist.name across all collaborating roles ('primary', 'featured', 'remixer').
+        """
+        from database.music_database import Artist, Track, TrackArtist
+        from core.matching_engine.text_utils import normalize_artist
+        from sqlalchemy import or_
+
+        if not artist_name:
+            return []
+
+        clean_name = artist_name.strip()
+        norm_name = normalize_artist(clean_name)
+
+        return (
+            session.query(Track)
+            .join(Track.artist_associations)
+            .join(TrackArtist.artist)
+            .filter(
+                TrackArtist.role.in_(["primary", "featured", "remixer"]),
+                or_(
+                    Artist.name.ilike(f"%{clean_name}%"),
+                    Artist.normalized_name == norm_name,
+                    Artist.name.ilike(clean_name),
+                ),
+            )
+            .distinct()
+            .all()
+        )
+
+    search_candidates_by_artist = query_candidates_by_artist
+    find_candidate_tracks_by_artist = query_candidates_by_artist
+
+
+MatchingEngine = WeightedMatchingEngine
 
 
 def create_matcher(profile: ScoringProfile) -> WeightedMatchingEngine:

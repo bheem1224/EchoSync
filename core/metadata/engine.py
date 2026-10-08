@@ -38,8 +38,10 @@ from core.tiered_logger import get_logger
 logger = get_logger("core.metadata.engine")
 
 from core.metadata.plugins import get_acoustid_plugin, get_musicbrainz_plugin
+from core.metadata.isrc_registry import calculate_isrc_penalty_or_bonus
 from core.metadata.scoring import (
     calculate_acoustid_duration_weight,
+    calculate_popularity_bonus,
     calculate_text_duration_weight,
     score_acoustid_candidate,
 )
@@ -836,38 +838,7 @@ class MetadataResolutionEngine:
             or raw_tags.get("musicbrainz_trackid")
         )
 
-        # ── Inconsistency Detection: Embedded MBID / ISRC vs Embedded Tags ─────
-        if embedded_mbid and not signature_valid and not request.ignore_embedded_mbid:
-            mb_plugin = self._get_mb_plugin()
-            if mb_plugin and hasattr(mb_plugin, "get_metadata"):
-                try:
-                    meta = mb_plugin.get_metadata(str(embedded_mbid).strip())
-                    if meta:
-                        c_artist = (
-                            (meta.get("artist") or meta.get("artist_name"))
-                            if isinstance(meta, dict)
-                            else (getattr(meta, "artist_name", None) or getattr(meta, "artist", None))
-                        )
-                        c_title = meta.get("title") if isinstance(meta, dict) else getattr(meta, "title", None)
-                        embedded_artist = tag_artist or baseline_artist
-                        if c_artist and embedded_artist:
-                            emb_art_str = str(embedded_artist).lower().strip()
-                            c_art_str = str(c_artist).lower().strip()
-                            fuzzy_ratio = difflib.SequenceMatcher(None, emb_art_str, c_art_str).ratio()
-                            is_alias_or_substr = (c_art_str in emb_art_str) or (emb_art_str in c_art_str)
-                            if fuzzy_ratio < 0.60 and not is_alias_or_substr:
-                                logger.warning(
-                                    "[resolution_engine] Embedded metadata contradiction detected: tag artist '%s' contradicts MBID artist '%s'. Demoting tags to untrusted legacy state.",
-                                    embedded_artist,
-                                    c_artist,
-                                )
-                                if request:
-                                    request.untrusted_tags = True
-                                    request.is_untrusted_legacy_tags = True
-                                signature_valid = False
-                except Exception as e_mb:
-                    logger.debug("[resolution_engine] Embedded MBID pre-check failed: %s", e_mb)
-
+        # ── Inconsistency Detection: Embedded ISRC vs Embedded Tags ──────────
         if tag_isrc and not signature_valid and not getattr(request, "untrusted_tags", False):
             try:
                 from services.isrc_lookup_service import dispatch_isrc_lookup
@@ -1685,7 +1656,7 @@ class MetadataResolutionEngine:
             acoustid_id = details.get("acoustid_id")
             recordings = details.get("recordings") or []
             candidate_mbids = details.get("mbids") or []
-            if deferred_embedded_mbid and str(deferred_embedded_mbid).strip():
+            if not recordings and not candidate_mbids and deferred_embedded_mbid and str(deferred_embedded_mbid).strip():
                 d_mbid = str(deferred_embedded_mbid).strip()
                 if d_mbid not in candidate_mbids:
                     candidate_mbids.append(d_mbid)
@@ -1733,6 +1704,29 @@ class MetadataResolutionEngine:
                 len(ordered_mbids),
                 filename_stem or "(none)",
             )
+
+            # Fast in-memory check: does any candidate match the physical filename stem?
+            has_matching_candidate = False
+            if has_identifiable_filename:
+                for m_id in ordered_mbids:
+                    r_m = rec_by_mbid.get(m_id) or {}
+                    r_t = str(r_m.get("title") or "").strip()
+                    if r_t:
+                        rt_low = r_t.lower().strip()
+                        s_val = difflib.SequenceMatcher(None, fn_lower, rt_low).ratio()
+                        norm_rt = normalize_title(rt_low)
+                        if norm_fn and norm_rt:
+                            s_val = max(s_val, difflib.SequenceMatcher(None, norm_fn, norm_rt).ratio())
+                        rt_toks = {w for w in re.findall(r"\w+", rt_low) if len(w) > 2}
+                        if fn_tokens and rt_toks:
+                            common_toks = fn_tokens & rt_toks
+                            if not common_toks:
+                                s_val = min(s_val, 0.15)
+                            else:
+                                s_val = max(s_val, len(common_toks) / max(len(fn_tokens), len(rt_toks)))
+                        if s_val >= 0.35:
+                            has_matching_candidate = True
+                            break
 
             viable_candidates: list[tuple[str, float, float, float]] = []  # (mbid, rank_score, dur_delta, title_sim)
 
@@ -1808,6 +1802,27 @@ class MetadataResolutionEngine:
                         or getattr(request, "is_untrusted_legacy_tags", False)
                     )
                 )
+
+                # Contradiction detection between candidate recording and file's embedded tags
+                if deferred_embedded_mbid and mbid_str == str(deferred_embedded_mbid).strip() and not is_untrusted:
+                    cand_art = (rec_meta.get("artist") or "").strip()
+                    emb_art = str(baseline_artist or "").strip()
+                    if cand_art and emb_art:
+                        c_art_str = cand_art.lower()
+                        emb_art_str = emb_art.lower()
+                        fuzzy_ratio = difflib.SequenceMatcher(None, emb_art_str, c_art_str).ratio()
+                        is_alias_or_substr = (c_art_str in emb_art_str) or (emb_art_str in c_art_str)
+                        if fuzzy_ratio < 0.60 and not is_alias_or_substr:
+                            logger.warning(
+                                "[resolution_engine] Embedded metadata contradiction detected: tag artist '%s' contradicts MBID artist '%s'. Demoting tags to untrusted legacy state.",
+                                emb_art,
+                                cand_art,
+                            )
+                            if request:
+                                request.untrusted_tags = True
+                                request.is_untrusted_legacy_tags = True
+                            is_untrusted = True
+
                 cand_artist = rec_meta.get("artist") or ""
                 b_art = str(baseline_artist).lower().strip() if baseline_artist else ""
                 generic_artists = {
@@ -1867,21 +1882,39 @@ class MetadataResolutionEngine:
                         common_tokens = fn_tokens & c_tokens
                         if not common_tokens:
                             # Disjoint titles sharing no significant words:
-                            # If acoustic match has veto authority, give 0.65 floor.
-                            if veto_applies or cand_acoustid_score >= 0.95 and dur_delta_sec <= 1.0:
+                            # If acoustic match has veto authority and no other candidate matches, give 0.65 floor.
+                            if not has_matching_candidate and (veto_applies or (cand_acoustid_score >= 0.95 and dur_delta_sec <= 1.0)):
                                 sim = max(sim, 0.65)
                             else:
                                 sim = min(sim, 0.15)
                         else:
                             token_overlap = len(common_tokens) / max(len(fn_tokens), len(c_tokens))
                             sim = max(sim, token_overlap)
-                            if veto_applies:
+                            if veto_applies and not has_matching_candidate:
                                 sim = max(sim, 0.65)
-                    elif veto_applies:
+                    elif veto_applies and not has_matching_candidate:
                         sim = max(sim, 0.65)
-                    # Removed sim < 0.35 trust gate as per Trust but Verify mandate
 
-                elif veto_applies:
+                    # Title pre-filter: Drop disjoint candidates (< 0.35) when a matching candidate exists
+                    if has_matching_candidate and sim < 0.35:
+                        logger.debug(
+                            "[resolution_engine] Title pre-filter DROPPED MBID %s '%s': "
+                            "title similarity %.2f < 0.35 against filename '%s'",
+                            mbid_str,
+                            cand_title,
+                            sim,
+                            filename_stem,
+                        )
+                        acoustid_candidates_diag.append({
+                            "mbid": mbid_str,
+                            "title": cand_title,
+                            "artist": rec_meta.get("artist") or "Unknown Artist",
+                            "status": "DROPPED_TITLE_PREFILTER",
+                            "reason": f"Title similarity {sim:.2f} < 0.35 against filename '{filename_stem}'",
+                        })
+                        continue
+
+                elif veto_applies and not has_matching_candidate:
                     sim = 0.65
                 else:
                     sim = 0.50  # Neutral similarity for untagged candidates or generic filenames
@@ -1913,8 +1946,8 @@ class MetadataResolutionEngine:
             # Sort descending by composite pre_rank_score
             viable_candidates.sort(key=lambda x: x[1], reverse=True)
 
-            # Cap at top 2 viable candidates for MusicBrainz detail lookup
-            top_candidates = viable_candidates[:2]
+            # Cap at top 5 viable candidates for MusicBrainz detail lookup (eliminate pre-network truncation)
+            top_candidates = viable_candidates[:5]
             top_mbids = [item[0] for item in top_candidates]
 
             logger.info(
@@ -1924,6 +1957,18 @@ class MetadataResolutionEngine:
                 len(top_mbids),
                 top_mbids,
             )
+
+            file_isrc = (
+                (request.baseline_isrc if request else None)
+                or (request.track.isrc if request and getattr(request, "track", None) else None)
+            )
+            if not file_isrc and request and request.file_path:
+                try:
+                    p_tags = extract_physical_tags(request.file_path)
+                    if p_tags and p_tags.get("isrc"):
+                        file_isrc = p_tags.get("isrc")
+                except Exception:
+                    pass
 
             # ── Step C: MusicBrainz Detail Lookup ─────────────────────────────
             # ── Step D: Filename-First Candidate Scoring via WeightedMatchingEngine ─
@@ -1941,7 +1986,11 @@ class MetadataResolutionEngine:
                 cand_sim = cand_info[3]
                 cand_acoustid_score = cand_info[4]
                 veto_applies = cand_info[5]
-                cand_meta = mb_plugin.get_metadata(mbid_str)
+                try:
+                    cand_meta = mb_plugin.get_metadata(mbid_str)
+                except Exception as exc:
+                    logger.warning("[resolution_engine] Failed to fetch MB metadata for candidate %s: %s", mbid_str, exc)
+                    continue
                 if not isinstance(cand_meta, dict):
                     continue
 
@@ -2038,7 +2087,7 @@ class MetadataResolutionEngine:
                 else:
                     dur_weight = 1.0  # Unknown duration — no penalty
 
-                # Release group popularity bonus (tie-breaker against obscure 1-release covers)
+                # Release group popularity bonus (continuous logarithmic scaling)
                 rg_set = set()
                 for r in cand_meta.get("releases") or []:
                     if isinstance(r, dict):
@@ -2052,6 +2101,18 @@ class MetadataResolutionEngine:
                 release_count = len(raw_releases) + (rg_count_meta if isinstance(rg_count_meta, int) else 0)
                 release_count = max(release_count, len(rg_set))
 
+                # Unique release-group count R from MusicBrainz
+                R = len(rg_set)
+                if isinstance(cand_meta.get("release_group_count"), int):
+                    R = max(R, cand_meta["release_group_count"])
+                elif isinstance(cand_meta.get("release_groups"), list):
+                    R = max(R, len(cand_meta["release_groups"]))
+                if R == 0 and release_count > 0:
+                    R = release_count
+
+                # Continuous logarithmic scaling: min(10.0, 3.0 * log10(R + 1))
+                popularity_bonus = calculate_popularity_bonus(R)
+
                 if release_count >= 20:
                     canonical_weight = 10.0
                 elif release_count >= 5:
@@ -2059,7 +2120,18 @@ class MetadataResolutionEngine:
                 else:
                     canonical_weight = 0.0
 
-                popularity_bonus = 5.0 if release_count >= 5 else (1.0 * release_count if release_count > 0 else 0.0)
+                # ISRC penalty or bonus
+                cand_isrcs: list[str] = []
+                raw_isrcs = cand_meta.get("isrcs") or cand_meta.get("isrc_list") or []
+                if isinstance(raw_isrcs, list):
+                    cand_isrcs.extend([str(i) for i in raw_isrcs if i])
+                elif isinstance(raw_isrcs, str):
+                    cand_isrcs.append(raw_isrcs)
+                single_isrc = cand_meta.get("isrc")
+                if single_isrc and isinstance(single_isrc, str) and single_isrc not in cand_isrcs:
+                    cand_isrcs.append(single_isrc)
+
+                isrc_adjustment = calculate_isrc_penalty_or_bonus(file_isrc, cand_isrcs)
 
                 # Cover Disambiguation Gate:
                 # delta_sim = sim_cand - sim_runner_up
@@ -2069,7 +2141,12 @@ class MetadataResolutionEngine:
 
                 album_str = str(c_album or "").lower()
                 rg_title_str = str(release_group.get("title") or "").lower()
-                is_cover_collection = any(k in album_str or k in rg_title_str for k in ("cover", "tribute", "karaoke"))
+                c_title_lower = str(c_title or "").lower()
+                c_artist_lower = str(c_artist or "").lower()
+                is_cover_collection = any(
+                    k in album_str or k in rg_title_str or k in c_title_lower or k in c_artist_lower
+                    for k in ("cover", "tribute", "karaoke")
+                )
 
                 if delta_sim > 0.08:
                     cover_penalty = 0.0
@@ -2078,7 +2155,7 @@ class MetadataResolutionEngine:
                 else:
                     cover_penalty = 0.0
 
-                # Final score: candidate scoring combines matcher score (70%), duration weight (30%), album bonus, popularity bonus, canonical weight, and cover penalty
+                # Final score: candidate scoring combines matcher score (70%), duration weight (30%), album bonus, popularity bonus, canonical weight, cover penalty, and ISRC adjustment
                 cand_score = (
                     (matcher_score * 0.7)
                     + (dur_weight * 30.0)
@@ -2086,6 +2163,7 @@ class MetadataResolutionEngine:
                     + popularity_bonus
                     + canonical_weight
                     + cover_penalty
+                    + isrc_adjustment
                 )
                 cand_score = max(0.0, cand_score)
                 if veto_applies:
@@ -2093,7 +2171,7 @@ class MetadataResolutionEngine:
 
                 logger.info(
                     "[resolution_engine] Stage 3 candidate MBID %s '%s': "
-                    "matcher=%.1f dur_weight=%.3f album_bonus=%.1f pop_bonus=%.1f canon_weight=%.1f cover_pen=%.1f veto=%s => score=%.2f",
+                    "matcher=%.1f dur_weight=%.3f album_bonus=%.1f pop_bonus=%.1f canon_weight=%.1f cover_pen=%.1f isrc_adj=%.1f veto=%s => score=%.2f",
                     mbid_str,
                     c_title,
                     matcher_score,
@@ -2102,6 +2180,7 @@ class MetadataResolutionEngine:
                     popularity_bonus,
                     canonical_weight,
                     cover_penalty,
+                    isrc_adjustment,
                     veto_applies,
                     cand_score,
                 )
@@ -2116,7 +2195,11 @@ class MetadataResolutionEngine:
                     "popularity_bonus": popularity_bonus,
                     "canonical_weight": canonical_weight,
                     "release_count": release_count,
+                    "release_group_count": R,
                     "cover_penalty": cover_penalty,
+                    "isrc_adjustment": isrc_adjustment,
+                    "isrcs": cand_isrcs,
+                    "file_isrc": file_isrc,
                     "delta_sim": delta_sim,
                     "is_cover_collection": is_cover_collection,
                     "veto_applied": veto_applies,
