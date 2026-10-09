@@ -11,17 +11,22 @@ def test_sanitize_soundtrack_title_removes_film_provenance():
     title = "Sunflower (Spider-Man: Into the Spider-Verse)"
     album = "Spider-Man: Into the Spider-Verse (Soundtrack from and Inspired by the Motion Picture)"
 
-    assert sanitize_soundtrack_title(title, album) == "Sunflower"
-    assert sanitize_soundtrack_title("Song (Spider-Verse)", album) == "Song"
-    assert sanitize_soundtrack_title(f"{title} (Remix)", album) == "Sunflower (Remix)"
-    assert sanitize_soundtrack_title('Song (from "Film Name")') == "Song"
-    assert sanitize_soundtrack_title("Song (from the motion picture Example)") == "Song"
+    clean_t, extracted = sanitize_soundtrack_title(title, album)
+    assert clean_t == "Sunflower"
+    assert extracted == "Spider-Man: Into the Spider-Verse"
+
+    assert sanitize_soundtrack_title("Song (Spider-Verse)", album)[0] == "Song"
+    assert sanitize_soundtrack_title(f"{title} (Remix)", album)[0] == "Sunflower (Remix)"
+    assert sanitize_soundtrack_title('Song (from "Film Name")')[0] == "Song"
+    assert sanitize_soundtrack_title("Song (from the motion picture Example)")[0] == "Song"
 
 
 def test_sanitize_soundtrack_title_preserves_track_versions():
     for descriptor in ("Live", "Acoustic", "Remix"):
         title = f"Song ({descriptor})"
-        assert sanitize_soundtrack_title(title) == title
+        clean_t, extracted = sanitize_soundtrack_title(title)
+        assert clean_t == title
+        assert extracted is None
 
 
 def test_polynomial_duration_penalty_decay_standard_mode():

@@ -2,7 +2,11 @@ import logging
 from sqlalchemy.orm import Session
 from database.music_database import Track, Artist, TrackArtist, LocalMedia, Album
 from core.matching_engine.text_utils import normalize_artist
-from core.matching_engine.track_parser import extract_version_descriptors, decompose_artists
+from core.matching_engine.track_parser import (
+    extract_version_descriptors,
+    decompose_artists,
+    sanitize_soundtrack_title,
+)
 from core.db.echo_sync_track import EchosyncTrack
 
 logger = logging.getLogger(__name__)
@@ -37,9 +41,16 @@ class ResolutionAdapter:
         Safely update scalar fields on the Track ORM model, enforce relational
         artist reconciliation, and extract lossless editions.
         """
+        raw_album = (
+            getattr(result, "album_title", None)
+            or getattr(result, "album", None)
+            or (track.album.title if track.album else "")
+        )
+
         # 1. Safely update basic track scalar fields
         if getattr(result, "title", None):
-            track.title = result.title
+            clean_s_title, _ = sanitize_soundtrack_title(result.title, album=raw_album)
+            track.title = clean_s_title
 
         if getattr(result, "track_number", None) is not None:
             track.track_number = result.track_number
@@ -65,7 +76,8 @@ class ResolutionAdapter:
 
         # 2. Extract Lossless Editions
         raw_title = track.title or ""
-        clean_title, ext_version, ext_edition = extract_version_descriptors(raw_title)
+        clean_s_title, _ = sanitize_soundtrack_title(raw_title, album=raw_album)
+        clean_title, ext_version, ext_edition = extract_version_descriptors(clean_s_title)
 
         if clean_title:
             track.title = clean_title

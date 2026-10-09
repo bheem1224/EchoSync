@@ -89,23 +89,54 @@ def extract_version_descriptors(title: str) -> tuple[str, str | None, str | None
     return clean_title, version, edition
 
 
-def sanitize_soundtrack_title(title: str, album: str | None = None) -> str:
-    """Remove trailing film provenance while keeping genuine track versions."""
+def sanitize_soundtrack_title(title: str, album: str | None = None) -> tuple[str, str | None]:
+    """Remove trailing film provenance while keeping genuine track versions.
+
+    Returns:
+        tuple[str, str | None]: (clean_title, extracted_film_provenance)
+    """
     if not title:
-        return title
+        return (title or "", None)
 
     trailing_groups = re.search(r"(?:\s+\([^()]*\))+\s*$", title)
     if not trailing_groups:
-        return title
+        return (title, None)
 
     def tokens(value: str) -> list[str]:
         return re.findall(r"[a-z0-9]+", value.casefold())
 
-    soundtrack_album = bool(
-        album and re.search(r"\b(?:soundtrack|motion\s+picture|film\s+score|ost)\b", album, re.IGNORECASE)
-    )
+    # Excluded version keywords & patterns (must never be treated as film provenance)
+    EXCLUDED_VERSION_PATTERNS = [
+        re.compile(r"\b(?:Live|Remaster|Remastered|Acoustic|Take|Instrumental|Demo)\b", re.IGNORECASE),
+        re.compile(
+            r"\b(?:Remix|Rmx|Mix|Edit|Bootleg|Flip|Rework|Club\s+Mix|Radio\s+Edit|Extended)\b",
+            re.IGNORECASE,
+        ),
+        re.compile(
+            r"\b(?:Deluxe|Original\s+Mix|Dub|Acapella|Vip|Clean|Explicit|Mono|Stereo)\b",
+            re.IGNORECASE,
+        ),
+        re.compile(
+            r"\b(?:Single\s+Version|Album\s+Version|Anniversary|Bonus\s+Track)\b",
+            re.IGNORECASE,
+        ),
+        re.compile(
+            r"^(?:19\d\d|20\d\d|\d+|part\s+\d+|pt\.?\s*\d+|vol\.?\s*\d+|disc\s*\d+|track\s*\d+)$",
+            re.IGNORECASE,
+        ),
+        re.compile(r"\b(?:feat\.?|ft\.?|featuring|with)\b", re.IGNORECASE),
+    ]
+
+    def is_version_descriptor(qualifier: str) -> bool:
+        if any(p.search(qualifier) for p in EXCLUDED_VERSION_PATTERNS):
+            # Special exception: "Soundtrack Version" contains "Version" but is a soundtrack indicator
+            if re.search(r"\bsoundtrack\s+version\b", qualifier, re.IGNORECASE):
+                return False
+            return True
+        return False
+
     release_tokens: list[str] = []
-    if soundtrack_album and album:
+    if album:
         release_title = re.sub(r"\([^)]*\)", " ", album)
         release_title = re.sub(
             r"\b(?:original\s+)?(?:motion\s+picture\s+)?(?:soundtrack|film\s+score|ost)\b.*$",
@@ -115,37 +146,93 @@ def sanitize_soundtrack_title(title: str, album: str | None = None) -> str:
         )
         release_tokens = tokens(release_title)
 
-    def is_soundtrack_reference(qualifier: str) -> bool:
-        if any(pattern.search(f"({qualifier})") for pattern in VERSION_PATTERNS.values()):
-            return False
-        if re.match(
-            r'^from\s+(?:"[^"\n]+"|(?:the\s+)?(?:motion\s+picture|film|movie)\b)',
+    def extract_film_from_qualifier(qualifier: str) -> tuple[bool, str | None]:
+        """Determine if qualifier is soundtrack/film reference, returning (is_soundtrack, film_name)."""
+        if is_version_descriptor(qualifier):
+            return False, None
+
+        # Pattern 1: Explicit 'from ...' pattern
+        # e.g., (from "Film Name"), (from the Motion Picture "Film Name"), (from the motion picture Example)
+        from_quoted = re.match(r'^from\s+"([^"\n]+)"', qualifier, re.IGNORECASE)
+        if from_quoted:
+            return True, from_quoted.group(1).strip()
+
+        from_mp = re.match(
+            r'^from\s+(?:the\s+)?(?:motion\s+picture|film|movie)\s*[:\-]?\s*"?([^"\n]+?)"?$',
+            qualifier,
+            re.IGNORECASE,
+        )
+        if from_mp:
+            return True, from_mp.group(1).strip()
+
+        from_general = re.match(
+            r'^from\s+(?:the\s+)?(?:soundtrack|ost|series|netflix\s+series)\s*[:\-]?\s*"?([^"\n]+?)"?$',
+            qualifier,
+            re.IGNORECASE,
+        )
+        if from_general:
+            return True, from_general.group(1).strip()
+
+        # Pattern 2: Soundtrack version / OST keywords
+        if re.search(
+            r"\b(?:soundtrack\s+version|ost\s+version|motion\s+picture\s+version)\b",
             qualifier,
             re.IGNORECASE,
         ):
-            return True
+            return True, None
 
+        if re.match(r"^(?:original\s+)?(?:motion\s+picture\s+)?soundtrack$", qualifier, re.IGNORECASE) or re.match(
+            r"^ost$", qualifier, re.IGNORECASE
+        ):
+            return True, None
+
+        # Pattern 3: Subsequence / token match with album release tokens
         qualifier_tokens = tokens(qualifier)
-        if not soundtrack_album or len(qualifier_tokens) < 2 or not release_tokens:
-            return False
+        if release_tokens and len(qualifier_tokens) >= 1:
+            rel_idx = 0
+            subseq_match = True
+            for q_tok in qualifier_tokens:
+                while rel_idx < len(release_tokens) and release_tokens[rel_idx] != q_tok:
+                    rel_idx += 1
+                if rel_idx == len(release_tokens):
+                    subseq_match = False
+                    break
+                rel_idx += 1
+            if subseq_match and len(qualifier_tokens) >= 1:
+                return True, qualifier
 
-        release_index = 0
-        for token in qualifier_tokens:
-            while release_index < len(release_tokens) and release_tokens[release_index] != token:
-                release_index += 1
-            if release_index == len(release_tokens):
-                return False
-            release_index += 1
-        return True
+        # Pattern 4: Parenthetical film titles with title-subtitle or franchise indicators
+        # e.g. "Spider-Man: Into the Spider-Verse", "Title: Subtitle"
+        if re.search(r":\s+\S+", qualifier):
+            return True, qualifier
+
+        # Explicit film / franchise keywords
+        if re.search(r"\b(?:spider-verse|motion\s+picture|film\s+score)\b", qualifier, re.IGNORECASE):
+            return True, qualifier
+
+        return False, None
 
     suffix = trailing_groups.group(0)
     matches = list(re.finditer(r"\(([^()]*)\)", suffix))
-    remaining_groups = [match.group(0) for match in matches if not is_soundtrack_reference(match.group(1).strip())]
+
+    extracted_film: str | None = None
+    remaining_groups: list[str] = []
+
+    for match in matches:
+        q_str = match.group(1).strip()
+        is_st, film = extract_film_from_qualifier(q_str)
+        if is_st:
+            if film and not extracted_film:
+                extracted_film = film
+        else:
+            remaining_groups.append(match.group(0))
+
     if len(remaining_groups) == len(matches):
-        return title
+        return title, None
 
     clean_base = title[: trailing_groups.start()].rstrip()
-    return f"{clean_base} {' '.join(remaining_groups)}" if remaining_groups else clean_base
+    clean_title = f"{clean_base} {' '.join(remaining_groups)}" if remaining_groups else clean_base
+    return clean_title, extracted_film
 
 
 @dataclass

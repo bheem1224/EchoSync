@@ -101,13 +101,18 @@ def _create_resolved_track(
         sanitize_soundtrack_title,
     )
 
-    title = sanitize_soundtrack_title(title or "", album=album)
+    clean_title, extracted_film = sanitize_soundtrack_title(title or "", album=album)
+    title = clean_title
+    final_album = album or ""
+    # If album is missing or identical to track title, use extracted film provenance
+    if extracted_film and (not final_album or final_album.strip().lower() == clean_title.strip().lower()):
+        final_album = f"{extracted_film} (Soundtrack)"
 
     clean_t, ext_ver, ext_ed = extract_version_descriptors(title)
-    clean_alb, alb_ver, alb_ed = extract_version_descriptors(album or "") if album else (None, None, None)
+    clean_alb, alb_ver, alb_ed = extract_version_descriptors(final_album or "") if final_album else (None, None, None)
     edition = ext_ed or alb_ed
     version = ext_ver or alb_ver
-    final_album = clean_alb if clean_alb else (album or "")
+    final_album = clean_alb if clean_alb else (final_album or "")
 
     roles = decompose_artists(artist or "")
     primary = roles.get("primary", [artist]) if artist else []
@@ -817,6 +822,9 @@ class MetadataResolutionEngine:
                             "[resolution_engine] Stage 0 FAILED: ECHOSYNC_SIGNATURE mismatch/tampering detected on %s",
                             file_path.name,
                         )
+                        if request:
+                            request.signature_failed = True
+                            request.untrusted_tags = True
                         _add_diagnostic(
                             request,
                             "Stage 0: Signature Gate",
@@ -931,6 +939,9 @@ class MetadataResolutionEngine:
                     embedded_mbid,
                 )
                 deferred_embedded_mbid = str(embedded_mbid).strip()
+                if request:
+                    request.stage_0_demoted = True
+                    request.untrusted_tags = True
                 _add_diagnostic(
                     request,
                     "Fast-Path: Embedded MBID",
@@ -1558,6 +1569,8 @@ class MetadataResolutionEngine:
         has_signature: bool = False,
         has_identifiable_tags: bool = False,
         deferred_embedded_mbid: str | None = None,
+        is_untrusted: bool = False,
+        stage_0_demoted: bool = False,
     ) -> dict[str, Any] | None:
         """Query AcoustID, pre-filter candidate recordings before network egress, and pick
         the highest scoring candidate using filename-first zero-trust title semantics.
@@ -1568,6 +1581,21 @@ class MetadataResolutionEngine:
         # ── Engine version signature ──────────────────────────────────────────
         logger.info("[resolution_engine] v2.4-filename-priority active")
         acoustid_candidates_diag: list[dict[str, Any]] = []
+
+        is_untrusted = bool(
+            is_untrusted
+            or stage_0_demoted
+            or deferred_embedded_mbid
+            or (
+                request
+                and (
+                    getattr(request, "untrusted_tags", False)
+                    or getattr(request, "is_untrusted_legacy_tags", False)
+                    or getattr(request, "stage_0_demoted", False)
+                    or getattr(request, "signature_failed", False)
+                )
+            )
+        )
 
         acoustid_plugin = self._get_acoustid_plugin()
         mb_plugin = self._get_mb_plugin()
@@ -1823,14 +1851,20 @@ class MetadataResolutionEngine:
                 # Skip filter if baseline_artist is missing, empty, or generic, OR if veto_applies,
                 # OR if request tags are marked untrusted (preventing contaminated tags from dropping real artist)
                 is_untrusted = bool(
-                    request
-                    and (
-                        getattr(request, "untrusted_tags", False) or getattr(request, "is_untrusted_legacy_tags", False)
+                    is_untrusted
+                    or (
+                        request
+                        and (
+                            getattr(request, "untrusted_tags", False)
+                            or getattr(request, "is_untrusted_legacy_tags", False)
+                            or getattr(request, "stage_0_demoted", False)
+                            or getattr(request, "signature_failed", False)
+                        )
                     )
                 )
 
                 # Contradiction detection between candidate recording and file's embedded tags
-                if deferred_embedded_mbid and mbid_str == str(deferred_embedded_mbid).strip() and not is_untrusted:
+                if deferred_embedded_mbid and mbid_str == str(deferred_embedded_mbid).strip():
                     cand_art = (rec_meta.get("artist") or "").strip()
                     emb_art = str(baseline_artist or "").strip()
                     if cand_art and emb_art:
@@ -2075,30 +2109,30 @@ class MetadataResolutionEngine:
 
                 # Build query track: when veto applies or tags are untrusted, do not let
                 # contaminated baseline artist pollute the query track
-                query_title = c_title if veto_applies else (filename_stem or c_title)
-                query_artist = c_artist if (veto_applies or is_untrusted) else (baseline_artist or c_artist)
-                query_album = c_album if is_untrusted else (baseline_album or c_album)
-
-                query_track = EchosyncTrack(
-                    raw_title=query_title,
-                    artist_name=query_artist,
-                    album_title=query_album,
-                    duration=file_duration_ms if file_duration_ms > 0 else None,
-                )
-                cand_track = EchosyncTrack(
-                    raw_title=c_title,
-                    artist_name=c_artist,
-                    album_title=c_album,
-                    duration=cand_dur_ms,
-                    version=cand_meta.get("disambiguation") or cand_meta.get("version"),
-                )
-                match_res = self.matcher.calculate_match(query_track, cand_track)
-                matcher_score = match_res.confidence_score if match_res else 0.0
-
                 if is_untrusted:
-                    # Base matcher_score primarily on title similarity against filename stem and candidate acoustic confidence
-                    acoustic_derived_matcher = ((cand_sim * 0.7) + (cand_acoustid_score * 0.3)) * 100.0
-                    matcher_score = max(matcher_score, acoustic_derived_matcher)
+                    # In untrusted mode, candidate text matching must evaluate candidate title against filename_stem
+                    # and acoustic similarity, not against the tainted tag artist
+                    matcher_score = ((cand_sim * 0.7) + (cand_acoustid_score * 0.3)) * 100.0
+                else:
+                    query_title = c_title if veto_applies else (filename_stem or c_title)
+                    query_artist = c_artist if veto_applies else (baseline_artist or c_artist)
+                    query_album = baseline_album or c_album
+
+                    query_track = EchosyncTrack(
+                        raw_title=query_title,
+                        artist_name=query_artist,
+                        album_title=query_album,
+                        duration=file_duration_ms if file_duration_ms > 0 else None,
+                    )
+                    cand_track = EchosyncTrack(
+                        raw_title=c_title,
+                        artist_name=c_artist,
+                        album_title=c_album,
+                        duration=cand_dur_ms,
+                        version=cand_meta.get("disambiguation") or cand_meta.get("version"),
+                    )
+                    match_res = self.matcher.calculate_match(query_track, cand_track)
+                    matcher_score = match_res.confidence_score if match_res else 0.0
 
                 # Album type bonus for canonical studio releases
                 release_group = cand_meta.get("release_group") or cand_meta.get("release-group") or {}
@@ -2169,6 +2203,10 @@ class MetadataResolutionEngine:
                     cand_isrcs.append(single_isrc)
 
                 isrc_adjustment = calculate_isrc_penalty_or_bonus(file_isrc, cand_isrcs)
+                if is_untrusted and isrc_adjustment > 0:
+                    # Do NOT evaluate file_isrc from unverified physical tags for exact match bonuses (+25.0).
+                    # Only allow major-label vs aggregator disqualifications/penalties (< 0).
+                    isrc_adjustment = 0.0
 
                 # Cover Disambiguation Gate:
                 # delta_sim = sim_cand - sim_runner_up
@@ -2249,9 +2287,52 @@ class MetadataResolutionEngine:
                     (cand_score, mbid_str, cand_meta, veto_applies, cand_acoustid_score, dur_delta_sec, cand_diag_entry)
                 )
 
+            def candidate_ranking_key(cand_tuple):
+                # cand_tuple: (score, mbid, meta, veto, acoustid_score, dur_delta, diag)
+                score = cand_tuple[0]
+                meta = cand_tuple[2] or {}
+                # Chronological primacy: earlier release years rank higher (e.g. 2003 beats 2018)
+                year_val = meta.get("year") or meta.get("release_year")
+                if not year_val:
+                    date_str = meta.get("first_release_date") or meta.get("first-release-date") or meta.get("date")
+                    if date_str:
+                        try:
+                            year_val = int(str(date_str)[:4])
+                        except (ValueError, TypeError):
+                            year_val = None
+                if not year_val and meta.get("releases"):
+                    for r in meta.get("releases") or []:
+                        if isinstance(r, dict):
+                            r_date = r.get("date") or r.get("release_date")
+                            if r_date:
+                                try:
+                                    y = int(str(r_date)[:4])
+                                    if 1900 <= y <= 2100:
+                                        year_val = min(year_val, y) if year_val else y
+                                except (ValueError, TypeError):
+                                    pass
+                try:
+                    year = int(year_val) if year_val else 9999
+                except (ValueError, TypeError):
+                    year = 9999
+
+                # Invert year so earlier years provide positive sorting advantage
+                year_score = -year if year > 1900 else -9999
+                # Release group breadth (artist/recording stature)
+                rg_count = len(meta.get("releases", []) or []) + (
+                    meta.get("release_group_count") or meta.get("release_count") or 0
+                )
+                # Acoustic duration proximity
+                dur_delta = abs(
+                    cand_tuple[5]
+                    if len(cand_tuple) > 5 and isinstance(cand_tuple[5], (int, float))
+                    else meta.get("duration_delta_sec", 0.0)
+                )
+                return (score, year_score, rg_count, -dur_delta)
+
             valid_scored = [c for c in candidates_scored if c[0] > 0]
             if valid_scored:
-                winner_tuple = max(valid_scored, key=lambda x: x[0])
+                winner_tuple = max(valid_scored, key=candidate_ranking_key)
                 (
                     best_score,
                     best_mbid,
