@@ -95,9 +95,15 @@ def _create_resolved_track(
     request: Any = None,
 ) -> EchosyncTrack:
     from core.db.echo_sync_track import EchosyncMedia
-    from core.matching_engine.track_parser import decompose_artists, extract_version_descriptors
+    from core.matching_engine.track_parser import (
+        decompose_artists,
+        extract_version_descriptors,
+        sanitize_soundtrack_title,
+    )
 
-    clean_t, ext_ver, ext_ed = extract_version_descriptors(title or "")
+    title = sanitize_soundtrack_title(title or "", album=album)
+
+    clean_t, ext_ver, ext_ed = extract_version_descriptors(title)
     clean_alb, alb_ver, alb_ed = extract_version_descriptors(album or "") if album else (None, None, None)
     edition = ext_ed or alb_ed
     version = ext_ver or alb_ver
@@ -108,8 +114,14 @@ def _create_resolved_track(
     featured = roles.get("featured", [])
     remixers = roles.get("remixer", [])
 
-    final_diagnostics = diagnostics if diagnostics is not None else (
-        list(request._diagnostics) if (request and hasattr(request, "_diagnostics") and request._diagnostics) else []
+    final_diagnostics = (
+        diagnostics
+        if diagnostics is not None
+        else (
+            list(request._diagnostics)
+            if (request and hasattr(request, "_diagnostics") and request._diagnostics)
+            else []
+        )
     )
 
     track = EchosyncTrack(
@@ -594,14 +606,22 @@ class MetadataResolutionEngine:
             or getattr(request, "dry_run", False)
             or getattr(request, "ignore_embedded_mbid", False)
         )
-        if not is_forced and hasattr(request, "_signature_locked_title") and hasattr(request, "_signature_locked_artist"):
+        if (
+            not is_forced
+            and hasattr(request, "_signature_locked_title")
+            and hasattr(request, "_signature_locked_artist")
+        ):
             result.raw_title = request._signature_locked_title
             result.title = request._signature_locked_title
             result.artist_name = request._signature_locked_artist
             if result.resolution_method and not str(result.resolution_method).startswith("signature_verified"):
                 result.resolution_method = f"signature_verified_merged_with_{result.resolution_method}"
             result.confidence_score = 1.0
-        if (not result.diagnostics or len(result.diagnostics) == 0) and hasattr(request, "_diagnostics") and request._diagnostics:
+        if (
+            (not result.diagnostics or len(result.diagnostics) == 0)
+            and hasattr(request, "_diagnostics")
+            and request._diagnostics
+        ):
             result.diagnostics = list(request._diagnostics)
         return result
 
@@ -1656,7 +1676,12 @@ class MetadataResolutionEngine:
             acoustid_id = details.get("acoustid_id")
             recordings = details.get("recordings") or []
             candidate_mbids = details.get("mbids") or []
-            if not recordings and not candidate_mbids and deferred_embedded_mbid and str(deferred_embedded_mbid).strip():
+            if (
+                not recordings
+                and not candidate_mbids
+                and deferred_embedded_mbid
+                and str(deferred_embedded_mbid).strip()
+            ):
                 d_mbid = str(deferred_embedded_mbid).strip()
                 if d_mbid not in candidate_mbids:
                     candidate_mbids.append(d_mbid)
@@ -1768,16 +1793,18 @@ class MetadataResolutionEngine:
                                 cand_dur_sec,
                                 file_duration_sec,
                             )
-                            acoustid_candidates_diag.append({
-                                "mbid": mbid_str,
-                                "title": rec_meta.get("title") or "Unknown Title",
-                                "artist": rec_meta.get("artist") or "Unknown Artist",
-                                "status": "DROPPED_DURATION_GATE",
-                                "candidate_duration": cand_dur_sec,
-                                "file_duration": file_duration_sec,
-                                "duration_delta": dur_delta_sec,
-                                "threshold": dynamic_threshold_a,
-                            })
+                            acoustid_candidates_diag.append(
+                                {
+                                    "mbid": mbid_str,
+                                    "title": rec_meta.get("title") or "Unknown Title",
+                                    "artist": rec_meta.get("artist") or "Unknown Artist",
+                                    "status": "DROPPED_DURATION_GATE",
+                                    "candidate_duration": cand_dur_sec,
+                                    "file_duration": file_duration_sec,
+                                    "duration_delta": dur_delta_sec,
+                                    "threshold": dynamic_threshold_a,
+                                }
+                            )
                             continue
                     except (ValueError, TypeError):
                         dur_delta_sec = 0.0  # Unknown duration — pass through
@@ -1798,8 +1825,7 @@ class MetadataResolutionEngine:
                 is_untrusted = bool(
                     request
                     and (
-                        getattr(request, "untrusted_tags", False)
-                        or getattr(request, "is_untrusted_legacy_tags", False)
+                        getattr(request, "untrusted_tags", False) or getattr(request, "is_untrusted_legacy_tags", False)
                     )
                 )
 
@@ -1860,13 +1886,15 @@ class MetadataResolutionEngine:
                             cand_artist,
                             baseline_artist,
                         )
-                        acoustid_candidates_diag.append({
-                            "mbid": mbid_str,
-                            "title": rec_meta.get("title") or "Unknown Title",
-                            "artist": cand_artist,
-                            "status": "DROPPED_ARTIST_FILTER",
-                            "reason": f"Candidate artist '{cand_artist}' conflicts with baseline '{baseline_artist}'",
-                        })
+                        acoustid_candidates_diag.append(
+                            {
+                                "mbid": mbid_str,
+                                "title": rec_meta.get("title") or "Unknown Title",
+                                "artist": cand_artist,
+                                "status": "DROPPED_ARTIST_FILTER",
+                                "reason": f"Candidate artist '{cand_artist}' conflicts with baseline '{baseline_artist}'",
+                            }
+                        )
                         continue
 
                 # Step C: Fast in-memory title check against filename stem
@@ -1883,7 +1911,9 @@ class MetadataResolutionEngine:
                         if not common_tokens:
                             # Disjoint titles sharing no significant words:
                             # If acoustic match has veto authority and no other candidate matches, give 0.65 floor.
-                            if not has_matching_candidate and (veto_applies or (cand_acoustid_score >= 0.95 and dur_delta_sec <= 1.0)):
+                            if not has_matching_candidate and (
+                                veto_applies or (cand_acoustid_score >= 0.95 and dur_delta_sec <= 1.0)
+                            ):
                                 sim = max(sim, 0.65)
                             else:
                                 sim = min(sim, 0.15)
@@ -1905,13 +1935,15 @@ class MetadataResolutionEngine:
                             sim,
                             filename_stem,
                         )
-                        acoustid_candidates_diag.append({
-                            "mbid": mbid_str,
-                            "title": cand_title,
-                            "artist": rec_meta.get("artist") or "Unknown Artist",
-                            "status": "DROPPED_TITLE_PREFILTER",
-                            "reason": f"Title similarity {sim:.2f} < 0.35 against filename '{filename_stem}'",
-                        })
+                        acoustid_candidates_diag.append(
+                            {
+                                "mbid": mbid_str,
+                                "title": cand_title,
+                                "artist": rec_meta.get("artist") or "Unknown Artist",
+                                "status": "DROPPED_TITLE_PREFILTER",
+                                "reason": f"Title similarity {sim:.2f} < 0.35 against filename '{filename_stem}'",
+                            }
+                        )
                         continue
 
                 elif veto_applies and not has_matching_candidate:
@@ -1958,9 +1990,8 @@ class MetadataResolutionEngine:
                 top_mbids,
             )
 
-            file_isrc = (
-                (request.baseline_isrc if request else None)
-                or (request.track.isrc if request and getattr(request, "track", None) else None)
+            file_isrc = (request.baseline_isrc if request else None) or (
+                request.track.isrc if request and getattr(request, "track", None) else None
             )
             if not file_isrc and request and request.file_path:
                 try:
@@ -1989,7 +2020,9 @@ class MetadataResolutionEngine:
                 try:
                     cand_meta = mb_plugin.get_metadata(mbid_str)
                 except Exception as exc:
-                    logger.warning("[resolution_engine] Failed to fetch MB metadata for candidate %s: %s", mbid_str, exc)
+                    logger.warning(
+                        "[resolution_engine] Failed to fetch MB metadata for candidate %s: %s", mbid_str, exc
+                    )
                     continue
                 if not isinstance(cand_meta, dict):
                     continue
@@ -2016,16 +2049,20 @@ class MetadataResolutionEngine:
                                 f"candidate_duration={mb_dur_sec:.2f}s, file_duration={file_duration_sec:.2f}s, "
                                 f"delta={dur_delta:.2f}s > {dynamic_threshold:.2f}s threshold (sim={norm_sim:.2f})."
                             )
-                            acoustid_candidates_diag.append({
-                                "mbid": mbid_str,
-                                "title": cand_meta.get("title") or "Unknown Title",
-                                "artist": cand_meta.get("artist") or cand_meta.get("artist_name") or "Unknown Artist",
-                                "status": "DROPPED_STEP_D_DURATION_VETO",
-                                "candidate_duration": mb_dur_sec,
-                                "file_duration": file_duration_sec,
-                                "duration_delta": dur_delta,
-                                "threshold": dynamic_threshold,
-                            })
+                            acoustid_candidates_diag.append(
+                                {
+                                    "mbid": mbid_str,
+                                    "title": cand_meta.get("title") or "Unknown Title",
+                                    "artist": cand_meta.get("artist")
+                                    or cand_meta.get("artist_name")
+                                    or "Unknown Artist",
+                                    "status": "DROPPED_STEP_D_DURATION_VETO",
+                                    "candidate_duration": mb_dur_sec,
+                                    "file_duration": file_duration_sec,
+                                    "duration_delta": dur_delta,
+                                    "threshold": dynamic_threshold,
+                                }
+                            )
                             continue
                     except (ValueError, TypeError):
                         mb_dur_sec = None
@@ -2215,7 +2252,15 @@ class MetadataResolutionEngine:
             valid_scored = [c for c in candidates_scored if c[0] > 0]
             if valid_scored:
                 winner_tuple = max(valid_scored, key=lambda x: x[0])
-                best_score, best_mbid, best_candidate, best_veto_applied, best_acoustid_score, best_dur_delta, winner_diag = winner_tuple
+                (
+                    best_score,
+                    best_mbid,
+                    best_candidate,
+                    best_veto_applied,
+                    best_acoustid_score,
+                    best_dur_delta,
+                    winner_diag,
+                ) = winner_tuple
                 winner_diag["status"] = "WINNER"
 
             if best_candidate and best_mbid:
@@ -2472,13 +2517,15 @@ class MetadataResolutionEngine:
                     tag_title=tag_title,
                     min_similarity=0.60,
                 ):
-                    text_candidates_diag.append({
-                        "mbid": mbid,
-                        "title": cand_title,
-                        "artist": cand.artist_name,
-                        "status": "DROPPED_TRUST_GATE",
-                        "reason": f"Title trust gate failed for candidate '{cand_title}' vs baseline '{baseline_title}'",
-                    })
+                    text_candidates_diag.append(
+                        {
+                            "mbid": mbid,
+                            "title": cand_title,
+                            "artist": cand.artist_name,
+                            "status": "DROPPED_TRUST_GATE",
+                            "reason": f"Title trust gate failed for candidate '{cand_title}' vs baseline '{baseline_title}'",
+                        }
+                    )
                     continue
 
                 # Stage 5 MusicBrainz Text Waterfall Duration Decay Curve
@@ -2491,15 +2538,17 @@ class MetadataResolutionEngine:
                         text_dur_weight = calculate_text_duration_weight(track_dur_sec, cand_dur_sec)
                         if text_dur_weight <= 0.0:
                             # Complete failure threshold: delta > 8.0s -> 0.0
-                            text_candidates_diag.append({
-                                "mbid": mbid,
-                                "title": cand_title,
-                                "artist": cand.artist_name,
-                                "status": "DROPPED_DURATION_DELTA",
-                                "candidate_duration": cand_dur_sec,
-                                "file_duration": track_dur_sec,
-                                "reason": f"Duration delta > 8.0s (track: {track_dur_sec:.1f}s, cand: {cand_dur_sec:.1f}s)",
-                            })
+                            text_candidates_diag.append(
+                                {
+                                    "mbid": mbid,
+                                    "title": cand_title,
+                                    "artist": cand.artist_name,
+                                    "status": "DROPPED_DURATION_DELTA",
+                                    "candidate_duration": cand_dur_sec,
+                                    "file_duration": track_dur_sec,
+                                    "reason": f"Duration delta > 8.0s (track: {track_dur_sec:.1f}s, cand: {cand_dur_sec:.1f}s)",
+                                }
+                            )
                             continue
                     except (ValueError, TypeError):
                         pass
@@ -2515,16 +2564,18 @@ class MetadataResolutionEngine:
                     text_dur_weight,
                     score,
                 )
-                text_candidates_diag.append({
-                    "mbid": mbid,
-                    "title": cand_title,
-                    "artist": cand.artist_name,
-                    "album": cand.album_title,
-                    "raw_score": raw_score,
-                    "duration_weight": text_dur_weight,
-                    "total_score": score,
-                    "status": "EVALUATED",
-                })
+                text_candidates_diag.append(
+                    {
+                        "mbid": mbid,
+                        "title": cand_title,
+                        "artist": cand.artist_name,
+                        "album": cand.album_title,
+                        "raw_score": raw_score,
+                        "duration_weight": text_dur_weight,
+                        "total_score": score,
+                        "status": "EVALUATED",
+                    }
+                )
                 if score > best_score:
                     best_score = score
                     best_cand = cand

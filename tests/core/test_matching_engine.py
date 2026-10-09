@@ -4,6 +4,24 @@ from core.matching_engine.matching_engine import (
     calculate_duration_score,
 )
 from core.matching_engine.scoring_profile import ExactSyncProfile
+from core.matching_engine.track_parser import sanitize_soundtrack_title
+
+
+def test_sanitize_soundtrack_title_removes_film_provenance():
+    title = "Sunflower (Spider-Man: Into the Spider-Verse)"
+    album = "Spider-Man: Into the Spider-Verse (Soundtrack from and Inspired by the Motion Picture)"
+
+    assert sanitize_soundtrack_title(title, album) == "Sunflower"
+    assert sanitize_soundtrack_title("Song (Spider-Verse)", album) == "Song"
+    assert sanitize_soundtrack_title(f"{title} (Remix)", album) == "Sunflower (Remix)"
+    assert sanitize_soundtrack_title('Song (from "Film Name")') == "Song"
+    assert sanitize_soundtrack_title("Song (from the motion picture Example)") == "Song"
+
+
+def test_sanitize_soundtrack_title_preserves_track_versions():
+    for descriptor in ("Live", "Acoustic", "Remix"):
+        title = f"Song ({descriptor})"
+        assert sanitize_soundtrack_title(title) == title
 
 
 def test_polynomial_duration_penalty_decay_standard_mode():

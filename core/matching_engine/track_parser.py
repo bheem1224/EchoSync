@@ -89,6 +89,65 @@ def extract_version_descriptors(title: str) -> tuple[str, str | None, str | None
     return clean_title, version, edition
 
 
+def sanitize_soundtrack_title(title: str, album: str | None = None) -> str:
+    """Remove trailing film provenance while keeping genuine track versions."""
+    if not title:
+        return title
+
+    trailing_groups = re.search(r"(?:\s+\([^()]*\))+\s*$", title)
+    if not trailing_groups:
+        return title
+
+    def tokens(value: str) -> list[str]:
+        return re.findall(r"[a-z0-9]+", value.casefold())
+
+    soundtrack_album = bool(
+        album and re.search(r"\b(?:soundtrack|motion\s+picture|film\s+score|ost)\b", album, re.IGNORECASE)
+    )
+    release_tokens: list[str] = []
+    if soundtrack_album and album:
+        release_title = re.sub(r"\([^)]*\)", " ", album)
+        release_title = re.sub(
+            r"\b(?:original\s+)?(?:motion\s+picture\s+)?(?:soundtrack|film\s+score|ost)\b.*$",
+            " ",
+            release_title,
+            flags=re.IGNORECASE,
+        )
+        release_tokens = tokens(release_title)
+
+    def is_soundtrack_reference(qualifier: str) -> bool:
+        if any(pattern.search(f"({qualifier})") for pattern in VERSION_PATTERNS.values()):
+            return False
+        if re.match(
+            r'^from\s+(?:"[^"\n]+"|(?:the\s+)?(?:motion\s+picture|film|movie)\b)',
+            qualifier,
+            re.IGNORECASE,
+        ):
+            return True
+
+        qualifier_tokens = tokens(qualifier)
+        if not soundtrack_album or len(qualifier_tokens) < 2 or not release_tokens:
+            return False
+
+        release_index = 0
+        for token in qualifier_tokens:
+            while release_index < len(release_tokens) and release_tokens[release_index] != token:
+                release_index += 1
+            if release_index == len(release_tokens):
+                return False
+            release_index += 1
+        return True
+
+    suffix = trailing_groups.group(0)
+    matches = list(re.finditer(r"\(([^()]*)\)", suffix))
+    remaining_groups = [match.group(0) for match in matches if not is_soundtrack_reference(match.group(1).strip())]
+    if len(remaining_groups) == len(matches):
+        return title
+
+    clean_base = title[: trailing_groups.start()].rstrip()
+    return f"{clean_base} {' '.join(remaining_groups)}" if remaining_groups else clean_base
+
+
 @dataclass
 class ParseConfig:
     """Configuration for track parsing behavior"""
