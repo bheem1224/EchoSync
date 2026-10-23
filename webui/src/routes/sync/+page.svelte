@@ -4,6 +4,7 @@
   import { jobs } from '../../stores/jobs';
   import { preferences } from '../../stores/preferences';
   import apiClient from '../../api/client';
+  import PlaylistMatchDiagnosticDrawer from '$lib/components/PlaylistMatchDiagnosticDrawer.svelte';
 
   let sourceProvider = '';
   let targetProvider = '';
@@ -34,6 +35,10 @@
   let syncEventStream = [];
   let syncProgressEvent = null;
   let syncEventPollingId = null;
+
+  // Matching diagnostics drawer state
+  let selectedTrackForDiagnostics = null;
+  let isDiagnosticsDrawerOpen = false;
   
   // Scheduled syncs state
   let scheduledSyncs = [];
@@ -907,7 +912,22 @@
               <div class="table-row muted">Analyzing tracks…</div>
             {:else if analysisResult?.tracks?.length}
               {#each analysisResult.tracks as track, idx}
-                <div class="table-row">
+                <div
+                  class="table-row interactive {selectedTrackForDiagnostics === track && isDiagnosticsDrawerOpen ? 'selected' : ''}"
+                  on:click={() => {
+                    selectedTrackForDiagnostics = track;
+                    isDiagnosticsDrawerOpen = true;
+                  }}
+                  role="button"
+                  tabindex="0"
+                  on:keydown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      selectedTrackForDiagnostics = track;
+                      isDiagnosticsDrawerOpen = true;
+                    }
+                  }}
+                >
                   <span>{idx + 1}</span>
                   <span title={track.title}>{track.title}</span>
                   <span title={track.artist}>{track.artist}</span>
@@ -1081,6 +1101,14 @@
     </div>
   </div>
 {/if}
+
+<PlaylistMatchDiagnosticDrawer
+  isOpen={isDiagnosticsDrawerOpen}
+  track={selectedTrackForDiagnostics}
+  onClose={() => {
+    isDiagnosticsDrawerOpen = false;
+  }}
+/>
 
 <style>
   .page {
@@ -1504,6 +1532,21 @@
     gap: 8px;
     padding: 10px 12px;
     align-items: center;
+  }
+
+  .table-row.interactive {
+    cursor: pointer;
+    transition: background 0.15s ease, outline-color 0.15s ease;
+  }
+
+  .table-row.interactive:hover {
+    background: rgba(255, 255, 255, 0.05);
+  }
+
+  .table-row.selected {
+    background: rgba(99, 102, 241, 0.15) !important;
+    outline: 1px solid rgba(99, 102, 241, 0.5);
+    border-radius: 6px;
   }
 
   .table-row span {

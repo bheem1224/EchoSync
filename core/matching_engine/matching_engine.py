@@ -41,7 +41,7 @@ Final score: 0-100 confidence percentage.
 
 import logging
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 from typing import Any
 
@@ -82,6 +82,10 @@ class MatchResult:
     # this flag allows the caller to route the track to the Suggestion Engine
     # instead of silently discarding it.
     is_near_miss: bool = False
+    title_score: float = 0.0
+    artist_score: float = 0.0
+    album_score: float = 0.0
+    penalties: dict[str, float] = field(default_factory=dict)
 
 
 REMASTER_STRIP_REGEX = re.compile(r"\s*[-–—\(\[]\s*(?:\d{4}\s+)?remaster(?:ed)?(?:\s+\d{4})?\s*[\)\]]?", re.IGNORECASE)
@@ -544,6 +548,10 @@ class WeightedMatchingEngine:
                             version_penalty_applied=0.0,
                             edition_penalty_applied=0.0,
                             reasoning="ISRC match (identical recording - instant 100% confidence)",
+                            title_score=1.0,
+                            artist_score=1.0,
+                            album_score=1.0,
+                            penalties={},
                         ),
                         target_source,
                         target_identifier,
@@ -561,6 +569,10 @@ class WeightedMatchingEngine:
                             version_penalty_applied=0.0,
                             edition_penalty_applied=0.0,
                             reasoning=" | ".join(reasoning_parts),
+                            title_score=0.0,
+                            artist_score=0.0,
+                            album_score=0.0,
+                            penalties={},
                         ),
                         target_source,
                         target_identifier,
@@ -616,6 +628,10 @@ class WeightedMatchingEngine:
                         version_penalty_applied=0.0,
                         edition_penalty_applied=0.0,
                         reasoning="Tier 2: ISRC match (instant 100%)",
+                        title_score=1.0,
+                        artist_score=1.0,
+                        album_score=1.0,
+                        penalties={},
                     ),
                     target_source,
                     target_identifier,
@@ -633,6 +649,10 @@ class WeightedMatchingEngine:
                         version_penalty_applied=0.0,
                         edition_penalty_applied=0.0,
                         reasoning=" | ".join(reasoning_parts),
+                        title_score=0.0,
+                        artist_score=0.0,
+                        album_score=0.0,
+                        penalties={},
                     ),
                     target_source,
                     target_identifier,
@@ -657,6 +677,10 @@ class WeightedMatchingEngine:
                     version_penalty_applied=0.0,
                     edition_penalty_applied=0.0,
                     reasoning=" | ".join(reasoning_parts),
+                    title_score=0.0,
+                    artist_score=0.0,
+                    album_score=0.0,
+                    penalties={},
                 ),
                 target_source,
                 target_identifier,
@@ -678,6 +702,10 @@ class WeightedMatchingEngine:
                     version_penalty_applied=0.0,
                     edition_penalty_applied=0.0,
                     reasoning=" | ".join(reasoning_parts),
+                    title_score=1.0,
+                    artist_score=0.0,
+                    album_score=0.0,
+                    penalties={},
                 ),
                 target_source,
                 target_identifier,
@@ -718,6 +746,10 @@ class WeightedMatchingEngine:
                     version_penalty_applied=0.0,
                     edition_penalty_applied=0.0,
                     reasoning=" | ".join(reasoning_parts),
+                    title_score=1.0,
+                    artist_score=0.0,
+                    album_score=0.0,
+                    penalties={},
                 ),
                 target_source,
                 target_identifier,
@@ -743,6 +775,10 @@ class WeightedMatchingEngine:
                 version_penalty_applied=0.0,
                 edition_penalty_applied=0.0,
                 reasoning=" | ".join(reasoning_parts),
+                title_score=1.0,
+                artist_score=1.0,
+                album_score=1.0,
+                penalties={},
             ),
             target_source,
             target_identifier,
@@ -785,54 +821,34 @@ class WeightedMatchingEngine:
                     version_penalty_applied=0.0,
                     edition_penalty_applied=0.0,
                     reasoning="Fingerprint match (audio fingerprint identical)",
+                    title_score=1.0,
+                    artist_score=1.0,
+                    album_score=1.0,
+                    penalties={},
                 )
             else:
                 reasoning_parts.append("Fingerprint available but no match")
 
-        # ===== STEP 1: VERSION CHECK =====
-        version_match, version_reasoning, ver_penalty = self._check_version_match(source, candidate, context=context)
+        # Title score — computed early for amnesty & rescues
+        title_fuzzy_score = 0.0
+        if source.title and candidate.title:
+            title_fuzzy_score = self._fuzzy_match(source.title, candidate.title)
 
-        if not version_match:
-            version_penalty = self.weights.version_mismatch_penalty
-            reasoning_parts.append(f"Version mismatch: {version_reasoning} (-{version_penalty})")
+        # Duration score — computed early for amnesty & rescues
+        duration_score = self._calculate_duration_match(source, candidate, tolerance_override_ms=tolerance_override_ms)
 
-            # Version mismatch is ALWAYS a critical failure - reject immediately
-            # Duration filtering at search time should prevent remix/live versions from appearing
-            logger.debug(f"REJECTING candidate due to version mismatch: {version_reasoning}")
-            return MatchResult(
-                confidence_score=0.0,  # Hard fail on version mismatch
-                passed_version_check=False,
-                passed_edition_check=True,
-                fuzzy_text_score=1.0,
-                duration_match_score=0.0,
-                quality_bonus_applied=0.0,
-                version_penalty_applied=version_penalty,
-                edition_penalty_applied=0.0,
-                reasoning=" | ".join(reasoning_parts) + f" | REJECTED: {version_reasoning}",
-            )
-        else:
-            if ver_penalty > 0.0:
-                edition_penalty += ver_penalty
-            reasoning_parts.append(f"Version match: {version_reasoning}")
+        # Album score
+        album_score = 1.0
+        src_album = getattr(source, "album_title", None) or getattr(source, "album_name", None)
+        cand_album = getattr(candidate, "album_title", None) or getattr(candidate, "album_name", None)
+        if src_album and cand_album:
+            raw_alb = self._fuzzy_match(str(src_album), str(cand_album))
+            base_src_alb = _BRACKET_REMOVE_PATTERN.sub("", str(src_album)).strip()
+            base_cand_alb = _BRACKET_REMOVE_PATTERN.sub("", str(cand_album)).strip()
+            base_alb = self._fuzzy_match(base_src_alb, base_cand_alb) if (base_src_alb and base_cand_alb) else 0.0
+            album_score = max(raw_alb, base_alb)
 
-        # ===== STEP 2: EDITION/TRACK CHECK =====
-        edition_match, edition_reasoning = self._check_edition_match(source, candidate)
-
-        if not edition_match:
-            edition_penalty = self.weights.edition_mismatch_penalty
-            reasoning_parts.append(f"Edition mismatch: {edition_reasoning} (-{edition_penalty})")
-        else:
-            reasoning_parts.append(f"Edition match: {edition_reasoning}")
-
-        # ===== STEP 3: FUZZY TEXT MATCHING =====
-        fuzzy_score = self._calculate_fuzzy_text_match(source, candidate)
-        text_contribution = fuzzy_score * self.weights.text_weight * 100
-
-        reasoning_parts.append(
-            f"Text match: {fuzzy_score:.1%} × {self.weights.text_weight:.1%} = {text_contribution:.1f} points"
-        )
-
-        # Store individual component scores for later use (e.g., duration bonus)
+        # Artist score
         artist_fuzzy_score = 0.0
         junction_role = None
         junction_matched_name = None
@@ -875,11 +891,75 @@ class WeightedMatchingEngine:
                         ):
                             artist_fuzzy_score = 0.0
 
-        # Title score — computed here (once) so both the strong-pair rescues below
-        # and the safe duration bonus further down share a single _fuzzy_match call.
-        title_fuzzy_score = 0.0
-        if source.title and candidate.title:
-            title_fuzzy_score = self._fuzzy_match(source.title, candidate.title)
+        # ===== STEP 1: VERSION CHECK =====
+        version_match, version_reasoning, ver_penalty = self._check_version_match(source, candidate, context=context)
+
+        # ===== STEP 2: EDITION/TRACK CHECK =====
+        edition_match, edition_reasoning = self._check_edition_match(source, candidate)
+
+        # ── Album Qualifier Amnesty (ExactSyncProfile & High Precision) ────────
+        # If title_score >= 0.95, artist_score >= 0.90, and duration_score >= 0.95,
+        # do NOT penalize parenthetical album edition qualifiers like (burnt), (Deluxe), or (Single).
+        cand_ed = (getattr(candidate, "edition", None) or getattr(candidate, "version", None) or "").strip().lower()
+        cand_fam = get_version_family(cand_ed)
+        # Remasters, remixes, and explicit track-level deluxe (in sync context) are track version mismatches, not album qualifiers.
+        is_hard_version_mismatch = (
+            cand_fam in ("remaster", "remix", "live", "instrumental", "karaoke", "acapella")
+            or (cand_fam == "deluxe" and cand_ed in ("deluxe", "deluxe edition") and context == "sync")
+        )
+        if title_fuzzy_score >= 0.95 and artist_fuzzy_score >= 0.90 and duration_score >= 0.95:
+            if not is_hard_version_mismatch:
+                version_match = True
+                edition_match = True
+                ver_penalty = 0.0
+                version_penalty = 0.0
+                edition_penalty = 0.0
+                album_score = max(album_score, 1.0)
+                reasoning_parts.append(
+                    "Album edition qualifier amnesty applied: title >= 0.95, artist >= 0.90, "
+                    "duration >= 0.95 -> zero penalty for album/edition qualifiers like (burnt)/(Deluxe)/(Single)"
+                )
+
+        if not version_match:
+            version_penalty = self.weights.version_mismatch_penalty
+            reasoning_parts.append(f"Version mismatch: {version_reasoning} (-{version_penalty})")
+
+            # Version mismatch is ALWAYS a critical failure - reject immediately
+            # Duration filtering at search time should prevent remix/live versions from appearing
+            logger.debug(f"REJECTING candidate due to version mismatch: {version_reasoning}")
+            return MatchResult(
+                confidence_score=0.0,  # Hard fail on version mismatch
+                passed_version_check=False,
+                passed_edition_check=edition_match,
+                fuzzy_text_score=1.0,
+                duration_match_score=0.0,
+                quality_bonus_applied=0.0,
+                version_penalty_applied=version_penalty,
+                edition_penalty_applied=0.0,
+                reasoning=" | ".join(reasoning_parts) + f" | REJECTED: {version_reasoning}",
+                title_score=title_fuzzy_score,
+                artist_score=artist_fuzzy_score,
+                album_score=album_score,
+                penalties={"version_penalty": version_penalty, "edition_penalty": 0.0},
+            )
+        else:
+            if ver_penalty > 0.0:
+                edition_penalty += ver_penalty
+            reasoning_parts.append(f"Version match: {version_reasoning}")
+
+        if not edition_match:
+            edition_penalty = self.weights.edition_mismatch_penalty
+            reasoning_parts.append(f"Edition mismatch: {edition_reasoning} (-{edition_penalty})")
+        else:
+            reasoning_parts.append(f"Edition match: {edition_reasoning}")
+
+        # ===== STEP 3: FUZZY TEXT MATCHING =====
+        fuzzy_score = self._calculate_fuzzy_text_match(source, candidate)
+        text_contribution = fuzzy_score * self.weights.text_weight * 100
+
+        reasoning_parts.append(
+            f"Text match: {fuzzy_score:.1%} × {self.weights.text_weight:.1%} = {text_contribution:.1f} points"
+        )
 
         # ── Pre-score plugin check ─────────────────────────────────────────────
         # Fire the scoring_modifier hook here — BEFORE the fuzzy threshold gate —
@@ -1039,6 +1119,10 @@ class WeightedMatchingEngine:
                         version_penalty_applied=version_penalty,
                         edition_penalty_applied=edition_penalty,
                         reasoning=" | ".join(reasoning_parts),
+                        title_score=title_fuzzy_score,
+                        artist_score=artist_fuzzy_score,
+                        album_score=album_score,
+                        penalties={"version_penalty": version_penalty, "edition_penalty": edition_penalty},
                     )
 
             # Rescue B — Title + Duration (title ≥ 0.95 AND duration ≤ 2 s)
@@ -1081,6 +1165,10 @@ class WeightedMatchingEngine:
                         version_penalty_applied=version_penalty,
                         edition_penalty_applied=edition_penalty,
                         reasoning=" | ".join(reasoning_parts),
+                        title_score=title_fuzzy_score,
+                        artist_score=artist_fuzzy_score,
+                        album_score=album_score,
+                        penalties={"version_penalty": version_penalty, "edition_penalty": edition_penalty},
                     )
 
             # ── End rescues — fall through to hard fail ────────────────────────
@@ -1100,6 +1188,10 @@ class WeightedMatchingEngine:
                 version_penalty_applied=version_penalty,
                 edition_penalty_applied=edition_penalty,
                 reasoning=" | ".join(reasoning_parts),
+                title_score=title_fuzzy_score,
+                artist_score=artist_fuzzy_score,
+                album_score=album_score,
+                penalties={"version_penalty": version_penalty, "edition_penalty": edition_penalty},
             )
 
         score += text_contribution
@@ -1158,6 +1250,10 @@ class WeightedMatchingEngine:
                 edition_penalty_applied=edition_penalty,
                 reasoning=" | ".join(reasoning_parts),
                 is_near_miss=True,
+                title_score=title_fuzzy_score,
+                artist_score=artist_fuzzy_score,
+                album_score=album_score,
+                penalties={"version_penalty": version_penalty, "edition_penalty": edition_penalty},
             )
 
         score += duration_contribution
@@ -1233,6 +1329,10 @@ class WeightedMatchingEngine:
             version_penalty_applied=version_penalty,
             edition_penalty_applied=edition_penalty,
             reasoning=" | ".join(reasoning_parts),
+            title_score=title_fuzzy_score,
+            artist_score=artist_fuzzy_score,
+            album_score=album_score,
+            penalties={"version_penalty": version_penalty, "edition_penalty": edition_penalty},
         )
 
     def _attach_target_context(
@@ -1833,27 +1933,49 @@ class WeightedMatchingEngine:
         from core.matching_engine.text_utils import _cmp_artists
 
         collabs = self._extract_artist_collaborators(candidate_track)
+        cand_primary = getattr(candidate_track, "artist_name", None)
+        if cand_primary and not any(r[0].lower() == str(cand_primary).lower() for r in collabs):
+            collabs.append((str(cand_primary), "primary"))
+
         if not collabs:
             return 0.0, None, None
 
         clean_query = query_artist.strip().lower()
 
-        for art_name, role in collabs:
-            clean_art = art_name.strip().lower()
-            if clean_query == clean_art:
-                cmp_score = 1.0
-            else:
-                cmp_score = max(_cmp_artists(query_artist, art_name), self._fuzzy_match(query_artist, art_name))
+        # Tokenize query_artist in case query has multiple artists (e.g. 'David Guetta & Usher' or 'Without You feat. Usher')
+        query_tokens = [tok.strip() for tok in _ARTIST_SPLIT_PATTERN.split(query_artist) if tok.strip()]
+        if clean_query not in [t.lower() for t in query_tokens]:
+            query_tokens.append(clean_query)
 
-            if cmp_score >= 0.85:
-                if role == "remixer":
-                    return 0.95, "remixer", art_name
-                elif role == "featured":
-                    return 0.90, "featured", art_name
-                elif role == "primary":
-                    return 1.0, "primary", art_name
+        best_score = 0.0
+        best_role = None
+        best_name = None
+
+        for q_tok in query_tokens:
+            q_lower = q_tok.lower()
+            for art_name, role in collabs:
+                clean_art = art_name.strip().lower()
+                if q_lower == clean_art:
+                    cmp_score = 1.0
                 else:
-                    return 0.90, role, art_name
+                    cmp_score = max(_cmp_artists(q_tok, art_name), self._fuzzy_match(q_tok, art_name))
+
+                if cmp_score >= 0.85:
+                    if role == "primary":
+                        score = 1.0
+                    elif role == "remixer":
+                        score = 0.95
+                    elif role == "featured":
+                        score = 0.90
+                    else:
+                        score = 0.90
+                    if score > best_score:
+                        best_score = score
+                        best_role = role
+                        best_name = art_name
+
+        if best_score > 0.0:
+            return best_score, best_role, best_name
 
         return 0.0, None, None
 
@@ -1866,6 +1988,7 @@ class WeightedMatchingEngine:
         from database.music_database import Artist, Track, TrackArtist
         from core.matching_engine.text_utils import normalize_artist
         from sqlalchemy import or_
+        from sqlalchemy.orm import aliased
 
         if not artist_name:
             return []
@@ -1873,17 +1996,28 @@ class WeightedMatchingEngine:
         clean_name = artist_name.strip()
         norm_name = normalize_artist(clean_name)
 
+        PrimaryArtist = aliased(Artist, name="primary_artist")
+        JunctionArtist = aliased(Artist, name="junction_artist")
+
         return (
             session.query(Track)
-            .join(Track.artist_associations)
-            .join(TrackArtist.artist)
+            .outerjoin(PrimaryArtist, Track.artist_id == PrimaryArtist.id)
+            .outerjoin(TrackArtist, Track.id == TrackArtist.track_id)
+            .outerjoin(JunctionArtist, TrackArtist.artist_id == JunctionArtist.id)
             .filter(
-                TrackArtist.role.in_(["primary", "featured", "remixer"]),
                 or_(
-                    Artist.name.ilike(f"%{clean_name}%"),
-                    Artist.normalized_name == norm_name,
-                    Artist.name.ilike(clean_name),
-                ),
+                    PrimaryArtist.name.ilike(f"%{clean_name}%"),
+                    PrimaryArtist.normalized_name == norm_name,
+                    PrimaryArtist.name.ilike(clean_name),
+                    (
+                        TrackArtist.role.in_(["primary", "featured", "remixer"])
+                        & or_(
+                            JunctionArtist.name.ilike(f"%{clean_name}%"),
+                            JunctionArtist.normalized_name == norm_name,
+                            JunctionArtist.name.ilike(clean_name),
+                        )
+                    ),
+                )
             )
             .distinct()
             .all()

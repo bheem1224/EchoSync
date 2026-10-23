@@ -1747,6 +1747,20 @@ class MetadataResolutionEngine:
             # 1. Hard duration gate (<= 2.0s cutoff)
             # 2. Artist token overlap check
             # 3. Filename stem title similarity (prune < 0.40, rank by title + duration)
+            file_isrc = (request.baseline_isrc if request else None) or (
+                request.track.isrc if request and getattr(request, "track", None) else None
+            )
+            if not file_isrc and request and request.file_path:
+                try:
+                    p_tags = extract_physical_tags(request.file_path)
+                    if p_tags and p_tags.get("isrc"):
+                        file_isrc = p_tags.get("isrc")
+                except Exception:
+                    pass
+
+            clean_file_isrc = str(file_isrc).replace("-", "").strip().upper() if file_isrc else ""
+            file_isrc_prefix = clean_file_isrc[:5] if len(clean_file_isrc) >= 5 else clean_file_isrc
+
             has_identifiable_filename = bool(filename_stem and not is_generic_title(filename_stem))
             fn_lower = filename_stem.lower().strip() if has_identifiable_filename else ""
             norm_fn = normalize_title(fn_lower) if fn_lower else ""
@@ -1959,26 +1973,93 @@ class MetadataResolutionEngine:
                     elif veto_applies and not has_matching_candidate:
                         sim = max(sim, 0.65)
 
+                    # Check exemptions before dropping (< 0.35)
+                    cand_aliases = rec_meta.get("aliases") or []
+                    alias_matched = False
+                    max_alias_sim = 0.0
+                    for alias in cand_aliases:
+                        a_str = ""
+                        if isinstance(alias, str):
+                            a_str = alias.strip()
+                        elif isinstance(alias, dict):
+                            a_str = str(alias.get("name") or alias.get("title") or "").strip()
+                        if a_str:
+                            a_low = a_str.lower()
+                            a_sim = difflib.SequenceMatcher(None, fn_lower, a_low).ratio()
+                            norm_a = normalize_title(a_low)
+                            if norm_fn and norm_a:
+                                a_sim = max(a_sim, difflib.SequenceMatcher(None, norm_fn, norm_a).ratio())
+                            if a_sim > max_alias_sim:
+                                max_alias_sim = a_sim
+                            if a_sim >= 0.60:
+                                alias_matched = True
+
+                    is_non_ascii = not cand_title.isascii()
+
+                    cand_isrcs_list: list[str] = []
+                    raw_cand_isrcs = rec_meta.get("isrcs") or rec_meta.get("isrc_list") or []
+                    if isinstance(raw_cand_isrcs, list):
+                        cand_isrcs_list.extend([str(i).replace("-", "").strip().upper() for i in raw_cand_isrcs if i])
+                    elif isinstance(raw_cand_isrcs, str):
+                        cand_isrcs_list.append(raw_cand_isrcs.replace("-", "").strip().upper())
+                    if rec_meta.get("isrc"):
+                        s_isrc = str(rec_meta.get("isrc")).replace("-", "").strip().upper()
+                        if s_isrc and s_isrc not in cand_isrcs_list:
+                            cand_isrcs_list.append(s_isrc)
+
+                    shares_isrc = False
+                    if clean_file_isrc and cand_isrcs_list:
+                        for c_isrc in cand_isrcs_list:
+                            if c_isrc == clean_file_isrc:
+                                shares_isrc = True
+                                break
+                            if len(c_isrc) >= 5 and file_isrc_prefix and c_isrc[:5] == file_isrc_prefix:
+                                shares_isrc = True
+                                break
+
                     # Title pre-filter: Drop disjoint candidates (< 0.35) when a matching candidate exists
+                    # EXCEPTION: Do NOT drop immediately if:
+                    # 1. Candidate title contains non-ASCII characters (e.g. ラヴリー).
+                    # 2. Any alias in candidate.get("aliases", []) matches target title with similarity >= 0.60.
+                    # 3. Candidate shares exact ISRC or ISRC registrant prefix (USUM7) with the physical file.
                     if has_matching_candidate and sim < 0.35:
-                        logger.debug(
-                            "[resolution_engine] Title pre-filter DROPPED MBID %s '%s': "
-                            "title similarity %.2f < 0.35 against filename '%s'",
-                            mbid_str,
-                            cand_title,
-                            sim,
-                            filename_stem,
-                        )
-                        acoustid_candidates_diag.append(
-                            {
-                                "mbid": mbid_str,
-                                "title": cand_title,
-                                "artist": rec_meta.get("artist") or "Unknown Artist",
-                                "status": "DROPPED_TITLE_PREFILTER",
-                                "reason": f"Title similarity {sim:.2f} < 0.35 against filename '{filename_stem}'",
-                            }
-                        )
-                        continue
+                        if is_non_ascii or alias_matched or shares_isrc:
+                            if alias_matched:
+                                sim = max(sim, max_alias_sim)
+                            elif shares_isrc:
+                                sim = max(sim, 0.70)
+                            elif is_non_ascii:
+                                sim = max(sim, 0.65)
+                            logger.info(
+                                "[resolution_engine] Script/alias tolerance: PRESERVED candidate MBID %s '%s' "
+                                "(sim=%.2f -> %.2f, non-ascii=%s, alias_matched=%s, shares_isrc=%s)",
+                                mbid_str,
+                                cand_title,
+                                difflib.SequenceMatcher(None, fn_lower, c_lower).ratio(),
+                                sim,
+                                is_non_ascii,
+                                alias_matched,
+                                shares_isrc,
+                            )
+                        else:
+                            logger.debug(
+                                "[resolution_engine] Title pre-filter DROPPED MBID %s '%s': "
+                                "title similarity %.2f < 0.35 against filename '%s'",
+                                mbid_str,
+                                cand_title,
+                                sim,
+                                filename_stem,
+                            )
+                            acoustid_candidates_diag.append(
+                                {
+                                    "mbid": mbid_str,
+                                    "title": cand_title,
+                                    "artist": rec_meta.get("artist") or "Unknown Artist",
+                                    "status": "DROPPED_TITLE_PREFILTER",
+                                    "reason": f"Title similarity {sim:.2f} < 0.35 against filename '{filename_stem}'",
+                                }
+                            )
+                            continue
 
                 elif veto_applies and not has_matching_candidate:
                     sim = 0.65
@@ -2024,16 +2105,7 @@ class MetadataResolutionEngine:
                 top_mbids,
             )
 
-            file_isrc = (request.baseline_isrc if request else None) or (
-                request.track.isrc if request and getattr(request, "track", None) else None
-            )
-            if not file_isrc and request and request.file_path:
-                try:
-                    p_tags = extract_physical_tags(request.file_path)
-                    if p_tags and p_tags.get("isrc"):
-                        file_isrc = p_tags.get("isrc")
-                except Exception:
-                    pass
+            # file_isrc and prefixes were already extracted prior to pre-filtering
 
             # ── Step C: MusicBrainz Detail Lookup ─────────────────────────────
             # ── Step D: Filename-First Candidate Scoring via WeightedMatchingEngine ─
@@ -2106,6 +2178,49 @@ class MetadataResolutionEngine:
                 c_artist = str(cand_meta.get("artist") or cand_meta.get("artist_name") or "")
                 c_album = str(cand_meta.get("album") or cand_meta.get("album_title") or "")
                 cand_dur_ms = int(mb_dur_sec * 1000) if mb_dur_sec is not None else None
+
+                # Check aliases and non-ASCII / ISRC alignment for candidate title
+                cand_mb_aliases = cand_meta.get("aliases") or []
+                best_cand_mb_title = c_title
+                best_alias_ratio = (
+                    difflib.SequenceMatcher(None, fn_lower, c_title.lower()).ratio()
+                    if fn_lower and c_title
+                    else 0.0
+                )
+
+                for alias in cand_mb_aliases:
+                    a_name = alias if isinstance(alias, str) else (alias.get("name") or alias.get("title") or "")
+                    if a_name:
+                        ratio = difflib.SequenceMatcher(None, fn_lower, str(a_name).lower()).ratio()
+                        if ratio > best_alias_ratio:
+                            best_alias_ratio = ratio
+                            best_cand_mb_title = str(a_name)
+
+                # Check if candidate shares ISRC with file
+                cand_isrcs_d = []
+                raw_isrcs_d = cand_meta.get("isrcs") or cand_meta.get("isrc_list") or []
+                if isinstance(raw_isrcs_d, list):
+                    cand_isrcs_d.extend([str(i).replace("-", "").strip().upper() for i in raw_isrcs_d if i])
+                elif isinstance(raw_isrcs_d, str):
+                    cand_isrcs_d.append(raw_isrcs_d.replace("-", "").strip().upper())
+                if cand_meta.get("isrc"):
+                    s_isrc_d = str(cand_meta.get("isrc")).replace("-", "").strip().upper()
+                    if s_isrc_d and s_isrc_d not in cand_isrcs_d:
+                        cand_isrcs_d.append(s_isrc_d)
+
+                isrc_prefix_match_d = False
+                if clean_file_isrc and cand_isrcs_d:
+                    for c_isrc in cand_isrcs_d:
+                        if c_isrc == clean_file_isrc or (
+                            len(c_isrc) >= 5 and file_isrc_prefix and c_isrc[:5] == file_isrc_prefix
+                        ):
+                            isrc_prefix_match_d = True
+                            break
+
+                if best_alias_ratio >= 0.60:
+                    c_title = best_cand_mb_title
+                elif (not c_title.isascii()) and isrc_prefix_match_d and filename_stem:
+                    c_title = filename_stem
 
                 # Build query track: when veto applies or tags are untrusted, do not let
                 # contaminated baseline artist pollute the query track

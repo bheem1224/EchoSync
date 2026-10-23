@@ -23,8 +23,38 @@ logger = logging.getLogger(__name__)
 
 # Atomic Role Parsing Patterns
 FEATURED_PATTERN = re.compile(r"\s+(?:feat\.?|ft\.?|featuring|with)\s+(.+?)(?=\s*[\(\[]|$)", re.IGNORECASE)
+FEAT_PAREN_REGEX = re.compile(
+    r"\s*[\(\[\{]\s*(?:feat\.?|ft\.?|featuring|with)\s+([^\)\]\}]+)[\)\]\}]",
+    re.IGNORECASE,
+)
 PRIMARY_SPLIT_PATTERN = re.compile(r"(?:\s+&\s+|\s*[/,]\s*|\s+\band\b\s+)", re.IGNORECASE)
 VS_PATTERN = re.compile(r"\s+(?:vs\.?|x|[\u00d7\u0445\u2715\u2716×✕✖])\s+", re.IGNORECASE)
+
+
+def extract_featured_from_title(title: str) -> tuple[str, list[str]]:
+    """Strip (feat. ...) or (with ...) parentheticals from title and return (clean_title, featured_artists).
+
+    Example:
+        'Without You (feat. Usher)' -> ('Without You', ['Usher'])
+    """
+    if not title:
+        return "", []
+
+    featured: list[str] = []
+
+    def _repl(match):
+        feat_str = match.group(1).strip()
+        names = [n.strip() for n in PRIMARY_SPLIT_PATTERN.split(feat_str) if n.strip()]
+        featured.extend(names)
+        return ""
+
+    clean_title = FEAT_PAREN_REGEX.sub(_repl, title).strip()
+    return clean_title or title, featured
+
+
+def parse_query_title(title: str) -> tuple[str, list[str]]:
+    """Parse query title, stripping (feat. ...) or (with ...) and returning (clean_title, featured_artists)."""
+    return extract_featured_from_title(title)
 
 # Version Extraction Patterns
 VERSION_PATTERNS = {
@@ -249,6 +279,9 @@ class ParseConfig:
 
 class TrackParser:
     """Parser for converting raw filename/string input into EchosyncTrack objects"""
+
+    extract_featured_from_title = staticmethod(extract_featured_from_title)
+    parse_query_title = staticmethod(parse_query_title)
 
     # Regex patterns for common filename formats
     PATTERNS = {
@@ -486,9 +519,14 @@ class TrackParser:
                 album_title = ""
 
             parsed_title = parsed_data.get("title", "")
+            parsed_title, extracted_feats = extract_featured_from_title(parsed_title)
             parsed_artist = parsed_data.get("artist", "")
 
             artist_roles = decompose_artists(parsed_artist)
+            if extracted_feats:
+                for ef in extracted_feats:
+                    if ef and not any(ef.lower() == f.lower() for f in artist_roles["featured"]):
+                        artist_roles["featured"].append(ef)
 
             # If the old regex pattern (artist_title) caught a 'version' group,
             # we consider it a fallback.

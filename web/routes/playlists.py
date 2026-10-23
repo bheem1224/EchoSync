@@ -71,6 +71,15 @@ class PlaylistSyncScheduleSchema(BaseModel):
     target_account_id: str | int | None = None
 
 
+class MatchDiagnosticRequest(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    title: str
+    artist: str
+    duration_ms: int = 0
+    album: str | None = None
+
+
 # In-memory store for ad-hoc analysis jobs started via API
 ANALYSIS_JOBS = {}
 
@@ -1813,6 +1822,161 @@ def analyze_playlists(payload_obj: PlaylistAnalyzeSchema | None = None):
     except Exception as e:
         logger.error(f"Error analyzing playlists: {e}", exc_info=True)
         return {"error": "Playlist analysis failed"}
+
+
+@router.post("/match-diagnostics")
+@api_v1_router.post("/match-diagnostics")
+@legacy_router.post("/match-diagnostics")
+@double_v1_router.post("/match-diagnostics")
+def match_diagnostics(payload: MatchDiagnosticRequest):
+    """Evaluate candidate tracks against ExactSyncProfile and return structured match trace."""
+    from core.matching_engine.scoring_profile import ExactSyncProfile
+    from core.matching_engine.matching_engine import WeightedMatchingEngine
+    from core.matching_engine.track_parser import TrackParser
+    from database.music_database import MusicDatabase, Track
+
+    query_title = (payload.title or "").strip()
+    query_artist = (payload.artist or "").strip()
+    query_duration = int(payload.duration_ms or 0)
+    query_album = (payload.album or "").strip()
+
+    profile = ExactSyncProfile()
+    engine = WeightedMatchingEngine(profile)
+
+    clean_search_title, feat_artists = TrackParser.extract_featured_from_title(query_title)
+    if not clean_search_title:
+        clean_search_title = query_title
+
+    base_search_title = re.sub(r"\s*[\(\[].*?[\)\]]", "", clean_search_title).strip()
+    base_search_title = re.sub(r"\s+-.*$", "", base_search_title).strip() or clean_search_title
+
+    source_track = EchosyncTrack(
+        raw_title=query_title,
+        artist_name=query_artist,
+        album_title=query_album,
+        duration=query_duration,
+        featured_artists=feat_artists,
+    )
+
+    clean_source = _normalize_candidate_title(query_title)
+    if clean_source:
+        source_track.title = clean_source
+
+    db = MusicDatabase()
+    candidates_list = []
+    seen_track_ids = set()
+
+    with db.session_scope() as session:
+        conn = session.connection()
+        t1_rows = _fetch_tier1_candidates(conn, clean_search_title, base_search_title, query_artist, query_duration)
+        candidate_rows = list(t1_rows) if t1_rows else []
+        for r in candidate_rows:
+            seen_track_ids.add(r[0])
+
+        if query_duration and len(candidate_rows) < 10:
+            t2_rows = _fetch_tier2_candidates(conn, clean_search_title, query_duration, 10000)
+            for r in t2_rows:
+                if r[0] not in seen_track_ids:
+                    seen_track_ids.add(r[0])
+                    candidate_rows.append(r)
+
+        if query_artist:
+            by_artist_tracks = engine.query_candidates_by_artist(session, query_artist)
+            for t in by_artist_tracks:
+                if t.id not in seen_track_ids:
+                    seen_track_ids.add(t.id)
+                    candidate_rows.append((
+                        t.id,
+                        t.title,
+                        t.duration,
+                        t.edition,
+                        t.artist.name if t.artist else "",
+                        t.artist_id,
+                        t.sort_title,
+                        t.album.title if t.album else "",
+                        None,
+                        t.sync_id,
+                    ))
+
+        for row in candidate_rows:
+            t_id = row[0]
+            track_obj = session.query(Track).filter_by(id=t_id).first()
+            if not track_obj:
+                continue
+
+            sync_id = track_obj.sync_id or str(t_id)
+            title = track_obj.title or ""
+            artist_name = track_obj.artist.name if track_obj.artist else ""
+            album_title = track_obj.album.title if track_obj.album else ""
+            duration = track_obj.duration or 0
+            edition = track_obj.edition
+
+            cand_echotrack = EchosyncTrack(
+                raw_title=title,
+                artist_name=artist_name,
+                album_title=album_title,
+                duration=duration,
+                edition=edition,
+                sync_id=sync_id,
+            )
+
+            if track_obj.artist_associations:
+                cand_echotrack.artist_associations = track_obj.artist_associations
+            if track_obj.all_artists:
+                cand_echotrack.all_artists = track_obj.all_artists
+
+            match_res = engine.calculate_match(source_track, cand_echotrack)
+
+            delta_sec = round(abs(duration - query_duration) / 1000.0, 2) if (duration and query_duration) else 0.0
+            accepted = match_res.confidence_score >= profile.weights.min_confidence_to_accept
+
+            rejection_reason = None
+            if not accepted:
+                if not match_res.passed_version_check:
+                    rejection_reason = f"Version mismatch: {match_res.reasoning}"
+                elif delta_sec > 6.0 and match_res.duration_match_score == 0.0:
+                    rejection_reason = f"Duration Delta > 6.0s ({delta_sec}s)"
+                else:
+                    rejection_reason = f"Confidence {match_res.confidence_score:.1f}% below threshold {profile.weights.min_confidence_to_accept:.1f}%"
+
+            penalties = match_res.penalties or {}
+            if match_res.version_penalty_applied > 0:
+                penalties["version_penalty"] = match_res.version_penalty_applied
+            if match_res.edition_penalty_applied > 0:
+                penalties["edition_penalty"] = match_res.edition_penalty_applied
+
+            candidates_list.append({
+                "track_sync_id": sync_id,
+                "title": title,
+                "artist": artist_name,
+                "album": album_title,
+                "duration_ms": duration,
+                "duration_delta_sec": delta_sec,
+                "title_score": round(match_res.title_score, 2),
+                "artist_score": round(match_res.artist_score, 2),
+                "duration_score": round(match_res.duration_match_score, 2),
+                "album_score": round(match_res.album_score, 2),
+                "penalties": penalties,
+                "composite_score": round(match_res.confidence_score, 2),
+                "accepted": accepted,
+                "rejection_reason": rejection_reason,
+            })
+
+    candidates_list.sort(key=lambda c: c["composite_score"], reverse=True)
+    best_match = candidates_list[0] if candidates_list else None
+
+    return {
+        "query": {
+            "title": query_title,
+            "artist": query_artist,
+            "duration_ms": query_duration,
+            "album": query_album,
+        },
+        "candidates_retrieved_count": len(candidates_list),
+        "candidates": candidates_list,
+        "best_match": best_match,
+        "winning_threshold": profile.weights.min_confidence_to_accept,
+    }
 
 
 @router.post("/analyze/start")

@@ -4,7 +4,6 @@ from typing import Any
 
 from datetime import timedelta
 
-from core.event_bus import event_bus
 from core.settings import config_manager
 from database.working_database import UserRating, UserTrackState, get_working_database
 from time_utils import utc_now
@@ -84,6 +83,7 @@ def execute_delete_now(sync_id: str) -> dict[str, Any]:
     with db.session_scope() as session:
         _clear_lifecycle_state(session, base_sync_id, mark_hard_deleted=True)
 
+    from core.event_bus import event_bus
     event_bus.publish(
         {
             "event": "HARD_DELETE_INTENT",
@@ -118,6 +118,7 @@ def execute_upgrade_now(
     with db.session_scope() as session:
         _clear_lifecycle_state(session, base_sync_id)
 
+    from core.event_bus import event_bus
     event_bus.publish(
         {
             "event": "QUALITY_UPGRADE_INTENT",
