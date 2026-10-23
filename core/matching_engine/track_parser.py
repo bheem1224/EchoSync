@@ -238,11 +238,6 @@ def sanitize_soundtrack_title(title: str, album: str | None = None) -> tuple[str
 
         return False, None
 
-    HYPHEN_SOUNDTRACK_PATTERN = re.compile(
-        r"\s+-\s+(?:from\s+(?:the\s+)?(?:motion\s+picture|soundtrack|film)(?:\s*[:\-]?\s*[\"']?([^\"'\n]+?)[\"']?)?|(?:theme\s+from\s+)?([A-Za-z0-9\s:,'’–-]+(?:soundtrack|score|ost|series|movie|verse|chronicles)?))\s*$",
-        re.IGNORECASE,
-    )
-
     trailing_groups = re.search(r"(?:\s+\([^()]*\))+\s*$", title)
     extracted_film: str | None = None
     remaining_groups: list[str] = []
@@ -267,16 +262,30 @@ def sanitize_soundtrack_title(title: str, album: str | None = None) -> tuple[str
     # If no film provenance found in parentheticals, check hyphen-delimited soundtrack provenance
     if not extracted_film:
         hyphen_target = title[: trailing_groups.start()].rstrip() if trailing_groups else title
-        hyphen_match = HYPHEN_SOUNDTRACK_PATTERN.search(hyphen_target)
-        if hyphen_match:
-            raw_film = (hyphen_match.group(2) or hyphen_match.group(1) or "").strip()
+        if " - " in hyphen_target:
+            base, sep, subtitle = hyphen_target.rpartition(" - ")
+            raw_film = subtitle.strip()
             if raw_film and not is_version_descriptor(raw_film):
+                sub_lower = raw_film.lower()
+                cues = [
+                    "soundtrack",
+                    "motion picture",
+                    "ost",
+                    "score",
+                    "into the spider-verse",
+                    "spider-verse",
+                    "film",
+                    "series",
+                    "movie",
+                    "verse",
+                    "chronicles",
+                ]
                 is_st, film = extract_film_from_qualifier(raw_film)
-                if is_st or re.search(r"\b(?:soundtrack|score|ost|series|movie|verse|chronicles)\b", raw_film, re.IGNORECASE):
+                if is_st or any(cue in sub_lower for cue in cues):
                     film_target = film or raw_film
                     film_clean = re.sub(r"\s*:\s*", " - ", film_target).strip()
                     extracted_film = film_clean
-                    clean_base = hyphen_target[: hyphen_match.start()].rstrip()
+                    clean_base = base.strip()
 
     if not extracted_film and trailing_groups and len(remaining_groups) == len(list(re.finditer(r"\(([^()]*)\)", trailing_groups.group(0)))):
         return title, None

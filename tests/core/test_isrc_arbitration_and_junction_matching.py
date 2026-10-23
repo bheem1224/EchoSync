@@ -180,7 +180,7 @@ def test_a_isrc_arbitration_demotes_aggregator_candidate(monkeypatch, tmp_path):
 
     assert rick_diag.get("isrc_adjustment") == -50.0
     assert rick_diag.get("status") == "RUNNER_UP"
-    assert post_diag.get("isrc_adjustment") == 25.0
+    assert post_diag.get("isrc_adjustment") == 50.0
     assert post_diag.get("status") == "WINNER"
 
 

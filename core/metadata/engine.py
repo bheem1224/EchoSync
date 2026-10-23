@@ -11,6 +11,7 @@ Unifies the 5-stage resolution waterfall:
 from __future__ import annotations
 
 import difflib
+import math
 import re
 from pathlib import Path
 from typing import Any
@@ -2016,6 +2017,8 @@ class MetadataResolutionEngine:
 
                 # Step C: Fast in-memory title check against filename stem
                 cand_title = str(rec_meta.get("title") or "").strip()
+                is_non_ascii = any(ord(c) > 127 for c in cand_title)
+
                 if cand_title and has_identifiable_filename:
                     c_lower = cand_title.lower().strip()
                     sim = difflib.SequenceMatcher(None, fn_lower, c_lower).ratio()
@@ -2032,6 +2035,8 @@ class MetadataResolutionEngine:
                                 veto_applies or (cand_acoustid_score >= 0.95 and dur_delta_sec <= 1.0)
                             ):
                                 sim = max(sim, 0.65)
+                            elif is_non_ascii:
+                                sim = max(sim, 0.65)
                             else:
                                 sim = min(sim, 0.15)
                         else:
@@ -2040,6 +2045,8 @@ class MetadataResolutionEngine:
                             if veto_applies and not has_matching_candidate:
                                 sim = max(sim, 0.65)
                     elif veto_applies and not has_matching_candidate:
+                        sim = max(sim, 0.65)
+                    elif is_non_ascii:
                         sim = max(sim, 0.65)
 
                     # Check exemptions before dropping (< 0.35)
@@ -2062,8 +2069,6 @@ class MetadataResolutionEngine:
                                 max_alias_sim = a_sim
                             if a_sim >= 0.60:
                                 alias_matched = True
-
-                    is_non_ascii = not cand_title.isascii()
 
                     cand_isrcs_list: list[str] = []
                     raw_cand_isrcs = rec_meta.get("isrcs") or rec_meta.get("isrc_list") or []
@@ -2088,14 +2093,14 @@ class MetadataResolutionEngine:
 
                     # Title pre-filter: Drop disjoint candidates (< 0.35) when a matching candidate exists
                     # EXCEPTION: Do NOT drop immediately if:
-                    # 1. Candidate title contains non-ASCII characters (e.g. ラヴリー).
-                    # 2. Any alias in candidate.get("aliases", []) matches target title with similarity >= 0.60.
-                    # 3. Candidate shares exact ISRC or ISRC registrant prefix (USUM7) with the physical file.
+                    # 1. Candidate title contains non-ASCII characters (any(ord(c) > 127 for c in cand_title)).
+                    # 2. Candidate shares exact ISRC with the physical file (and tags are not untrusted).
+                    # 3. Any alias in candidate matches target title with similarity >= 0.60.
                     if has_matching_candidate and sim < 0.35:
-                        if is_non_ascii or alias_matched or shares_isrc:
+                        if is_non_ascii or alias_matched or (shares_isrc and not is_untrusted):
                             if alias_matched:
                                 sim = max(sim, max_alias_sim)
-                            elif shares_isrc:
+                            elif shares_isrc and not is_untrusted:
                                 sim = max(sim, 0.70)
                             elif is_non_ascii:
                                 sim = max(sim, 0.65)
@@ -2135,6 +2140,10 @@ class MetadataResolutionEngine:
                 else:
                     sim = 0.50  # Neutral similarity for untagged candidates or generic filenames
 
+                # Ensure non-ascii or no-matching acoustic veto candidate has at least 0.65 sim for ranking
+                if is_non_ascii or (not has_matching_candidate and (veto_applies or (cand_acoustid_score >= 0.95 and dur_delta_sec <= 1.0))):
+                    sim = max(sim, 0.65)
+
                 # Ranking score: 80% title similarity + 20% AcoustID cluster score
                 pre_rank_score = (sim * 0.8) + (cand_acoustid_score * 0.2)
 
@@ -2162,8 +2171,49 @@ class MetadataResolutionEngine:
             # Sort descending by composite pre_rank_score
             viable_candidates.sort(key=lambda x: x[1], reverse=True)
 
-            # Cap at top 5 viable candidates for MusicBrainz detail lookup (eliminate pre-network truncation)
+            # Clear-Match Short-Circuit:
+            # If Candidate 1 has AcoustID score >= 0.95, duration delta <= 1.0s, raw title matches filename_stem exactly (sim >= 0.99),
+            # and all other candidates have lower raw title similarity (< 0.95) and no other candidate has non-ASCII script:
+            # Only fetch MusicBrainz metadata for Candidate 1 (top_candidates = [viable_candidates[0]]).
+            # This satisfies the 1-HTTP-call requirement on clear matches.
             top_candidates = viable_candidates[:5]
+            if viable_candidates and fn_lower:
+                c1 = viable_candidates[0]
+                c1_mbid, c1_rank, c1_dur_delta, c1_sim, c1_acoustid_score, c1_veto = c1
+                c1_rec = rec_by_mbid.get(c1_mbid) or {}
+                c1_raw_title = str(c1_rec.get("title") or "").lower().strip()
+                c1_raw_sim = difflib.SequenceMatcher(None, fn_lower, c1_raw_title).ratio() if c1_raw_title else 0.0
+
+                other_candidates = viable_candidates[1:]
+                other_raw_sims = [
+                    difflib.SequenceMatcher(None, fn_lower, str((rec_by_mbid.get(c[0]) or {}).get("title") or "").lower().strip()).ratio()
+                    for c in other_candidates
+                ]
+                has_other_non_ascii = any(
+                    any(ord(char) > 127 for char in str((rec_by_mbid.get(c[0]) or {}).get("title") or ""))
+                    for c in other_candidates
+                )
+                has_other_higher_acoustid = any(c[4] > c1_acoustid_score for c in other_candidates)
+
+                if (
+                    c1_acoustid_score >= 0.95
+                    and c1_dur_delta <= 1.0
+                    and c1_raw_sim >= 0.99
+                    and (not other_raw_sims or all(s < 0.95 for s in other_raw_sims))
+                    and not has_other_non_ascii
+                    and not has_other_higher_acoustid
+                ):
+                    top_candidates = [c1]
+                    logger.info(
+                        "[resolution_engine] Clear-match detected for candidate %s '%s' (score=%.2f, delta=%.2fs, raw_sim=%.2f): "
+                        "capping MusicBrainz detail lookup to 1 call.",
+                        c1_mbid,
+                        c1_rec.get("title"),
+                        c1_acoustid_score,
+                        c1_dur_delta,
+                        c1_raw_sim,
+                    )
+
             top_mbids = [item[0] for item in top_candidates]
 
             logger.info(
@@ -2251,19 +2301,39 @@ class MetadataResolutionEngine:
                 # Check aliases and non-ASCII / ISRC alignment for candidate title
                 cand_mb_aliases = cand_meta.get("aliases") or []
                 best_cand_mb_title = c_title
-                best_alias_ratio = (
-                    difflib.SequenceMatcher(None, fn_lower, c_title.lower()).ratio()
-                    if fn_lower and c_title
-                    else 0.0
-                )
+
+                # Check candidate title similarity against filename_stem and baseline_title
+                target_titles = [t for t in [filename_stem, baseline_title] if t]
+                raw_title_sim = 0.0
+                for tgt in target_titles:
+                    tgt_low = tgt.lower().strip()
+                    s = difflib.SequenceMatcher(None, tgt_low, c_title.lower().strip()).ratio()
+                    norm_tgt = normalize_title(tgt_low)
+                    norm_c = normalize_title(c_title.lower().strip())
+                    if norm_tgt and norm_c:
+                        s = max(s, difflib.SequenceMatcher(None, norm_tgt, norm_c).ratio())
+                    if s > raw_title_sim:
+                        raw_title_sim = s
+
+                best_alias_ratio = raw_title_sim
+                alias_transliteration_confirmed = False
 
                 for alias in cand_mb_aliases:
                     a_name = alias if isinstance(alias, str) else (alias.get("name") or alias.get("title") or "")
                     if a_name:
-                        ratio = difflib.SequenceMatcher(None, fn_lower, str(a_name).lower()).ratio()
-                        if ratio > best_alias_ratio:
-                            best_alias_ratio = ratio
-                            best_cand_mb_title = str(a_name)
+                        a_str_low = str(a_name).lower().strip()
+                        norm_a = normalize_title(a_str_low)
+                        for tgt in target_titles:
+                            tgt_low = tgt.lower().strip()
+                            ratio = difflib.SequenceMatcher(None, tgt_low, a_str_low).ratio()
+                            norm_tgt = normalize_title(tgt_low)
+                            if norm_tgt and norm_a:
+                                ratio = max(ratio, difflib.SequenceMatcher(None, norm_tgt, norm_a).ratio())
+                            if ratio > best_alias_ratio:
+                                best_alias_ratio = ratio
+                                best_cand_mb_title = str(a_name)
+                            if ratio >= 0.60:
+                                alias_transliteration_confirmed = True
 
                 # Check if candidate shares ISRC with file
                 cand_isrcs_d = []
@@ -2286,7 +2356,15 @@ class MetadataResolutionEngine:
                             isrc_prefix_match_d = True
                             break
 
-                if best_alias_ratio >= 0.60:
+                if raw_title_sim < 0.50 and alias_transliteration_confirmed:
+                    cand_sim = 1.0
+                    c_title = best_cand_mb_title
+                    logger.info(
+                        "[resolution_engine] Alias transliteration match: MBID %s alias '%s' matched target (sim -> 1.0)",
+                        mbid_str,
+                        best_cand_mb_title,
+                    )
+                elif best_alias_ratio >= 0.60:
                     c_title = best_cand_mb_title
                 elif (not c_title.isascii()) and isrc_prefix_match_d and filename_stem:
                     c_title = filename_stem
@@ -2379,18 +2457,28 @@ class MetadataResolutionEngine:
                 cand_isrcs: list[str] = []
                 raw_isrcs = cand_meta.get("isrcs") or cand_meta.get("isrc_list") or []
                 if isinstance(raw_isrcs, list):
-                    cand_isrcs.extend([str(i) for i in raw_isrcs if i])
+                    cand_isrcs.extend([str(i).strip() for i in raw_isrcs if i])
                 elif isinstance(raw_isrcs, str):
-                    cand_isrcs.append(raw_isrcs)
+                    cand_isrcs.append(raw_isrcs.strip())
                 single_isrc = cand_meta.get("isrc")
-                if single_isrc and isinstance(single_isrc, str) and single_isrc not in cand_isrcs:
-                    cand_isrcs.append(single_isrc)
+                if single_isrc and isinstance(single_isrc, str) and single_isrc.strip() not in cand_isrcs:
+                    cand_isrcs.append(single_isrc.strip())
 
-                isrc_adjustment = calculate_isrc_penalty_or_bonus(file_isrc, cand_isrcs)
-                if is_untrusted and isrc_adjustment > 0:
-                    # Do NOT evaluate file_isrc from unverified physical tags for exact match bonuses (+25.0).
-                    # Only allow major-label vs aggregator disqualifications/penalties (< 0).
-                    isrc_adjustment = 0.0
+                clean_cand_isrcs = [str(i).replace("-", "").strip().upper() for i in cand_isrcs if i]
+                is_exact_isrc_match = bool(clean_file_isrc and clean_file_isrc in clean_cand_isrcs and not is_untrusted)
+
+                if is_exact_isrc_match:
+                    isrc_adjustment = 50.0  # Master ISRC match (+50.0)
+                    cand_meta["isrc_match"] = True
+                else:
+                    cand_meta["isrc_match"] = False
+                    isrc_adjustment = calculate_isrc_penalty_or_bonus(file_isrc, cand_isrcs)
+                    if is_untrusted and isrc_adjustment > 0:
+                        # Do NOT evaluate file_isrc from unverified physical tags for exact match bonuses (+25.0).
+                        # Only allow major-label vs aggregator disqualifications/penalties (< 0).
+                        isrc_adjustment = 0.0
+
+                cand_meta["duration_delta_sec"] = dur_delta_sec
 
                 # Cover Disambiguation Gate:
                 # delta_sim = sim_cand - sim_runner_up
@@ -2414,7 +2502,30 @@ class MetadataResolutionEngine:
                 else:
                     cover_penalty = 0.0
 
-                # Final score: candidate scoring combines matcher score (70%), duration weight (30%), album bonus, popularity bonus, canonical weight, cover penalty, and ISRC adjustment
+                # Remix Disambiguation Gate:
+                # If candidate has disambiguation containing version keywords ("mix", "remix", "country mix", "acoustic", "edit")
+                # or release_group secondary type is Remix, while baseline title is clean:
+                # Deduct 25.0 points from cand_score.
+                base_clean_for_remix = (baseline_title or filename_stem or "").lower()
+                baseline_has_remix_cue = any(
+                    k in base_clean_for_remix for k in ("mix", "remix", "country mix", "acoustic", "edit", "live")
+                )
+                c_disambig = str(cand_meta.get("disambiguation") or cand_meta.get("version") or "").lower()
+                rg_sec_types = [
+                    str(st).lower()
+                    for st in (
+                        release_group.get("secondary_types")
+                        or release_group.get("secondary-types")
+                        or ([release_group.get("secondary_type")] if release_group.get("secondary_type") else [])
+                    )
+                ]
+                c_is_remix_variant = any(
+                    k in c_disambig for k in ("mix", "remix", "country mix", "acoustic", "edit")
+                ) or any(k in rg_sec_types for k in ("remix", "dj-mix"))
+
+                remix_penalty = -25.0 if (c_is_remix_variant and not baseline_has_remix_cue) else 0.0
+
+                # Final score: candidate scoring combines matcher score (70%), duration weight (30%), album bonus, popularity bonus, canonical weight, cover penalty, remix penalty, and ISRC adjustment
                 cand_score = (
                     (matcher_score * 0.7)
                     + (dur_weight * 30.0)
@@ -2422,15 +2533,16 @@ class MetadataResolutionEngine:
                     + popularity_bonus
                     + canonical_weight
                     + cover_penalty
+                    + remix_penalty
                     + isrc_adjustment
                 )
-                cand_score = max(0.0, cand_score)
+                cand_score = min(100.0, max(0.0, cand_score))
                 if veto_applies:
                     cand_sim = max(cand_sim, 0.65)
 
                 logger.info(
                     "[resolution_engine] Stage 3 candidate MBID %s '%s': "
-                    "matcher=%.1f dur_weight=%.3f album_bonus=%.1f pop_bonus=%.1f canon_weight=%.1f cover_pen=%.1f isrc_adj=%.1f veto=%s => score=%.2f",
+                    "matcher=%.1f dur_weight=%.3f album_bonus=%.1f pop_bonus=%.1f canon_weight=%.1f cover_pen=%.1f remix_pen=%.1f isrc_adj=%.1f veto=%s => score=%.2f",
                     mbid_str,
                     c_title,
                     matcher_score,
@@ -2439,6 +2551,7 @@ class MetadataResolutionEngine:
                     popularity_bonus,
                     canonical_weight,
                     cover_penalty,
+                    remix_penalty,
                     isrc_adjustment,
                     veto_applies,
                     cand_score,
@@ -2456,13 +2569,16 @@ class MetadataResolutionEngine:
                     "release_count": release_count,
                     "release_group_count": R,
                     "cover_penalty": cover_penalty,
+                    "remix_penalty": remix_penalty,
                     "isrc_adjustment": isrc_adjustment,
+                    "isrc_match": is_exact_isrc_match,
+                    "duration_delta_sec": dur_delta_sec,
                     "isrcs": cand_isrcs,
                     "file_isrc": file_isrc,
                     "delta_sim": delta_sim,
                     "is_cover_collection": is_cover_collection,
                     "veto_applied": veto_applies,
-                    "total_score": min(100.0, max(0.0, cand_score)),
+                    "total_score": cand_score,
                     "status": "EVALUATED",
                 }
                 acoustid_candidates_diag.append(cand_diag_entry)
@@ -2485,6 +2601,7 @@ class MetadataResolutionEngine:
                 has_competing_exact_candidate = False
                 for other_item in top_candidates[len(candidates_scored):]:
                     other_mbid = other_item[0]
+                    other_acoustid_score = other_item[4] if len(other_item) > 4 else 0.0
                     other_rec = rec_by_mbid.get(other_mbid) or {}
                     other_t = str(other_rec.get("title") or "").lower().strip()
                     if other_t and target_title_clean:
@@ -2492,6 +2609,15 @@ class MetadataResolutionEngine:
                         if other_raw_sim >= 0.95:
                             has_competing_exact_candidate = True
                             break
+                    if other_acoustid_score >= 0.90 or (other_t and not other_t.isascii()):
+                        has_competing_exact_candidate = True
+                        break
+                    if other_acoustid_score > cand_acoustid_score:
+                        has_competing_exact_candidate = True
+                        break
+
+                if clean_file_isrc and not is_exact_isrc_match:
+                    has_competing_exact_candidate = True
 
                 if (
                     cand_score >= 100.0
@@ -2512,6 +2638,14 @@ class MetadataResolutionEngine:
                 # cand_tuple: (score, mbid, meta, veto, acoustid_score, dur_delta, diag)
                 score = cand_tuple[0]
                 meta = cand_tuple[2] or {}
+                is_isrc_match = 1 if meta.get("isrc_match") else 0
+
+                # Release group breadth (artist/recording stature)
+                rg_count = len(meta.get("releases", []) or []) + (
+                    meta.get("release_group_count") or meta.get("release_count") or 0
+                )
+                pop_score = math.log10(rg_count + 1)
+
                 # Chronological primacy: earlier release years rank higher (e.g. 2003 beats 2018)
                 year_val = meta.get("year") or meta.get("release_year")
                 if not year_val:
@@ -2539,17 +2673,14 @@ class MetadataResolutionEngine:
 
                 # Invert year so earlier years provide positive sorting advantage
                 year_score = -year if year > 1900 else -9999
-                # Release group breadth (artist/recording stature)
-                rg_count = len(meta.get("releases", []) or []) + (
-                    meta.get("release_group_count") or meta.get("release_count") or 0
-                )
+
                 # Acoustic duration proximity
                 dur_delta = abs(
                     cand_tuple[5]
                     if len(cand_tuple) > 5 and isinstance(cand_tuple[5], (int, float))
                     else meta.get("duration_delta_sec", 0.0)
                 )
-                return (score, year_score, rg_count, -dur_delta)
+                return (score, is_isrc_match, pop_score, year_score, -dur_delta)
 
             valid_scored = [c for c in candidates_scored if c[0] > 0]
             if valid_scored:
