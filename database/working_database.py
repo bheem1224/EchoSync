@@ -105,6 +105,7 @@ class WatchlistArtist(WorkingBase):
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now, onupdate=utc_now)
 
 
+
 class ReviewTask(WorkingBase):
     """Model for items in the Metadata Review Queue."""
 
@@ -119,6 +120,11 @@ class ReviewTask(WorkingBase):
     last_checked_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now, onupdate=utc_now)
+
+    def __init__(self, **kwargs):
+        if not kwargs.get("file_path") and kwargs.get("media_id"):
+            kwargs["file_path"] = kwargs["media_id"]
+        super().__init__(**kwargs)
 
     @property
     def detected_metadata(self) -> dict | None:
@@ -233,7 +239,7 @@ class ReviewTask(WorkingBase):
         return {
             "id": self.id,
             "file_path": self.file_path,
-            "media_id": self.media_id,
+            "media_id": self.media_id or self.file_path,
             "track_data": self.track_data,
             "status": self.status,
             "confidence_score": self.confidence_score,
@@ -265,6 +271,7 @@ class UserTrackState(WorkingBase):
     lifecycle_queued_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
 
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now, onupdate=utc_now)
+
 
     account: Mapped[Account] = relationship(back_populates="track_states", foreign_keys=[account_id])
     sponsor: Mapped[Account | None] = relationship(foreign_keys=[sponsor_id])
@@ -331,6 +338,7 @@ class SuggestionStagingQueue(WorkingBase):
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now, onupdate=utc_now)
 
+
     @property
     def raw_payload(self) -> dict | None:
         return self.context_data
@@ -376,6 +384,7 @@ class VirtualTrackCache(WorkingBase):
 
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now, onupdate=utc_now)
+
 
 
 class PluginStateKVS(WorkingBase):

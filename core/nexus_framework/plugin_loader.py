@@ -1981,7 +1981,11 @@ class PluginRegistry:
         if not base_type:
             raise ValueError(f"Unknown plugin type: {plugin_type}")
 
-        plugins = [p_id for p_id, cls_ in cls._plugins.items() if issubclass(cls_, base_type)]
+        plugins = [
+            p_id
+            for p_id, cls_ in cls._plugins.items()
+            if isinstance(cls_, type) and issubclass(cls_, base_type)
+        ]
         if exclude_disabled:
             plugins = [p_id for p_id in plugins if p_id not in cls._disabled_plugins]
         return plugins

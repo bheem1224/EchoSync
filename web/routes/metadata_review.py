@@ -1593,6 +1593,7 @@ def lookup_review_queue_item_acoustid(task_id: int, _=Depends(require_auth)):
                 track_obj.title = res.title
                 track_obj.raw_title = res.title
                 track_obj.display_title = res.title
+            track_obj.edition = res.edition
             if res.artist:
                 track_obj.artist_name = res.artist
             if res.album:
@@ -1610,6 +1611,7 @@ def lookup_review_queue_item_acoustid(task_id: int, _=Depends(require_auth)):
             if res.chromaprint:
                 track_obj.fingerprint = res.chromaprint
             res_dict = res.to_dict()
+            res_dict["edition"] = res.edition
             if res.chromaprint:
                 res_dict["fingerprint"] = res.chromaprint
                 res_dict["chromaprint"] = res.chromaprint

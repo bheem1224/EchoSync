@@ -8,6 +8,8 @@ from core.settings import config_manager
 from database.working_database import UserRating, UserTrackState, get_working_database
 from time_utils import utc_now
 
+event_bus: Any = None
+
 DELETE_MONTH_END = "DELETE_MONTH_END"
 UPGRADE_WEEK_END = "UPGRADE_WEEK_END"
 

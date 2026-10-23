@@ -65,7 +65,7 @@ def test_serialize_task(monkeypatch, mock_db):
     serialized = metadata_review._serialize_task(task)
     assert serialized["id"] == 456
     assert serialized["file_path"] == "/data/library/artist/album/song.mp3"
-    assert serialized["media_id"] == "/data/library/artist/album/song.mp3"
+    assert serialized["media_id"] == "media_123"
     assert serialized["detected_metadata"]["title"] == "Song Title"
     assert serialized["current_metadata"] == {"title": "Existing Title"}
 

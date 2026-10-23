@@ -653,6 +653,28 @@ def select_best_acoustid_recording(
                 filename=filename,
             )
 
+            # Penalize remix disambiguation when baseline is clean
+            baseline_str = f"{baseline_title or ''} {filename or ''} {tag_title or ''}".lower()
+            baseline_is_remix = bool(re.search(r"\b(?:remix|rmx|club mix|mix|edit|bootleg|flip)\b", baseline_str))
+
+            if not baseline_is_remix:
+                has_remix_sec_type = False
+                for r in meta.get("releases", []) or []:
+                    if isinstance(r, dict):
+                        rg = r.get("release-group") or r.get("release_group") or {}
+                        sec_types = [str(st).lower() for st in (rg.get("secondary-types") or rg.get("secondary_types") or [])]
+                        if "remix" in sec_types:
+                            has_remix_sec_type = True
+                            break
+
+                disambig = str(meta.get("disambiguation") or "").strip().lower()
+                cand_title_str = str(meta.get("title") or "").strip().lower()
+                has_remix_disambig = bool(re.search(r"\b(?:remix|rmx|club mix|country mix|acoustic mix|mix|edit|bootleg|flip)\b", disambig))
+                has_remix_title = bool(re.search(r"\((?:[^\)]*?\s+)?(?:remix|rmx|mix|edit|flip|bootleg)\)", cand_title_str))
+
+                if has_remix_sec_type or has_remix_disambig or has_remix_title:
+                    score = max(0.0, score - 25.0)
+
             if score > best_cand_score:
                 best_cand_score = score
                 best_cand_meta = meta

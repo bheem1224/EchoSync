@@ -902,13 +902,16 @@ class WeightedMatchingEngine:
         # do NOT penalize parenthetical album edition qualifiers like (burnt), (Deluxe), or (Single).
         cand_ed = (getattr(candidate, "edition", None) or getattr(candidate, "version", None) or "").strip().lower()
         cand_fam = get_version_family(cand_ed)
-        # Remasters, remixes, and explicit track-level deluxe (in sync context) are track version mismatches, not album qualifiers.
+        # Remasters, remixes, and explicit track-level deluxe (in sync/download contexts) are track version mismatches, not album qualifiers.
         is_hard_version_mismatch = (
             cand_fam in ("remaster", "remix", "live", "instrumental", "karaoke", "acapella")
-            or (cand_fam == "deluxe" and cand_ed in ("deluxe", "deluxe edition") and context == "sync")
+            or (
+                cand_fam in ("deluxe", "remaster")
+                and (context in ("sync", "download") or getattr(self.profile, "name", "") == "exact_sync")
+            )
         )
         if title_fuzzy_score >= 0.95 and artist_fuzzy_score >= 0.90 and duration_score >= 0.95:
-            if not is_hard_version_mismatch:
+            if not is_hard_version_mismatch and context != "tier3_fallback":
                 version_match = True
                 edition_match = True
                 ver_penalty = 0.0

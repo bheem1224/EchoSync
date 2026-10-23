@@ -543,7 +543,7 @@ def delete_media_endpoint(media_id: str):
                     status_code=404, detail={"error": f"Media file {clean_media_id} not found"}
                 )
 
-        success = media_manager.delete_media_file(clean_media_id)
+        success = media_manager.delete_media_file(clean_media_id, db=db)
         if success:
             return {"success": True, "message": f"Media file {clean_media_id} deleted"}
         else:
@@ -577,7 +577,7 @@ def delete_track_endpoint(sync_id: str):
                     status_code=404, detail={"error": f"Track {clean_sync_id} not found"}
                 )
 
-        success = media_manager.delete_track(clean_sync_id)
+        success = media_manager.delete_track(clean_sync_id, db=db)
         if success:
             return {"success": True, "message": f"Track {clean_sync_id} deleted"}
         else:

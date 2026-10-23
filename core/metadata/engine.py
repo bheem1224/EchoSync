@@ -1300,10 +1300,41 @@ class MetadataResolutionEngine:
                             "",
                             baseline_album,
                         ).strip()
-                    _, extracted_film = sanitize_soundtrack_title(
-                        baseline_title if signature_valid else acoustid_res["title"],
+                    _, ext_film_cand = sanitize_soundtrack_title(
+                        acoustid_res.get("title") or "",
                         album=resolved_album,
                     )
+                    _, ext_film_base = sanitize_soundtrack_title(
+                        baseline_title or "",
+                        album=resolved_album,
+                    )
+                    extracted_film = ext_film_cand or ext_film_base
+                    if not extracted_film:
+                        # Check if release group or album carries a soundtrack/film title
+                        rg = acoustid_res.get("release_group") or {}
+                        is_soundtrack_rg = (
+                            str(rg.get("primary_type", "")).lower() == "soundtrack"
+                            or any(
+                                str(r.get("release_group", {}).get("primary_type", "")).lower() == "soundtrack"
+                                for r in acoustid_res.get("releases", [])
+                                if isinstance(r, dict)
+                            )
+                        )
+                        raw_album_name = str(acoustid_res.get("album") or rg.get("title") or resolved_album or "")
+                        if is_soundtrack_rg or re.search(r"\b(?:soundtrack|ost|motion\s+picture|score|spider-verse)\b", raw_album_name, re.IGNORECASE):
+                            clean_film = re.sub(
+                                r"(?i)\s*[\(\[](?:original\s+)?(?:motion\s+picture\s+)?(?:soundtrack|score|ost).*?[\)\]]",
+                                "",
+                                raw_album_name,
+                            ).strip()
+                            clean_film = re.sub(
+                                r"(?i)\b(?:original\s+)?(?:motion\s+picture\s+)?(?:soundtrack|score|ost)\b",
+                                "",
+                                clean_film,
+                            ).strip()
+                            clean_film = re.sub(r"\s*:\s*", " - ", clean_film).strip()
+                            if clean_film:
+                                extracted_film = clean_film
                     forced_edition = f"{extracted_film} Edition" if extracted_film else None
                 else:
                     resolved_album = resolved_album or baseline_album
@@ -2439,6 +2470,43 @@ class MetadataResolutionEngine:
                 candidates_scored.append(
                     (cand_score, mbid_str, cand_meta, veto_applies, cand_acoustid_score, dur_delta_sec, cand_diag_entry)
                 )
+
+                # Short-circuit: When the top candidate is an unambiguous exact match
+                # (cand_score >= 100.0, dur_delta_sec <= 1.0s, raw title similarity >= 0.95)
+                # and no remaining candidate has a competing exact title match (raw_sim >= 0.95),
+                # stop querying MusicBrainz to avoid redundant network egress.
+                target_title_clean = (filename_stem or baseline_title or "").lower().strip()
+                raw_title_sim = (
+                    difflib.SequenceMatcher(None, target_title_clean, c_title.lower().strip()).ratio()
+                    if target_title_clean and c_title
+                    else 0.0
+                )
+
+                has_competing_exact_candidate = False
+                for other_item in top_candidates[len(candidates_scored):]:
+                    other_mbid = other_item[0]
+                    other_rec = rec_by_mbid.get(other_mbid) or {}
+                    other_t = str(other_rec.get("title") or "").lower().strip()
+                    if other_t and target_title_clean:
+                        other_raw_sim = difflib.SequenceMatcher(None, target_title_clean, other_t).ratio()
+                        if other_raw_sim >= 0.95:
+                            has_competing_exact_candidate = True
+                            break
+
+                if (
+                    cand_score >= 100.0
+                    and dur_delta_sec <= 1.0
+                    and raw_title_sim >= 0.95
+                    and not has_competing_exact_candidate
+                ):
+                    logger.info(
+                        "[resolution_engine] Short-circuiting candidate evaluation: candidate (%s) is an unambiguous exact match (score=%.1f, delta=%.2fs, raw_sim=%.2f).",
+                        mbid_str,
+                        cand_score,
+                        dur_delta_sec,
+                        raw_title_sim,
+                    )
+                    break
 
             def candidate_ranking_key(cand_tuple):
                 # cand_tuple: (score, mbid, meta, veto, acoustid_score, dur_delta, diag)

@@ -12,10 +12,20 @@ logger = get_logger("media_manager")
 
 
 class MediaManagerService:
-    def __init__(self):
-        self.db = get_database()
+    def __init__(self, db=None):
+        self._db = db
         self._subscribed = False
         self._subscribe_events()
+
+    @property
+    def db(self):
+        if self._db is not None:
+            return self._db
+        return get_database()
+
+    @db.setter
+    def db(self, value):
+        self._db = value
 
     def _subscribe_events(self) -> None:
         if self._subscribed:
@@ -258,7 +268,7 @@ class MediaManagerService:
         logger.warning(f"File path for track {track_id} does not exist: {file_path}")
         return None
 
-    def delete_track(self, track_id: int | str, delete_physical: bool = True) -> bool:
+    def delete_track(self, track_id: int | str, delete_physical: bool = True, db: Any = None) -> bool:
         """
         Delete a Track, its linked LocalMedia records, and optionally its physical files.
         Also triggers remote deletion on active media servers.
@@ -272,8 +282,9 @@ class MediaManagerService:
         library_root = Path(_lib).resolve() if _lib else None
         active_servers = PluginRegistry.get_active_services_by_type("media_server")
 
+        target_db = db or self.db or get_database()
         try:
-            with self.db.session_scope() as session:
+            with target_db.session_scope() as session:
                 query = session.query(Track)
                 if isinstance(track_id, int) or (isinstance(track_id, str) and track_id.isdigit()):
                     track = query.filter((Track.id == int(track_id)) | (Track.sync_id == str(track_id))).first()
@@ -341,7 +352,7 @@ class MediaManagerService:
             logger.error(f"Failed to delete local track {track_id}: {e}", exc_info=True)
             return False
 
-    def delete_media_file(self, local_media_id: int | str, delete_physical: bool = True) -> bool:
+    def delete_media_file(self, local_media_id: int | str, delete_physical: bool = True, db: Any = None) -> bool:
         """
         Delete a single LocalMedia record and its physical file without deleting
         the parent Track (unless no other media files remain on the Track).
@@ -353,15 +364,14 @@ class MediaManagerService:
         _lib = config_manager.get("storage.library_dir") or config_manager.get("library_dir")
         library_root = Path(_lib).resolve() if _lib else None
 
+        target_db = db or self.db or get_database()
         try:
-            with self.db.session_scope() as session:
-                query = session.query(LocalMedia)
-                if isinstance(local_media_id, int) or (isinstance(local_media_id, str) and local_media_id.isdigit()):
-                    media = query.filter(
-                        (LocalMedia.id == int(local_media_id)) | (LocalMedia.media_id == str(local_media_id))
-                    ).first()
-                else:
-                    media = query.filter(LocalMedia.media_id == str(local_media_id)).first()
+            with target_db.session_scope() as session:
+                media_identifier = local_media_id
+                media = session.query(LocalMedia).filter(
+                    (LocalMedia.media_id == str(media_identifier)) |
+                    (LocalMedia.id == int(media_identifier) if str(media_identifier).isdigit() else False)
+                ).first()
 
                 if not media:
                     logger.warning(f"LocalMedia {local_media_id} not found for deletion")
@@ -431,3 +441,5 @@ class MediaManagerService:
             if not self.delete_media_file(m_id, delete_physical=True):
                 all_success = False
         return all_success
+
+    delete_media = delete_media_file

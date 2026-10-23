@@ -356,7 +356,7 @@
       ...newMetadata,
       title: newMetadata.title ?? proposedMetadata.title,
       edition:
-        newMetadata.edition ?? newMetadata.version ?? proposedMetadata.edition,
+        ("edition" in newMetadata ? (newMetadata.edition ?? "") : ("version" in newMetadata ? (newMetadata.version ?? "") : proposedMetadata.edition)),
       artist: newMetadata.artist ?? proposedMetadata.artist,
       album: newMetadata.album ?? proposedMetadata.album,
       year: newMetadata.year ?? newMetadata.date ?? proposedMetadata.year,
@@ -984,6 +984,9 @@
           diagnostics,
         };
         showDiagnosticsDrawer = true;
+        if ("edition" in resMeta) {
+          proposedMetadata.edition = resMeta.edition ?? "";
+        }
 
         const { changed, fieldsChanged } = applyMetadataUpdate(resMeta);
         if (changed && fieldsChanged.length > 0) {
@@ -1377,15 +1380,15 @@
     <!-- Right: Slide-out Diagnostic Drawer -->
     {#if showDiagnosticsDrawer}
       <aside
-        class="w-96 lg:w-[480px] shrink-0 border-l border-slate-800 bg-slate-950 flex flex-col h-full max-h-[85vh] min-h-0 overflow-hidden z-20 shadow-2xl transition-all duration-200"
+        class="w-[420px] shrink-0 border-l border-slate-800 bg-slate-900/95 flex flex-col h-full min-h-0 shadow-2xl transition-all duration-200"
       >
         <!-- Drawer Header -->
         <div
           class="p-4 border-b border-slate-800 flex items-center justify-between bg-slate-900/60 shrink-0"
         >
           <div class="flex items-center gap-2">
-            <span class="text-sm font-semibold text-slate-200"
-              >Stage Diagnostics</span
+            <h3 class="font-medium text-slate-200"
+              >Stage Diagnostics</h3
             >
             {#if pipelineDiagnostics?.winning_stage || pipelineDiagnostics?.winningStage}
               <span
@@ -1408,7 +1411,7 @@
 
         <!-- Drawer Content (Scrollable) -->
         <div
-          class="flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-4 pr-2 space-y-4 text-xs font-sans [scrollbar-width:thin] [scrollbar-color:theme(colors.slate.700)_transparent]"
+          class="flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-4 pr-2 space-y-4 text-xs font-sans scrollbar-thin scrollbar-thumb-slate-700 [scrollbar-width:thin] [scrollbar-color:theme(colors.slate.700)_transparent]"
         >
           {#if pipelineDiagnostics}
             <!-- Waterfall Timeline -->
