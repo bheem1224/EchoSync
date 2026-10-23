@@ -84,18 +84,10 @@
 <svelte:window onkeydown={handleKeydown} />
 
 {#if isOpen}
-  <!-- Backdrop -->
-  <div
-    class="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 transition-opacity"
-    onclick={onClose}
-    transition:fade={{ duration: 180 }}
-    aria-hidden="true"
-  ></div>
-
-  <!-- Slide-out Drawer Panel -->
+  <!-- Docked Drawer Panel -->
   <aside
-    class="fixed inset-y-0 right-0 z-50 w-full sm:w-[480px] bg-slate-900 text-slate-100 border-l border-slate-700/80 shadow-2xl flex flex-col overflow-hidden"
-    transition:fly={{ x: 480, duration: 240 }}
+    class="w-96 lg:w-[450px] shrink-0 border-l border-slate-800 bg-slate-900 text-slate-100 flex flex-col min-h-0 h-full overflow-hidden shadow-2xl transition-all duration-300"
+    transition:fly={{ x: 200, duration: 240 }}
     aria-label="Playlist Track Match Diagnostics"
   >
     <!-- Header -->
@@ -139,7 +131,7 @@
     </div>
 
     <!-- Body -->
-    <div class="flex-1 overflow-y-auto p-4 space-y-4 text-xs">
+    <div class="flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-4 pr-2 space-y-4 text-xs [scrollbar-width:thin] [scrollbar-color:theme(colors.slate.700)_transparent]">
       <!-- Query Details Card -->
       <div class="bg-slate-800/60 rounded-xl p-3 border border-slate-700/60 space-y-2">
         <div class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">

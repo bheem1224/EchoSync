@@ -20,6 +20,7 @@ from core.matching_engine.fingerprinting import FingerprintGenerator
 from core.matching_engine.matching_engine import WeightedMatchingEngine
 from core.matching_engine.scoring_profile import PROFILE_EXACT_SYNC
 from core.matching_engine.text_utils import normalize_title
+from core.matching_engine.track_parser import sanitize_soundtrack_title
 from core.matching_engine.trust_gate import (
     clean_title_from_filename,
     is_cross_script,
@@ -72,6 +73,9 @@ def _add_diagnostic(
     request._diagnostics.append(entry)
 
 
+_UNSET = object()
+
+
 def _create_resolved_track(
     media_id: str | None = None,
     sync_id: str | None = None,
@@ -93,6 +97,7 @@ def _create_resolved_track(
     file_path: str | Path | None = None,
     diagnostics: list[dict[str, Any]] | None = None,
     request: Any = None,
+    edition: Any = _UNSET,
 ) -> EchosyncTrack:
     from core.db.echo_sync_track import EchosyncMedia
     from core.matching_engine.track_parser import (
@@ -110,7 +115,8 @@ def _create_resolved_track(
 
     clean_t, ext_ver, ext_ed = extract_version_descriptors(title)
     clean_alb, alb_ver, alb_ed = extract_version_descriptors(final_album or "") if final_album else (None, None, None)
-    edition = ext_ed or alb_ed
+    if edition is _UNSET:
+        edition = ext_ed or alb_ed
     version = ext_ver or alb_ver
     final_album = clean_alb if clean_alb else (final_album or "")
 
@@ -1271,12 +1277,44 @@ class MetadataResolutionEngine:
                     acoustid_res["candidate_score"],
                     acoustid_res.get("veto_applied", False),
                 )
+                cand_score = acoustid_res.get("candidate_score", 0.0)
+                ac_score = acoustid_res.get("acoustid_score", 0.0)
+                is_high_conf = cand_score >= 90.0 or ac_score >= 90.0
+                mb_title = str(acoustid_res.get("title") or "")
+                mb_disambig = str(acoustid_res.get("disambiguation") or "")
+                has_remix_descriptor = bool(
+                    re.search(
+                        r"\b(?:remix|rmx|club mix|radio edit|dub|rework|bootleg|flip)\b",
+                        f"{mb_title} {mb_disambig}",
+                        re.IGNORECASE,
+                    )
+                )
+
+                resolved_album = acoustid_res.get("album")
+                forced_edition = _UNSET
+                if is_high_conf and not has_remix_descriptor:
+                    # Strip unverified baseline edition modifiers: do not let baseline_album or baseline_edition inject "Remix"
+                    if not resolved_album and baseline_album:
+                        resolved_album = re.sub(
+                            r"(?i)\s*[\(\[](?:remix(?:es)?|rmx|club mix|radio edit)[\)\]]",
+                            "",
+                            baseline_album,
+                        ).strip()
+                    _, extracted_film = sanitize_soundtrack_title(
+                        baseline_title if signature_valid else acoustid_res["title"],
+                        album=resolved_album,
+                    )
+                    forced_edition = f"{extracted_film} Edition" if extracted_film else None
+                else:
+                    resolved_album = resolved_album or baseline_album
+
                 return _create_resolved_track(
                     media_id=request.media_id,
                     sync_id=request.sync_id,
                     title=baseline_title if signature_valid else acoustid_res["title"],
                     artist=baseline_artist if signature_valid else acoustid_res["artist"],
-                    album=acoustid_res.get("album") or baseline_album,
+                    album=resolved_album,
+                    edition=forced_edition,
                     year=acoustid_res.get("year") if acoustid_res.get("year") is not None else parsed_year,
                     track_number=acoustid_res.get("track_number")
                     if acoustid_res.get("track_number") is not None

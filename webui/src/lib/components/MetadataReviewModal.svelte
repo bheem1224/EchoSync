@@ -1377,7 +1377,7 @@
     <!-- Right: Slide-out Diagnostic Drawer -->
     {#if showDiagnosticsDrawer}
       <aside
-        class="w-96 lg:w-[480px] shrink-0 border-l border-slate-800 bg-slate-950 flex flex-col min-h-0 h-full overflow-hidden z-20 shadow-2xl transition-all duration-200"
+        class="w-96 lg:w-[480px] shrink-0 border-l border-slate-800 bg-slate-950 flex flex-col h-full max-h-[85vh] min-h-0 overflow-hidden z-20 shadow-2xl transition-all duration-200"
       >
         <!-- Drawer Header -->
         <div
@@ -1408,7 +1408,7 @@
 
         <!-- Drawer Content (Scrollable) -->
         <div
-          class="flex-1 min-h-0 overflow-y-auto p-4 space-y-4 text-xs font-sans"
+          class="flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-4 pr-2 space-y-4 text-xs font-sans [scrollbar-width:thin] [scrollbar-color:theme(colors.slate.700)_transparent]"
         >
           {#if pipelineDiagnostics}
             <!-- Waterfall Timeline -->

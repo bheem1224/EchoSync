@@ -593,6 +593,8 @@
     analysisStarted = false;
     availableTargetAccounts = [];
     overrideTargetUserId = null;
+    isDiagnosticsDrawerOpen = false;
+    selectedTrackForDiagnostics = null;
     // Also clear any lingering sync-progress state so re-opening always shows a fresh analysis
     if (syncEventPollingId) {
       clearInterval(syncEventPollingId);
@@ -813,7 +815,7 @@
 
 {#if analysisModalOpen}
   <div class="modal-backdrop" on:click={closeAnalysisModal}></div>
-  <div class="modal">
+  <div class="modal {isDiagnosticsDrawerOpen ? 'modal--expanded' : ''}">
     <header class="modal__header">
       <div>
         <p class="eyebrow">Playlist Sync</p>
@@ -836,7 +838,8 @@
       <button class="close-btn active:scale-95 transition-all duration-200" on:click={closeAnalysisModal}>×</button>
     </header>
 
-    <div class="modal__body">
+    <div class="modal-content-container">
+      <div class="modal__body">
       {#if !syncProgressEvent}
         <!-- Analysis Section -->
         <div class="summary-grid">
@@ -979,6 +982,17 @@
           </div>
         {/if}
       {/if}
+      </div>
+
+      {#if isDiagnosticsDrawerOpen}
+        <PlaylistMatchDiagnosticDrawer
+          isOpen={isDiagnosticsDrawerOpen}
+          track={selectedTrackForDiagnostics}
+          onClose={() => {
+            isDiagnosticsDrawerOpen = false;
+          }}
+        />
+      {/if}
     </div>
   </div>
 {/if}
@@ -1101,14 +1115,6 @@
     </div>
   </div>
 {/if}
-
-<PlaylistMatchDiagnosticDrawer
-  isOpen={isDiagnosticsDrawerOpen}
-  track={selectedTrackForDiagnostics}
-  onClose={() => {
-    isDiagnosticsDrawerOpen = false;
-  }}
-/>
 
 <style>
   .page {
@@ -1394,7 +1400,7 @@
     position: fixed;
     top: 50%; left: 50%;
     transform: translate(-50%, -50%);
-    width: min(1100px, 96vw);
+    width: min(1000px, 96vw);
     max-height: 90vh;
     background: rgba(10, 10, 10, 0.98);
     backdrop-filter: blur(20px);
@@ -1407,6 +1413,20 @@
     gap: 16px;
     overflow: hidden;
     box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+    transition: width 0.3s cubic-bezier(0.16, 1, 0.3, 1), max-width 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .modal.modal--expanded {
+    width: min(1500px, 96vw);
+  }
+
+  .modal-content-container {
+    display: flex;
+    flex-direction: row;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+    gap: 20px;
   }
   .modal__header {
     display: flex;
@@ -1458,7 +1478,10 @@
     display: flex;
     flex-direction: column;
     gap: 16px;
-    overflow: auto;
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+    overflow-y: auto;
   }
   .close-btn {
     background: rgba(255, 255, 255, 0.05);

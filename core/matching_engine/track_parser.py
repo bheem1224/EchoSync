@@ -128,10 +128,6 @@ def sanitize_soundtrack_title(title: str, album: str | None = None) -> tuple[str
     if not title:
         return (title or "", None)
 
-    trailing_groups = re.search(r"(?:\s+\([^()]*\))+\s*$", title)
-    if not trailing_groups:
-        return (title, None)
-
     def tokens(value: str) -> list[str]:
         return re.findall(r"[a-z0-9]+", value.casefold())
 
@@ -242,25 +238,52 @@ def sanitize_soundtrack_title(title: str, album: str | None = None) -> tuple[str
 
         return False, None
 
-    suffix = trailing_groups.group(0)
-    matches = list(re.finditer(r"\(([^()]*)\)", suffix))
+    HYPHEN_SOUNDTRACK_PATTERN = re.compile(
+        r"\s+-\s+(?:from\s+(?:the\s+)?(?:motion\s+picture|soundtrack|film)(?:\s*[:\-]?\s*[\"']?([^\"'\n]+?)[\"']?)?|(?:theme\s+from\s+)?([A-Za-z0-9\s:,'’–-]+(?:soundtrack|score|ost|series|movie|verse|chronicles)?))\s*$",
+        re.IGNORECASE,
+    )
 
+    trailing_groups = re.search(r"(?:\s+\([^()]*\))+\s*$", title)
     extracted_film: str | None = None
     remaining_groups: list[str] = []
 
-    for match in matches:
-        q_str = match.group(1).strip()
-        is_st, film = extract_film_from_qualifier(q_str)
-        if is_st:
-            if film and not extracted_film:
-                extracted_film = film
-        else:
-            remaining_groups.append(match.group(0))
+    clean_base = title
+    if trailing_groups:
+        suffix = trailing_groups.group(0)
+        matches = list(re.finditer(r"\(([^()]*)\)", suffix))
 
-    if len(remaining_groups) == len(matches):
+        for match in matches:
+            q_str = match.group(1).strip()
+            is_st, film = extract_film_from_qualifier(q_str)
+            if is_st:
+                if film and not extracted_film:
+                    extracted_film = film
+            else:
+                remaining_groups.append(match.group(0))
+
+        if len(remaining_groups) < len(matches):
+            clean_base = title[: trailing_groups.start()].rstrip()
+
+    # If no film provenance found in parentheticals, check hyphen-delimited soundtrack provenance
+    if not extracted_film:
+        hyphen_target = title[: trailing_groups.start()].rstrip() if trailing_groups else title
+        hyphen_match = HYPHEN_SOUNDTRACK_PATTERN.search(hyphen_target)
+        if hyphen_match:
+            raw_film = (hyphen_match.group(2) or hyphen_match.group(1) or "").strip()
+            if raw_film and not is_version_descriptor(raw_film):
+                is_st, film = extract_film_from_qualifier(raw_film)
+                if is_st or re.search(r"\b(?:soundtrack|score|ost|series|movie|verse|chronicles)\b", raw_film, re.IGNORECASE):
+                    film_target = film or raw_film
+                    film_clean = re.sub(r"\s*:\s*", " - ", film_target).strip()
+                    extracted_film = film_clean
+                    clean_base = hyphen_target[: hyphen_match.start()].rstrip()
+
+    if not extracted_film and trailing_groups and len(remaining_groups) == len(list(re.finditer(r"\(([^()]*)\)", trailing_groups.group(0)))):
         return title, None
 
-    clean_base = title[: trailing_groups.start()].rstrip()
+    if not extracted_film and not trailing_groups:
+        return title, None
+
     clean_title = f"{clean_base} {' '.join(remaining_groups)}" if remaining_groups else clean_base
     return clean_title, extracted_film
 

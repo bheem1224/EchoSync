@@ -96,6 +96,8 @@ class ResolutionAdapter:
 
         if getattr(result, "edition", None):
             track.edition = result.edition
+        elif hasattr(result, "edition") and getattr(result, "resolution_method", None) in ("acoustid", "signature_verified"):
+            track.edition = result.edition
         elif ext_edition:
             track.edition = ext_edition
         elif ext_version:

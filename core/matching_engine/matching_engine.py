@@ -932,7 +932,7 @@ class WeightedMatchingEngine:
                 passed_version_check=False,
                 passed_edition_check=edition_match,
                 fuzzy_text_score=1.0,
-                duration_match_score=0.0,
+                duration_match_score=duration_score,
                 quality_bonus_applied=0.0,
                 version_penalty_applied=version_penalty,
                 edition_penalty_applied=0.0,
