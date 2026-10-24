@@ -94,6 +94,7 @@ def score_acoustid_candidate(
     untrusted_tags: bool = False,
     delta_sim: float | None = None,
     file_isrc: str | None = None,
+    sim_score: float | None = None,
 ) -> float:
     """Score AcoustID recording candidate by duration proximity, variant disambiguation penalties,
     canonical studio release weighting, logarithmic popularity bonus, and safe cover arbitration.
@@ -102,6 +103,15 @@ def score_acoustid_candidate(
     cand_dur_ms: int | None = None
     duration_weight = 1.0
     delta_sec = 0.0
+
+    if sim_score is not None:
+        from core.metadata.engine import compute_dynamic_duration_bounds
+
+        base_sec, effective_max_sec = compute_dynamic_duration_bounds(sim_score)
+    else:
+        base_sec = 2.0
+        effective_max_sec = max_sec
+
     if cand_dur:
         try:
             cand_dur_val = float(cand_dur)
@@ -112,8 +122,13 @@ def score_acoustid_candidate(
                 track_dur_sec = file_duration_ms / 1000.0
                 cand_dur_sec = cand_dur_ms / 1000.0
                 delta_sec = abs(track_dur_sec - cand_dur_sec)
-                duration_weight = calculate_acoustid_duration_weight(track_dur_sec, cand_dur_sec, max_sec=max_sec)
-                if duration_weight <= 0.0 or delta_sec > max_sec:
+                duration_weight = calculate_acoustid_duration_weight(
+                    track_dur_sec,
+                    cand_dur_sec,
+                    base_sec=base_sec,
+                    max_sec=effective_max_sec,
+                )
+                if duration_weight <= 0.0 or delta_sec > effective_max_sec:
                     return 0.0  # AcoustID duration gate (reject delta > max_sec)
         except (ValueError, TypeError):
             pass

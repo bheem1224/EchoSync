@@ -339,6 +339,23 @@ def compute_dynamic_duration_threshold(sim_score: float) -> float:
     return 2.0 + (progress * 3.0)
 
 
+def compute_dynamic_duration_bounds(sim_score: float) -> tuple[float, float]:
+    """Compute both base neutral window (T_base) and maximum limit (T_limit)
+    scaled by acoustic similarity.
+    """
+    s_norm = sim_score / 100.0 if sim_score > 1.0 else sim_score
+    if s_norm <= 0.80:
+        return 2.0, 2.0
+    if s_norm >= 0.95:
+        return 3.5, 5.0
+
+    # Linear interpolation between 0.80 and 0.95
+    progress = (s_norm - 0.80) / 0.15
+    base_sec = 2.0 + (progress * 1.5)   # 2.0s -> 3.5s
+    limit_sec = 2.0 + (progress * 3.0)  # 2.0s -> 5.0s
+    return round(base_sec, 3), round(limit_sec, 3)
+
+
 _calculate_dynamic_duration_threshold = compute_dynamic_duration_threshold
 
 
@@ -393,10 +410,12 @@ class MetadataResolutionEngine:
         baseline_album: str | None = None,
         filename: str | None = None,
         prefer_studio_album: bool = True,
+        sim_score: float | None = None,
     ) -> float:
         """Score AcoustID recording candidate by duration proximity, variant disambiguation penalties,
         and canonical studio release weighting using WeightedMatchingEngine(PROFILE_EXACT_SYNC).
         """
+        cand_score = sim_score if sim_score is not None else candidate.get("score")
         return score_acoustid_candidate(
             matcher=self.matcher,
             candidate=candidate,
@@ -406,6 +425,7 @@ class MetadataResolutionEngine:
             baseline_album=baseline_album,
             filename=filename,
             prefer_studio_album=prefer_studio_album,
+            sim_score=cand_score,
         )
 
     def resolve_track(
@@ -2393,7 +2413,13 @@ class MetadataResolutionEngine:
                         duration=cand_dur_ms,
                         version=cand_meta.get("disambiguation") or cand_meta.get("version"),
                     )
-                    match_res = self.matcher.calculate_match(query_track, cand_track)
+                    dynamic_base, dynamic_limit = compute_dynamic_duration_bounds(cand_acoustid_score or 0.0)
+                    match_res = self.matcher.calculate_match(
+                        query_track,
+                        cand_track,
+                        context="metadata_resolution",
+                        tolerance_override_ms=int(dynamic_limit * 1000),
+                    )
                     matcher_score = match_res.confidence_score if match_res else 0.0
 
                 # Album type bonus for canonical studio releases
@@ -2409,13 +2435,15 @@ class MetadataResolutionEngine:
                 prefer_studio = request.prefer_studio_album if request else True
                 album_bonus = 5.0 if prefer_studio and p_type == "Album" else 0.0
 
-                # Duration proximity weight (quadratic decay with dynamic max_sec)
+                # Duration proximity weight (quadratic decay with dynamic bounds)
                 if cand_dur_ms is not None and file_duration_ms > 0:
-                    max_threshold = compute_dynamic_duration_threshold(cand_acoustid_score)
+                    cand_sim = cand_acoustid_score or (details.get("score") if isinstance(details, dict) else 0.0) or 0.0
+                    dynamic_base, dynamic_limit = compute_dynamic_duration_bounds(cand_sim)
                     dur_weight = calculate_acoustid_duration_weight(
                         file_duration_sec,
                         cand_dur_ms / 1000.0,
-                        max_sec=max_threshold,
+                        base_sec=dynamic_base,
+                        max_sec=dynamic_limit,
                     )
                 else:
                     dur_weight = 1.0  # Unknown duration — no penalty
