@@ -4,7 +4,9 @@ build-backend = "maturin"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-v --maxfail=5 --durations=10"
+addopts = "-vv -s"
+timeout = 10
+timeout_method = "thread"
 # Enforce isolation and fail fast on runaway suites
 filterwarnings = ["error::ResourceWarning", "ignore::DeprecationWarning"]
 
@@ -55,7 +57,10 @@ dependencies = [
 ]
 
 [dependency-groups]
-dev = ["ruff>=0.16.6"]
+dev = [
+    "pytest-timeout>=2.4.0",
+    "ruff>=0.16.6",
+]
 
 [tool.ruff]
 line-length = 120

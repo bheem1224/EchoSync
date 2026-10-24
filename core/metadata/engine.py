@@ -2422,10 +2422,18 @@ class MetadataResolutionEngine:
                     )
                     matcher_score = match_res.confidence_score if match_res else 0.0
 
+                raw_releases = (
+                    cand_meta.get("releases")
+                    or cand_meta.get("release-list")
+                    or cand_meta.get("release_list")
+                    or []
+                )
+                cand_meta["releases"] = raw_releases
+
                 # Album type bonus for canonical studio releases
                 release_group = cand_meta.get("release_group") or cand_meta.get("release-group") or {}
-                if not release_group and cand_meta.get("releases"):
-                    for r in cand_meta.get("releases") or []:
+                if not release_group and raw_releases:
+                    for r in raw_releases:
                         if isinstance(r, dict):
                             rg = r.get("release-group") or r.get("release_group") or {}
                             if rg.get("primary_type") == "Album" or rg.get("primary-type") == "Album":
@@ -2448,62 +2456,59 @@ class MetadataResolutionEngine:
                 else:
                     dur_weight = 1.0  # Unknown duration — no penalty
 
-                # Release group popularity bonus (continuous logarithmic scaling)
-                rg_set = set()
-                for r in cand_meta.get("releases") or []:
-                    if isinstance(r, dict):
-                        rg = r.get("release-group") or r.get("release_group") or {}
-                        rg_id = rg.get("id") or r.get("release_group_id") or r.get("id")
-                        if rg_id:
-                            rg_set.add(rg_id)
-                # Global Release Count / Originality Weighting
-                raw_releases = cand_meta.get("releases") or []
-                rg_count_meta = cand_meta.get("release_group_count") or cand_meta.get("release_count") or 0
-                release_count = len(raw_releases) + (rg_count_meta if isinstance(rg_count_meta, int) else 0)
-                release_count = max(release_count, len(rg_set))
-
-                # Unique release-group count R from MusicBrainz
-                R = len(rg_set)
-                if isinstance(cand_meta.get("release_group_count"), int):
-                    R = max(R, cand_meta["release_group_count"])
-                elif isinstance(cand_meta.get("release_groups"), list):
-                    R = max(R, len(cand_meta["release_groups"]))
-                if R == 0 and release_count > 0:
-                    R = release_count
+                # Release group count, popularity bonus, and canonical weight
+                rg_count = (
+                    cand_meta.get("release_group_count")
+                    or (len(cand_meta["release-groups"]) if isinstance(cand_meta.get("release-groups"), list) else None)
+                    or (len(cand_meta["release_groups"]) if isinstance(cand_meta.get("release_groups"), list) else None)
+                    or cand_meta.get("release_count")
+                    or len(raw_releases)
+                )
+                cand_meta["release_group_count"] = rg_count
+                release_count = cand_meta.get("release_count") or len(raw_releases)
+                cand_meta["release_count"] = release_count
 
                 # Continuous logarithmic scaling: min(10.0, 3.0 * log10(R + 1))
-                popularity_bonus = calculate_popularity_bonus(R)
-
-                if release_count >= 20:
-                    canonical_weight = 10.0
-                elif release_count >= 5:
-                    canonical_weight = 5.0
-                else:
-                    canonical_weight = 0.0
+                pop_bonus = min(10.0, 3.0 * math.log10(rg_count + 1))
+                canon_weight = 10.0 if rg_count >= 20 else (5.0 if rg_count >= 5 else 0.0)
+                popularity_bonus = pop_bonus
+                canonical_weight = canon_weight
 
                 # ISRC penalty or bonus
-                cand_isrcs: list[str] = []
-                raw_isrcs = cand_meta.get("isrcs") or cand_meta.get("isrc_list") or []
-                if isinstance(raw_isrcs, list):
-                    cand_isrcs.extend([str(i).strip() for i in raw_isrcs if i])
-                elif isinstance(raw_isrcs, str):
-                    cand_isrcs.append(raw_isrcs.strip())
+                raw_isrcs = (
+                    cand_meta.get("isrcs")
+                    or cand_meta.get("isrc-list")
+                    or cand_meta.get("isrc_list")
+                    or []
+                )
+                if isinstance(raw_isrcs, str):
+                    raw_isrcs = [raw_isrcs]
+                cand_isrcs = [
+                    (item if isinstance(item, str) else item.get("isrc", ""))
+                    for item in raw_isrcs
+                ]
+                cand_isrcs = [i.strip().upper() for i in cand_isrcs if i]
                 single_isrc = cand_meta.get("isrc")
-                if single_isrc and isinstance(single_isrc, str) and single_isrc.strip() not in cand_isrcs:
-                    cand_isrcs.append(single_isrc.strip())
+                if single_isrc and isinstance(single_isrc, str) and single_isrc.strip().upper() not in cand_isrcs:
+                    cand_isrcs.append(single_isrc.strip().upper())
+                cand_meta["isrcs"] = cand_isrcs
 
                 clean_cand_isrcs = [str(i).replace("-", "").strip().upper() for i in cand_isrcs if i]
-                is_exact_isrc_match = bool(clean_file_isrc and clean_file_isrc in clean_cand_isrcs and not is_untrusted)
+                is_exact_isrc_match = bool(
+                    clean_file_isrc
+                    and (clean_file_isrc in clean_cand_isrcs or (file_isrc and file_isrc.strip().upper() in cand_isrcs))
+                )
 
                 if is_exact_isrc_match:
-                    isrc_adjustment = 50.0  # Master ISRC match (+50.0)
+                    # Authoritative embedded stream ISRC grants Master ISRC Match bonus (+25.0 when untrusted, +50.0 when trusted)
+                    isrc_adjustment = 25.0 if is_untrusted else 50.0
                     cand_meta["isrc_match"] = True
                 else:
                     cand_meta["isrc_match"] = False
                     isrc_adjustment = calculate_isrc_penalty_or_bonus(file_isrc, cand_isrcs)
                     if is_untrusted and isrc_adjustment > 0:
-                        # Do NOT evaluate file_isrc from unverified physical tags for exact match bonuses (+25.0).
-                        # Only allow major-label vs aggregator disqualifications/penalties (< 0).
+                        # Do NOT evaluate unverified physical tags for prefix bonuses.
+                        # Only allow aggregator penalties (< 0).
                         isrc_adjustment = 0.0
 
                 cand_meta["duration_delta_sec"] = dur_delta_sec
@@ -2554,7 +2559,7 @@ class MetadataResolutionEngine:
                 remix_penalty = -25.0 if (c_is_remix_variant and not baseline_has_remix_cue) else 0.0
 
                 # Final score: candidate scoring combines matcher score (70%), duration weight (30%), album bonus, popularity bonus, canonical weight, cover penalty, remix penalty, and ISRC adjustment
-                cand_score = (
+                raw_cand_score = (
                     (matcher_score * 0.7)
                     + (dur_weight * 30.0)
                     + album_bonus
@@ -2564,13 +2569,13 @@ class MetadataResolutionEngine:
                     + remix_penalty
                     + isrc_adjustment
                 )
-                cand_score = min(100.0, max(0.0, cand_score))
+                cand_score = raw_cand_score
                 if veto_applies:
                     cand_sim = max(cand_sim, 0.65)
 
                 logger.info(
                     "[resolution_engine] Stage 3 candidate MBID %s '%s': "
-                    "matcher=%.1f dur_weight=%.3f album_bonus=%.1f pop_bonus=%.1f canon_weight=%.1f cover_pen=%.1f remix_pen=%.1f isrc_adj=%.1f veto=%s => score=%.2f",
+                    "matcher=%.1f dur_weight=%.3f album_bonus=%.1f pop_bonus=%.1f canon_weight=%.1f cover_pen=%.1f remix_pen=%.1f isrc_adj=%.1f veto=%s => score=%.2f (raw=%.2f)",
                     mbid_str,
                     c_title,
                     matcher_score,
@@ -2582,7 +2587,8 @@ class MetadataResolutionEngine:
                     remix_penalty,
                     isrc_adjustment,
                     veto_applies,
-                    cand_score,
+                    min(100.0, max(0.0, cand_score)),
+                    raw_cand_score,
                 )
                 cand_diag_entry = {
                     "mbid": mbid_str,
@@ -2595,7 +2601,7 @@ class MetadataResolutionEngine:
                     "popularity_bonus": popularity_bonus,
                     "canonical_weight": canonical_weight,
                     "release_count": release_count,
-                    "release_group_count": R,
+                    "release_group_count": rg_count,
                     "cover_penalty": cover_penalty,
                     "remix_penalty": remix_penalty,
                     "isrc_adjustment": isrc_adjustment,
@@ -2606,13 +2612,14 @@ class MetadataResolutionEngine:
                     "delta_sim": delta_sim,
                     "is_cover_collection": is_cover_collection,
                     "veto_applied": veto_applies,
-                    "total_score": cand_score,
+                    "raw_score": raw_cand_score,
+                    "total_score": min(100.0, max(0.0, raw_cand_score)),
                     "status": "EVALUATED",
                 }
                 acoustid_candidates_diag.append(cand_diag_entry)
 
                 candidates_scored.append(
-                    (cand_score, mbid_str, cand_meta, veto_applies, cand_acoustid_score, dur_delta_sec, cand_diag_entry)
+                    (raw_cand_score, mbid_str, cand_meta, veto_applies, cand_acoustid_score, dur_delta_sec, cand_diag_entry)
                 )
 
                 # Short-circuit: When the top candidate is an unambiguous exact match
@@ -2648,7 +2655,7 @@ class MetadataResolutionEngine:
                     has_competing_exact_candidate = True
 
                 if (
-                    cand_score >= 100.0
+                    raw_cand_score >= 100.0
                     and dur_delta_sec <= 1.0
                     and raw_title_sim >= 0.95
                     and not has_competing_exact_candidate
@@ -2656,59 +2663,24 @@ class MetadataResolutionEngine:
                     logger.info(
                         "[resolution_engine] Short-circuiting candidate evaluation: candidate (%s) is an unambiguous exact match (score=%.1f, delta=%.2fs, raw_sim=%.2f).",
                         mbid_str,
-                        cand_score,
+                        min(100.0, max(0.0, raw_cand_score)),
                         dur_delta_sec,
                         raw_title_sim,
                     )
                     break
 
             def candidate_ranking_key(cand_tuple):
-                # cand_tuple: (score, mbid, meta, veto, acoustid_score, dur_delta, diag)
-                score = cand_tuple[0]
+                # cand_tuple: (raw_cand_score, mbid, meta, veto, acoustid_score, dur_delta, diag)
+                raw_score = cand_tuple[0]
                 meta = cand_tuple[2] or {}
-                is_isrc_match = 1 if meta.get("isrc_match") else 0
-
-                # Release group breadth (artist/recording stature)
-                rg_count = len(meta.get("releases", []) or []) + (
-                    meta.get("release_group_count") or meta.get("release_count") or 0
-                )
-                pop_score = math.log10(rg_count + 1)
-
-                # Chronological primacy: earlier release years rank higher (e.g. 2003 beats 2018)
-                year_val = meta.get("year") or meta.get("release_year")
-                if not year_val:
-                    date_str = meta.get("first_release_date") or meta.get("first-release-date") or meta.get("date")
-                    if date_str:
-                        try:
-                            year_val = int(str(date_str)[:4])
-                        except (ValueError, TypeError):
-                            year_val = None
-                if not year_val and meta.get("releases"):
-                    for r in meta.get("releases") or []:
-                        if isinstance(r, dict):
-                            r_date = r.get("date") or r.get("release_date")
-                            if r_date:
-                                try:
-                                    y = int(str(r_date)[:4])
-                                    if 1900 <= y <= 2100:
-                                        year_val = min(year_val, y) if year_val else y
-                                except (ValueError, TypeError):
-                                    pass
-                try:
-                    year = int(year_val) if year_val else 9999
-                except (ValueError, TypeError):
-                    year = 9999
-
-                # Invert year so earlier years provide positive sorting advantage
-                year_score = -year if year > 1900 else -9999
-
-                # Acoustic duration proximity
+                has_isrc = 1 if meta.get("isrc_match") else 0
+                rgs = meta.get("release_group_count", 0)
                 dur_delta = abs(
                     cand_tuple[5]
                     if len(cand_tuple) > 5 and isinstance(cand_tuple[5], (int, float))
                     else meta.get("duration_delta_sec", 0.0)
                 )
-                return (score, is_isrc_match, pop_score, year_score, -dur_delta)
+                return (raw_score, has_isrc, rgs, -dur_delta)
 
             valid_scored = [c for c in candidates_scored if c[0] > 0]
             if valid_scored:
@@ -2729,10 +2701,12 @@ class MetadataResolutionEngine:
                     best_candidate,
                     recording_id=best_mbid,
                 )
+                clamped_winner_score = min(100.0, max(0.0, best_score))
                 logger.info(
-                    "[resolution_engine] Stage 3 WINNER MBID %s '%s' (score=%.2f, veto=%s, filename_stem='%s')",
+                    "[resolution_engine] Stage 3 WINNER MBID %s '%s' (score=%.2f, raw=%.2f, veto=%s, filename_stem='%s')",
                     best_mbid,
                     best_candidate.get("title"),
+                    clamped_winner_score,
                     best_score,
                     best_veto_applied,
                     filename_stem,
@@ -2746,10 +2720,11 @@ class MetadataResolutionEngine:
                     request,
                     "Stage 3: AcoustID",
                     "hit",
-                    f"AcoustID matched recording '{best_candidate.get('title')}' with score {best_score:.2f}",
+                    f"AcoustID matched recording '{best_candidate.get('title')}' with score {clamped_winner_score:.2f}",
                     {
                         "winner_mbid": best_mbid,
-                        "score": best_score,
+                        "score": clamped_winner_score,
+                        "raw_score": best_score,
                         "veto_applied": best_veto_applied,
                     },
                     candidates=acoustid_candidates_diag,
