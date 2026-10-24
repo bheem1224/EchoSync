@@ -116,6 +116,11 @@ def test_import_single_file_updates_existing_track_and_local_media(tmp_path):
     Base.metadata.create_all(music_db.engine)
     WorkingBase.metadata.create_all(get_working_database().engine)
 
+    with music_db.session_scope() as session:
+        for t in session.query(Track).filter(Track.title == "Black Rover").all():
+            session.delete(t)
+        session.commit()
+
     old_file = tmp_path / "old_artist" / "old_album" / "song.flac"
     old_file.parent.mkdir(parents=True, exist_ok=True)
     old_file.write_bytes(b"audio")

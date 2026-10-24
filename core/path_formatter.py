@@ -384,6 +384,97 @@ def build_destination_path(
     return Path(base_library_path).joinpath(*cleaned_segments)
 
 
+def build_disambiguated_destination_path(
+    metadata: dict[str, Any],
+    session: Any = None,
+    current_file: Path | None = None,
+    existing_media_id: int | None = None,
+    base_library_path: Path | str | None = None,
+    pattern: str | None = None,
+    singles_pattern: str | None = None,
+    group_singles: bool | None = None,
+) -> Path:
+    """Build destination path disambiguated against both filesystem collisions
+    and LocalMedia database allocations.
+    """
+    if base_library_path is not None:
+        target = build_destination_path(
+            str(base_library_path),
+            pattern=pattern,
+            meta=metadata,
+            singles_pattern=singles_pattern,
+            group_singles=group_singles,
+        )
+    else:
+        target = build_destination_path(
+            metadata,
+            pattern=pattern,
+            singles_pattern=singles_pattern,
+            group_singles=group_singles,
+        )
+    if current_file and current_file.suffix and target.suffix.lower() != current_file.suffix.lower():
+        target = target.with_suffix(current_file.suffix)
+
+    stem = target.stem
+    ext = target.suffix
+    parent = target.parent
+
+    # High-res quality tag fallback if available (e.g. " [24-96]")
+    bd = metadata.get("bit_depth")
+    sr = metadata.get("sample_rate")
+    quality_tag = ""
+    if bd and sr:
+        try:
+            bd_int = int(bd)
+            sr_int = int(sr)
+            if bd_int > 16 or sr_int > 44100:
+                quality_tag = f" [{bd_int}-{int(round(sr_int / 1000))}]"
+        except (ValueError, TypeError):
+            pass
+
+    resolved = target
+    counter = 1
+
+    from database import _canonicalize_path
+
+    while True:
+        # Check filesystem existence
+        exists_on_disk = False
+        try:
+            if resolved.exists():
+                if current_file and current_file.exists():
+                    exists_on_disk = resolved.resolve() != current_file.resolve()
+                else:
+                    exists_on_disk = True
+        except Exception:
+            exists_on_disk = False
+
+        # Check database allocation
+        exists_in_db = False
+        if session is not None:
+            try:
+                from database.music_database import LocalMedia
+
+                canonical_str = _canonicalize_path(str(resolved))
+                q = session.query(LocalMedia).filter(
+                    (LocalMedia.file_path == canonical_str) | (LocalMedia.file_path == str(resolved))
+                )
+                if existing_media_id is not None:
+                    q = q.filter(LocalMedia.id != existing_media_id)
+                exists_in_db = q.first() is not None
+            except Exception:
+                exists_in_db = False
+
+        if not exists_on_disk and not exists_in_db:
+            return resolved
+
+        if quality_tag and counter == 1:
+            resolved = parent / f"{stem}{quality_tag}{ext}"
+        else:
+            resolved = parent / f"{stem} ({counter}){ext}"
+        counter += 1
+
+
 def ensure_path_invariance(session: Any, track: Any, local_media: Any) -> Path:
     """Ensure library track file path matches active library_import renaming pattern.
 
@@ -469,7 +560,12 @@ def ensure_path_invariance(session: Any, track: Any, local_media: Any) -> Path:
         "ext": current_path.suffix.lstrip(".") or "flac",
     }
 
-    target_path = build_destination_path(metadata_dict)
+    target_path = build_disambiguated_destination_path(
+        metadata_dict,
+        session=session,
+        current_file=current_path,
+        existing_media_id=getattr(local_media, "id", None),
+    )
     if target_path.resolve() != current_path.resolve():
         # Check both filesystem existence and database allocation to resolve collisions
         resolved_target = target_path

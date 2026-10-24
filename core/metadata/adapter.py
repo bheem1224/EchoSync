@@ -96,7 +96,10 @@ class ResolutionAdapter:
 
         if getattr(result, "edition", None):
             track.edition = result.edition
-        elif hasattr(result, "edition") and getattr(result, "resolution_method", None) in ("acoustid", "signature_verified"):
+        elif hasattr(result, "edition") and getattr(result, "resolution_method", None) in (
+            "acoustid",
+            "signature_verified",
+        ):
             track.edition = result.edition
         elif ext_edition:
             track.edition = ext_edition
@@ -341,6 +344,31 @@ class ResolutionAdapter:
                         matched_track = cand
                         break
 
+        if not matched_track:
+            target_album_id = getattr(enhanced_dto, "album_id", None) or (
+                current_track.album_id if current_track else None
+            )
+            t_title = (getattr(enhanced_dto, "title", None) or getattr(enhanced_dto, "raw_title", None) or "").strip()
+            if target_album_id and t_title:
+                from sqlalchemy import or_
+                from core.matching_engine.text_utils import normalize_title
+
+                norm_title = normalize_title(t_title)
+                t_edition = (
+                    getattr(enhanced_dto, "edition", None) or getattr(enhanced_dto, "version", None) or ""
+                ).strip() or None
+                edition_filter = (
+                    Track.edition == t_edition if t_edition else or_(Track.edition.is_(None), Track.edition == "")
+                )
+                cand_query = session.query(Track).filter(
+                    Track.album_id == target_album_id,
+                    Track.normalized_title == norm_title,
+                    edition_filter,
+                )
+                if old_track_id:
+                    cand_query = cand_query.filter(Track.id != old_track_id)
+                matched_track = cand_query.first()
+
         if matched_track:
             logger.info(
                 "Reconciling LocalMedia %s (%s): collapsing into existing Track %s (MBID: %s)",
@@ -349,6 +377,24 @@ class ResolutionAdapter:
                 matched_track.id,
                 matched_track.musicbrainz_id,
             )
+            from sqlalchemy import or_
+
+            ghosts = (
+                session.query(LocalMedia)
+                .filter(
+                    LocalMedia.track_id == matched_track.id,
+                    LocalMedia.id != media.id,
+                    or_(
+                        LocalMedia.file_path == media.file_path,
+                        (LocalMedia.media_id == media.media_id) if media.media_id else False,
+                    ),
+                )
+                .all()
+            )
+            for g in ghosts:
+                session.delete(g)
+            session.flush()
+
             media.track = matched_track
             media.track_id = matched_track.id
             session.flush()
@@ -390,22 +436,38 @@ class ResolutionAdapter:
             if current_track.musicbrainz_id and mbid and current_track.musicbrainz_id != mbid:
                 diverges = True
             else:
-                dto_title = (getattr(enhanced_dto, "title", None) or getattr(enhanced_dto, "raw_title", None) or "").strip().lower()
+                dto_title = (
+                    (getattr(enhanced_dto, "title", None) or getattr(enhanced_dto, "raw_title", None) or "")
+                    .strip()
+                    .lower()
+                )
                 cur_title = (current_track.title or "").strip().lower()
                 if dto_title and cur_title and dto_title != cur_title:
                     diverges = True
 
-                dto_edition = (getattr(enhanced_dto, "edition", None) or getattr(enhanced_dto, "version", None) or "").strip().lower()
+                dto_edition = (
+                    (getattr(enhanced_dto, "edition", None) or getattr(enhanced_dto, "version", None) or "")
+                    .strip()
+                    .lower()
+                )
                 cur_edition = (current_track.edition or "").strip().lower()
                 if (dto_edition or cur_edition) and dto_edition != cur_edition:
                     diverges = True
 
-                dto_artist = (getattr(enhanced_dto, "artist", None) or getattr(enhanced_dto, "artist_name", None) or "").strip().lower()
+                dto_artist = (
+                    (getattr(enhanced_dto, "artist", None) or getattr(enhanced_dto, "artist_name", None) or "")
+                    .strip()
+                    .lower()
+                )
                 cur_artist = (current_track.artist.name if current_track.artist else "").strip().lower()
                 if dto_artist and cur_artist and dto_artist != cur_artist:
                     diverges = True
 
-                dto_album = (getattr(enhanced_dto, "album", None) or getattr(enhanced_dto, "album_title", None) or "").strip().lower()
+                dto_album = (
+                    (getattr(enhanced_dto, "album", None) or getattr(enhanced_dto, "album_title", None) or "")
+                    .strip()
+                    .lower()
+                )
                 cur_album = (current_track.album.title if current_track.album else "").strip().lower()
                 if dto_album and cur_album and dto_album != cur_album:
                     diverges = True
@@ -430,6 +492,7 @@ class ResolutionAdapter:
                     current_track.id,
                 )
                 from core.database.repositories.track_repo import TrackRepository
+
                 TrackRepository.resolve_artists_and_albums(session, [enhanced_dto])
 
                 target_album_id = getattr(enhanced_dto, "album_id", None)
@@ -437,7 +500,11 @@ class ResolutionAdapter:
                 if target_album_id and session.query(Album.id).filter_by(id=target_album_id).first():
                     verified_album_id = target_album_id
                 elif current_track.album_id and session.query(Album.id).filter_by(id=current_track.album_id).first():
-                    dto_alb = (getattr(enhanced_dto, "album", None) or getattr(enhanced_dto, "album_title", None) or "").strip().lower()
+                    dto_alb = (
+                        (getattr(enhanced_dto, "album", None) or getattr(enhanced_dto, "album_title", None) or "")
+                        .strip()
+                        .lower()
+                    )
                     cur_alb = (current_track.album.title if current_track.album else "").strip().lower()
                     if not dto_alb or dto_alb == cur_alb:
                         verified_album_id = current_track.album_id
@@ -472,6 +539,7 @@ class ResolutionAdapter:
         # 3. In-place track hydration
         if current_track:
             from core.database.repositories.track_repo import TrackRepository
+
             TrackRepository.resolve_artists_and_albums(session, [enhanced_dto])
             current_track = self.hydrate_track(enhanced_dto, session, current_track)
             target_album_id = getattr(enhanced_dto, "album_id", None)
@@ -483,7 +551,10 @@ class ResolutionAdapter:
                         "Target album_id %s does not exist in DB during in-place track hydration; verifying existing album_id",
                         target_album_id,
                     )
-                    if current_track.album_id and not session.query(Album.id).filter_by(id=current_track.album_id).first():
+                    if (
+                        current_track.album_id
+                        and not session.query(Album.id).filter_by(id=current_track.album_id).first()
+                    ):
                         current_track.album_id = None
             elif current_track.album_id and not session.query(Album.id).filter_by(id=current_track.album_id).first():
                 current_track.album_id = None

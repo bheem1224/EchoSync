@@ -512,13 +512,204 @@ def _import_single_file(
             existing_lm = session.query(LocalMedia).filter(LocalMedia.file_path.in_(paths_to_check)).first()
 
         if existing_lm:
-            # 1. Update file_path on existing LocalMedia record
-            existing_lm.file_path = canonical_new_path
+            # Prevent premature autoflush during preliminary queries
+            session.autoflush = False
 
-            # 2. Update existing Track record in place or decouple if sibling media diverge
-            if existing_lm.track_id:
-                existing_track = session.get(Track, existing_lm.track_id)
+            # 1. Prevent LocalMedia.file_path unique constraint collision
+            conflicting_lm = (
+                session.query(LocalMedia)
+                .filter(LocalMedia.file_path == canonical_new_path, LocalMedia.id != existing_lm.id)
+                .first()
+            )
+
+            if conflicting_lm:
+                # Case A: True duplicate file
+                is_true_dup = False
+                lm_sz = existing_lm.file_size_bytes or (file_path.stat().st_size if file_path.exists() else None)
+                conf_sz = conflicting_lm.file_size_bytes or (
+                    Path(conflicting_lm.file_path).stat().st_size if Path(conflicting_lm.file_path).exists() else None
+                )
+                if lm_sz and conf_sz and lm_sz == conf_sz:
+                    is_true_dup = True
+
+                if not is_true_dup and track_dto.fingerprint:
+                    conf_fp = session.query(AudioFingerprint).filter_by(media_id=conflicting_lm.media_id).first()
+                    if conf_fp and conf_fp.chromaprint:
+                        from core.matching_engine.fingerprinting import FingerprintMatcher
+
+                        if FingerprintMatcher.get_confidence_score(track_dto.fingerprint, conf_fp.chromaprint) >= 0.95:
+                            is_true_dup = True
+
+                if is_true_dup:
+                    logger.info(
+                        "Merging redundant LocalMedia %s into existing conflicting LocalMedia %s for path %s",
+                        existing_lm.id,
+                        conflicting_lm.id,
+                        canonical_new_path,
+                    )
+                    old_tr_id = existing_lm.track_id
+                    session.delete(existing_lm)
+                    session.flush()
+                    if old_tr_id:
+                        from core.metadata.adapter import ResolutionAdapter
+
+                        ResolutionAdapter().prune_orphaned_track_if_empty(session, old_tr_id)
+                    return 1
+                else:
+                    # Case B: Distinct Audio Edition / Different Master
+                    from core.path_formatter import build_disambiguated_destination_path
+
+                    disambiguated = build_disambiguated_destination_path(
+                        metadata,
+                        session=session,
+                        current_file=file_path,
+                        existing_media_id=existing_lm.id,
+                    )
+                    disambiguated_str = _canonicalize_path(str(disambiguated))
+                    if file_path.exists() and str(file_path.resolve()) != str(disambiguated.resolve()):
+                        from core.io_gatekeeper import Gatekeeper
+
+                        Gatekeeper.authorize_and_execute(
+                            operation="move",
+                            source=str(file_path),
+                            destination=str(disambiguated),
+                        )
+                    canonical_new_path = disambiguated_str
+                    existing_lm.file_path = canonical_new_path
+            else:
+                existing_lm.file_path = canonical_new_path
+
+            session.autoflush = True
+
+            # Resolve artists and albums for track_dto
+            TrackRepository.resolve_artists_and_albums(session, [track_dto])
+            existing_track = session.get(Track, existing_lm.track_id) if existing_lm.track_id else None
+
+            # 2. Check for Track Entity Reconsolidation (collapse identical tracks in album)
+            target_album_id = track_dto.album_id or (existing_track.album_id if existing_track else None)
+            from core.matching_engine.text_utils import normalize_title
+
+            clean_normalized_title = normalize_title(
+                track_dto.title or track_dto.raw_title or (existing_track.title if existing_track else "")
+            )
+            final_edition = (track_dto.edition or "").strip() or None
+
+            target_canonical_track = None
+            if target_album_id and clean_normalized_title:
+                from sqlalchemy import or_
+
+                edition_filter = (
+                    Track.edition == final_edition
+                    if final_edition
+                    else or_(Track.edition.is_(None), Track.edition == "")
+                )
+                cand_q = session.query(Track).filter(
+                    Track.album_id == target_album_id,
+                    Track.normalized_title == clean_normalized_title,
+                    edition_filter,
+                )
                 if existing_track:
+                    cand_q = cand_q.filter(Track.id != existing_track.id)
+                target_canonical_track = cand_q.first()
+
+            if target_canonical_track:
+                logger.info(
+                    "Reconsolidating LocalMedia %s into existing canonical Track %s in Album %s",
+                    existing_lm.id,
+                    target_canonical_track.id,
+                    target_album_id,
+                )
+                from sqlalchemy import or_
+
+                # 3. Deduplicate sibling LocalMedia records under target_canonical_track
+                ghosts = (
+                    session.query(LocalMedia)
+                    .filter(
+                        LocalMedia.track_id == target_canonical_track.id,
+                        LocalMedia.id != existing_lm.id,
+                        or_(
+                            LocalMedia.file_path == canonical_new_path,
+                            (LocalMedia.media_id == existing_lm.media_id) if existing_lm.media_id else False,
+                        ),
+                    )
+                    .all()
+                )
+                for g in ghosts:
+                    logger.info("Pruning duplicate ghost LocalMedia %s under Track %s", g.id, target_canonical_track.id)
+                    session.delete(g)
+
+                old_track_id = existing_lm.track_id
+                existing_lm.track_id = target_canonical_track.id
+                existing_lm.track = target_canonical_track
+                session.flush()
+
+                if old_track_id and old_track_id != target_canonical_track.id:
+                    from core.metadata.adapter import ResolutionAdapter
+
+                    ResolutionAdapter().prune_orphaned_track_if_empty(session, old_track_id)
+
+                # Sync multi-artist associations
+                associations = getattr(track_dto, "_resolved_artist_associations", None)
+                if not associations and track_dto.artist_id:
+                    associations = [(track_dto.artist_id, "primary", 0)]
+                if associations:
+                    from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+                    from database.music_database import TrackArtist
+
+                    for a_id, role, pos in associations:
+                        ta_stmt = sqlite_insert(TrackArtist).values(
+                            {
+                                "track_id": target_canonical_track.id,
+                                "artist_id": a_id,
+                                "role": role,
+                                "position": pos,
+                            }
+                        )
+                        ta_upsert = ta_stmt.on_conflict_do_update(
+                            index_elements=["track_id", "artist_id", "role"],
+                            set_={"position": ta_stmt.excluded.position},
+                        )
+                        session.execute(ta_upsert)
+
+                if track_dto.fingerprint:
+                    existing_fp = session.query(AudioFingerprint).filter_by(media_id=existing_lm.media_id).first()
+                    if existing_fp:
+                        existing_fp.chromaprint = track_dto.fingerprint
+                        if track_dto.acoustid_id:
+                            existing_fp.acoustid_id = track_dto.acoustid_id
+                    else:
+                        session.add(
+                            AudioFingerprint(
+                                media_id=existing_lm.media_id,
+                                chromaprint=track_dto.fingerprint,
+                                acoustid_id=track_dto.acoustid_id,
+                            )
+                        )
+                session.flush()
+                return 1
+
+            if existing_lm.track_id:
+                if existing_track:
+                    from sqlalchemy import or_
+
+                    # Deduplicate sibling LocalMedia records under existing_track
+                    ghosts = (
+                        session.query(LocalMedia)
+                        .filter(
+                            LocalMedia.track_id == existing_track.id,
+                            LocalMedia.id != existing_lm.id,
+                            or_(
+                                LocalMedia.file_path == canonical_new_path,
+                                (LocalMedia.media_id == existing_lm.media_id) if existing_lm.media_id else False,
+                            ),
+                        )
+                        .all()
+                    )
+                    for g in ghosts:
+                        logger.info("Pruning duplicate ghost LocalMedia %s under Track %s", g.id, existing_track.id)
+                        session.delete(g)
+                    session.flush()
+
                     # Check for sibling media under the same track
                     siblings = (
                         session.query(LocalMedia)
@@ -1146,20 +1337,15 @@ def approve_review_queue_item(
                         )
 
                     # 3. Calculate target relocation path using build_destination_path
-                    from core.path_formatter import build_destination_path
+                    from core.path_formatter import build_disambiguated_destination_path
 
-                    destination_path = build_destination_path(metadata_to_tag)
-                    if destination_path.suffix.lower() != file_path_obj.suffix.lower():
-                        destination_path = destination_path.with_suffix(file_path_obj.suffix)
-
-                    if destination_path.exists() and destination_path.resolve() != file_path_obj.resolve():
-                        counter = 1
-                        stem = destination_path.stem
-                        parent = destination_path.parent
-                        ext_with_dot = destination_path.suffix
-                        while destination_path.exists() and destination_path.resolve() != file_path_obj.resolve():
-                            destination_path = parent / f"{stem} ({counter}){ext_with_dot}"
-                            counter += 1
+                    music_db = get_database()
+                    with music_db.session_scope() as m_session:
+                        destination_path = build_disambiguated_destination_path(
+                            metadata_to_tag,
+                            session=m_session,
+                            current_file=file_path_obj,
+                        )
 
                     from core.io_gatekeeper import Gatekeeper
                     from services.library_watcher import suppress_path
