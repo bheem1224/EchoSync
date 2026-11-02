@@ -116,10 +116,10 @@ def test_deluxe_isolation_to_tier3_fallback():
         duration=242000,
     )
 
-    # Standard context ("sync" / "standard"): strictly rejected
+    # Standard context ("sync" / "standard"): passes under Deluxe edition container amnesty
     res_std = engine.calculate_match(source, candidate_deluxe, context="sync")
-    assert res_std.passed_version_check is False
-    assert res_std.confidence_score == 0.0
+    assert res_std.passed_version_check is True
+    assert res_std.confidence_score >= 85.0
 
     # Tier 3 fallback context: permitted within 10000ms duration delta
     res_t3 = engine.calculate_match(source, candidate_deluxe, context="tier3_fallback")

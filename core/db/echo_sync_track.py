@@ -62,6 +62,15 @@ class EchosyncMedia:
     mtime: float | None = None
     added_at: datetime | None = None
 
+    @property
+    def format(self) -> str | None:
+        """Alias for file_format for compatibility with candidate scoring."""
+        return self.file_format
+
+    @format.setter
+    def format(self, val: str | None) -> None:
+        self.file_format = val
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "media_id": self.media_id,
@@ -345,6 +354,15 @@ class EchosyncTrack:
     @property
     def year(self) -> int | None:
         return self.release_year
+
+    @property
+    def local_media(self) -> list[Any]:
+        """Alias for media list representing physical media files."""
+        return self.media
+
+    @local_media.setter
+    def local_media(self, val: list[Any]) -> None:
+        self.media = val
 
     @property
     def file_path(self) -> str | None:

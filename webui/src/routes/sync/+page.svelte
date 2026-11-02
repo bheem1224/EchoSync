@@ -926,7 +926,7 @@
     aria-modal="true"
   >
     <div
-      class="bg-slate-900 border border-slate-800 rounded-xl shadow-2xl flex flex-col w-full max-w-7xl h-[85vh] max-h-[85vh] overflow-hidden"
+      class="bg-slate-900 border border-slate-800 rounded-xl shadow-2xl flex flex-col h-[85vh] max-h-[85vh] overflow-hidden transition-all duration-200 {isDiagnosticsDrawerOpen ? 'w-full max-w-7xl' : 'w-full max-w-5xl'}"
       on:click|stopPropagation
     >
       <div

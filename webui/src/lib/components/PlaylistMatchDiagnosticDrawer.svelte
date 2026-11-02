@@ -1,5 +1,5 @@
 <script>
-  import { fly, fade } from 'svelte/transition';
+  import { fly } from 'svelte/transition';
   import apiClient from '../../api/client';
 
   let {
@@ -90,10 +90,10 @@
 <svelte:window onkeydown={handleKeydown} />
 
 {#if isOpen}
-  <!-- Docked Drawer Panel -->
+  <!-- Docked Drawer Panel (fixed width, full height, min-h-0 for proper flex scroll isolation) -->
   <aside
-    class="w-[440px] shrink-0 border-l border-slate-800 bg-slate-900/95 text-slate-100 flex flex-col h-full min-h-0 overflow-hidden shadow-2xl transition-all duration-300"
-    transition:fly={{ x: 200, duration: 240 }}
+    class="w-[440px] shrink-0 border-l border-slate-800 bg-slate-900/95 text-slate-100 flex flex-col h-full min-h-0 overflow-hidden shadow-2xl transition-all duration-200"
+    transition:fly={{ x: 200, duration: 200 }}
     aria-label="Playlist Track Match Diagnostics"
   >
     <!-- Fixed Sidebar Header -->
@@ -104,18 +104,13 @@
             MATCH DIAGNOSTICS
           </span>
           {#if track}
-            {@const isFound = track.status === 'found' || track.library_match === 'Found' || (track.library_match && track.library_match.includes('Found'))}
-            <span class="{isFound ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold'} text-xs">
+            {@const isFound = track.status === 'found' || track.library_match === 'Found' || (track.library_match && !track.library_match.includes('missing'))}
+            <span class="text-xs font-bold px-2 py-0.5 rounded border {isFound ? 'text-emerald-400 bg-emerald-950/50 border-emerald-800/50' : 'text-rose-400 bg-rose-950/50 border-rose-800/50'}">
               {isFound ? 'Found' : 'Not Found'}
             </span>
-            {#if track.duration}
-              <span class="text-xs text-slate-400 bg-slate-800 px-1.5 py-0.5 rounded font-mono">
-                {track.duration}
-              </span>
-            {/if}
           {/if}
         </div>
-        <h2 class="text-base font-bold text-white truncate" title={track?.title || 'Unknown Track'}>
+        <h2 class="text-sm font-bold text-white truncate" title={track?.title || 'Unknown Track'}>
           {track?.title || 'Unknown Track'}
         </h2>
         <p class="text-xs text-slate-400 truncate" title={track?.artist || 'Unknown Artist'}>
@@ -137,9 +132,9 @@
     </div>
 
     <!-- Scrollable Candidate Cards Container -->
-    <div class="flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-4 space-y-4 text-xs scrollbar-thin scrollbar-thumb-slate-700">
+    <div class="flex-1 min-h-0 overflow-y-auto p-4 space-y-4 text-xs scrollbar-thin scrollbar-thumb-slate-700">
       <!-- Query Details Card -->
-      <div class="bg-slate-800/60 rounded-xl p-3 border border-slate-700/60 space-y-2">
+      <div class="bg-slate-800/50 rounded-xl p-3 border border-slate-700/50 space-y-2">
         <div class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
           Query Details
         </div>
@@ -169,9 +164,9 @@
       <div class="flex items-center justify-between px-1 text-slate-400 text-xs">
         <span>Database Candidates Located:</span>
         {#if loading}
-          <span class="text-indigo-400 animate-pulse font-medium">Querying library…</span>
+          <span class="text-slate-400 animate-pulse font-medium">Querying library…</span>
         {:else if diagnosticData}
-          <span class="font-bold text-teal-400 font-mono">
+          <span class="font-mono font-bold text-slate-200">
             {diagnosticData.candidates_retrieved_count} candidate{diagnosticData.candidates_retrieved_count === 1 ? '' : 's'}
           </span>
         {:else}
@@ -183,7 +178,7 @@
         <!-- Loading Skeleton -->
         <div class="space-y-3 pt-2">
           {#each [1, 2, 3] as _}
-            <div class="bg-slate-800/40 rounded-xl p-3 border border-slate-800 animate-pulse space-y-2">
+            <div class="bg-slate-800/50 rounded-xl p-3 border border-slate-700/50 animate-pulse space-y-2">
               <div class="h-4 bg-slate-700/60 rounded w-3/4"></div>
               <div class="h-3 bg-slate-700/40 rounded w-1/2"></div>
               <div class="h-8 bg-slate-700/20 rounded"></div>
@@ -191,7 +186,7 @@
           {/each}
         </div>
       {:else if error}
-        <div class="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300">
+        <div class="p-3 rounded-xl bg-rose-950/50 border border-rose-800/50 text-rose-300">
           <div class="font-semibold mb-1">Diagnostic Error</div>
           <div class="text-[11px] text-rose-400">{error}</div>
         </div>
@@ -202,11 +197,11 @@
               Evaluated Candidates ({diagnosticData.candidates.length})
             </div>
 
-            {#each diagnosticData.candidates as cand, idx}
+            {#each diagnosticData.candidates as cand}
               {@const isWinner = diagnosticData.best_match && diagnosticData.best_match.track_sync_id === cand.track_sync_id && cand.accepted}
               {@const isVetoed = !cand.accepted && (cand.duration_delta_sec > 6.0 || (cand.rejection_reason && cand.rejection_reason.includes('Duration Delta > 6.0s')))}
               
-              <div class="bg-slate-800/50 rounded-xl p-3 border transition-all {isWinner ? 'border-emerald-500/50 bg-emerald-950/10' : 'border-slate-700/60'}">
+              <div class="bg-slate-800/50 rounded-xl p-3 border transition-all {isWinner ? 'border-emerald-800/50 bg-emerald-950/30' : 'border-slate-700/50'}">
                 <!-- Candidate Header -->
                 <div class="flex items-start justify-between gap-2 mb-2">
                   <div class="min-w-0 flex-1">
@@ -226,19 +221,19 @@
                   <!-- Outcome Badge -->
                   <div>
                     {#if isWinner}
-                      <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                      <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold text-emerald-400 bg-emerald-950/50 border border-emerald-800/50">
                         ✓ ACCEPTED
                       </span>
                     {:else if cand.accepted}
-                      <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                      <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold text-emerald-400 bg-emerald-950/50 border border-emerald-800/50">
                         ACCEPTED
                       </span>
                     {:else if isVetoed}
-                      <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40">
+                      <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold text-amber-400 bg-amber-950/50 border border-amber-800/50">
                         ⚠ VETOED
                       </span>
                     {:else}
-                      <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-rose-500/20 text-rose-300 border border-rose-500/30">
+                      <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold text-rose-400 bg-rose-950/50 border border-rose-800/50">
                         ✕ REJECTED
                       </span>
                     {/if}
@@ -286,16 +281,16 @@
                 </div>
 
                 <!-- Composite Score vs Threshold -->
-                <div class="pt-1 border-t border-slate-700/40">
+                <div class="pt-1 border-t border-slate-700/50">
                   <div class="flex items-center justify-between text-[11px] mb-1">
                     <span class="text-slate-400">Composite Score</span>
                     <span class="font-mono font-bold {cand.accepted ? 'text-emerald-400' : 'text-slate-300'}">
                       {cand.composite_score.toFixed(1)}% <span class="text-slate-500 font-normal">/ {diagnosticData.winning_threshold}% req</span>
                     </span>
                   </div>
-                  <div class="h-1.5 w-full bg-slate-700/60 rounded-full overflow-hidden">
+                  <div class="h-1.5 w-full bg-slate-800 rounded-full overflow-hidden">
                     <div
-                      class="h-full rounded-full transition-all duration-300 {cand.accepted ? 'bg-emerald-500' : isVetoed ? 'bg-amber-500' : 'bg-slate-500'}"
+                      class="h-full rounded-full transition-all duration-300 {cand.accepted ? 'bg-emerald-500' : isVetoed ? 'bg-amber-500' : 'bg-slate-600'}"
                       style="width: {Math.min(100, Math.max(0, cand.composite_score))}%"
                     ></div>
                   </div>
@@ -303,7 +298,7 @@
 
                 <!-- Rejection Reason if any -->
                 {#if cand.rejection_reason}
-                  <div class="mt-2 text-[10px] text-rose-400/90 bg-rose-950/20 px-2 py-1 rounded border border-rose-900/30">
+                  <div class="mt-2 text-[10px] text-rose-400/90 bg-rose-950/40 px-2 py-1 rounded border border-rose-800/50">
                     {cand.rejection_reason}
                   </div>
                 {/if}
@@ -312,7 +307,7 @@
           </div>
         {:else}
           <!-- Zero Candidates State -->
-          <div class="bg-slate-800/40 rounded-xl p-4 border border-slate-800 text-center space-y-2 py-6">
+          <div class="bg-slate-800/50 rounded-xl p-4 border border-slate-700/50 text-center space-y-2 py-6">
             <div class="text-2xl">🔍</div>
             <div class="font-semibold text-slate-300">No Candidates Located</div>
             <p class="text-slate-400 text-[11px] max-w-xs mx-auto leading-relaxed">
@@ -324,4 +319,3 @@
     </div>
   </aside>
 {/if}
-

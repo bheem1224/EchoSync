@@ -43,7 +43,7 @@
     aria-modal="true"
   >
     <div
-      class="bg-slate-900 border border-slate-800 rounded-xl shadow-2xl flex flex-col w-full max-w-7xl h-[85vh] max-h-[85vh] overflow-hidden"
+      class="bg-slate-900 border border-slate-800 rounded-xl shadow-2xl flex flex-col h-[85vh] max-h-[85vh] overflow-hidden transition-all duration-200 {isDiagnosticsOpen ? 'w-full max-w-7xl' : 'w-full max-w-5xl'}"
     >
       <!-- Modal Header (Fixed height, shrink-0) -->
       <div class="p-6 border-b border-slate-800 shrink-0 flex items-center justify-between">
@@ -64,7 +64,7 @@
             <select
               id="quality-select"
               bind:value={selectedQuality}
-              class="bg-slate-800 border border-slate-700 text-slate-200 text-xs rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-indigo-500"
+              class="bg-slate-800 border border-slate-700 text-slate-200 text-xs rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-slate-500"
             >
               {#if qualityProfiles.length === 0}
                 <option value="">Default (FLAC/Lossless)</option>
@@ -79,7 +79,7 @@
           <!-- Action Buttons -->
           <button
             type="button"
-            class="px-3.5 py-1.5 rounded-lg text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-200 transition-colors disabled:opacity-50"
+            class="px-3.5 py-1.5 rounded-lg text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-colors disabled:opacity-50"
             onclick={onRunAnalysis}
             disabled={loading}
           >
@@ -98,7 +98,7 @@
           {#if (analysisResult?.summary?.missing_tracks ?? 0) > 0}
             <button
               type="button"
-              class="px-3.5 py-1.5 rounded-lg text-xs font-medium bg-indigo-600 hover:bg-indigo-500 text-white transition-colors disabled:opacity-50"
+              class="px-3.5 py-1.5 rounded-lg text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-colors disabled:opacity-50"
               onclick={onDownloadMissing}
               disabled={downloading}
             >
@@ -127,21 +127,21 @@
           <!-- Summary Cards -->
           {#if analysisResult?.summary}
             <div class="grid grid-cols-4 gap-4">
-              <div class="bg-slate-800/60 border border-slate-700/60 rounded-xl p-3.5">
+              <div class="bg-slate-800/50 border border-slate-700/50 rounded-xl p-3.5">
                 <span class="text-xs text-slate-400 block font-medium">Total Tracks</span>
                 <span class="text-xl font-bold text-white mt-1 block">{analysisResult.summary.total_tracks ?? 0}</span>
               </div>
-              <div class="bg-slate-800/60 border border-slate-700/60 rounded-xl p-3.5">
+              <div class="bg-slate-800/50 border border-slate-700/50 rounded-xl p-3.5">
                 <span class="text-xs text-slate-400 block font-medium">Found in Library</span>
                 <span class="text-xl font-bold text-emerald-400 mt-1 block">{analysisResult.summary.found_in_library ?? 0}</span>
               </div>
-              <div class="bg-slate-800/60 border border-slate-700/60 rounded-xl p-3.5">
+              <div class="bg-slate-800/50 border border-slate-700/50 rounded-xl p-3.5">
                 <span class="text-xs text-slate-400 block font-medium">Missing</span>
                 <span class="text-xl font-bold text-rose-400 mt-1 block">{analysisResult.summary.missing_tracks ?? 0}</span>
               </div>
-              <div class="bg-slate-800/60 border border-slate-700/60 rounded-xl p-3.5">
+              <div class="bg-slate-800/50 border border-slate-700/50 rounded-xl p-3.5">
                 <span class="text-xs text-slate-400 block font-medium">Target Quality</span>
-                <span class="text-sm font-semibold text-indigo-300 mt-1 block truncate">{selectedQuality || 'Any'}</span>
+                <span class="text-sm font-semibold text-slate-200 mt-1 block truncate">{selectedQuality || 'Any'}</span>
               </div>
             </div>
           {/if}
@@ -166,7 +166,7 @@
                   {@const isSelected = selectedTrack === track && isDiagnosticsOpen}
                   <button
                     type="button"
-                    class="w-full grid grid-cols-[40px_1fr_1fr_90px_130px_110px] items-center gap-3 px-4 py-3 text-left text-xs transition-colors hover:bg-slate-800/50 {isSelected ? 'bg-indigo-950/40 ring-1 ring-inset ring-indigo-500/50' : ''}"
+                    class="w-full grid grid-cols-[40px_1fr_1fr_90px_130px_110px] items-center gap-3 px-4 py-3 text-left text-xs transition-colors hover:bg-slate-800/50 {isSelected ? 'bg-slate-800/60 ring-1 ring-inset ring-slate-700' : ''}"
                     onclick={() => handleTrackClick(track)}
                   >
                     <span class="text-slate-500 font-mono text-center">{idx + 1}</span>
@@ -174,7 +174,7 @@
                     <span class="text-slate-400 truncate" title={track.artist}>{track.artist}</span>
                     <span class="font-mono text-slate-400">{track.duration || '–'}</span>
                     <span class="text-center">
-                      <span class="inline-block px-2 py-0.5 rounded text-[11px] font-semibold {isFound ? 'bg-emerald-950/80 text-emerald-400 border border-emerald-800/50' : 'bg-rose-950/80 text-rose-400 border border-rose-800/50'}">
+                      <span class="inline-block px-2 py-0.5 rounded text-[11px] font-semibold border {isFound ? 'text-emerald-400 bg-emerald-950/50 border-emerald-800/50' : 'text-rose-400 bg-rose-950/50 border-rose-800/50'}">
                         {track.library_match || (isFound ? 'Found' : 'Missing')}
                       </span>
                     </span>
@@ -200,4 +200,3 @@
     </div>
   </div>
 {/if}
-

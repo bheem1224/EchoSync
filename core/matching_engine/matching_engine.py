@@ -296,16 +296,42 @@ def evaluate_version_compatibility(
 
     # Source has no version info, candidate has version
     if not src_fam and cand_fam:
-        if cand_fam == "deluxe":
-            if context == "tier3_fallback":
-                if duration_delta_ms is not None and duration_delta_ms > 10000:
-                    return (
-                        False,
-                        0.0,
-                        f"Deluxe Edition duration mismatch ({duration_delta_ms}ms > 10000ms)",
-                    )
-                return True, 1.0, "Deluxe fallback permitted in Tier 3"
-            return False, 0.0, "Deluxe candidate rejected in primary tiers"
+        # Strictly exclude extended mixes from studio container qualifier exemption
+        is_extended = "extended" in cand_lower or cand_fam in ("extended", "extended_club", "extended_mix")
+        if is_extended:
+            if duration_delta_ms is not None and duration_delta_ms <= 2000:
+                return (
+                    True,
+                    0.0,
+                    "Duration amnesty: studio cut runtime proves original despite extended tag",
+                )
+            return (
+                False,
+                0.0,
+                f"Version mismatch: source requested original, candidate is '{cand_v}' (extended mix)",
+            )
+
+        # Studio container qualifiers exemption (Deluxe, Anniversary, Special Edition, Expanded)
+        studio_container_qualifiers = {
+            "deluxe",
+            "deluxe edition",
+            "anniversary",
+            "anniversary edition",
+            "special edition",
+            "expanded",
+        }
+        if (
+            cand_lower in studio_container_qualifiers
+            or cand_fam == "deluxe"
+            or any(q in cand_lower for q in ("deluxe", "anniversary", "special edition", "expanded"))
+        ):
+            if duration_delta_ms is not None and duration_delta_ms > 10000:
+                return (
+                    False,
+                    0.0,
+                    f"Deluxe Edition duration mismatch ({duration_delta_ms}ms > 10000ms)",
+                )
+            return True, 0.0, f"Studio container qualifier amnesty: Original ≡ '{cand_v}'"
 
         if cand_fam == "remaster":
             if context == "tier3_fallback":
@@ -316,22 +342,6 @@ def evaluate_version_compatibility(
                         f"Remaster duration mismatch ({duration_delta_ms}ms > 5000ms)",
                     )
                 return True, 1.0, "Remaster fallback permitted in Tier 3"
-            return (
-                False,
-                0.0,
-                f"Version mismatch: source requested original, candidate is '{cand_v}'",
-            )
-
-        # Extended Mix Duration Amnesty:
-        # If candidate is tagged extended/club, but its duration matches within 2000ms,
-        # the tag is metadata pollution and it is actually the original cut.
-        if cand_fam in ("extended", "extended_club", "extended_mix"):
-            if duration_delta_ms is not None and duration_delta_ms <= 2000:
-                return (
-                    True,
-                    0.0,
-                    "Duration amnesty: studio cut runtime proves original despite extended tag",
-                )
             return (
                 False,
                 0.0,
@@ -902,13 +912,14 @@ class WeightedMatchingEngine:
         # do NOT penalize parenthetical album edition qualifiers like (burnt), (Deluxe), or (Single).
         cand_ed = (getattr(candidate, "edition", None) or getattr(candidate, "version", None) or "").strip().lower()
         cand_fam = get_version_family(cand_ed)
-        # Remasters, remixes, and explicit track-level deluxe (in sync/download contexts) are track version mismatches, not album qualifiers.
+        # Remasters, remixes, and explicit track-level extended mixes are track version mismatches, not album qualifiers.
         is_hard_version_mismatch = (
-            cand_fam in ("remaster", "remix", "live", "instrumental", "karaoke", "acapella")
+            cand_fam in ("remaster", "remix", "live", "instrumental", "karaoke", "acapella", "extended_club")
             or (
-                cand_fam in ("deluxe", "remaster")
+                cand_fam == "remaster"
                 and (context in ("sync", "download") or getattr(self.profile, "name", "") == "exact_sync")
             )
+            or ("extended" in cand_ed)
         )
         if title_fuzzy_score >= 0.95 and artist_fuzzy_score >= 0.90 and duration_score >= 0.95:
             if not is_hard_version_mismatch and context != "tier3_fallback":
@@ -1262,14 +1273,37 @@ class WeightedMatchingEngine:
         score += duration_contribution
         max_possible_score += self.weights.duration_weight * 100
 
-        # ===== STEP 5: QUALITY TIE-BREAKER =====
+        # ===== STEP 5: QUALITY TIE-BREAKER & FIDELITY BOOST VIA LOCAL_MEDIA =====
+        media_list = getattr(candidate, "local_media", None) or getattr(candidate, "media", None) or []
+        max_bitrate = 0
+        is_lossless = False
+
+        for media in media_list:
+            b_rate = getattr(media, "bitrate", 0) or 0
+            fmt = (getattr(media, "format", "") or getattr(media, "file_format", "")).lower()
+            b_kbps = b_rate // 1000 if b_rate > 5000 else b_rate
+            if b_kbps > max_bitrate:
+                max_bitrate = b_kbps
+            if fmt in {"flac", "alac", "wav", "aiff"} or (fmt not in {"mp3", "aac", "ogg", "wma", "m4a", "opus"} and b_kbps >= 800):
+                is_lossless = True
+
+        # Compute a continuous fidelity bonus (up to +3.0 max)
+        fidelity_bonus = 0.0
+        if is_lossless:
+            fidelity_bonus = 3.0
+        elif max_bitrate >= 320:
+            fidelity_bonus = 1.5
+        elif max_bitrate >= 256:
+            fidelity_bonus = 0.75
+
         if getattr(candidate, "quality_tags", None):
-            quality_bonus = self.weights.quality_bonus * 100
-            score += quality_bonus
+            legacy_bonus = self.weights.quality_bonus * 100
+            quality_bonus += legacy_bonus
+            score += legacy_bonus
             max_possible_score += self.weights.quality_bonus * 100
-            reasoning_parts.append(f"Quality bonus applied: +{quality_bonus:.1f} points")
+            reasoning_parts.append(f"Quality tags bonus applied: +{legacy_bonus:.1f} points")
         else:
-            reasoning_parts.append("No quality bonus (candidate has no quality tags)")
+            reasoning_parts.append("No quality tags bonus")
 
         # ===== APPLY CUMULATIVE PENALTIES =====
         final_penalty = version_penalty + edition_penalty
@@ -1281,8 +1315,11 @@ class WeightedMatchingEngine:
         else:
             normalized_score = 0.0
 
+        # Base metadata score headroom (reserves up to 3.0 pts for physical stream fidelity bonus)
+        base_score = min(97.0, normalized_score)
+
         # ===== NON-DESTRUCTIVE ALBUM MATCH BONUS =====
-        # Normalized album similarity >= 0.85 grants an additive bonus (+2.0 pts clamped to 100.0).
+        # Normalized album similarity >= 0.85 grants an additive bonus (+2.0 pts clamped to headroom).
         # Missing or non-matching albums incur zero penalty.
         src_album = getattr(source, "album_title", None) or getattr(source, "album_name", None)
         cand_album = getattr(candidate, "album_title", None) or getattr(candidate, "album_name", None)
@@ -1294,7 +1331,7 @@ class WeightedMatchingEngine:
             if src_alb_norm and cand_alb_norm:
                 alb_sim = SequenceMatcher(None, src_alb_norm, cand_alb_norm).ratio()
                 if alb_sim >= 0.85:
-                    normalized_score = min(100.0, normalized_score + 2.0)
+                    base_score = min(97.0, base_score + 2.0)
                     reasoning_parts.append(f"Non-destructive album bonus: +2.0 (album_sim={alb_sim:.2f} >= 0.85)")
 
         # ===== SAFE DURATION BONUS =====
@@ -1307,12 +1344,21 @@ class WeightedMatchingEngine:
             if duration_diff_ms <= 1500:  # Near-perfect duration match
                 if artist_fuzzy_score >= 0.60:  # Artist match is strong enough
                     duration_bonus = 15.0
-                    normalized_score += duration_bonus
+                    if base_score < self.weights.min_confidence_to_accept:
+                        base_score = min(self.weights.min_confidence_to_accept, base_score + duration_bonus)
                     reasoning_parts.append(
                         f"Safe duration bonus: +{duration_bonus:.1f} (duration_diff={duration_diff_ms}ms, artist_score={artist_fuzzy_score:.1%})"
                     )
                 else:
                     reasoning_parts.append(f"Duration bonus NOT applied (artist_score={artist_fuzzy_score:.1%} < 60%)")
+
+        # Apply fidelity bonus from physical stream properties
+        normalized_score = base_score + fidelity_bonus
+        quality_bonus = fidelity_bonus
+        if fidelity_bonus > 0.0:
+            reasoning_parts.append(
+                f"Physical media fidelity bonus: +{fidelity_bonus:.2f} pts (lossless={is_lossless}, max_bitrate={max_bitrate}kbps)"
+            )
 
         # Clamp to 0-100 range
         if _score_boost:
