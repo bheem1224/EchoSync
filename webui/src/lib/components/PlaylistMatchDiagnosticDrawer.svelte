@@ -14,7 +14,13 @@
 
   $effect(() => {
     if (isOpen && track) {
-      fetchDiagnostics(track);
+      if (track.match_diagnostics) {
+        diagnosticData = track.match_diagnostics;
+        loading = false;
+        error = null;
+      } else {
+        fetchDiagnostics(track);
+      }
     } else {
       diagnosticData = null;
       error = null;
@@ -86,20 +92,20 @@
 {#if isOpen}
   <!-- Docked Drawer Panel -->
   <aside
-    class="w-96 lg:w-[450px] shrink-0 border-l border-slate-800 bg-slate-900 text-slate-100 flex flex-col min-h-0 h-full overflow-hidden shadow-2xl transition-all duration-300"
+    class="w-[440px] shrink-0 border-l border-slate-800 bg-slate-900/95 text-slate-100 flex flex-col h-full min-h-0 overflow-hidden shadow-2xl transition-all duration-300"
     transition:fly={{ x: 200, duration: 240 }}
     aria-label="Playlist Track Match Diagnostics"
   >
-    <!-- Header -->
-    <div class="p-4 border-b border-slate-800 bg-slate-900/95 flex items-start justify-between gap-3 select-none">
+    <!-- Fixed Sidebar Header -->
+    <div class="p-4 border-b border-slate-800 bg-slate-900/95 shrink-0 flex items-start justify-between gap-3 select-none">
       <div class="flex-1 min-w-0">
         <div class="flex items-center gap-2 mb-1 flex-wrap">
-          <span class="text-xs font-semibold px-2 py-0.5 rounded tracking-wide uppercase bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
-            Match Diagnostics
+          <span class="text-xs font-semibold px-2 py-0.5 rounded tracking-wide uppercase bg-slate-800 text-slate-300">
+            MATCH DIAGNOSTICS
           </span>
           {#if track}
-            {@const isFound = track.library_match === 'Found' || (track.library_match && track.library_match.includes('Found'))}
-            <span class="text-xs font-semibold px-2 py-0.5 rounded border {isFound ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' : 'bg-rose-500/15 text-rose-400 border-rose-500/30'}">
+            {@const isFound = track.status === 'found' || track.library_match === 'Found' || (track.library_match && track.library_match.includes('Found'))}
+            <span class="{isFound ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold'} text-xs">
               {isFound ? 'Found' : 'Not Found'}
             </span>
             {#if track.duration}
@@ -120,7 +126,7 @@
       <!-- Close Button -->
       <button
         type="button"
-        class="text-slate-400 hover:text-white p-1.5 rounded-lg hover:bg-slate-800 transition-colors"
+        class="text-slate-400 hover:text-white p-1.5 rounded-lg hover:bg-slate-800 transition-colors shrink-0"
         onclick={onClose}
         aria-label="Close Drawer"
       >
@@ -130,8 +136,8 @@
       </button>
     </div>
 
-    <!-- Body -->
-    <div class="flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-4 pr-2 space-y-4 text-xs [scrollbar-width:thin] [scrollbar-color:theme(colors.slate.700)_transparent]">
+    <!-- Scrollable Candidate Cards Container -->
+    <div class="flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-4 space-y-4 text-xs scrollbar-thin scrollbar-thumb-slate-700">
       <!-- Query Details Card -->
       <div class="bg-slate-800/60 rounded-xl p-3 border border-slate-700/60 space-y-2">
         <div class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">

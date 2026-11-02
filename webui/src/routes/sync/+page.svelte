@@ -1,36 +1,36 @@
 <script>
-  import { onMount, onDestroy } from 'svelte';
-  import { plugins } from '../../stores/plugins';
-  import { jobs } from '../../stores/jobs';
-  import { preferences } from '../../stores/preferences';
-  import apiClient from '../../api/client';
-  import PlaylistMatchDiagnosticDrawer from '$lib/components/PlaylistMatchDiagnosticDrawer.svelte';
+  import { onMount, onDestroy } from "svelte";
+  import { plugins } from "../../stores/plugins";
+  import { jobs } from "../../stores/jobs";
+  import { preferences } from "../../stores/preferences";
+  import apiClient from "../../api/client";
+  import PlaylistMatchDiagnosticDrawer from "$lib/components/PlaylistMatchDiagnosticDrawer.svelte";
 
-  let sourceProvider = '';
-  let targetProvider = '';
+  let sourceProvider = "";
+  let targetProvider = "";
   let playlists = [];
   let selectedPlaylists = [];
   let loadingPlaylists = false;
   let syncing = false;
-  let error = '';
-  let success = '';
+  let error = "";
+  let success = "";
 
   // Analysis modal state
   let analysisModalOpen = false;
   let analysisLoading = false;
-  let analysisError = '';
+  let analysisError = "";
   let analysisResult = null;
   let analysisStarted = false;
   let downloadingMissing = false;
-  let selectedQuality = '';
+  let selectedQuality = "";
   let availableTargetAccounts = [];
   let overrideTargetUserId = null;
-  
+
   // Sync config modal state
   let syncConfigModalOpen = false;
   let syncInProgress = false;
   let syncDownloadMissing = false;
-  
+
   // Sync progress state (integrated into analysis modal)
   let syncEventStream = [];
   let syncProgressEvent = null;
@@ -39,58 +39,59 @@
   // Matching diagnostics drawer state
   let selectedTrackForDiagnostics = null;
   let isDiagnosticsDrawerOpen = false;
-  
+
   // Scheduled syncs state
   let scheduledSyncs = [];
   let showScheduleModal = false;
   let scheduleForm = {
-    source: '',
-    target: '',
+    source: "",
+    target: "",
     playlists: [],
     interval: 3600,
     download_missing: false,
   };
   let scheduleIntervalOptions = [
-    { value: 300, label: '5 minutes' },
-    { value: 900, label: '15 minutes' },
-    { value: 1800, label: '30 minutes' },
-    { value: 3600, label: '1 hour' },
-    { value: 21600, label: '6 hours' },
-    { value: 43200, label: '12 hours' },
-    { value: 86400, label: '24 hours' },
-    { value: 604800, label: '1 week' },
+    { value: 300, label: "5 minutes" },
+    { value: 900, label: "15 minutes" },
+    { value: 1800, label: "30 minutes" },
+    { value: 3600, label: "1 hour" },
+    { value: 21600, label: "6 hours" },
+    { value: 43200, label: "12 hours" },
+    { value: 86400, label: "24 hours" },
+    { value: 604800, label: "1 week" },
   ];
 
   function getPluginName(pluginId) {
-    if (!pluginId) return '';
+    if (!pluginId) return "";
     const idStr = String(pluginId).toLowerCase();
-    const item = Object.values($plugins?.items || {}).find(p => 
-      String(p.plugin_id || '').toLowerCase() === idStr || 
-      String(p.id || '').toLowerCase() === idStr ||
-      String(p.name || '').toLowerCase() === idStr
+    const item = Object.values($plugins?.items || {}).find(
+      (p) =>
+        String(p.plugin_id || "").toLowerCase() === idStr ||
+        String(p.id || "").toLowerCase() === idStr ||
+        String(p.name || "").toLowerCase() === idStr,
     );
     if (item?.name) return item.name;
     if (item?.title) return item.title;
 
     const knownNames = {
-      '2391116200': 'Spotify',
-      'spotify': 'Spotify',
-      '3021005569': 'Plex',
-      'plex': 'Plex',
-      '3782485548': 'Tidal',
-      'tidal': 'Tidal',
-      '3934388657': 'MusicBrainz',
-      'musicbrainz': 'MusicBrainz',
-      '1910609384': 'AcoustID',
-      'acoustid': 'AcoustID',
-      '2305548545': 'Jellyfin',
-      'jellyfin': 'Jellyfin',
-      '4010168341': 'Navidrome',
-      'navidrome': 'Navidrome',
-      '2021666874': 'Slskd',
-      'slskd': 'Slskd',
-      'local': 'Local Library',
-      'local_server': 'Local Server',
+      "2391116200": "Spotify",
+      spotify: "Spotify",
+      "3021005569": "Plex",
+      plex: "Plex",
+      "3782485548": "Tidal",
+      tidal: "Tidal",
+      "3934388657": "MusicBrainz",
+      musicbrainz: "MusicBrainz",
+      "1910609384": "AcoustID",
+      acoustid: "AcoustID",
+      "2305548545": "Jellyfin",
+      jellyfin: "Jellyfin",
+      "4010168341": "Navidrome",
+      navidrome: "Navidrome",
+      "2021666874": "Slskd",
+      slskd: "Slskd",
+      local: "Local Library",
+      local_server: "Local Server",
     };
     if (knownNames[idStr]) return knownNames[idStr];
 
@@ -102,8 +103,14 @@
     if (!targetProvider) return;
     try {
       try {
-        const res = await apiClient.get(`/system/plugins/${targetProvider}/accounts`);
-        if (res.data?.items && Array.isArray(res.data.items) && res.data.items.length > 0) {
+        const res = await apiClient.get(
+          `/system/plugins/${targetProvider}/accounts`,
+        );
+        if (
+          res.data?.items &&
+          Array.isArray(res.data.items) &&
+          res.data.items.length > 0
+        ) {
           availableTargetAccounts = res.data.items;
           return;
         } else if (Array.isArray(res.data) && res.data.length > 0) {
@@ -114,95 +121,103 @@
         // Fallback to /system/accounts
       }
 
-      const res = await apiClient.get('/system/accounts');
+      const res = await apiClient.get("/system/accounts");
       if (res.data?.media_users && res.data.media_users.length > 0) {
         availableTargetAccounts = res.data.media_users;
       } else if (res.data?.music_accounts) {
-        const filtered = res.data.music_accounts.filter(a => 
-          String(a.service).toLowerCase() === String(targetProvider).toLowerCase()
+        const filtered = res.data.music_accounts.filter(
+          (a) =>
+            String(a.service).toLowerCase() ===
+            String(targetProvider).toLowerCase(),
         );
         if (filtered.length > 0) {
           availableTargetAccounts = filtered;
         }
       }
     } catch (err) {
-      console.warn('[Sync] Failed to fetch target accounts:', err);
+      console.warn("[Sync] Failed to fetch target accounts:", err);
     }
   }
 
   $: qualityProfiles = $preferences.profiles || [];
   $: if (qualityProfiles.length > 0 && !selectedQuality) {
-    selectedQuality = qualityProfiles[0]?.name || '';
+    selectedQuality = qualityProfiles[0]?.name || "";
   }
 
-  $: playlistPlugins = Object.values($plugins.items).filter(p => 
-    (p.capabilities?.supports_playlists ?? 'NONE') !== 'NONE'
+  $: playlistPlugins = Object.values($plugins.items).filter(
+    (p) => (p.capabilities?.supports_playlists ?? "NONE") !== "NONE",
   );
 
-  $: syncTargets = Object.values($plugins.items).filter(p => 
-    // Streaming services (Spotify, Tidal) OR Media servers (Plex, Jellyfin, Navidrome)
-    (p.capabilities?.supports_playlists === 'READ_WRITE') || 
-    (p.capabilities?.supports_library_scan ?? false)
+  $: syncTargets = Object.values($plugins.items).filter(
+    (p) =>
+      // Streaming services (Spotify, Tidal) OR Media servers (Plex, Jellyfin, Navidrome)
+      p.capabilities?.supports_playlists === "READ_WRITE" ||
+      (p.capabilities?.supports_library_scan ?? false),
   );
 
   function getPlaylistTargetContext(playlist) {
-    if (!playlist) return '';
+    if (!playlist) return "";
 
     return (
       playlist.target_account_name ||
       playlist.target_user_name ||
       playlist.target_profile_name ||
       playlist.target_display_name ||
-      (playlist.target_user_id ? playlist.source_account_name : '') ||
-      ''
+      (playlist.target_user_id ? playlist.source_account_name : "") ||
+      ""
     );
   }
 
   function formatTargetWithContext(targetLabel, playlistItems = []) {
-    if (!targetLabel) return '';
+    if (!targetLabel) return "";
 
-    const contexts = [...new Set(
-      (playlistItems || [])
-        .map(getPlaylistTargetContext)
-        .filter(Boolean)
-    )];
+    const contexts = [
+      ...new Set(
+        (playlistItems || []).map(getPlaylistTargetContext).filter(Boolean),
+      ),
+    ];
 
     if (contexts.length === 0) {
       return targetLabel;
     }
 
-    return `${targetLabel} (${contexts.join(', ')})`;
+    return `${targetLabel} (${contexts.join(", ")})`;
   }
 
-  $: selectedPlaylistItems = playlists.filter((_, index) => selectedPlaylists.includes(index));
-  $: selectedTargetLabel = formatTargetWithContext(targetProvider, selectedPlaylistItems);
-
-
+  $: selectedPlaylistItems = playlists.filter((_, index) =>
+    selectedPlaylists.includes(index),
+  );
+  $: selectedTargetLabel = formatTargetWithContext(
+    targetProvider,
+    selectedPlaylistItems,
+  );
 
   async function loadPlaylists() {
     if (!sourceProvider) {
-      console.log('[Sync] No source plugin selected');
+      console.log("[Sync] No source plugin selected");
       return;
     }
 
     loadingPlaylists = true;
-    error = '';
+    error = "";
     playlists = [];
     selectedPlaylists = []; // Clear selections when loading new playlists
 
     try {
       console.log(`[Sync] Loading playlists for plugin: ${sourceProvider}`);
-      const response = await apiClient.get(`/system/plugins/${sourceProvider}/playlists`);
-      console.log('[Sync] Full response object:', response);
-      console.log('[Sync] Response data:', response.data);
-      console.log('[Sync] Response data type:', typeof response.data);
-      console.log('[Sync] Response data.items:', response.data.items);
+      const response = await apiClient.get(
+        `/system/plugins/${sourceProvider}/playlists`,
+      );
+      console.log("[Sync] Full response object:", response);
+      console.log("[Sync] Response data:", response.data);
+      console.log("[Sync] Response data type:", typeof response.data);
+      console.log("[Sync] Response data.items:", response.data.items);
 
       playlists = response.data.items || [];
-      console.log('[Sync] Playlists after assignment:', playlists);
-      console.log('[Sync] Number of playlists:', playlists.length);
+      console.log("[Sync] Playlists after assignment:", playlists);
+      console.log("[Sync] Number of playlists:", playlists.length);
     } catch (err) {
-      console.error('[Sync] Error loading playlists:', err);
+      console.error("[Sync] Error loading playlists:", err);
       error = `Failed to load playlists: ${err.response?.data?.error || err.message}`;
     } finally {
       loadingPlaylists = false;
@@ -212,94 +227,99 @@
   async function runAnalysis() {
     if (!sourceProvider || !targetProvider || selectedPlaylists.length === 0) {
       if (!sourceProvider) {
-        analysisError = 'Please select a source service.';
+        analysisError = "Please select a source service.";
       } else if (!targetProvider) {
-        analysisError = 'Please select a target service.';
+        analysisError = "Please select a target service.";
       } else {
-        analysisError = 'Please select at least one playlist to analyze.';
+        analysisError = "Please select at least one playlist to analyze.";
       }
       return;
     }
     analysisLoading = true;
-    analysisError = '';
+    analysisError = "";
     analysisResult = null;
     analysisStarted = true;
 
     try {
-        const selectedDetails = playlists
-          .map((p, index) => ({ ...p, index }))
-          .filter(p => selectedPlaylists.includes(p.index))
-          .map(p => {
-            const detail = { id: p.id, name: p.name, track_count: p.track_count };
-            if (p.account_id !== undefined) {
-              detail.account_id = p.account_id;
-            }
-            if (p.source_account_name !== undefined) {
-              detail.source_account_name = p.source_account_name;
-            }
-            if (p.target_user_id !== undefined) {
-              detail.target_user_id = p.target_user_id;
-            }
-            return detail;
-          });
-
-        // Start analysis as a background job
-        const startResp = await apiClient.post('/core/playlists/analyze/start', {
-          source: sourceProvider,
-          target: targetProvider,
-          quality_profile: selectedQuality,
-          playlists: selectedDetails,
+      const selectedDetails = playlists
+        .map((p, index) => ({ ...p, index }))
+        .filter((p) => selectedPlaylists.includes(p.index))
+        .map((p) => {
+          const detail = { id: p.id, name: p.name, track_count: p.track_count };
+          if (p.account_id !== undefined) {
+            detail.account_id = p.account_id;
+          }
+          if (p.source_account_name !== undefined) {
+            detail.source_account_name = p.source_account_name;
+          }
+          if (p.target_user_id !== undefined) {
+            detail.target_user_id = p.target_user_id;
+          }
+          return detail;
         });
 
-        if (!startResp.data || !startResp.data.job_id) {
-          throw new Error('Failed to start analysis job');
-        }
+      // Start analysis as a background job
+      const startResp = await apiClient.post("/core/playlists/analyze/start", {
+        source: sourceProvider,
+        target: targetProvider,
+        quality_profile: selectedQuality,
+        playlists: selectedDetails,
+      });
 
-        const jobId = startResp.data.job_id;
-        analysisResult = null;
+      if (!startResp.data || !startResp.data.job_id) {
+        throw new Error("Failed to start analysis job");
+      }
 
-        // Poll the job status until finished/failed
-        const pollInterval = 3000;
-        analysisLoading = true;
+      const jobId = startResp.data.job_id;
+      analysisResult = null;
 
-        async function pollOnce() {
-          try {
-            const statusResp = await apiClient.get(`/core/playlists/analyze/${jobId}`);
-            const d = statusResp.data;
-            if (!d) return false;
-            if (d.status === 'finished') {
-              analysisResult = d.result || null;
-              if (analysisResult) {
-                const autoTargetId = analysisResult.target_user_id || analysisResult.summary?.target_user_id;
-                if (autoTargetId) {
-                  overrideTargetUserId = autoTargetId;
-                }
+      // Poll the job status until finished/failed
+      const pollInterval = 3000;
+      analysisLoading = true;
+
+      async function pollOnce() {
+        try {
+          const statusResp = await apiClient.get(
+            `/core/playlists/analyze/${jobId}`,
+          );
+          const d = statusResp.data;
+          if (!d) return false;
+          if (d.status === "finished") {
+            analysisResult = d.result || null;
+            if (analysisResult) {
+              const autoTargetId =
+                analysisResult.target_user_id ||
+                analysisResult.summary?.target_user_id;
+              if (autoTargetId) {
+                overrideTargetUserId = autoTargetId;
               }
-              return true;
             }
-            if (d.status === 'failed') {
-              analysisError = d.error || 'Analysis job failed';
-              return true;
-            }
-          } catch (e) {
-            console.error('Polling error:', e);
+            return true;
           }
-          return false;
+          if (d.status === "failed") {
+            analysisError = d.error || "Analysis job failed";
+            return true;
+          }
+        } catch (e) {
+          console.error("Polling error:", e);
         }
+        return false;
+      }
 
-        // Poll loop
-        let finished = false;
-        while (!finished) {
+      // Poll loop
+      let finished = false;
+      while (!finished) {
+        // eslint-disable-next-line no-await-in-loop
+        finished = await pollOnce();
+        if (!finished) {
           // eslint-disable-next-line no-await-in-loop
-          finished = await pollOnce();
-          if (!finished) {
-            // eslint-disable-next-line no-await-in-loop
-            await new Promise(r => setTimeout(r, pollInterval));
-          }
+          await new Promise((r) => setTimeout(r, pollInterval));
         }
+      }
     } catch (err) {
-      console.error('[Sync] Analysis error:', err);
-      analysisError = err.response?.data?.error || err.message || 'Analysis failed';
+      console.error("[Sync] Analysis error:", err);
+      analysisError =
+        err.response?.data?.error || err.message || "Analysis failed";
     } finally {
       analysisLoading = false;
     }
@@ -308,78 +328,106 @@
   async function downloadMissingTracks() {
     if (!analysisResult || downloadingMissing) return;
     downloadingMissing = true;
-    error = '';
-    success = '';
+    error = "";
+    success = "";
 
     try {
-      const response = await apiClient.post('/core/playlists/download-missing', {
-        missing: analysisResult.missing || []
-      });
+      const response = await apiClient.post(
+        "/core/playlists/download-missing",
+        {
+          missing: analysisResult.missing || [],
+        },
+      );
 
       if (response.data.accepted) {
-        success = 'Download job created. Check Jobs for progress.';
+        success = "Download job created. Check Jobs for progress.";
         jobs.load();
       } else {
-        error = response.data.error || 'Failed to start download job.';
+        error = response.data.error || "Failed to start download job.";
       }
     } catch (err) {
-      error = err.response?.data?.error || err.message || 'Download failed';
+      error = err.response?.data?.error || err.message || "Download failed";
     } finally {
       downloadingMissing = false;
     }
   }
-  
+
   function openSyncConfigModal() {
-    if (!analysisResult?.summary?.can_sync && !(analysisResult?.summary?.found_in_library > 0) && !(analysisResult?.tracks?.some(t => t.matched_track_id))) {
-      analysisError = 'No matched tracks to sync.';
+    if (
+      !analysisResult?.summary?.can_sync &&
+      !(analysisResult?.summary?.found_in_library > 0) &&
+      !analysisResult?.tracks?.some((t) => t.matched_track_id)
+    ) {
+      analysisError = "No matched tracks to sync.";
       return;
     }
     syncConfigModalOpen = true;
   }
-  
+
   function closeSyncConfigModal() {
     syncConfigModalOpen = false;
   }
-  
+
   async function confirmSync() {
-    const validMatches = (analysisResult?.summary?.matched_pairs?.length > 0)
-      ? analysisResult.summary.matched_pairs
-      : (analysisResult?.tracks || [])
-          .filter(t => t.matched_track_id)
-          .map(t => ({
-            track_id: t.matched_track_id,
-            matched_track_id: t.matched_track_id,
-            target_identifier: t.target_identifier || t.matched_track_id,
-            title: t.title,
-            artist: t.artist,
-            album: t.album,
-            duration_ms: t.duration_ms,
-            source_title: t.title,
-            source_artist: t.artist,
-            source_track: t.source_track,
-          }));
+    const validMatches =
+      analysisResult?.summary?.matched_pairs?.length > 0
+        ? analysisResult.summary.matched_pairs
+        : (analysisResult?.tracks || [])
+            .filter((t) => t.matched_track_id)
+            .map((t) => ({
+              track_id: t.matched_track_id,
+              matched_track_id: t.matched_track_id,
+              target_identifier: t.target_identifier || t.matched_track_id,
+              title: t.title,
+              artist: t.artist,
+              album: t.album,
+              duration_ms: t.duration_ms,
+              source_title: t.title,
+              source_artist: t.artist,
+              source_track: t.source_track,
+            }));
 
     if (validMatches.length === 0) {
-      analysisError = 'No tracks from the selected playlist(s) matched your target library. Nothing to sync.';
+      analysisError =
+        "No tracks from the selected playlist(s) matched your target library. Nothing to sync.";
       return;
     }
     syncInProgress = true;
-    analysisError = '';
-    
-    try {
-      const selectedItems = selectedPlaylists.map(i => playlists[i]).filter(Boolean);
-      
-      const sourceAccountNames = [...new Set(selectedItems.map(p => p.source_account_name).filter(Boolean))];
-      const targetUserIds = [...new Set(selectedItems.map(p => p.target_user_id).filter(Boolean))];
+    analysisError = "";
 
-      let sourceAccountName = sourceAccountNames.length === 1 ? sourceAccountNames[0] : (selectedItems[0]?.source_account_name || undefined);
-      let targetUserId = targetUserIds.length === 1 ? targetUserIds[0] : (selectedItems[0]?.target_user_id || undefined);
-      let syncPlaylistName = selectedItems.length === 1 ? (selectedItems[0]?.name || 'Synced Playlist') : (selectedItems[0]?.name ? `${selectedItems[0].name} (+${selectedItems.length - 1} more)` : 'Multi-Playlist Sync');
+    try {
+      const selectedItems = selectedPlaylists
+        .map((i) => playlists[i])
+        .filter(Boolean);
+
+      const sourceAccountNames = [
+        ...new Set(
+          selectedItems.map((p) => p.source_account_name).filter(Boolean),
+        ),
+      ];
+      const targetUserIds = [
+        ...new Set(selectedItems.map((p) => p.target_user_id).filter(Boolean)),
+      ];
+
+      let sourceAccountName =
+        sourceAccountNames.length === 1
+          ? sourceAccountNames[0]
+          : selectedItems[0]?.source_account_name || undefined;
+      let targetUserId =
+        targetUserIds.length === 1
+          ? targetUserIds[0]
+          : selectedItems[0]?.target_user_id || undefined;
+      let syncPlaylistName =
+        selectedItems.length === 1
+          ? selectedItems[0]?.name || "Synced Playlist"
+          : selectedItems[0]?.name
+            ? `${selectedItems[0].name} (+${selectedItems.length - 1} more)`
+            : "Multi-Playlist Sync";
 
       // Increase timeout proportional to number of selected playlists
       const syncTimeoutMs = Math.max(10000, selectedPlaylists.length * 10000);
       const response = await apiClient.post(
-        '/core/playlists/sync',
+        "/core/playlists/sync",
         {
           source: sourceProvider,
           target_source: targetProvider,
@@ -389,63 +437,72 @@
           matches: validMatches,
           download_missing: syncDownloadMissing,
         },
-        { timeout: syncTimeoutMs }
+        { timeout: syncTimeoutMs },
       );
-      
+
       if (response.data.accepted) {
         syncConfigModalOpen = false;
         // Set initial progress state immediately to trigger UI change
-        syncProgressEvent = { 
-          type: 'in-progress', 
-          data: { 
-            total: analysisResult?.summary?.found_in_library || validMatches.length,
-            message: 'Starting sync...'
-          } 
+        syncProgressEvent = {
+          type: "in-progress",
+          data: {
+            total:
+              analysisResult?.summary?.found_in_library || validMatches.length,
+            message: "Starting sync...",
+          },
         };
         // Keep analysis modal open to show progress
         // Fix the events_path - remove /api/v1 or /api prefix if present since apiClient already has baseURL='/api/v1'
-        const rawEventsPath = response.data.events_path || '';
-        const eventsPath = rawEventsPath.replace(/^\/api\/v1/, '').replace(/^\/api/, '');
+        const rawEventsPath = response.data.events_path || "";
+        const eventsPath = rawEventsPath
+          .replace(/^\/api\/v1/, "")
+          .replace(/^\/api/, "");
         startSyncEventPolling(response.data.job, eventsPath);
       } else {
-        analysisError = response.data.error || 'Sync failed to start';
+        analysisError = response.data.error || "Sync failed to start";
       }
     } catch (err) {
-      console.error('[Sync] Sync error:', err);
-      analysisError = err.response?.data?.error || err.message || 'Sync failed';
+      console.error("[Sync] Sync error:", err);
+      analysisError = err.response?.data?.error || err.message || "Sync failed";
     } finally {
       syncInProgress = false;
     }
   }
-  
+
   function startSyncEventPolling(jobName, eventsPath) {
     syncEventStream = [];
     let lastEventId = -1;
-    
-    console.log('[Sync Events] Starting polling for job:', jobName);
-    console.log('[Sync Events] Events path:', eventsPath);
-    
+
+    console.log("[Sync Events] Starting polling for job:", jobName);
+    console.log("[Sync Events] Events path:", eventsPath);
+
     const pollEvents = async () => {
       try {
-        const separator = eventsPath.includes('?') ? '&' : '?';
+        const separator = eventsPath.includes("?") ? "&" : "?";
         const url = `${eventsPath}${separator}since=${lastEventId}`;
-        console.log('[Sync Events] Polling URL:', url);
+        console.log("[Sync Events] Polling URL:", url);
         const response = await apiClient.get(url);
         const newEvents = response.data.events || [];
-        
-        console.log('[Sync Events] Received', newEvents.length, 'events');
+
+        console.log("[Sync Events] Received", newEvents.length, "events");
         if (newEvents.length > 0) {
-          console.log('[Sync Events] Latest event:', newEvents[newEvents.length - 1]);
+          console.log(
+            "[Sync Events] Latest event:",
+            newEvents[newEvents.length - 1],
+          );
         }
-        
+
         syncEventStream = [...syncEventStream, ...newEvents];
-        
+
         if (newEvents.length > 0) {
           lastEventId = newEvents[newEvents.length - 1].id;
           syncProgressEvent = newEvents[newEvents.length - 1];
-          
-          if (syncProgressEvent.type === 'sync_complete' || syncProgressEvent.type === 'sync_error') {
-            console.log('[Sync Events] Sync finished, stopping polling');
+
+          if (
+            syncProgressEvent.type === "sync_complete" ||
+            syncProgressEvent.type === "sync_error"
+          ) {
+            console.log("[Sync Events] Sync finished, stopping polling");
             if (syncEventPollingId) {
               clearInterval(syncEventPollingId);
               syncEventPollingId = null;
@@ -453,19 +510,22 @@
             setTimeout(() => {
               jobs.load();
               // Auto-download if checkbox was checked and sync was successful
-              if (syncProgressEvent.type === 'sync_complete' && syncDownloadMissing) {
+              if (
+                syncProgressEvent.type === "sync_complete" &&
+                syncDownloadMissing
+              ) {
                 downloadMissingTracks();
               }
-              if (syncProgressEvent.type === 'sync_complete') {
-                success = 'Sync completed!';
+              if (syncProgressEvent.type === "sync_complete") {
+                success = "Sync completed!";
               } else {
-                analysisError = syncProgressEvent.data?.error || 'Sync failed';
+                analysisError = syncProgressEvent.data?.error || "Sync failed";
               }
             }, 500);
           }
         }
       } catch (err) {
-        console.error('[Sync Events] Polling error:', err);
+        console.error("[Sync Events] Polling error:", err);
         // Stop polling on error
         if (syncEventPollingId) {
           clearInterval(syncEventPollingId);
@@ -473,11 +533,11 @@
         }
       }
     };
-    
+
     pollEvents();
     syncEventPollingId = setInterval(pollEvents, 500);
   }
-  
+
   function closeSyncProgressModal() {
     if (syncEventPollingId) {
       clearInterval(syncEventPollingId);
@@ -486,28 +546,32 @@
     syncEventStream = [];
     syncProgressEvent = null;
   }
-  
+
   async function loadScheduledSyncs() {
     try {
-      const response = await apiClient.get('/core/playlists/sync/scheduled');
+      const response = await apiClient.get("/core/playlists/sync/scheduled");
       scheduledSyncs = response.data.scheduled_syncs || [];
     } catch (err) {
-      console.error('Failed to load scheduled syncs:', err);
+      console.error("Failed to load scheduled syncs:", err);
     }
   }
-  
+
   function openScheduleModal() {
     // Convert indices back to playlist details
     const playlistDetails = playlists
       .map((p, index) => ({ ...p, index }))
-      .filter(p => selectedPlaylists.includes(p.index))
-      .map(p => ({
+      .filter((p) => selectedPlaylists.includes(p.index))
+      .map((p) => ({
         id: p.id,
         name: p.name,
         track_count: p.track_count,
-        ...(p.source_account_name !== undefined && { source_account_name: p.source_account_name }),
+        ...(p.source_account_name !== undefined && {
+          source_account_name: p.source_account_name,
+        }),
         ...(p.account_id !== undefined && { account_id: p.account_id }),
-        ...(p.target_user_id !== undefined && { target_user_id: p.target_user_id })
+        ...(p.target_user_id !== undefined && {
+          target_user_id: p.target_user_id,
+        }),
       }));
 
     scheduleForm = {
@@ -519,68 +583,78 @@
     };
     showScheduleModal = true;
   }
-  
+
   function closeScheduleModal() {
     showScheduleModal = false;
   }
-  
+
   async function createScheduledSync() {
     try {
-      const response = await apiClient.post('/core/playlists/sync/schedule', {
+      const response = await apiClient.post("/core/playlists/sync/schedule", {
         source: scheduleForm.source,
         target_source: scheduleForm.target,
         playlists: scheduleForm.playlists,
         interval: scheduleForm.interval,
         download_missing: scheduleForm.download_missing,
       });
-      
+
       if (response.data.accepted) {
-        success = `Scheduled sync created! Runs every ${scheduleIntervalOptions.find(o => o.value === scheduleForm.interval)?.label || scheduleForm.interval + 's'}.`;
+        success = `Scheduled sync created! Runs every ${scheduleIntervalOptions.find((o) => o.value === scheduleForm.interval)?.label || scheduleForm.interval + "s"}.`;
         closeScheduleModal();
         loadScheduledSyncs();
       }
     } catch (err) {
-      error = err.response?.data?.error || err.message || 'Failed to create scheduled sync';
+      error =
+        err.response?.data?.error ||
+        err.message ||
+        "Failed to create scheduled sync";
     }
   }
-  
+
   async function deleteScheduledSync(syncId) {
-    if (!confirm('Delete this scheduled sync?')) return;
+    if (!confirm("Delete this scheduled sync?")) return;
     try {
       await apiClient.delete(`/core/playlists/sync/scheduled/${syncId}`);
-      success = 'Scheduled sync deleted.';
+      success = "Scheduled sync deleted.";
       loadScheduledSyncs();
     } catch (err) {
-      error = err.response?.data?.error || err.message || 'Failed to delete scheduled sync';
+      error =
+        err.response?.data?.error ||
+        err.message ||
+        "Failed to delete scheduled sync";
     }
   }
 
   async function openAnalysisModal() {
     if (!sourceProvider || !targetProvider || selectedPlaylists.length === 0) {
       if (!sourceProvider) {
-        error = 'Please select a source service.';
+        error = "Please select a source service.";
       } else if (!targetProvider) {
-        error = 'Please select a target service.';
+        error = "Please select a target service.";
       } else {
-        error = 'Please select at least one playlist to sync.';
+        error = "Please select at least one playlist to sync.";
       }
       return;
     }
     // Clear stale page-level messages from a previous sync run
-    error = '';
-    success = '';
+    error = "";
+    success = "";
     analysisModalOpen = true;
 
     // Auto-resolve initial target user ID from selected playlist if available
-    const initialTargetUserId = playlists.find((_, index) => selectedPlaylists.includes(index))?.target_user_id || null;
+    const initialTargetUserId =
+      playlists.find((_, index) => selectedPlaylists.includes(index))
+        ?.target_user_id || null;
     overrideTargetUserId = initialTargetUserId;
 
     await fetchTargetAccounts();
 
     // If still null after accounts loaded, preselect admin or first account
     if (!overrideTargetUserId && availableTargetAccounts.length > 0) {
-      const adminAcc = availableTargetAccounts.find(a => a.is_admin);
-      overrideTargetUserId = adminAcc ? (adminAcc.user_id || adminAcc.id) : (availableTargetAccounts[0].user_id || availableTargetAccounts[0].id);
+      const adminAcc = availableTargetAccounts.find((a) => a.is_admin);
+      overrideTargetUserId = adminAcc
+        ? adminAcc.user_id || adminAcc.id
+        : availableTargetAccounts[0].user_id || availableTargetAccounts[0].id;
     }
 
     runAnalysis();
@@ -589,7 +663,7 @@
   function closeAnalysisModal() {
     analysisModalOpen = false;
     analysisResult = null;
-    analysisError = '';
+    analysisError = "";
     analysisStarted = false;
     availableTargetAccounts = [];
     overrideTargetUserId = null;
@@ -612,7 +686,7 @@
 
   function togglePlaylist(index) {
     if (selectedPlaylists.includes(index)) {
-      selectedPlaylists = selectedPlaylists.filter(i => i !== index);
+      selectedPlaylists = selectedPlaylists.filter((i) => i !== index);
     } else {
       selectedPlaylists = [...selectedPlaylists, index];
     }
@@ -620,7 +694,7 @@
 
   function toggleTarget(id) {
     if (targetProviders.includes(id)) {
-      targetProviders = targetProviders.filter(i => i !== id);
+      targetProviders = targetProviders.filter((i) => i !== id);
     } else {
       targetProviders = [...targetProviders, id];
     }
@@ -663,10 +737,14 @@
         </div>
         <div class="form-group">
           <label for="source">Select where to sync from:</label>
-          <select id="source" bind:value={sourceProvider} on:change={() => {
-              console.log('[Debug] Source plugin selected:', sourceProvider);
+          <select
+            id="source"
+            bind:value={sourceProvider}
+            on:change={() => {
+              console.log("[Debug] Source plugin selected:", sourceProvider);
               loadPlaylists();
-            }}>
+            }}
+          >
             <option value="">-- Select Source --</option>
             {#each playlistPlugins as p}
               <option value={p.plugin_id}>{p.name}</option>
@@ -724,9 +802,11 @@
       {:else}
         <div class="playlists-grid">
           {#each playlists as playlist, index}
-            <button class="playlist-item active:scale-95 transition-all duration-200"
-                    class:selected={selectedPlaylists.includes(index)}
-                    on:click={() => togglePlaylist(index)}>
+            <button
+              class="playlist-item active:scale-95 transition-all duration-200"
+              class:selected={selectedPlaylists.includes(index)}
+              on:click={() => togglePlaylist(index)}
+            >
               <div class="playlist-info">
                 <strong>{playlist.name}</strong>
                 {#if playlist.track_count !== undefined}
@@ -735,13 +815,19 @@
               </div>
               <div class="playlist-meta-bottom-right">
                 {#if playlist.source_account_name}
-                  <span class="account-hint muted small">{playlist.source_account_name}</span>
+                  <span class="account-hint muted small"
+                    >{playlist.source_account_name}</span
+                  >
                 {/if}
               </div>
               <div class="checkbox">
                 {#if selectedPlaylists.includes(index)}
                   <svg viewBox="0 0 20 20" fill="currentColor">
-                    <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" />
+                    <path
+                      fill-rule="evenodd"
+                      d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
+                      clip-rule="evenodd"
+                    />
                   </svg>
                 {/if}
               </div>
@@ -758,16 +844,22 @@
       {#if success}
         <p class="success-msg">{success}</p>
       {/if}
-      <button class="btn btn--primary active:scale-95 transition-all duration-200"
-              disabled={syncing}
-              on:click={openAnalysisModal}>
+      <button
+        class="btn btn--primary active:scale-95 transition-all duration-200"
+        disabled={syncing}
+        on:click={openAnalysisModal}
+      >
         {#if syncing}
           Preparing...
         {:else}
           Sync Playlist
         {/if}
       </button>
-      <button type="button" class="btn btn--secondary active:scale-95 transition-all duration-200" on:click={openScheduleModal}>
+      <button
+        type="button"
+        class="btn btn--secondary active:scale-95 transition-all duration-200"
+        on:click={openScheduleModal}
+      >
         ⏰ Create Schedule
       </button>
     </div>
@@ -777,11 +869,15 @@
   <div class="scheduled-syncs-section">
     <div class="section-header">
       <h2>Scheduled Syncs</h2>
-      <button type="button" class="btn btn--accent active:scale-95 transition-all duration-200" on:click={openScheduleModal}>
+      <button
+        type="button"
+        class="btn btn--accent active:scale-95 transition-all duration-200"
+        on:click={openScheduleModal}
+      >
         + Create Schedule
       </button>
     </div>
-    
+
     {#if scheduledSyncs.length > 0}
       <div class="syncs-table">
         <div class="table-header">
@@ -794,13 +890,20 @@
         {#each scheduledSyncs as sync (sync.id)}
           <div class="table-row">
             <div class="col-source">{sync.source}</div>
-            <div class="col-target">{formatTargetWithContext(sync.target, sync.playlists)}</div>
+            <div class="col-target">
+              {formatTargetWithContext(sync.target, sync.playlists)}
+            </div>
             <div class="col-interval">
-              {scheduleIntervalOptions.find(o => o.value === sync.interval)?.label || sync.interval + 's'}
+              {scheduleIntervalOptions.find((o) => o.value === sync.interval)
+                ?.label || sync.interval + "s"}
             </div>
             <div class="col-playlists">{sync.playlists.length}</div>
             <div class="col-actions">
-              <button type="button" class="btn btn--small active:scale-95 transition-all duration-200" on:click={() => deleteScheduledSync(sync.id)}>
+              <button
+                type="button"
+                class="btn btn--small active:scale-95 transition-all duration-200"
+                on:click={() => deleteScheduledSync(sync.id)}
+              >
                 Delete
               </button>
             </div>
@@ -808,191 +911,318 @@
         {/each}
       </div>
     {:else}
-      <p class="empty-state">No scheduled syncs yet. Create one to automate your playlists!</p>
+      <p class="empty-state">
+        No scheduled syncs yet. Create one to automate your playlists!
+      </p>
     {/if}
   </div>
 </section>
 
 {#if analysisModalOpen}
-  <div class="modal-backdrop" on:click={closeAnalysisModal}></div>
-  <div class="modal {isDiagnosticsDrawerOpen ? 'modal--expanded' : ''}">
-    <header class="modal__header">
-      <div>
-        <p class="eyebrow">Playlist Sync</p>
-        <h2>{syncProgressEvent ? 'Sync' : 'Analysis'}</h2>
-        <p class="sub">{syncProgressEvent ? `Syncing tracks to ${getPluginName(targetProvider)}...` : `Source: ${getPluginName(analysisResult?.source || sourceProvider)} → Target: ${getPluginName(analysisResult?.target || targetProvider)}`}</p>
-        {#if !syncProgressEvent && availableTargetAccounts.length > 0}
-          <div class="target-account-selector my-2 flex items-center gap-2">
-            <span class="text-xs text-muted">Syncing to Profile:</span>
-            <select class="select select-sm select-bordered" bind:value={overrideTargetUserId}>
-              <option value="" disabled selected>-- Select Target Profile --</option>
-              {#each availableTargetAccounts as acc}
-                <option value={acc.user_id || acc.id}>
-                  {acc.display_name || acc.account_name || acc.username || acc.name} {acc.is_admin ? '(Admin)' : ''}
-                </option>
-              {/each}
-            </select>
-          </div>
-        {/if}
-      </div>
-      <button class="close-btn active:scale-95 transition-all duration-200" on:click={closeAnalysisModal}>×</button>
-    </header>
-
-    <div class="modal-content-container">
-      <div class="modal__body">
-      {#if !syncProgressEvent}
-        <!-- Analysis Section -->
-        <div class="summary-grid">
-          <div class="summary-card">
-            <div class="label">Total Tracks</div>
-            <div class="value">{analysisResult?.summary?.total_tracks ?? '–'}</div>
-          </div>
-          <div class="summary-card">
-            <div class="label">Found in Library</div>
-            <div class="value">{analysisResult?.summary?.found_in_library ?? '–'}</div>
-          </div>
-          <div class="summary-card">
-            <div class="label">Missing</div>
-            <div class="value highlight">{analysisResult?.summary?.missing_tracks ?? '–'}</div>
-          </div>
-          <div class="summary-card">
-            <div class="label">Downloaded</div>
-            <div class="value">{analysisResult?.summary?.downloaded ?? 0}</div>
-          </div>
-        </div>
-
-        <div class="controls-row">
-          <div class="control">
-            <label>Target Quality for Missing Tracks</label>
-            <select bind:value={selectedQuality}>
-              {#if qualityProfiles.length === 0}
-                <option value="">No profiles configured</option>
-              {:else}
-                {#each qualityProfiles as profile}
-                  <option value={profile.name}>{profile.name}</option>
-                {/each}
-              {/if}
-            </select>
-            <p class="muted text-xs mt-1">Applies only to newly downloaded missing tracks — does not change existing files in your library.</p>
-          </div>
-          <div class="control buttons">
-            <button class="btn active:scale-95 transition-all duration-200" on:click={runAnalysis} disabled={analysisLoading}>
-              {analysisLoading ? 'Analyzing…' : (analysisStarted ? 'Re-run Analysis' : 'Begin Analysis')}
-            </button>
-            <button 
-              class="btn btn--accent active:scale-95 transition-all duration-200" 
-              on:click={confirmSync} 
-              disabled={!overrideTargetUserId || !(
-                (analysisResult?.summary?.matched_pairs?.length ?? 0) > 0 ||
-                (analysisResult?.summary?.found_in_library ?? 0) > 0 ||
-                (analysisResult?.tracks?.some(t => t.matched_track_id) ?? false)
-              )}
-            >
-              ⇄ Sync
-            </button>
-            <button class="btn btn--primary active:scale-95 transition-all duration-200" on:click={downloadMissingTracks}
-              disabled={!analysisResult || downloadingMissing || (analysisResult?.summary?.missing_tracks ?? 0) === 0}>
-              {downloadingMissing ? 'Starting…' : 'Download Missing Tracks'}
-            </button>
-          </div>
-        </div>
-
-        {#if analysisError}
-          <p class="error-msg">{analysisError}</p>
-        {/if}
-
-        <div class="tracks-table-wrapper">
-          <div class="tracks-table">
-            <div class="table-header">
-              <span>#</span>
-              <span>Track</span>
-              <span>Artist</span>
-              <span>Duration</span>
-              <span>Match Quality</span>
-              <span>Download Status</span>
-            </div>
-            {#if analysisLoading}
-              <div class="table-row muted">Analyzing tracks…</div>
-            {:else if analysisResult?.tracks?.length}
-              {#each analysisResult.tracks as track, idx}
-                <div
-                  class="table-row interactive {selectedTrackForDiagnostics === track && isDiagnosticsDrawerOpen ? 'selected' : ''}"
-                  on:click={() => {
-                    selectedTrackForDiagnostics = track;
-                    isDiagnosticsDrawerOpen = true;
-                  }}
-                  role="button"
-                  tabindex="0"
-                  on:keydown={(e) => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault();
-                      selectedTrackForDiagnostics = track;
-                      isDiagnosticsDrawerOpen = true;
-                    }
-                  }}
+  <div
+    class="fixed inset-0 z-50 flex items-center justify-center p-6 bg-slate-950/80 backdrop-blur-sm"
+    on:click={closeAnalysisModal}
+    role="dialog"
+    aria-modal="true"
+  >
+    <div
+      class="bg-slate-900 border border-slate-800 rounded-xl shadow-2xl flex flex-col w-full max-w-7xl h-[85vh] max-h-[85vh] overflow-hidden"
+      on:click|stopPropagation
+    >
+      <div
+        class="p-6 border-b border-slate-800 shrink-0 flex items-center justify-between"
+      >
+        <div>
+          <p class="eyebrow">Playlist Sync</p>
+          <h2 class="text-xl font-bold text-white">
+            {syncProgressEvent ? "Sync" : "Analysis"}
+          </h2>
+          <p class="sub">
+            {syncProgressEvent
+              ? `Syncing tracks to ${getPluginName(targetProvider)}...`
+              : `Source: ${getPluginName(analysisResult?.source || sourceProvider)} → Target: ${getPluginName(analysisResult?.target || targetProvider)}`}
+          </p>
+          {#if !syncProgressEvent && availableTargetAccounts.length > 0}
+            <div class="target-account-selector my-2 flex items-center gap-2">
+              <span class="text-xs text-muted">Syncing to Profile:</span>
+              <select
+                class="select select-sm select-bordered"
+                bind:value={overrideTargetUserId}
+              >
+                <option value="" disabled selected
+                  >-- Select Target Profile --</option
                 >
-                  <span>{idx + 1}</span>
-                  <span title={track.title}>{track.title}</span>
-                  <span title={track.artist}>{track.artist}</span>
-                  <span>{track.duration || '–'}</span>
-                  <span class="match-badge {track.library_match?.includes('score') ? 'partial' : track.library_match === 'Found' ? 'found' : track.library_match?.includes('fuzzy') ? 'fuzzy' : 'missing'}">{track.library_match ?? 'Checking…'}</span>
-                  <span>{track.download_status ?? '-'}</span>
-                </div>
-              {/each}
-            {:else}
-              <div class="table-row muted">No track details available yet.</div>
-            {/if}
-          </div>
-        </div>
-      {:else}
-        <!-- Sync Progress Section -->
-        <div class="summary-grid">
-          <div class="summary-card">
-            <div class="label">Total Tracks</div>
-            <div class="value">{syncProgressEvent.data?.total || analysisResult?.summary?.found_in_library || 0}</div>
-          </div>
-          <div class="summary-card">
-            <div class="label">Synced</div>
-            <div class="value" style="color: #22c55e">{(syncEventStream.filter(e => e.type === 'track_synced').length) || 0}</div>
-          </div>
-          <div class="summary-card">
-            <div class="label">Failed</div>
-            <div class="value highlight" style="color: #ef4444">{(syncEventStream.filter(e => e.type === 'track_failed').length) || 0}</div>
-          </div>
-          <div class="summary-card">
-            <div class="label">Pending</div>
-            <div class="value">{Math.max(0, (syncProgressEvent.data?.total || analysisResult?.summary?.found_in_library || 0) - (syncEventStream.filter(e => e.type === 'track_synced').length) - (syncEventStream.filter(e => e.type === 'track_failed').length)) || 0}</div>
-          </div>
-        </div>
-
-        <!-- Progress Bar - Right after summary cards -->
-        {#if (syncProgressEvent.data?.total || analysisResult?.summary?.found_in_library) > 0}
-          <div class="progress-bar-container">
-            <div class="progress-label">
-              {#if syncProgressEvent.type === 'sync_complete'}
-                ✓ Completed
-              {:else}
-                Progress: {Math.round(((syncEventStream.filter(e => e.type === 'track_synced').length) + (syncEventStream.filter(e => e.type === 'track_failed').length)) / (syncProgressEvent.data?.total || analysisResult?.summary?.found_in_library || 1) * 100)}% 
-                ({(syncEventStream.filter(e => e.type === 'track_synced').length) + (syncEventStream.filter(e => e.type === 'track_failed').length)}/{syncProgressEvent.data?.total || analysisResult?.summary?.found_in_library})
-              {/if}
+                {#each availableTargetAccounts as acc}
+                  <option value={acc.user_id || acc.id}>
+                    {acc.display_name ||
+                      acc.account_name ||
+                      acc.username ||
+                      acc.name}
+                    {acc.is_admin ? "(Admin)" : ""}
+                  </option>
+                {/each}
+              </select>
             </div>
-            <div class="progress-bar">
-              <div class="progress-fill {syncProgressEvent.type === 'sync_complete' ? 'complete' : ''}" style="width: {Math.round(((syncEventStream.filter(e => e.type === 'track_synced').length) + (syncEventStream.filter(e => e.type === 'track_failed').length)) / (syncProgressEvent.data?.total || analysisResult?.summary?.found_in_library || 1) * 100)}%"></div>
-            </div>
-          </div>
-        {/if}
-      {/if}
+          {/if}
+        </div>
+        <button
+          class="close-btn active:scale-95 transition-all duration-200"
+          on:click={closeAnalysisModal}>×</button
+        >
       </div>
 
-      {#if isDiagnosticsDrawerOpen}
-        <PlaylistMatchDiagnosticDrawer
-          isOpen={isDiagnosticsDrawerOpen}
-          track={selectedTrackForDiagnostics}
-          onClose={() => {
-            isDiagnosticsDrawerOpen = false;
-          }}
-        />
-      {/if}
+      <div class="flex-1 min-h-0 flex flex-row overflow-hidden">
+        <div
+          class="flex-1 min-h-0 overflow-y-auto p-6 scrollbar-thin scrollbar-thumb-slate-700"
+        >
+          {#if !syncProgressEvent}
+            <!-- Analysis Section -->
+            <div class="summary-grid">
+              <div class="summary-card">
+                <div class="label">Total Tracks</div>
+                <div class="value">
+                  {analysisResult?.summary?.total_tracks ?? "–"}
+                </div>
+              </div>
+              <div class="summary-card">
+                <div class="label">Found in Library</div>
+                <div class="value">
+                  {analysisResult?.summary?.found_in_library ?? "–"}
+                </div>
+              </div>
+              <div class="summary-card">
+                <div class="label">Missing</div>
+                <div class="value highlight">
+                  {analysisResult?.summary?.missing_tracks ?? "–"}
+                </div>
+              </div>
+              <div class="summary-card">
+                <div class="label">Downloaded</div>
+                <div class="value">
+                  {analysisResult?.summary?.downloaded ?? 0}
+                </div>
+              </div>
+            </div>
+
+            <div class="controls-row">
+              <div class="control">
+                <label>Target Quality for Missing Tracks</label>
+                <select bind:value={selectedQuality}>
+                  {#if qualityProfiles.length === 0}
+                    <option value="">No profiles configured</option>
+                  {:else}
+                    {#each qualityProfiles as profile}
+                      <option value={profile.name}>{profile.name}</option>
+                    {/each}
+                  {/if}
+                </select>
+                <p class="muted text-xs mt-1">
+                  Applies only to newly downloaded missing tracks — does not
+                  change existing files in your library.
+                </p>
+              </div>
+              <div class="control buttons">
+                <button
+                  class="btn active:scale-95 transition-all duration-200"
+                  on:click={runAnalysis}
+                  disabled={analysisLoading}
+                >
+                  {analysisLoading
+                    ? "Analyzing…"
+                    : analysisStarted
+                      ? "Re-run Analysis"
+                      : "Begin Analysis"}
+                </button>
+                <button
+                  class="btn btn--accent active:scale-95 transition-all duration-200"
+                  on:click={confirmSync}
+                  disabled={!overrideTargetUserId ||
+                    !(
+                      (analysisResult?.summary?.matched_pairs?.length ?? 0) >
+                        0 ||
+                      (analysisResult?.summary?.found_in_library ?? 0) > 0 ||
+                      (analysisResult?.tracks?.some(
+                        (t) => t.matched_track_id,
+                      ) ??
+                        false)
+                    )}
+                >
+                  ⇄ Sync
+                </button>
+                <button
+                  class="btn btn--primary active:scale-95 transition-all duration-200"
+                  on:click={downloadMissingTracks}
+                  disabled={!analysisResult ||
+                    downloadingMissing ||
+                    (analysisResult?.summary?.missing_tracks ?? 0) === 0}
+                >
+                  {downloadingMissing ? "Starting…" : "Download Missing Tracks"}
+                </button>
+              </div>
+            </div>
+
+            {#if analysisError}
+              <p class="error-msg">{analysisError}</p>
+            {/if}
+
+            <div class="tracks-table-wrapper">
+              <div class="tracks-table">
+                <div class="table-header">
+                  <span>#</span>
+                  <span>Track</span>
+                  <span>Artist</span>
+                  <span>Duration</span>
+                  <span>Match Quality</span>
+                  <span>Download Status</span>
+                </div>
+                {#if analysisLoading}
+                  <div class="table-row muted">Analyzing tracks…</div>
+                {:else if analysisResult?.tracks?.length}
+                  {#each analysisResult.tracks as track, idx}
+                    <div
+                      class="table-row interactive {selectedTrackForDiagnostics ===
+                        track && isDiagnosticsDrawerOpen
+                        ? 'selected'
+                        : ''}"
+                      on:click={() => {
+                        selectedTrackForDiagnostics = track;
+                        isDiagnosticsDrawerOpen = true;
+                      }}
+                      role="button"
+                      tabindex="0"
+                      on:keydown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          selectedTrackForDiagnostics = track;
+                          isDiagnosticsDrawerOpen = true;
+                        }
+                      }}
+                    >
+                      <span>{idx + 1}</span>
+                      <span title={track.title}>{track.title}</span>
+                      <span title={track.artist}>{track.artist}</span>
+                      <span>{track.duration || "–"}</span>
+                      <span
+                        class="match-badge {track.library_match?.includes(
+                          'score',
+                        )
+                          ? 'partial'
+                          : track.library_match === 'Found'
+                            ? 'found'
+                            : track.library_match?.includes('fuzzy')
+                              ? 'fuzzy'
+                              : 'missing'}"
+                        >{track.library_match ?? "Checking…"}</span
+                      >
+                      <span>{track.download_status ?? "-"}</span>
+                    </div>
+                  {/each}
+                {:else}
+                  <div class="table-row muted">
+                    No track details available yet.
+                  </div>
+                {/if}
+              </div>
+            </div>
+          {:else}
+            <!-- Sync Progress Section -->
+            <div class="summary-grid">
+              <div class="summary-card">
+                <div class="label">Total Tracks</div>
+                <div class="value">
+                  {syncProgressEvent.data?.total ||
+                    analysisResult?.summary?.found_in_library ||
+                    0}
+                </div>
+              </div>
+              <div class="summary-card">
+                <div class="label">Synced</div>
+                <div class="value" style="color: #22c55e">
+                  {syncEventStream.filter((e) => e.type === "track_synced")
+                    .length || 0}
+                </div>
+              </div>
+              <div class="summary-card">
+                <div class="label">Failed</div>
+                <div class="value highlight" style="color: #ef4444">
+                  {syncEventStream.filter((e) => e.type === "track_failed")
+                    .length || 0}
+                </div>
+              </div>
+              <div class="summary-card">
+                <div class="label">Pending</div>
+                <div class="value">
+                  {Math.max(
+                    0,
+                    (syncProgressEvent.data?.total ||
+                      analysisResult?.summary?.found_in_library ||
+                      0) -
+                      syncEventStream.filter((e) => e.type === "track_synced")
+                        .length -
+                      syncEventStream.filter((e) => e.type === "track_failed")
+                        .length,
+                  ) || 0}
+                </div>
+              </div>
+            </div>
+
+            <!-- Progress Bar - Right after summary cards -->
+            {#if (syncProgressEvent.data?.total || analysisResult?.summary?.found_in_library) > 0}
+              <div class="progress-bar-container">
+                <div class="progress-label">
+                  {#if syncProgressEvent.type === "sync_complete"}
+                    ✓ Completed
+                  {:else}
+                    Progress: {Math.round(
+                      ((syncEventStream.filter((e) => e.type === "track_synced")
+                        .length +
+                        syncEventStream.filter((e) => e.type === "track_failed")
+                          .length) /
+                        (syncProgressEvent.data?.total ||
+                          analysisResult?.summary?.found_in_library ||
+                          1)) *
+                        100,
+                    )}% ({syncEventStream.filter(
+                      (e) => e.type === "track_synced",
+                    ).length +
+                      syncEventStream.filter((e) => e.type === "track_failed")
+                        .length}/{syncProgressEvent.data?.total ||
+                      analysisResult?.summary?.found_in_library})
+                  {/if}
+                </div>
+                <div class="progress-bar">
+                  <div
+                    class="progress-fill {syncProgressEvent.type ===
+                    'sync_complete'
+                      ? 'complete'
+                      : ''}"
+                    style="width: {Math.round(
+                      ((syncEventStream.filter((e) => e.type === 'track_synced')
+                        .length +
+                        syncEventStream.filter((e) => e.type === 'track_failed')
+                          .length) /
+                        (syncProgressEvent.data?.total ||
+                          analysisResult?.summary?.found_in_library ||
+                          1)) *
+                        100,
+                    )}%"
+                  ></div>
+                </div>
+              </div>
+            {/if}
+          {/if}
+        </div>
+
+        {#if isDiagnosticsDrawerOpen}
+          <PlaylistMatchDiagnosticDrawer
+            isOpen={isDiagnosticsDrawerOpen}
+            track={selectedTrackForDiagnostics}
+            onClose={() => {
+              isDiagnosticsDrawerOpen = false;
+            }}
+          />
+        {/if}
+      </div>
     </div>
   </div>
 {/if}
@@ -1003,9 +1233,13 @@
   <div class="modal sync-config-modal">
     <div class="modal-header">
       <h2>Configure Sync</h2>
-      <button type="button" class="close-btn active:scale-95 transition-all duration-200" on:click={closeSyncConfigModal}>✕</button>
+      <button
+        type="button"
+        class="close-btn active:scale-95 transition-all duration-200"
+        on:click={closeSyncConfigModal}>✕</button
+      >
     </div>
-    
+
     <div class="modal-body">
       <div class="config-summary">
         <div class="config-row">
@@ -1014,7 +1248,9 @@
         </div>
         <div class="config-row">
           <span class="config-label">Target:</span>
-          <span class="config-value">{selectedTargetLabel || targetProvider}</span>
+          <span class="config-value"
+            >{selectedTargetLabel || targetProvider}</span
+          >
         </div>
         <div class="config-row">
           <span class="config-label">Playlists:</span>
@@ -1022,14 +1258,18 @@
         </div>
         <div class="config-row">
           <span class="config-label">Matched Tracks:</span>
-          <span class="config-value">{analysisResult?.summary?.matched_pairs?.length || 0}</span>
+          <span class="config-value"
+            >{analysisResult?.summary?.matched_pairs?.length || 0}</span
+          >
         </div>
         <div class="config-row">
           <span class="config-label">Missing Tracks:</span>
-          <span class="config-value">{analysisResult?.summary?.missing_tracks || 0}</span>
+          <span class="config-value"
+            >{analysisResult?.summary?.missing_tracks || 0}</span
+          >
         </div>
       </div>
-      
+
       <div class="config-options flex items-center gap-3">
         <label class="switch">
           <input type="checkbox" bind:checked={syncDownloadMissing} />
@@ -1038,11 +1278,20 @@
         <span>Download missing tracks after sync</span>
       </div>
     </div>
-    
+
     <div class="modal-footer">
-      <button type="button" class="btn active:scale-95 transition-all duration-200" on:click={closeSyncConfigModal}>Cancel</button>
-      <button type="button" class="btn btn--accent active:scale-95 transition-all duration-200" on:click={confirmSync} disabled={syncInProgress}>
-        {syncInProgress ? 'Starting Sync…' : 'Start Sync'}
+      <button
+        type="button"
+        class="btn active:scale-95 transition-all duration-200"
+        on:click={closeSyncConfigModal}>Cancel</button
+      >
+      <button
+        type="button"
+        class="btn btn--accent active:scale-95 transition-all duration-200"
+        on:click={confirmSync}
+        disabled={syncInProgress}
+      >
+        {syncInProgress ? "Starting Sync…" : "Start Sync"}
       </button>
     </div>
   </div>
@@ -1056,9 +1305,13 @@
   <div class="modal schedule-modal">
     <div class="modal-header">
       <h2>Create Scheduled Sync</h2>
-      <button type="button" class="close-btn active:scale-95 transition-all duration-200" on:click={closeScheduleModal}>✕</button>
+      <button
+        type="button"
+        class="close-btn active:scale-95 transition-all duration-200"
+        on:click={closeScheduleModal}>✕</button
+      >
     </div>
-    
+
     <div class="modal-body">
       <div class="form-group">
         <label for="schedule-source">Source Service:</label>
@@ -1068,7 +1321,7 @@
           {/each}
         </select>
       </div>
-      
+
       <div class="form-group">
         <label for="schedule-target">Target Service:</label>
         <select id="schedule-target" bind:value={scheduleForm.target}>
@@ -1077,7 +1330,7 @@
           {/each}
         </select>
       </div>
-      
+
       <div class="form-group">
         <label for="schedule-interval">Repeat Interval:</label>
         <select id="schedule-interval" bind:value={scheduleForm.interval}>
@@ -1086,7 +1339,7 @@
           {/each}
         </select>
       </div>
-      
+
       <div class="form-group flex items-center gap-3">
         <label class="switch">
           <input type="checkbox" bind:checked={scheduleForm.download_missing} />
@@ -1094,11 +1347,21 @@
         </label>
         <span>Download missing tracks after sync</span>
       </div>
-      
+
       <div class="bg-[rgba(59,130,246,0.1)] rounded-md p-3">
-        <p class="text-xs text-muted m-0">Note: This will sync {scheduleForm.playlists.length} selected playlist(s) to {formatTargetWithContext(scheduleForm.target, scheduleForm.playlists)} every {scheduleIntervalOptions.find(o => o.value === scheduleForm.interval)?.label || scheduleForm.interval + 's'}.</p>
+        <p class="text-xs text-muted m-0">
+          Note: This will sync {scheduleForm.playlists.length} selected playlist(s)
+          to {formatTargetWithContext(
+            scheduleForm.target,
+            scheduleForm.playlists,
+          )} every {scheduleIntervalOptions.find(
+            (o) => o.value === scheduleForm.interval,
+          )?.label || scheduleForm.interval + "s"}.
+        </p>
         {#if scheduleForm.playlists.length > 0}
-          <div class="mt-2 max-h-[120px] overflow-y-auto custom-scrollbar bg-black/20 border border-[rgba(255,255,255,0.05)] rounded p-2">
+          <div
+            class="mt-2 max-h-[120px] overflow-y-auto custom-scrollbar bg-black/20 border border-[rgba(255,255,255,0.05)] rounded p-2"
+          >
             <ul class="m-0 pl-4 text-xs text-muted list-disc">
               {#each scheduleForm.playlists as pl}
                 <li class="py-0.5">{pl.name}</li>
@@ -1108,10 +1371,18 @@
         {/if}
       </div>
     </div>
-    
+
     <div class="modal-footer">
-      <button type="button" class="btn active:scale-95 transition-all duration-200" on:click={closeScheduleModal}>Cancel</button>
-      <button type="button" class="btn btn--accent active:scale-95 transition-all duration-200" on:click={createScheduledSync}>Create Schedule</button>
+      <button
+        type="button"
+        class="btn active:scale-95 transition-all duration-200"
+        on:click={closeScheduleModal}>Cancel</button
+      >
+      <button
+        type="button"
+        class="btn btn--accent active:scale-95 transition-all duration-200"
+        on:click={createScheduledSync}>Create Schedule</button
+      >
     </div>
   </div>
 {/if}
@@ -1222,7 +1493,8 @@
     box-shadow: 0 0 0 3px rgba(15, 239, 136, 0.1);
   }
 
-  .playlists-grid {    padding: 2px 6px;
+  .playlists-grid {
+    padding: 2px 6px;
     border-radius: 4px;
     color: #94a3b8;
   }
@@ -1317,7 +1589,8 @@
     border-radius: 14px;
   }
 
-  .btn, .btn--primary {
+  .btn,
+  .btn--primary {
     background: var(--accent);
     color: #000;
     padding: 12px 24px;
@@ -1349,8 +1622,15 @@
     cursor: not-allowed;
   }
 
-  .error-msg { color: #ef4444; font-size: 14px; }
-  .success-msg { color: var(--accent); font-size: 14px; font-weight: 600; }
+  .error-msg {
+    color: #ef4444;
+    font-size: 14px;
+  }
+  .success-msg {
+    color: var(--accent);
+    font-size: 14px;
+    font-weight: 600;
+  }
 
   .empty-state {
     display: flex;
@@ -1372,7 +1652,9 @@
   }
 
   @keyframes spin {
-    to { transform: rotate(360deg); }
+    to {
+      transform: rotate(360deg);
+    }
   }
 
   .badge {
@@ -1385,26 +1667,31 @@
     font-size: 11px;
   }
 
-  .muted { color: #94a3b8; }
-  .small { font-size: 12px; }
+  .muted {
+    color: #94a3b8;
+  }
+  .small {
+    font-size: 12px;
+  }
 
   /* Analysis modal */
   .modal-backdrop {
     position: fixed;
     inset: 0;
-    background: rgba(0,0,0,0.55);
+    background: rgba(0, 0, 0, 0.55);
     backdrop-filter: blur(4px);
     z-index: 20;
   }
   .modal {
     position: fixed;
-    top: 50%; left: 50%;
+    top: 50%;
+    left: 50%;
     transform: translate(-50%, -50%);
     width: min(1000px, 96vw);
     max-height: 90vh;
     background: rgba(10, 10, 10, 0.98);
     backdrop-filter: blur(20px);
-    border: 1px solid rgba(255,255,255,0.1);
+    border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 16px;
     padding: 24px;
     z-index: 30;
@@ -1413,7 +1700,9 @@
     gap: 16px;
     overflow: hidden;
     box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
-    transition: width 0.3s cubic-bezier(0.16, 1, 0.3, 1), max-width 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    transition:
+      width 0.3s cubic-bezier(0.16, 1, 0.3, 1),
+      max-width 0.3s cubic-bezier(0.16, 1, 0.3, 1);
   }
 
   .modal.modal--expanded {
@@ -1433,7 +1722,7 @@
     justify-content: space-between;
     align-items: center;
     gap: 16px;
-    border-bottom: 1px solid rgba(255,255,255,0.1);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
     padding-bottom: 16px;
   }
 
@@ -1508,14 +1797,27 @@
     gap: 12px;
   }
   .summary-card {
-    background: rgba(255,255,255,0.03);
-    border: 1px solid rgba(255,255,255,0.05);
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.05);
     border-radius: 12px;
     padding: 12px;
   }
-  .summary-card .label { color: var(--muted); font-size: 12px; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600; }
-  .summary-card .value { font-size: 24px; font-weight: 700; color: var(--text); }
-  .summary-card .highlight { color: #fbbf24; }
+  .summary-card .label {
+    color: var(--muted);
+    font-size: 12px;
+    margin-bottom: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    font-weight: 600;
+  }
+  .summary-card .value {
+    font-size: 24px;
+    font-weight: 700;
+    color: var(--text);
+  }
+  .summary-card .highlight {
+    color: #fbbf24;
+  }
 
   .controls-row {
     display: flex;
@@ -1524,9 +1826,21 @@
     gap: 12px;
     align-items: center;
   }
-  .control { display: flex; flex-direction: column; gap: 6px; }
-  .control label { color: var(--text); font-size: 13px; font-weight: 500; }
-  .control.buttons { flex-direction: row; align-items: center; gap: 10px; }
+  .control {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .control label {
+    color: var(--text);
+    font-size: 13px;
+    font-weight: 500;
+  }
+  .control.buttons {
+    flex-direction: row;
+    align-items: center;
+    gap: 10px;
+  }
   .controls-row select {
     min-width: 180px;
   }
@@ -1559,7 +1873,9 @@
 
   .table-row.interactive {
     cursor: pointer;
-    transition: background 0.15s ease, outline-color 0.15s ease;
+    transition:
+      background 0.15s ease,
+      outline-color 0.15s ease;
   }
 
   .table-row.interactive:hover {
@@ -1610,23 +1926,23 @@
     width: min(600px, 96vw);
     max-height: 70vh;
   }
-  
+
   .modal-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
     gap: 12px;
-    border-bottom: 1px solid rgba(255,255,255,0.1);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
     padding-bottom: 12px;
   }
-  
+
   .modal-header h2 {
     margin: 0;
     font-size: 20px;
     font-weight: 600;
     color: var(--text);
   }
-  
+
   .close-btn {
     background: none;
     border: none;
@@ -1637,62 +1953,62 @@
     border-radius: 4px;
     transition: all 0.2s;
   }
-  
+
   .close-btn:hover {
-    background: rgba(255,255,255,0.1);
+    background: rgba(255, 255, 255, 0.1);
     color: var(--text);
   }
-  
+
   .modal-body {
     flex: 1;
     overflow-y: auto;
     padding: 12px 0;
   }
-  
+
   .modal-footer {
     display: flex;
     justify-content: flex-end;
     gap: 12px;
-    border-top: 1px solid rgba(255,255,255,0.1);
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
     padding-top: 12px;
   }
-  
+
   .config-summary {
     display: flex;
     flex-direction: column;
     gap: 12px;
     padding: 12px;
-    background: rgba(255,255,255,0.05);
+    background: rgba(255, 255, 255, 0.05);
     border-radius: 8px;
     margin-bottom: 16px;
   }
-  
+
   .config-row {
     display: flex;
     justify-content: space-between;
     align-items: center;
     font-size: 14px;
   }
-  
+
   .config-label {
     color: var(--text-secondary);
     font-weight: 500;
   }
-  
+
   .config-value {
     color: var(--text);
     font-weight: 600;
   }
-  
+
   .config-options {
     display: flex;
     flex-direction: column;
     gap: 12px;
     padding: 12px;
-    background: rgba(255,255,255,0.02);
+    background: rgba(255, 255, 255, 0.02);
     border-radius: 8px;
   }
-  
+
   .config-options label {
     display: flex;
     align-items: center;
@@ -1701,22 +2017,22 @@
     color: var(--text);
     cursor: pointer;
   }
-  
+
   .config-options input[type="checkbox"] {
     cursor: pointer;
   }
-  
+
   .progress-bar-container {
     display: flex;
     flex-direction: column;
     gap: 8px;
     margin: 24px 0 16px 0;
     padding: 12px;
-    background: rgba(255,255,255,0.03);
+    background: rgba(255, 255, 255, 0.03);
     border-radius: 8px;
     border: 1px solid rgba(59, 130, 246, 0.2);
   }
-  
+
   .progress-label {
     font-size: 13px;
     color: var(--text-secondary);
@@ -1725,24 +2041,26 @@
     justify-content: space-between;
     align-items: center;
   }
-  
+
   .progress-bar {
     width: 100%;
     height: 12px;
-    background: rgba(255,255,255,0.08);
+    background: rgba(255, 255, 255, 0.08);
     border-radius: 6px;
     overflow: hidden;
     border: 1px solid rgba(59, 130, 246, 0.3);
   }
-  
+
   .progress-fill {
     height: 100%;
     background: linear-gradient(90deg, #3b82f6 0%, #0ea5e9 100%);
     border-radius: 6px;
-    transition: width 0.3s ease, background 0.3s ease;
+    transition:
+      width 0.3s ease,
+      background 0.3s ease;
     box-shadow: 0 0 10px rgba(59, 130, 246, 0.4);
   }
-  
+
   .progress-fill.complete {
     background: linear-gradient(90deg, #22c55e 0%, #16a34a 100%);
     box-shadow: 0 0 10px rgba(34, 197, 94, 0.4);
@@ -1754,8 +2072,8 @@
     flex-direction: column;
     gap: 16px;
     padding: 20px;
-    background: rgba(255,255,255,0.02);
-    border: 1px solid rgba(255,255,255,0.08);
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 12px;
   }
 
@@ -1776,7 +2094,7 @@
   .syncs-table {
     display: flex;
     flex-direction: column;
-    border: 1px solid rgba(255,255,255,0.1);
+    border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 8px;
     overflow: hidden;
   }
@@ -1785,8 +2103,8 @@
     display: grid;
     grid-template-columns: 150px 150px 150px 120px 100px;
     gap: 0;
-    background: rgba(255,255,255,0.05);
-    border-bottom: 1px solid rgba(255,255,255,0.1);
+    background: rgba(255, 255, 255, 0.05);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
     padding: 12px 16px;
     font-weight: 600;
     font-size: 13px;
@@ -1799,7 +2117,7 @@
     gap: 0;
     align-items: center;
     padding: 12px 16px;
-    border-bottom: 1px solid rgba(255,255,255,0.05);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
     font-size: 14px;
     color: var(--text);
   }
@@ -1809,10 +2127,14 @@
   }
 
   .syncs-table .table-row:hover {
-    background: rgba(255,255,255,0.02);
+    background: rgba(255, 255, 255, 0.02);
   }
 
-  .col-source, .col-target, .col-interval, .col-playlists, .col-actions {
+  .col-source,
+  .col-target,
+  .col-interval,
+  .col-playlists,
+  .col-actions {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
