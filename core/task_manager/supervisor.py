@@ -79,35 +79,51 @@ class ProcessSupervisor:
         from core.task_manager.task_queue import job_queue
 
         kwargs = kwargs or {}
-        reg_id_holder = [""]
-
-        def _wrapped():
-            acquired_pool = False
-            if bound_to_general_pool and hasattr(job_queue, "_general_workers"):
-                job_queue._general_workers.acquire()
-                acquired_pool = True
-
-            try:
-                target(*args, **kwargs)
-            finally:
-                if acquired_pool:
-                    job_queue._general_workers.release()
-                if reg_id_holder[0]:
-                    self.unregister_process(reg_id_holder[0])
-
-        thread = threading.Thread(target=_wrapped, name=name, daemon=daemon)
-        thread.start()
-
         owner = ProcessOwner(
             owner_id=owner_id,
             owner_type=owner_type,
             task_name=name,
             category=category,
-            thread_id=thread.ident,
+            thread_id=None,
             is_killable=True,
         )
+        # Pre-register before starting so fast-exiting threads cannot beat registration.
         reg_id = self.register_process(owner, cancellation_event=cancellation_event)
-        reg_id_holder[0] = reg_id
+        ready_event = threading.Event()
+
+        def _wrapped():
+            tid = threading.get_ident()
+            with self._lock:
+                registered = self._processes.get(reg_id)
+                if registered is not None:
+                    registered.thread_id = tid
+            # Wait until spawning thread has synchronized thread_id and released the target.
+            ready_event.wait()
+
+            acquired_pool = False
+            try:
+                if bound_to_general_pool and hasattr(job_queue, "_general_workers"):
+                    job_queue._general_workers.acquire()
+                    acquired_pool = True
+
+                target(*args, **kwargs)
+            finally:
+                if acquired_pool:
+                    job_queue._general_workers.release()
+                self.unregister_process(reg_id)
+
+        thread = threading.Thread(target=_wrapped, name=name, daemon=daemon)
+        try:
+            thread.start()
+        except Exception:
+            self.unregister_process(reg_id)
+            raise
+
+        with self._lock:
+            registered = self._processes.get(reg_id)
+            if registered is not None and registered.thread_id is None:
+                registered.thread_id = thread.ident
+        ready_event.set()
         return thread, reg_id
 
     def unregister_process(self, registration_id: str) -> None:
@@ -238,20 +254,70 @@ class ProcessSupervisor:
         logger.info(f"[kill_with_cleanup] {msg}")
         return True, msg
 
+    @staticmethod
+    def _cleanup_scoped_registry_for_thread(
+        session_registry: Any, thread_id: int, registry_name: str
+    ) -> None:
+        """Close and remove ONLY ``thread_id``'s session from a SQLAlchemy scoped_session."""
+        reg = getattr(session_registry, "registry", None)
+        if reg is not None:
+            inner = getattr(reg, "registry", None)
+            if isinstance(inner, dict):
+                sess = inner.pop(thread_id, None)
+                if sess is not None and hasattr(sess, "close"):
+                    try:
+                        sess.close()
+                    except Exception as e:
+                        logger.debug(
+                            f"[kill_with_cleanup] {registry_name} session close() for thread {thread_id}: {e}"
+                        )
+                return
+
+            # ThreadLocalRegistry stores per-thread state in threading.local(); only
+            # clear when the target thread IS the current thread so we never drop
+            # the caller thread's own session.
+            if thread_id == threading.get_ident():
+                if hasattr(reg, "has") and hasattr(reg, "clear"):
+                    if reg.has():
+                        sess = reg()
+                        if hasattr(sess, "close"):
+                            sess.close()
+                    reg.clear()
+                elif hasattr(session_registry, "remove"):
+                    session_registry.remove()
+            else:
+                logger.debug(
+                    f"[kill_with_cleanup] Skipping cross-thread remove on ThreadLocalRegistry "
+                    f"{registry_name} for thread {thread_id} (caller={threading.get_ident()})"
+                )
+            return
+
+        if hasattr(session_registry, "remove_for_thread"):
+            session_registry.remove_for_thread(thread_id)
+        elif thread_id == threading.get_ident() and hasattr(session_registry, "remove"):
+            session_registry.remove()
+
     def _release_db_sessions_for_thread(self, thread_id: int | None) -> None:
+        if thread_id is None:
+            return
+
         try:
             from database.working_database import working_session_registry
 
-            working_session_registry.remove()
+            self._cleanup_scoped_registry_for_thread(
+                working_session_registry, thread_id, "working_session_registry"
+            )
         except Exception as e:
-            logger.debug(f"[kill_with_cleanup] working_session_registry.remove(): {e}")
+            logger.debug(f"[kill_with_cleanup] working_session_registry cleanup for thread {thread_id}: {e}")
 
         try:
             from database.music_database import music_session_registry
 
-            music_session_registry.remove()
+            self._cleanup_scoped_registry_for_thread(
+                music_session_registry, thread_id, "music_session_registry"
+            )
         except Exception as e:
-            logger.debug(f"[kill_with_cleanup] music_session_registry.remove(): {e}")
+            logger.debug(f"[kill_with_cleanup] music_session_registry cleanup for thread {thread_id}: {e}")
 
     def _kill_process(self, pid: int, task_name: str) -> None:
         try:
