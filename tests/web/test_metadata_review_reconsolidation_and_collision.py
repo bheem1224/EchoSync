@@ -90,9 +90,9 @@ def review_test_env(tmp_path, monkeypatch):
             yield
 
     fake_job_queue = FakeJobQueue()
-    import core.job_queue
+    import core.task_manager.task_queue
 
-    monkeypatch.setattr(core.job_queue, "job_queue", fake_job_queue)
+    monkeypatch.setattr(core.task_manager.task_queue, "job_queue", fake_job_queue)
 
     return {
         "music_db": music_db,

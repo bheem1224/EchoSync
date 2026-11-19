@@ -93,7 +93,7 @@ def test_jobs_route_force_check_parameter_propagation(monkeypatch):
         captured_params["params"] = params or {}
         return True
 
-    from core.job_queue import job_queue
+    from core.task_manager.task_queue import job_queue
 
     monkeypatch.setattr(job_queue, "execute_job_now", mock_execute)
     monkeypatch.setattr(

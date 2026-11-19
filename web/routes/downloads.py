@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from core.job_queue import list_jobs as jq_list_jobs
+from core.task_manager.task_queue import list_jobs as jq_list_jobs
 from core.tiered_logger import get_logger
 from database.working_database import DownloadQueue, get_working_database
 from services.download_manager import get_download_manager

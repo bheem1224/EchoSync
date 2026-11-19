@@ -4,8 +4,8 @@ from datetime import UTC
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from core.job_queue import job_queue
-from core.job_queue import list_jobs as jq_list_jobs
+from core.task_manager.task_queue import job_queue
+from core.task_manager.task_queue import list_jobs as jq_list_jobs
 from core.tiered_logger import get_logger
 from web.auth import require_auth
 from web.schemas.job import JobIntervalRequest, JobRunRequest

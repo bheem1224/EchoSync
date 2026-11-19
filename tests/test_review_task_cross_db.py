@@ -127,9 +127,9 @@ def test_approve_review_queue_item(monkeypatch, mock_db, mock_work_db, tmp_path)
             yield
 
     fake_job_queue = FakeJobQueue()
-    import core.job_queue
+    import core.task_manager.task_queue
 
-    monkeypatch.setattr(core.job_queue, "job_queue", fake_job_queue)
+    monkeypatch.setattr(core.task_manager.task_queue, "job_queue", fake_job_queue)
 
     # Call approve
     from web.routes.metadata_review import ApproveReviewQueueRequest

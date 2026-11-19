@@ -61,9 +61,6 @@ def patch_spotify_client(monkeypatch):
     monkeypatch.setattr(
         "services.storage_service.get_storage_service", lambda: fake_storage
     )
-    monkeypatch.setattr(
-        "core.file_handling.storage.get_storage_service", lambda: fake_storage
-    )
 
     yield
 

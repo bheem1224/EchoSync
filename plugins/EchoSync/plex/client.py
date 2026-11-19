@@ -16,7 +16,7 @@ from plexapi.library import MusicSection
 from plexapi.server import PlexServer
 
 from core.db.echo_sync_track import EchosyncTrack
-from core.health_check import HealthCheckResult
+from core.task_manager.health import HealthCheckResult
 from core.nexus_framework.plugin_SDK import (
     MediaServerProvider,
     MetadataRichness,
@@ -1550,7 +1550,7 @@ class PlexClient(MediaServerProvider):
             # Fallback to service config / secrets / legacy storage
             token = self.config.get("token") or (hasattr(self, "secrets") and self.secrets.get("token"))
             if not token:
-                from core.file_handling.storage import get_storage_service
+                from services.storage_service import get_storage_service
 
                 try:
                     storage = get_storage_service()
@@ -1570,7 +1570,7 @@ class PlexClient(MediaServerProvider):
             base_url = _safe_getattr(self, "kvs", None) and (self.kvs.get("base_url") or self.kvs.get("server_url"))
 
         if not base_url:
-            from core.file_handling.storage import get_storage_service
+            from services.storage_service import get_storage_service
 
             try:
                 storage = get_storage_service()

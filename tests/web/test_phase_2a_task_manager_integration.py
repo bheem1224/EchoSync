@@ -30,7 +30,7 @@ async def test_api_app_lifespan_lifecycle():
 
     with patch("core.task_manager.task_queue.stop_job_queue") as mock_stop_jq:
         with patch("core.event_bus.event_bus.stop") as mock_stop_eb:
-            with patch("core.backend_services.start_services", new_callable=AsyncMock) as mock_start_services:
+            with patch("core.task_manager.backend_services.start_services", new_callable=AsyncMock) as mock_start_services:
                 with TestClient(app) as client:
                     resp = client.get("/api/v1/system/status")
                     assert resp.status_code == 200

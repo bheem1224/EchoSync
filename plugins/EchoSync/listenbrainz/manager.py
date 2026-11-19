@@ -6,7 +6,7 @@ Manages caching of ListenBrainz playlists and metadata enrichment
 import json
 from typing import Any
 
-from core.job_queue import register_job
+from core.task_manager.task_queue import register_job
 from core.nexus_framework.plugin_SDK import PluginBase
 from core.plugins.sdk import compute_plugin_crc32
 from core.request_manager import RateLimitConfig, RequestManager, RetryConfig

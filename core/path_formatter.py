@@ -483,7 +483,7 @@ def ensure_path_invariance(session: Any, track: Any, local_media: Any) -> Path:
     """
     from core.io_gatekeeper import Gatekeeper
     from core.settings import config_manager
-    from core.system_watcher import suppress_path
+    from services.library_watcher import suppress_path
     from core.tiered_logger import get_logger
     from core.utils.file_utils import prune_empty_parent_directories
     from database.music_database import Album, Artist, LocalMedia

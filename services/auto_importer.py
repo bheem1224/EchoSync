@@ -39,7 +39,7 @@ from watchdog.events import (  # type: ignore[import-untyped]
 from watchdog.observers import Observer  # type: ignore[import-untyped]
 
 from core.event_bus import event_bus
-from core.job_queue import register_job
+from core.task_manager.task_queue import register_job
 from core.settings import config_manager
 from core.tiered_logger import get_logger
 from database.working_database import ReviewTask, get_working_database

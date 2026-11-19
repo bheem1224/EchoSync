@@ -9,7 +9,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from core.scan_state import scan_state_manager
 from core.tiered_logger import get_logger
 from services.media_manager import MediaManagerService
-from web.services.library_service import LibraryAdapter
+from services.library_service import LibraryAdapter
 
 logger = get_logger("library")
 router = APIRouter(prefix="/api/v1/core/library", tags=["Library"])

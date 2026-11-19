@@ -187,7 +187,7 @@ class _JobsSDKFacade:
         backoff_factor=2.0,
         tags=None,
     ):
-        from core.job_queue import job_queue
+        from core.task_manager.task_queue import job_queue
 
         prefixed_name = f"{self.plugin_id}.{name}" if not name.startswith(self.plugin_id) else name
         job_queue.register_job(
@@ -204,7 +204,7 @@ class _JobsSDKFacade:
         )
 
     def dispatch_job(self, name: str) -> bool:
-        from core.job_queue import job_queue
+        from core.task_manager.task_queue import job_queue
 
         prefixed_name = f"{self.plugin_id}.{name}" if not name.startswith(self.plugin_id) else name
         return job_queue.execute_job_now(prefixed_name)
@@ -642,7 +642,7 @@ class _HealthCheckSDKFacade:
             url_or_func: Either a string URL to GET or a function returning HealthCheckResult.
             interval_seconds: How often to run the check (default: 300 seconds).
         """
-        from core.health_check import HealthCheckResult, health_check_registry
+        from core.task_manager.health import HealthCheckResult, health_check_registry
 
         plugin_id = self.plugin_id or sdk._get_plugin_id()
         service_name = plugin_id.split(".")[-1].split("@")[0]

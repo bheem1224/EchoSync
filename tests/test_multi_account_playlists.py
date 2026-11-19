@@ -182,7 +182,6 @@ def test_providers_playlist_route_includes_account_id(client, monkeypatch):
         {"id": 2, "display_name": "Second"},
     ]
     monkeypatch.setattr("services.storage_service.get_storage_service", lambda: fake_storage)
-    monkeypatch.setattr("core.file_handling.storage.get_storage_service", lambda: fake_storage)
     monkeypatch.setattr("database.config_database.get_config_database", lambda: FakeConfigDB())
 
     # fake SpotifyClient to return one playlist per account with distinctive id
@@ -250,7 +249,6 @@ def test_analyze_playlists_honors_account_id(client, monkeypatch):
     """analyze_playlists should instantiate provider per-account when account_id supplied."""
     fake_storage = MagicMock()
     fake_storage.list_accounts.return_value = [{"id": 1}, {"id": 2}]
-    monkeypatch.setattr("core.file_handling.storage.get_storage_service", lambda: fake_storage)
     monkeypatch.setattr("services.storage_service.get_storage_service", lambda: fake_storage)
 
     called = []

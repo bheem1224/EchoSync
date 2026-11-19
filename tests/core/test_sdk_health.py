@@ -1,4 +1,4 @@
-from core.health_check import HealthCheckResult
+from core.task_manager.health import HealthCheckResult
 from core.nexus_framework.plugin_SDK import _HealthCheckSDKFacade, sdk
 from core.task_manager.task_queue import job_queue
 

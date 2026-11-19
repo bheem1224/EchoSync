@@ -53,7 +53,7 @@ def get_settings():
 
         # Legacy storage fallback
         if not client_id or not client_secret:
-            from core.file_handling.storage import get_storage_service
+            from services.storage_service import get_storage_service
 
             storage = get_storage_service()
             client_id = client_id or storage.get_service_config("spotify", "client_id") or ""
@@ -106,7 +106,7 @@ async def save_settings(request: Request):
                 db.set_service_config(svc_id, "redirect_uri", redirect_uri, is_sensitive=False)
 
         # Also mirror into storage for legacy callers
-        from core.file_handling.storage import get_storage_service
+        from services.storage_service import get_storage_service
 
         storage = get_storage_service()
         storage.ensure_service(
@@ -236,7 +236,7 @@ def begin_auth(account_id: int | None = None):
                 client_secret = client_secret or db.get_service_config(svc_id, "client_secret")
 
         if not client_id or not client_secret:
-            from core.file_handling.storage import get_storage_service
+            from services.storage_service import get_storage_service
 
             storage = get_storage_service()
             client_id = client_id or storage.get_service_config("spotify", "client_id")
@@ -340,7 +340,7 @@ def oauth_callback(
         redirect_uri = _get_redirect_uri()
 
         if not client_id or not client_secret:
-            from core.file_handling.storage import get_storage_service
+            from services.storage_service import get_storage_service
 
             storage = get_storage_service()
             client_id = client_id or storage.get_service_config("spotify", "client_id")

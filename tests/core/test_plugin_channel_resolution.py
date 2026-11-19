@@ -8,12 +8,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from core.matching_engine.echo_sync_track import (
-    DownloadStatus,
-    EchosyncTrack,
-    QualityTag,
-    Track,
-)
 from core.nexus_framework.permissions import (
     seed_base_permissions,
 )
@@ -77,21 +71,6 @@ def isolated_env(tmp_path, monkeypatch):
     finally:
         close_config_database()
         close_working_database()
-
-
-# ---------------------------------------------------------------------------
-# 1. Compatibility Shim Tests
-# ---------------------------------------------------------------------------
-
-
-def test_legacy_echo_sync_track_shim():
-    """Verify that core.matching_engine.echo_sync_track successfully re-exports canonical symbols."""
-    assert Track is EchosyncTrack
-    assert DownloadStatus.COMPLETE.value == "complete"
-    assert QualityTag.FLAC_24BIT.value == "FLAC 24-bit"
-
-    t = Track(raw_title="Test Track", artist_name="Test Artist", album_title="Test Album")
-    assert t.raw_title == "Test Track"
 
 
 # ---------------------------------------------------------------------------

@@ -5,7 +5,7 @@ from pathlib import Path
 
 from sqlalchemy import delete, update
 
-from core.job_queue import register_job
+from core.task_manager.task_queue import register_job
 from core.plugins.sdk import compute_plugin_crc32
 from core.task_manager.task_queue import db_write_lease
 from core.tiered_logger import get_logger

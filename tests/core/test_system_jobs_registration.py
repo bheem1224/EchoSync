@@ -1,4 +1,4 @@
-from core import system_jobs
+from core.task_manager import system_jobs
 
 
 def test_register_all_system_jobs_registers_expected_defaults(monkeypatch):

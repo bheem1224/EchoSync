@@ -1538,7 +1538,7 @@ class PluginStore:
 
             # 2. Disable and remove jobs
             try:
-                from core.job_queue import job_queue
+                from core.task_manager.task_queue import job_queue
 
                 job_queue.kill_jobs_by_plugin(db_plugin_id)
                 job_queue.kill_jobs_by_plugin(service_id)
@@ -1550,7 +1550,7 @@ class PluginStore:
 
             # Unregister health checks for the plugin
             try:
-                from core.health_check import health_check_registry
+                from core.task_manager.health import health_check_registry
 
                 # Try unregistering both full clean_id and short name
                 health_check_registry.unregister_check(clean_id)
@@ -1558,7 +1558,7 @@ class PluginStore:
                 health_check_registry.unregister_check(short_name)
 
                 # Unregister the jobs from job_queue
-                from core.job_queue import job_queue
+                from core.task_manager.task_queue import job_queue
 
                 job_queue.unregister_job(f"health_check_{clean_id}")
                 job_queue.unregister_job(f"health_check_{short_name}")

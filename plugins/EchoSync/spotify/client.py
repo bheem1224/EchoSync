@@ -42,7 +42,7 @@ class ConfigCacheHandler(CacheHandler):
             accounts = []
         if not accounts:
             try:
-                from core.file_handling.storage import get_storage_service
+                from services.storage_service import get_storage_service
 
                 accounts = get_storage_service().list_accounts("spotify")
             except Exception:
@@ -278,7 +278,7 @@ class SpotifyClient(SyncServiceProvider):
         if not self.is_configured():
             return
 
-        from core.health_check import HealthCheckResult
+        from core.task_manager.health import HealthCheckResult
 
         def spotify_health_check() -> HealthCheckResult:
             try:
@@ -336,7 +336,7 @@ class SpotifyClient(SyncServiceProvider):
             accounts = []
         if not accounts:
             try:
-                from core.file_handling.storage import get_storage_service
+                from services.storage_service import get_storage_service
 
                 accounts = get_storage_service().list_accounts("spotify")
             except Exception:
@@ -675,7 +675,7 @@ class SpotifyClient(SyncServiceProvider):
         from flask import jsonify, redirect
         from spotipy.oauth2 import SpotifyOAuth
 
-        from core.file_handling.storage import get_storage_service
+        from services.storage_service import get_storage_service
 
         try:
             code = args.get("code")
@@ -700,7 +700,7 @@ class SpotifyClient(SyncServiceProvider):
                 account_id = int(state)
             except (ValueError, TypeError):
                 account_id = None
-            from core.file_handling.storage import get_storage_service
+            from services.storage_service import get_storage_service
 
             storage = get_storage_service()
             client_id = storage.get_service_config("spotify", "client_id")
@@ -808,7 +808,7 @@ class SpotifyClient(SyncServiceProvider):
             pass
 
         # Check storage if we can potentially configure it
-        from core.file_handling.storage import get_storage_service
+        from services.storage_service import get_storage_service
 
         storage = get_storage_service()
         return bool(
