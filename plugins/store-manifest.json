@@ -27,7 +27,7 @@
       "requirements": [],
       "hooks": [],
       "min_echosync_version": "2.4.0",
-      "beta_version": "2.4.3-beta.109",
+      "beta_version": "2.4.3-beta.110",
       "verified_source": "official",
       "plugin_id": "spotify",
       "source_url": "https://github.com/bheem1224/EchoSync/tree/main/plugins/EchoSync/spotify",
@@ -45,7 +45,7 @@
       "hooks": [],
       "min_echosync_version": "2.4.0",
       "ui_manifest": "ui_manifest.json",
-      "beta_version": "2.4.3-beta.116",
+      "beta_version": "2.4.3-beta.117",
       "plugin_id": "slskd",
       "source_url": "https://github.com/bheem1224/EchoSync/tree/main/plugins/EchoSync/slskd",
       "download_url": "https://raw.githubusercontent.com/bheem1224/EchoSync/main/plugins/EchoSync/slskd/releases/v2.4.2.zip",
@@ -62,7 +62,7 @@
       "hooks": [],
       "min_echosync_version": "2.4.0",
       "ui_manifest": "ui_manifest.json",
-      "beta_version": "2.4.3-beta.103",
+      "beta_version": "2.4.3-beta.104",
       "plugin_id": "plex",
       "source_url": "https://github.com/bheem1224/EchoSync/tree/main/plugins/EchoSync/plex",
       "download_url": "https://raw.githubusercontent.com/bheem1224/EchoSync/main/plugins/EchoSync/plex/releases/v2.4.2.zip",
@@ -120,7 +120,7 @@
           "description": "Base URL for the MusicBrainz API"
         }
       },
-      "beta_version": "2.4.3-beta.87",
+      "beta_version": "2.4.3-beta.88",
       "plugin_id": "musicbrainz",
       "source_url": "https://github.com/bheem1224/EchoSync/tree/main/plugins/EchoSync/musicbrainz",
       "download_url": "https://raw.githubusercontent.com/bheem1224/EchoSync/main/plugins/EchoSync/musicbrainz/releases/v2.4.2.zip",
@@ -152,7 +152,7 @@
       "requirements": [],
       "hooks": [],
       "min_echosync_version": "2.4.0",
-      "beta_version": "2.4.3-beta.53",
+      "beta_version": "2.4.3-beta.54",
       "privileged": true,
       "display_name": "Local Server",
       "plugin_id": "local_server",
@@ -187,7 +187,7 @@
       "requirements": [],
       "hooks": [],
       "min_echosync_version": "2.4.0",
-      "beta_version": "2.4.3-beta.32",
+      "beta_version": "2.4.3-beta.33",
       "display_name": "Local Metadata",
       "plugin_id": "local_metadata",
       "source_url": "https://github.com/bheem1224/EchoSync/tree/main/plugins/EchoSync/local_metadata",
@@ -204,7 +204,7 @@
       "requirements": [],
       "hooks": [],
       "min_echosync_version": "2.4.0",
-      "beta_version": "2.4.3-beta.38",
+      "beta_version": "2.4.3-beta.39",
       "plugin_id": "listenbrainz",
       "source_url": "https://github.com/bheem1224/EchoSync/tree/main/plugins/EchoSync/listenbrainz",
       "download_url": "https://raw.githubusercontent.com/bheem1224/EchoSync/main/plugins/EchoSync/listenbrainz/releases/v2.4.2.zip",
@@ -228,19 +228,6 @@
       "beta_url": "https://raw.githubusercontent.com/bheem1224/EchoSync/main/plugins/EchoSync/jellyfin/beta.zip"
     },
     {
-      "id": "Test.echo_test",
-      "version": "1.0.0",
-      "name": "echo_test",
-      "author": "Test",
-      "category": "utility",
-      "beta_version": "1.0.1-beta.6",
-      "display_name": "Echo Test",
-      "plugin_id": "echo_test",
-      "source_url": "https://github.com/bheem1224/EchoSync/tree/main/plugins/EchoSync/echo_test",
-      "download_url": "https://raw.githubusercontent.com/bheem1224/EchoSync/main/plugins/EchoSync/echo_test/releases/v1.0.0.zip",
-      "beta_url": "https://raw.githubusercontent.com/bheem1224/EchoSync/main/plugins/EchoSync/echo_test/beta.zip"
-    },
-    {
       "id": "EchoSync.cjk_language_pack",
       "name": "cjk_language_pack",
       "description": "Transliterates Chinese (Simplified/Traditional), Japanese (Kanji/Kana), and Korean (Hangul) text to Romaji/Pinyin so the matching engine can compare CJK track titles against their Latin-script counterparts.",
@@ -253,15 +240,21 @@
           "mutate_aliases": true,
           "mutate_attributes": true
         },
+        "pipeline:enrich": true,
+        "pipeline:intercept": true,
         "network_domains": [
           "vgmdb.info",
           "musicbrainz.org"
         ]
       },
+      "capabilities": [
+        "pipeline:enrich",
+        "pipeline:intercept"
+      ],
       "requirements": [],
       "hooks": [],
       "min_echosync_version": "2.4.0",
-      "beta_version": "2.4.3-beta.33",
+      "beta_version": "2.4.3-beta.34",
       "display_name": "CJK Language Pack",
       "plugin_id": "cjk_language_pack",
       "source_url": "https://github.com/bheem1224/EchoSync/tree/main/plugins/EchoSync/cjk_language_pack",
