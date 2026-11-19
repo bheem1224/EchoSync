@@ -12,6 +12,33 @@
       "min_echosync_version": "2.4.0",
       "ui_manifest": "ui_manifest.json",
       "beta_version": "2.4.3-beta.103",
+      "permissions": {
+        "database": {
+          "read_library": true
+        },
+        "contract:accounts:read:own": true,
+        "contract:accounts:edit:own": true,
+        "contract:accounts:delete:own": true,
+        "contract:config:read:own": true,
+        "contract:config:edit:own": true,
+        "contract:secrets:read:own": true,
+        "contract:secrets:edit:own": true,
+        "contract:tracks:read": true,
+        "contract:playlists:read:own": true,
+        "contract:playlists:edit:own": true
+      },
+      "capabilities": [
+        "contract:accounts:read:own",
+        "contract:accounts:edit:own",
+        "contract:accounts:delete:own",
+        "contract:config:read:own",
+        "contract:config:edit:own",
+        "contract:secrets:read:own",
+        "contract:secrets:edit:own",
+        "contract:tracks:read",
+        "contract:playlists:read:own",
+        "contract:playlists:edit:own"
+      ],
       "plugin_id": "tidal",
       "source_url": "https://github.com/bheem1224/EchoSync/tree/main/plugins/EchoSync/tidal",
       "download_url": "https://raw.githubusercontent.com/bheem1224/EchoSync/main/plugins/EchoSync/tidal/releases/v2.4.2.zip",
@@ -27,8 +54,35 @@
       "requirements": [],
       "hooks": [],
       "min_echosync_version": "2.4.0",
-      "beta_version": "2.4.3-beta.110",
+      "beta_version": "2.4.3-beta.111",
       "verified_source": "official",
+      "permissions": {
+        "database": {
+          "read_library": true
+        },
+        "contract:accounts:read:own": true,
+        "contract:accounts:edit:own": true,
+        "contract:accounts:delete:own": true,
+        "contract:config:read:own": true,
+        "contract:config:edit:own": true,
+        "contract:secrets:read:own": true,
+        "contract:secrets:edit:own": true,
+        "contract:tracks:read": true,
+        "contract:playlists:read:own": true,
+        "contract:playlists:edit:own": true
+      },
+      "capabilities": [
+        "contract:accounts:read:own",
+        "contract:accounts:edit:own",
+        "contract:accounts:delete:own",
+        "contract:config:read:own",
+        "contract:config:edit:own",
+        "contract:secrets:read:own",
+        "contract:secrets:edit:own",
+        "contract:tracks:read",
+        "contract:playlists:read:own",
+        "contract:playlists:edit:own"
+      ],
       "plugin_id": "spotify",
       "source_url": "https://github.com/bheem1224/EchoSync/tree/main/plugins/EchoSync/spotify",
       "download_url": "https://raw.githubusercontent.com/bheem1224/EchoSync/main/plugins/EchoSync/spotify/releases/v2.4.2.zip",
@@ -45,7 +99,33 @@
       "hooks": [],
       "min_echosync_version": "2.4.0",
       "ui_manifest": "ui_manifest.json",
-      "beta_version": "2.4.3-beta.117",
+      "beta_version": "2.4.3-beta.118",
+      "permissions": {
+        "database": {
+          "read_library": true,
+          "mutate_working": true
+        },
+        "contract:config:read:own": true,
+        "contract:config:edit:own": true,
+        "contract:secrets:read:own": true,
+        "contract:secrets:edit:own": true,
+        "contract:webhooks:read:own": true,
+        "contract:webhooks:edit:own": true,
+        "contract:downloads:read": true,
+        "contract:downloads:edit": true,
+        "contract:tracks:read": true
+      },
+      "capabilities": [
+        "contract:config:read:own",
+        "contract:config:edit:own",
+        "contract:secrets:read:own",
+        "contract:secrets:edit:own",
+        "contract:webhooks:read:own",
+        "contract:webhooks:edit:own",
+        "contract:downloads:read",
+        "contract:downloads:edit",
+        "contract:tracks:read"
+      ],
       "plugin_id": "slskd",
       "source_url": "https://github.com/bheem1224/EchoSync/tree/main/plugins/EchoSync/slskd",
       "download_url": "https://raw.githubusercontent.com/bheem1224/EchoSync/main/plugins/EchoSync/slskd/releases/v2.4.2.zip",
@@ -62,7 +142,28 @@
       "hooks": [],
       "min_echosync_version": "2.4.0",
       "ui_manifest": "ui_manifest.json",
-      "beta_version": "2.4.3-beta.104",
+      "beta_version": "2.4.3-beta.105",
+      "permissions": {
+        "database": {
+          "read_library": true
+        },
+        "contract:accounts:read:own": true,
+        "contract:accounts:edit:own": true,
+        "contract:config:read:own": true,
+        "contract:config:edit:own": true,
+        "contract:tracks:read": true,
+        "contract:playlists:read:own": true,
+        "contract:playlists:edit:own": true
+      },
+      "capabilities": [
+        "contract:accounts:read:own",
+        "contract:accounts:edit:own",
+        "contract:config:read:own",
+        "contract:config:edit:own",
+        "contract:tracks:read",
+        "contract:playlists:read:own",
+        "contract:playlists:edit:own"
+      ],
       "plugin_id": "plex",
       "source_url": "https://github.com/bheem1224/EchoSync/tree/main/plugins/EchoSync/plex",
       "download_url": "https://raw.githubusercontent.com/bheem1224/EchoSync/main/plugins/EchoSync/plex/releases/v2.4.2.zip",
@@ -80,6 +181,17 @@
       "min_echosync_version": "2.4.0",
       "beta_version": "2.4.3-beta.30",
       "display_name": "Outbound Gateway",
+      "permissions": {
+        "database": {
+          "read_library": true
+        },
+        "contract:config:read:own": true,
+        "contract:tracks:read": true
+      },
+      "capabilities": [
+        "contract:config:read:own",
+        "contract:tracks:read"
+      ],
       "plugin_id": "outbound_gateway",
       "source_url": "https://github.com/bheem1224/EchoSync/tree/main/plugins/EchoSync/outbound_gateway",
       "download_url": "https://raw.githubusercontent.com/bheem1224/EchoSync/main/plugins/EchoSync/outbound_gateway/releases/v2.4.2.zip",
@@ -97,6 +209,23 @@
       "min_echosync_version": "2.4.0",
       "ui_manifest": "ui_manifest.json",
       "beta_version": "2.4.3-beta.61",
+      "permissions": {
+        "database": {
+          "read_library": true
+        },
+        "contract:config:read:own": true,
+        "contract:config:edit:own": true,
+        "contract:tracks:read": true,
+        "contract:playlists:read:own": true,
+        "contract:playlists:edit:own": true
+      },
+      "capabilities": [
+        "contract:config:read:own",
+        "contract:config:edit:own",
+        "contract:tracks:read",
+        "contract:playlists:read:own",
+        "contract:playlists:edit:own"
+      ],
       "plugin_id": "navidrome",
       "source_url": "https://github.com/bheem1224/EchoSync/tree/main/plugins/EchoSync/navidrome",
       "download_url": "https://raw.githubusercontent.com/bheem1224/EchoSync/main/plugins/EchoSync/navidrome/releases/v2.4.2.zip",
@@ -120,7 +249,28 @@
           "description": "Base URL for the MusicBrainz API"
         }
       },
-      "beta_version": "2.4.3-beta.88",
+      "beta_version": "2.4.3-beta.89",
+      "permissions": {
+        "database": {
+          "read_library": true
+        },
+        "contract:accounts:read:own": true,
+        "contract:accounts:edit:own": true,
+        "contract:accounts:delete:own": true,
+        "contract:config:read:own": true,
+        "contract:config:edit:own": true,
+        "contract:secrets:read:own": true,
+        "contract:tracks:read": true
+      },
+      "capabilities": [
+        "contract:accounts:read:own",
+        "contract:accounts:edit:own",
+        "contract:accounts:delete:own",
+        "contract:config:read:own",
+        "contract:config:edit:own",
+        "contract:secrets:read:own",
+        "contract:tracks:read"
+      ],
       "plugin_id": "musicbrainz",
       "source_url": "https://github.com/bheem1224/EchoSync/tree/main/plugins/EchoSync/musicbrainz",
       "download_url": "https://raw.githubusercontent.com/bheem1224/EchoSync/main/plugins/EchoSync/musicbrainz/releases/v2.4.2.zip",
@@ -137,6 +287,17 @@
       "hooks": [],
       "min_echosync_version": "2.4.0",
       "beta_version": "2.4.3-beta.24",
+      "permissions": {
+        "database": {
+          "read_library": true
+        },
+        "contract:config:read:own": true,
+        "contract:tracks:read": true
+      },
+      "capabilities": [
+        "contract:config:read:own",
+        "contract:tracks:read"
+      ],
       "plugin_id": "lrclib",
       "source_url": "https://github.com/bheem1224/EchoSync/tree/main/plugins/EchoSync/lrclib",
       "download_url": "https://raw.githubusercontent.com/bheem1224/EchoSync/main/plugins/EchoSync/lrclib/releases/v2.4.2.zip",
@@ -152,9 +313,29 @@
       "requirements": [],
       "hooks": [],
       "min_echosync_version": "2.4.0",
-      "beta_version": "2.4.3-beta.54",
-      "privileged": true,
+      "beta_version": "2.4.3-beta.55",
       "display_name": "Local Server",
+      "permissions": {
+        "database": {
+          "read_library": true
+        },
+        "contract:config:read:own": true,
+        "contract:library:read": true,
+        "contract:library:edit": true,
+        "contract:tracks:read": true,
+        "contract:playlists:read:own": true,
+        "contract:playlists:edit:own": true,
+        "service:library:read": true
+      },
+      "capabilities": [
+        "contract:config:read:own",
+        "contract:library:read",
+        "contract:library:edit",
+        "contract:tracks:read",
+        "contract:playlists:read:own",
+        "contract:playlists:edit:own",
+        "service:library:read"
+      ],
       "plugin_id": "local_server",
       "source_url": "https://github.com/bheem1224/EchoSync/tree/main/plugins/EchoSync/local_server",
       "download_url": "https://raw.githubusercontent.com/bheem1224/EchoSync/main/plugins/EchoSync/local_server/releases/v2.4.2.zip",
@@ -172,6 +353,19 @@
       "min_echosync_version": "2.4.0",
       "beta_version": "2.4.3-beta.27",
       "display_name": "Local Player",
+      "permissions": {
+        "database": {
+          "read_library": true
+        },
+        "contract:config:read:own": true,
+        "contract:tracks:read": true,
+        "contract:playlists:read:own": true
+      },
+      "capabilities": [
+        "contract:config:read:own",
+        "contract:tracks:read",
+        "contract:playlists:read:own"
+      ],
       "plugin_id": "local_player",
       "source_url": "https://github.com/bheem1224/EchoSync/tree/main/plugins/EchoSync/local_player",
       "download_url": "https://raw.githubusercontent.com/bheem1224/EchoSync/main/plugins/EchoSync/local_player/releases/v2.4.2.zip",
@@ -187,8 +381,19 @@
       "requirements": [],
       "hooks": [],
       "min_echosync_version": "2.4.0",
-      "beta_version": "2.4.3-beta.33",
+      "beta_version": "2.4.3-beta.34",
       "display_name": "Local Metadata",
+      "permissions": {
+        "database": {
+          "read_library": true
+        },
+        "contract:library:read": true,
+        "contract:tracks:read": true
+      },
+      "capabilities": [
+        "contract:library:read",
+        "contract:tracks:read"
+      ],
       "plugin_id": "local_metadata",
       "source_url": "https://github.com/bheem1224/EchoSync/tree/main/plugins/EchoSync/local_metadata",
       "download_url": "https://raw.githubusercontent.com/bheem1224/EchoSync/main/plugins/EchoSync/local_metadata/releases/v2.4.2.zip",
@@ -204,7 +409,20 @@
       "requirements": [],
       "hooks": [],
       "min_echosync_version": "2.4.0",
-      "beta_version": "2.4.3-beta.39",
+      "beta_version": "2.4.3-beta.40",
+      "permissions": {
+        "database": {
+          "read_library": true
+        },
+        "contract:config:read:own": true,
+        "contract:config:edit:own": true,
+        "contract:tracks:read": true
+      },
+      "capabilities": [
+        "contract:config:read:own",
+        "contract:config:edit:own",
+        "contract:tracks:read"
+      ],
       "plugin_id": "listenbrainz",
       "source_url": "https://github.com/bheem1224/EchoSync/tree/main/plugins/EchoSync/listenbrainz",
       "download_url": "https://raw.githubusercontent.com/bheem1224/EchoSync/main/plugins/EchoSync/listenbrainz/releases/v2.4.2.zip",
@@ -222,6 +440,23 @@
       "min_echosync_version": "2.4.0",
       "ui_manifest": "ui_manifest.json",
       "beta_version": "2.4.3-beta.58",
+      "permissions": {
+        "database": {
+          "read_library": true
+        },
+        "contract:config:read:own": true,
+        "contract:config:edit:own": true,
+        "contract:tracks:read": true,
+        "contract:playlists:read:own": true,
+        "contract:playlists:edit:own": true
+      },
+      "capabilities": [
+        "contract:config:read:own",
+        "contract:config:edit:own",
+        "contract:tracks:read",
+        "contract:playlists:read:own",
+        "contract:playlists:edit:own"
+      ],
       "plugin_id": "jellyfin",
       "source_url": "https://github.com/bheem1224/EchoSync/tree/main/plugins/EchoSync/jellyfin",
       "download_url": "https://raw.githubusercontent.com/bheem1224/EchoSync/main/plugins/EchoSync/jellyfin/releases/v2.4.2.zip",
@@ -242,6 +477,9 @@
         },
         "pipeline:enrich": true,
         "pipeline:intercept": true,
+        "contract:library:read": true,
+        "contract:aliases:edit": true,
+        "contract:attributes:edit": true,
         "network_domains": [
           "vgmdb.info",
           "musicbrainz.org"
@@ -249,12 +487,15 @@
       },
       "capabilities": [
         "pipeline:enrich",
-        "pipeline:intercept"
+        "pipeline:intercept",
+        "contract:library:read",
+        "contract:aliases:edit",
+        "contract:attributes:edit"
       ],
       "requirements": [],
       "hooks": [],
       "min_echosync_version": "2.4.0",
-      "beta_version": "2.4.3-beta.34",
+      "beta_version": "2.4.3-beta.35",
       "display_name": "CJK Language Pack",
       "plugin_id": "cjk_language_pack",
       "source_url": "https://github.com/bheem1224/EchoSync/tree/main/plugins/EchoSync/cjk_language_pack",
@@ -273,12 +514,20 @@
       "min_echosync_version": "2.4.0",
       "ui_manifest": "ui_manifest.json",
       "beta_version": "2.4.3-beta.66",
-      "capabilities": {
-        "metadata": {
-          "fingerprinting_algorithms": [
-            "chromaprint"
-          ]
-        }
+      "capabilities": [
+        "contract:config:read:own",
+        "contract:config:edit:own",
+        "contract:secrets:read:own",
+        "contract:tracks:read"
+      ],
+      "permissions": {
+        "database": {
+          "read_library": true
+        },
+        "contract:config:read:own": true,
+        "contract:config:edit:own": true,
+        "contract:secrets:read:own": true,
+        "contract:tracks:read": true
       },
       "plugin_id": "acoustid",
       "source_url": "https://github.com/bheem1224/EchoSync/tree/main/plugins/EchoSync/acoustid",
