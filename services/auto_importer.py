@@ -787,62 +787,278 @@ class AutoImportService:
         # 1. Tag and verify
         self.enhancer.tag_file_verified(file_path, metadata)
 
-        # 2. Move
-        self._move_file(file_path, metadata)
+        # 2. Move & persist/deduplicate into library DB
+        dest_path = self._move_file(file_path, metadata)
 
         # 3. Update Review Task status if it exists
         self.enhancer.create_or_update_review_task(file_path, metadata, 1.0, status="approved")
+        return dest_path
 
-    def _move_file(self, file_path: Path, metadata: dict[str, Any]):
+    @staticmethod
+    def _enrich_physical_telemetry(file_path: Path, metadata: dict[str, Any]) -> dict[str, Any]:
+        """Copy metadata and enrich missing physical audio telemetry via echosync_core."""
+        meta = dict(metadata)
+        try:
+            import echosync_core
+
+            raw_probe = echosync_core.extract_metadata(str(file_path)) or {}
+            for key in (
+                "codec",
+                "file_format",
+                "bit_depth",
+                "sample_rate",
+                "bitrate",
+                "channels",
+                "duration_ms",
+                "file_size_bytes",
+                "mtime",
+                "inode",
+            ):
+                if meta.get(key) is None and raw_probe.get(key) is not None:
+                    meta[key] = raw_probe[key]
+        except Exception:
+            pass
+
+        if meta.get("file_format") is None:
+            meta["file_format"] = (
+                str(meta.get("codec") or file_path.suffix).lstrip(".").lower() or None
+            )
+        if file_path.exists():
+            try:
+                st = file_path.stat()
+                if meta.get("file_size_bytes") is None:
+                    meta["file_size_bytes"] = st.st_size
+                if meta.get("mtime") is None:
+                    meta["mtime"] = st.st_mtime
+                if meta.get("inode") is None:
+                    meta["inode"] = getattr(st, "st_ino", None)
+            except OSError:
+                pass
+        return meta
+
+    @staticmethod
+    def _build_import_track_dto(dest_path: Path, meta: dict[str, Any]) -> Any:
+        """Build a normalized EchosyncTrack + EchosyncMedia DTO for imported file persistence."""
+        from core.db.echo_sync_track import EchosyncMedia, EchosyncTrack
+        from core.matching_engine.track_parser import normalize_track_dto
+        from services.library_watcher import _coerce_optional_int
+
+        duration_ms = _coerce_optional_int(meta.get("duration_ms"))
+        if duration_ms is None and meta.get("duration") is not None:
+            try:
+                raw_dur = float(meta["duration"])
+                duration_ms = int(round(raw_dur * 1000.0)) if raw_dur < 10000.0 else int(round(raw_dur))
+            except (ValueError, TypeError):
+                duration_ms = None
+
+        release_year = _coerce_optional_int(meta.get("release_year"))
+        if release_year is None and meta.get("year") is not None:
+            raw_year = str(meta["year"]).strip()
+            if len(raw_year) >= 4 and raw_year[:4].isdigit():
+                release_year = int(raw_year[:4])
+
+        file_size = _coerce_optional_int(meta.get("file_size_bytes"))
+        mtime_val = meta.get("mtime")
+        if dest_path.exists():
+            try:
+                st = dest_path.stat()
+                file_size = st.st_size
+                mtime_val = st.st_mtime
+            except OSError:
+                pass
+
+        title = str(meta.get("title") or meta.get("raw_title") or dest_path.stem)
+        artist_name = str(meta.get("artist_name") or meta.get("artist") or "Unknown Artist")
+        album_title = str(meta.get("album_title") or meta.get("album") or "")
+        file_format = (
+            str(meta.get("file_format") or meta.get("codec") or dest_path.suffix)
+            .lstrip(".")
+            .lower()
+            or None
+        )
+
+        media_obj = EchosyncMedia(
+            file_path=str(dest_path),
+            file_format=file_format,
+            bitrate=_coerce_optional_int(meta.get("bitrate")),
+            sample_rate=_coerce_optional_int(meta.get("sample_rate")),
+            bit_depth=_coerce_optional_int(meta.get("bit_depth")),
+            channels=_coerce_optional_int(meta.get("channels")),
+            duration_ms=duration_ms,
+            file_size_bytes=file_size,
+            inode=_coerce_optional_int(meta.get("inode")),
+            mtime=mtime_val,
+        )
+
+        return normalize_track_dto(
+            EchosyncTrack(
+                raw_title=title,
+                title=title,
+                artist_name=artist_name,
+                album_title=album_title,
+                edition=meta.get("edition") or meta.get("version") or None,
+                duration_ms=duration_ms,
+                track_number=_coerce_optional_int(
+                    meta.get("track_number") if meta.get("track_number") is not None else meta.get("track_no")
+                ),
+                disc_number=_coerce_optional_int(
+                    meta.get("disc_number") if meta.get("disc_number") is not None else meta.get("disc_no")
+                ),
+                release_year=release_year,
+                musicbrainz_id=meta.get("musicbrainz_track_id") or meta.get("musicbrainz_id") or meta.get("mbid"),
+                mb_release_id=meta.get("musicbrainz_release_id") or meta.get("musicbrainz_album_id") or meta.get("mb_release_id"),
+                acoustid_id=meta.get("acoustid_id"),
+                fingerprint=meta.get("fingerprint") or meta.get("chromaprint"),
+                isrc=meta.get("isrc"),
+                media=[media_obj],
+            )
+        )
+
+    def _move_file(self, file_path: Path, metadata: dict[str, Any]) -> Path:
         """
-        Rename and move file to library with 'Keep Both' conflict resolution.
+        Rename and move file to library with collision-safe edition path resolution and
+        session.no_autoflush Track deduplication/re-parenting.
         """
         try:
+            from sqlalchemy import inspect, or_
+
+            from core.database.repositories.track_repo import TrackRepository
+            from core.io_gatekeeper import Gatekeeper
             from core.path_formatter import (
                 build_destination_path,
                 get_library_preferences,
             )
+            from core.task_manager.task_queue import db_write_lease
+            from core.utils.file_utils import prune_empty_parent_directories
+            from database import _canonicalize_path
+            from database.music_database import AudioFingerprint, LocalMedia, get_database
+            from services.library_watcher import (
+                deduplicate_and_reparent_track,
+                resolve_collision_safe_edition_path,
+                suppress_path,
+            )
 
+            meta = self._enrich_physical_telemetry(file_path, metadata)
             pref_lib_root, pattern = get_library_preferences()
             base_library_path = str(self.library_root) if getattr(self, "library_root", None) else pref_lib_root
             ext = file_path.suffix.lower().lstrip(".")
 
-            dest_path = build_destination_path(
+            base_dest = build_destination_path(
                 base_library_path=base_library_path,
                 pattern=pattern,
-                meta=metadata,
+                meta=meta,
                 ext=ext,
             )
 
-            # Force Keep Both / Rename Duplicate logic
-            if dest_path.exists() and dest_path.resolve() != file_path.resolve():
-                counter = 1
-                stem = dest_path.stem
-                parent = dest_path.parent
-                ext_with_dot = dest_path.suffix
+            db = getattr(self, "_music_db", None) or get_database()
+            has_music_schema = False
+            try:
+                has_music_schema = inspect(db.engine).has_table("local_media")
+            except Exception:
+                has_music_schema = False
 
-                while dest_path.exists() and dest_path.resolve() != file_path.resolve():
-                    dest_path = parent / f"{stem} ({counter}){ext_with_dot}"
-                    counter += 1
+            dest_path = base_dest
+            if has_music_schema:
+                with db.session_factory() as session:
+                    try:
+                        with session.no_autoflush:
+                            dest_path = resolve_collision_safe_edition_path(
+                                base_dest,
+                                metadata=meta,
+                                session=session,
+                                current_file=file_path,
+                            )
 
-            from core.io_gatekeeper import Gatekeeper
-            from core.utils.file_utils import prune_empty_parent_directories
-            from services.library_watcher import suppress_path
+                            if dest_path.resolve() != file_path.resolve():
+                                with suppress_path(str(file_path)), suppress_path(str(dest_path)):
+                                    moved_to = Gatekeeper.authorize_and_execute(
+                                        {
+                                            "operation": "safe_move",
+                                            "src": str(file_path),
+                                            "dst": str(dest_path),
+                                        }
+                                    )
+                                logger.info(f"Moved {file_path.name} → {moved_to}")
 
-            with suppress_path(str(dest_path)):
-                moved_to = Gatekeeper.authorize_and_execute(
-                    {
-                        "operation": "safe_move",
-                        "src": str(file_path),
-                        "dst": str(dest_path),
-                    }
+                            canon_src = _canonicalize_path(str(file_path))
+                            src_lm = (
+                                session.query(LocalMedia)
+                                .filter(
+                                    or_(
+                                        LocalMedia.file_path == canon_src,
+                                        LocalMedia.file_path == str(file_path),
+                                    )
+                                )
+                                .first()
+                            )
+                            if src_lm is not None:
+                                src_lm.file_path = _canonicalize_path(str(dest_path))
+                                session.flush()
+
+                            track_obj = self._build_import_track_dto(dest_path, meta)
+                            TrackRepository(session).bulk_upsert_tracks([track_obj])
+                            deduplicate_and_reparent_track(
+                                session=session,
+                                media_path=dest_path,
+                                track_dto=track_obj,
+                                metadata=meta,
+                            )
+
+                            fp_val = meta.get("fingerprint") or meta.get("chromaprint")
+                            if fp_val:
+                                canon_dest = _canonicalize_path(str(dest_path))
+                                new_lm = (
+                                    session.query(LocalMedia)
+                                    .filter(
+                                        or_(
+                                            LocalMedia.file_path == canon_dest,
+                                            LocalMedia.file_path == str(dest_path),
+                                        )
+                                    )
+                                    .first()
+                                )
+                                if new_lm and new_lm.media_id:
+                                    existing_fp = (
+                                        session.query(AudioFingerprint)
+                                        .filter_by(media_id=new_lm.media_id)
+                                        .first()
+                                    )
+                                    if not existing_fp:
+                                        session.add(
+                                            AudioFingerprint(
+                                                media_id=new_lm.media_id,
+                                                chromaprint=fp_val,
+                                                acoustid_id=meta.get("acoustid_id"),
+                                            )
+                                        )
+                        with db_write_lease(task_name="auto_importer"):
+                            session.commit()
+                    except Exception:
+                        session.rollback()
+                        raise
+            else:
+                dest_path = resolve_collision_safe_edition_path(
+                    base_dest,
+                    metadata=meta,
+                    session=None,
+                    current_file=file_path,
                 )
-            logger.info(f"Moved {file_path.name} → {moved_to}")
+                if dest_path.resolve() != file_path.resolve():
+                    with suppress_path(str(file_path)), suppress_path(str(dest_path)):
+                        moved_to = Gatekeeper.authorize_and_execute(
+                            {
+                                "operation": "safe_move",
+                                "src": str(file_path),
+                                "dst": str(dest_path),
+                            }
+                        )
+                    logger.info(f"Moved {file_path.name} → {moved_to}")
 
             # Prune empty source parent directories halting at download_dir
             _dl = config_manager.get("storage.download_dir") or config_manager.get("download_dir")
             stop_roots = {Path(_dl).resolve()} if _dl else set()
             prune_empty_parent_directories(file_path, stop_at_roots=stop_roots)
+            return dest_path
 
         except Exception as e:
             logger.error(f"Failed to move file {file_path}: {e}")
