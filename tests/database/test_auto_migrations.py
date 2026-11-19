@@ -53,7 +53,7 @@ def test_music_migrations_single_head():
     heads = script.get_heads()
 
     assert len(heads) == 1, f"Expected exactly 1 head revision, got {heads}"
-    assert heads[0] == "f3a4b5c6d7e8", f"Expected head 'f3a4b5c6d7e8', got {heads[0]}"
+    assert heads[0] == "g1a2b3c4d5e6", f"Expected head 'g1a2b3c4d5e6', got {heads[0]}"
 
 
 def test_music_migrations_strict_linearity():
@@ -65,7 +65,7 @@ def test_music_migrations_strict_linearity():
     cfg.set_main_option("script_location", str(music_ini.parent))
     script = ScriptDirectory.from_config(cfg)
 
-    head_rev = script.get_revision("f3a4b5c6d7e8")
+    head_rev = script.get_revision("g1a2b3c4d5e6")
     assert head_rev is not None
 
     # Walk backwards from head to baseline
@@ -80,6 +80,8 @@ def test_music_migrations_strict_linearity():
             f"Revision {curr.revision} has non-linear down_revision: {curr.down_revision}"
         )
         curr = script.get_revision(curr.down_revision)
+
+    assert "f3a4b5c6d7e8" in visited, "f3a4b5c6d7e8 must be in the linear history"
 
     assert "d4a8e2b9c1f0" in visited, "d4a8e2b9c1f0 must be in the linear history"
     assert "a1b2c3d4e5f6" in visited, "a1b2c3d4e5f6 must be in the linear history"

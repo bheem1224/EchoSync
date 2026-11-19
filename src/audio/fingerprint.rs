@@ -1,3 +1,4 @@
+use rayon::prelude::*;
 use rusty_chromaprint::{Configuration, Fingerprinter};
 use std::fs::File;
 use std::path::Path;
@@ -673,6 +674,49 @@ pub fn base64_decode(input: &str) -> Result<Vec<u8>, String> {
     Ok(out)
 }
 
+fn decode_and_decompress_subfps(fp_str: &str) -> Option<Vec<u32>> {
+    let trimmed = fp_str.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let decoded = base64_decode(trimmed).ok()?;
+    let subfps = decompress_chromaprint(&decoded).ok()?;
+    if subfps.is_empty() {
+        None
+    } else {
+        Some(subfps)
+    }
+}
+
+fn compare_subfps(subfps1: &[u32], subfps2: &[u32]) -> f64 {
+    if subfps1.is_empty() || subfps2.is_empty() {
+        return 0.0;
+    }
+    if subfps1 == subfps2 {
+        return 1.0;
+    }
+
+    let config = Configuration::preset_test2();
+    let segments = match rusty_chromaprint::match_fingerprints(subfps1, subfps2, &config) {
+        Ok(segs) => segs,
+        Err(_) => return 0.0,
+    };
+
+    if segments.is_empty() {
+        return 0.0;
+    }
+
+    let min_len = subfps1.len().min(subfps2.len()) as f64;
+    let mut total_matched_score = 0.0;
+
+    for seg in &segments {
+        let bit_similarity = (1.0 - (seg.score / 32.0)).clamp(0.0, 1.0);
+        total_matched_score += bit_similarity * (seg.items_count as f64);
+    }
+
+    (total_matched_score / min_len).clamp(0.0, 1.0)
+}
+
 /// Compares two Chromaprint base64 fingerprint strings using native Rust rusty_chromaprint.
 /// Returns a similarity confidence score in [0.0, 1.0].
 pub fn compare_chromaprints(fp1_str: &str, fp2_str: &str) -> Result<f64, String> {
@@ -687,52 +731,73 @@ pub fn compare_chromaprints(fp1_str: &str, fp2_str: &str) -> Result<f64, String>
         return Ok(1.0);
     }
 
-    let b1 = match base64_decode(s1) {
-        Ok(b) => b,
-        Err(_) => return Ok(0.0),
+    let subfps1 = match decode_and_decompress_subfps(s1) {
+        Some(fps) => fps,
+        None => return Ok(0.0),
     };
-    let b2 = match base64_decode(s2) {
-        Ok(b) => b,
-        Err(_) => return Ok(0.0),
-    };
-
-    let subfps1 = match decompress_chromaprint(&b1) {
-        Ok(fps) => fps,
-        Err(_) => return Ok(0.0),
-    };
-    let subfps2 = match decompress_chromaprint(&b2) {
-        Ok(fps) => fps,
-        Err(_) => return Ok(0.0),
+    let subfps2 = match decode_and_decompress_subfps(s2) {
+        Some(fps) => fps,
+        None => return Ok(0.0),
     };
 
-    if subfps1.is_empty() || subfps2.is_empty() {
-        return Ok(0.0);
+    Ok(compare_subfps(&subfps1, &subfps2))
+}
+
+/// Compares one target Chromaprint against a batch of `(id, fp)` candidates in parallel via Rayon.
+/// Returns `(id, similarity)` pairs meeting `min_similarity`, sorted descending by similarity.
+pub fn batch_compare_chromaprints(
+    target_fp: &str,
+    candidates: &[(String, String)],
+    min_similarity: f64,
+) -> Vec<(String, f64)> {
+    let target_trimmed = target_fp.trim();
+    if target_trimmed.is_empty() || candidates.is_empty() {
+        return Vec::new();
     }
 
-    if subfps1 == subfps2 {
-        return Ok(1.0);
-    }
-
-    let config = Configuration::preset_test2();
-    let segments = match rusty_chromaprint::match_fingerprints(&subfps1, &subfps2, &config) {
-        Ok(segs) => segs,
-        Err(_) => return Ok(0.0),
+    let target_subfps = match decode_and_decompress_subfps(target_trimmed) {
+        Some(fps) => fps,
+        None => return Vec::new(),
     };
 
-    if segments.is_empty() {
-        return Ok(0.0);
-    }
+    let mut matches: Vec<(String, f64)> = candidates
+        .par_iter()
+        .filter_map(|(id, cand_fp)| {
+            let cand_trimmed = cand_fp.trim();
+            if cand_trimmed.is_empty() {
+                return None;
+            }
+            let score = if cand_trimmed == target_trimmed {
+                1.0
+            } else {
+                let cand_subfps = decode_and_decompress_subfps(cand_trimmed)?;
+                compare_subfps(&target_subfps, &cand_subfps)
+            };
+            if score >= min_similarity {
+                Some((id.clone(), score))
+            } else {
+                None
+            }
+        })
+        .collect();
 
-    let min_len = subfps1.len().min(subfps2.len()) as f64;
-    let mut total_matched_score = 0.0;
+    matches.sort_by(|a, b| {
+        b.1.partial_cmp(&a.1)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.0.cmp(&b.0))
+    });
+    matches
+}
 
-    for seg in &segments {
-        let bit_similarity = (1.0 - (seg.score / 32.0)).clamp(0.0, 1.0);
-        total_matched_score += bit_similarity * (seg.items_count as f64);
-    }
-
-    let confidence = (total_matched_score / min_len).clamp(0.0, 1.0);
-    Ok(confidence)
+/// Finds the single best matching Chromaprint candidate meeting `min_similarity` using Rayon.
+pub fn find_best_chromaprint_match(
+    target_fp: &str,
+    candidates: &[(String, String)],
+    min_similarity: f64,
+) -> Option<(String, f64)> {
+    batch_compare_chromaprints(target_fp, candidates, min_similarity)
+        .into_iter()
+        .next()
 }
 
 #[cfg(test)]
@@ -856,5 +921,40 @@ mod tests {
 
         let score_empty2 = compare_chromaprints("", "").unwrap();
         assert_eq!(score_empty2, 0.0);
+    }
+
+    #[test]
+    fn test_batch_and_best_chromaprint_match() {
+        const OUTPUT: [u8; 220] = [
+            0x01, 0x00, 0x00, 0x20, 0x0A, 0xA9, 0x24, 0xD2, 0x92, 0x24, 0x48, 0x92, 0x45, 0x52,
+            0x14, 0x65, 0x8B, 0x12, 0x24, 0x49, 0xA4, 0x4C, 0x61, 0x1E, 0x54, 0x89, 0xA4, 0x50,
+            0x61, 0x22, 0x28, 0xCA, 0x94, 0xA9, 0x53, 0x82, 0x24, 0xC9, 0x19, 0x4D, 0x83, 0x12,
+            0x29, 0x19, 0x95, 0x84, 0x8B, 0xA0, 0x2A, 0x91, 0xA4, 0x47, 0x49, 0x40, 0x69, 0x11,
+            0xB3, 0x45, 0x81, 0x12, 0x26, 0xC9, 0xA3, 0x44, 0x81, 0xB2, 0x6D, 0xD9, 0x98, 0x22,
+            0x59, 0x94, 0x25, 0x4B, 0x32, 0x31, 0x41, 0xC2, 0x2C, 0x91, 0x12, 0x45, 0x95, 0x90,
+            0x2D, 0x51, 0x94, 0x2D, 0x4A, 0x94, 0x04, 0x8C, 0xA4, 0x24, 0x49, 0xC4, 0x64, 0xC1,
+            0xD7, 0x24, 0x49, 0xE2, 0x24, 0x48, 0x32, 0x6D, 0x89, 0x92, 0xE4, 0xC8, 0x2B, 0x49,
+            0x49, 0x14, 0x05, 0xC9, 0x22, 0x31, 0xDA, 0x94, 0x10, 0x49, 0xC2, 0x24, 0xC9, 0xA2,
+            0x2B, 0x81, 0xA2, 0x6C, 0x49, 0xB6, 0x44, 0x8A, 0x84, 0x24, 0x4A, 0xA2, 0x44, 0x99,
+            0xF2, 0x21, 0xCF, 0x14, 0x25, 0x49, 0xB2, 0x30, 0x58, 0x92, 0x30, 0x89, 0x92, 0x28,
+            0x89, 0x18, 0xE4, 0x8A, 0xA4, 0x24, 0x49, 0xB2, 0x24, 0x41, 0x14, 0x25, 0x49, 0x22,
+            0x66, 0xC9, 0x12, 0x48, 0x4A, 0x94, 0x84, 0xE9, 0xA4, 0x40, 0x92, 0x22, 0x3D, 0x8B,
+            0x96, 0xA0, 0x4B, 0x92, 0x54, 0x49, 0xA6, 0x24, 0x48, 0xA2, 0x44, 0x89, 0x94, 0x44,
+            0x49, 0x94, 0x28, 0x48, 0x16, 0x25, 0xCA, 0x72, 0x0D, 0x9B, 0x32, 0x25, 0x0B, 0xA3,
+            0x00, 0xA1, 0x80, 0x01, 0x06, 0x00, 0x00, 0x04, 0x30, 0x00,
+        ];
+        let fp_str = base64_encode(&OUTPUT);
+        let candidates = vec![
+            ("invalid".to_string(), "not-base64!!!".to_string()),
+            ("exact".to_string(), fp_str.clone()),
+        ];
+
+        let batch = batch_compare_chromaprints(&fp_str, &candidates, 0.85);
+        assert_eq!(batch.len(), 1);
+        assert_eq!(batch[0].0, "exact");
+        assert!((batch[0].1 - 1.0).abs() < 1e-6);
+
+        let best = find_best_chromaprint_match(&fp_str, &candidates, 0.85);
+        assert_eq!(best.map(|(id, _)| id), Some("exact".to_string()));
     }
 }

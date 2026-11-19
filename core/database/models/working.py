@@ -82,7 +82,7 @@ class DownloadQueue(WorkingBase):
 
     __tablename__ = "download_queue"
 
-    id: int = Column(Integer, primary_key=True, autoincrement=True)
+    id: int = Column(Integer, primary_key=True)
     sync_id: str | None = Column(String(64), nullable=True, index=True)
     intent: str = Column(
         String(32), nullable=False, default=DownloadIntent.MANUAL_OMNI.value

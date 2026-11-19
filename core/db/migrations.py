@@ -1,5 +1,6 @@
 import contextlib
 import os
+import shutil
 import sqlite3
 from pathlib import Path
 
@@ -137,15 +138,41 @@ def _engine_for_env(env: str):
 #                    possible for that environment.
 _ENV_LEGACY_BASELINE = {
     # (sentinel_table, baseline_rev, v2_4_0_sentinel, v2_4_0_rev)
-    "alembic:working": ("downloads", "0560a1c7fa89", ("accounts", "review_tasks"), "head"),
+    "alembic:working": ("downloads", "0560a1c7fa89", ("accounts", "review_tasks"), "fedcba654325"),
     "alembic:music": (
         "artists",
         "7b7461716632",
         ("track_aliases", "local_media", "track_artists", "artist_aliases", "audio_fingerprints"),
-        "head",
+        "f3a4b5c6d7e8",
     ),
     # alembic:config has no application tables — no legacy adoption needed.
 }
+
+
+def snapshot_sqlite_before_migration(db_path: Path | str | None) -> Path | None:
+    """Create a `<db>.bak` backup copy via shutil.copy2 before migrating a non-empty DB."""
+    if not db_path or str(db_path) == ":memory:":
+        return None
+    src = Path(db_path)
+    if not src.exists() or not src.is_file() or src.stat().st_size <= 0:
+        return None
+    backup_path = Path(f"{src}.bak")
+    shutil.copy2(src, backup_path)
+    logger.info("Created pre-migration SQLite snapshot: %s", backup_path)
+    return backup_path
+
+
+def _has_pending_migrations(engine, alembic_cfg) -> bool:
+    """Return True if the live database has unapplied Alembic revisions or is unstamped with data."""
+    from alembic.runtime.migration import MigrationContext
+    from alembic.script import ScriptDirectory
+
+    script_dir = ScriptDirectory.from_config(alembic_cfg)
+    target_heads = set(script_dir.get_heads())
+    with engine.connect() as conn:
+        context = MigrationContext.configure(conn)
+        current_heads = set(context.get_current_heads())
+    return current_heads != target_heads
 
 
 def run_auto_migrations() -> None:
@@ -213,6 +240,8 @@ def run_auto_migrations() -> None:
 
         # ── Clean up leftover _alembic_tmp_* tables and inspect schema ────────
         engine = _engine_for_env(env)
+        db_file_path = engine.url.database if engine is not None and hasattr(engine, "url") else None
+        dispose_engine = env == "alembic:config"
         if engine is not None:
             with engine.connect() as conn:
                 from sqlalchemy import text
@@ -224,142 +253,152 @@ def run_auto_migrations() -> None:
                         conn.execute(text(f"DROP TABLE IF EXISTS {t_name}"))
                         conn.commit()
 
-        if env in _ENV_LEGACY_BASELINE:
-            sentinel_table, baseline_rev, v2_4_0_sentinel, v2_4_0_rev = _ENV_LEGACY_BASELINE[env]
+        try:
+            if env in _ENV_LEGACY_BASELINE:
+                sentinel_table, baseline_rev, v2_4_0_sentinel, v2_4_0_rev = _ENV_LEGACY_BASELINE[env]
 
-            if engine is not None:
-                inspector = sa_inspect(engine)
-                has_alembic = inspector.has_table("alembic_version")
+                if engine is not None:
+                    inspector = sa_inspect(engine)
+                    has_alembic = inspector.has_table("alembic_version")
 
-                # Verify if alembic_version has actually been populated
-                is_stamped = False
-                if has_alembic:
-                    with engine.connect() as conn:
-                        from sqlalchemy import text
+                    # Verify if alembic_version has actually been populated
+                    is_stamped = False
+                    if has_alembic:
+                        with engine.connect() as conn:
+                            from sqlalchemy import text
 
-                        res = conn.execute(text("SELECT version_num FROM alembic_version")).fetchone()
-                        if res:
-                            is_stamped = True
+                            res = conn.execute(text("SELECT version_num FROM alembic_version")).fetchone()
+                            if res:
+                                is_stamped = True
 
-                user_tables = set(inspector.get_table_names()) - {"alembic_version", "sqlite_sequence"}
+                    user_tables = set(inspector.get_table_names()) - {"alembic_version", "sqlite_sequence"}
 
-                if has_alembic and is_stamped:
-                    # ── Case 1: Normal flow ───────────────────────────────────
-                    logger.info("%s: alembic_version present — running upgrade to head.", env)
-                    try:
-                        command.upgrade(alembic_cfg, "head")
-                        logger.info("Successfully migrated %s to head.", env)
-                    except Exception as e:
-                        logger.error("Failed to migrate %s: %s", env, e, exc_info=True)
-                        raise
-                    continue
-
-                elif len(user_tables) == 0:
-                    # ── Case 2: Fresh install ─────────────────────────────────
-                    logger.info(
-                        "%s: fresh database (no tables) — running full upgrade to head.",
-                        env,
-                    )
-                    try:
-                        command.upgrade(alembic_cfg, "head")
-                        logger.info("Successfully migrated %s to head.", env)
-                    except Exception as e:
-                        logger.error("Failed to migrate %s: %s", env, e, exc_info=True)
-                        raise
-                    continue
-
-                else:
-                    # Legacy or pre-created database: has tables but no stamped alembic_version.
-                    # Check whether the modern / partial upgrade tables exist.
-                    if v2_4_0_sentinel is not None:
-                        if isinstance(v2_4_0_sentinel, (tuple, list, set)):
-                            has_v2_4_0 = any(t in user_tables for t in v2_4_0_sentinel)
-                        else:
-                            has_v2_4_0 = v2_4_0_sentinel in user_tables
-                    else:
-                        has_v2_4_0 = False
-
-                    if has_v2_4_0:
-                        # ── Case 3: Partial upgrade or modern schema ──────────
-                        logger.info(
-                            "%s: partial upgrade or modern schema detected (table '%s' exists, "
-                            "alembic_version absent) — stamping at baseline %s, "
-                            "then upgrading to head.",
-                            env,
-                            v2_4_0_sentinel,
-                            v2_4_0_rev or "head",
-                        )
-                        stamp_rev = v2_4_0_rev if v2_4_0_rev else "head"
-                        try:
-                            command.stamp(alembic_cfg, stamp_rev)
-                            logger.info("%s stamped at %s.", env, stamp_rev)
-                        except Exception as e:
-                            logger.error(
-                                "Failed to stamp %s at %s: %s",
-                                env,
-                                stamp_rev,
-                                e,
-                                exc_info=True,
-                            )
-                            raise
-                        if v2_4_0_rev and v2_4_0_rev != "head":
-                            try:
-                                command.upgrade(alembic_cfg, "head")
-                                logger.info("Successfully migrated %s to head.", env)
-                            except Exception as e:
-                                logger.error("Failed to migrate %s: %s", env, e, exc_info=True)
-                                raise
-
-                    elif sentinel_table in user_tables:
-                        # ── Case 4: Pure v2.3.0 legacy adoption ──────────────
-                        logger.info(
-                            "%s: legacy database detected (table '%s' exists, "
-                            "alembic_version absent) — stamping at v2.3.0 baseline %s, "
-                            "then upgrading to head.",
-                            env,
-                            sentinel_table,
-                            baseline_rev,
-                        )
-                        try:
-                            command.stamp(alembic_cfg, baseline_rev)
-                            logger.info("%s stamped at %s.", env, baseline_rev)
-                        except Exception as e:
-                            logger.error(
-                                "Failed to stamp %s at baseline %s: %s",
-                                env,
-                                baseline_rev,
-                                e,
-                                exc_info=True,
-                            )
-                            raise
+                    if has_alembic and is_stamped:
+                        # ── Case 1: Normal flow ───────────────────────────────────
+                        logger.info("%s: alembic_version present — running upgrade to head.", env)
+                        if _has_pending_migrations(engine, alembic_cfg):
+                            snapshot_sqlite_before_migration(db_file_path)
                         try:
                             command.upgrade(alembic_cfg, "head")
                             logger.info("Successfully migrated %s to head.", env)
                         except Exception as e:
                             logger.error("Failed to migrate %s: %s", env, e, exc_info=True)
                             raise
-                    else:
-                        logger.warning(
-                            "%s: existing tables %s found without alembic_version and no matching sentinel. Stamping at head.",
+                        continue
+
+                    elif len(user_tables) == 0:
+                        # ── Case 2: Fresh install ─────────────────────────────────
+                        logger.info(
+                            "%s: fresh database (no tables) — running full upgrade to head.",
                             env,
-                            user_tables,
                         )
+                        snapshot_sqlite_before_migration(db_file_path)
                         try:
-                            command.stamp(alembic_cfg, "head")
-                            logger.info("%s stamped at head.", env)
+                            command.upgrade(alembic_cfg, "head")
+                            logger.info("Successfully migrated %s to head.", env)
                         except Exception as e:
-                            logger.error("Failed to stamp %s at head: %s", env, e, exc_info=True)
+                            logger.error("Failed to migrate %s: %s", env, e, exc_info=True)
                             raise
+                        continue
 
-                    continue
+                    else:
+                        snapshot_sqlite_before_migration(db_file_path)
+                        # Legacy or pre-created database: has tables but no stamped alembic_version.
+                        # Check whether the modern / partial upgrade tables exist.
+                        if v2_4_0_sentinel is not None:
+                            if isinstance(v2_4_0_sentinel, (tuple, list, set)):
+                                has_v2_4_0 = any(t in user_tables for t in v2_4_0_sentinel)
+                            else:
+                                has_v2_4_0 = v2_4_0_sentinel in user_tables
+                        else:
+                            has_v2_4_0 = False
 
-        # ── No legacy baseline for this environment (alembic:config) ─────────
-        try:
-            command.upgrade(alembic_cfg, "head")
-            logger.info("Successfully migrated %s to head.", env)
-        except Exception as e:
-            logger.error("Failed to migrate %s: %s", env, e, exc_info=True)
-            raise
+                        if has_v2_4_0:
+                            # ── Case 3: Partial upgrade or modern schema ──────────
+                            logger.info(
+                                "%s: partial upgrade or modern schema detected (table '%s' exists, "
+                                "alembic_version absent) — stamping at baseline %s, "
+                                "then upgrading to head.",
+                                env,
+                                v2_4_0_sentinel,
+                                v2_4_0_rev or "head",
+                            )
+                            stamp_rev = v2_4_0_rev if v2_4_0_rev else "head"
+                            try:
+                                command.stamp(alembic_cfg, stamp_rev)
+                                logger.info("%s stamped at %s.", env, stamp_rev)
+                            except Exception as e:
+                                logger.error(
+                                    "Failed to stamp %s at %s: %s",
+                                    env,
+                                    stamp_rev,
+                                    e,
+                                    exc_info=True,
+                                )
+                                raise
+                            if v2_4_0_rev and v2_4_0_rev != "head":
+                                try:
+                                    command.upgrade(alembic_cfg, "head")
+                                    logger.info("Successfully migrated %s to head.", env)
+                                except Exception as e:
+                                    logger.error("Failed to migrate %s: %s", env, e, exc_info=True)
+                                    raise
+
+                        elif sentinel_table in user_tables:
+                            # ── Case 4: Pure v2.3.0 legacy adoption ──────────────
+                            logger.info(
+                                "%s: legacy database detected (table '%s' exists, "
+                                "alembic_version absent) — stamping at v2.3.0 baseline %s, "
+                                "then upgrading to head.",
+                                env,
+                                sentinel_table,
+                                baseline_rev,
+                            )
+                            try:
+                                command.stamp(alembic_cfg, baseline_rev)
+                                logger.info("%s stamped at %s.", env, baseline_rev)
+                            except Exception as e:
+                                logger.error(
+                                    "Failed to stamp %s at baseline %s: %s",
+                                    env,
+                                    baseline_rev,
+                                    e,
+                                    exc_info=True,
+                                )
+                                raise
+                            try:
+                                command.upgrade(alembic_cfg, "head")
+                                logger.info("Successfully migrated %s to head.", env)
+                            except Exception as e:
+                                logger.error("Failed to migrate %s: %s", env, e, exc_info=True)
+                                raise
+                        else:
+                            logger.warning(
+                                "%s: existing tables %s found without alembic_version and no matching sentinel. Stamping at head.",
+                                env,
+                                user_tables,
+                            )
+                            try:
+                                command.stamp(alembic_cfg, "head")
+                                logger.info("%s stamped at head.", env)
+                            except Exception as e:
+                                logger.error("Failed to stamp %s at head: %s", env, e, exc_info=True)
+                                raise
+
+                        continue
+
+            # ── No legacy baseline for this environment (alembic:config) ─────────
+            if engine is not None and _has_pending_migrations(engine, alembic_cfg):
+                snapshot_sqlite_before_migration(db_file_path)
+            try:
+                command.upgrade(alembic_cfg, "head")
+                logger.info("Successfully migrated %s to head.", env)
+            except Exception as e:
+                logger.error("Failed to migrate %s: %s", env, e, exc_info=True)
+                raise
+        finally:
+            if dispose_engine and engine is not None:
+                engine.dispose()
 
 
 def trigger_post_migration_database_update():
