@@ -1,8 +1,10 @@
+import asyncio
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from core.database.models.working import DownloadStatus
 from database.working_database import DownloadQueue
 from plugins.EchoSync.slskd.client import SlskdProvider
 from services.download_manager import DownloadManager
@@ -152,18 +154,26 @@ async def test_ghost_transfer_fallback_and_blacklist(mock_work_db, mock_db):
         dm, "_execute_waterfall_search_and_download", new_callable=AsyncMock
     ) as mock_waterfall:
         await dm._check_active_downloads()
+        await asyncio.sleep(0)
 
         # Verify cancellation was called
         mock_provider._async_cancel_download.assert_called_once_with(
             "peer1|test.flac"
         )
+        mock_waterfall.assert_called_once_with(db_id, [mock_provider])
 
-        # Verify DB record updated: status="searching", blacklist updated
+        # Verify DB record updated via rotate_candidate: status="RETRYING", retry_count=1,
+        # candidate recorded on DownloadQueue.blacklisted_candidates (never echo_sync_track)
         with mock_work_db.session_scope() as session:
             refreshed = session.get(DownloadQueue, db_id)
             assert refreshed is not None
-            assert refreshed.status == "searching"
+            assert refreshed.status == DownloadStatus.RETRYING.value
+            assert refreshed.retry_count == 1
+            assert refreshed.active_candidate_id is None
             assert refreshed.provider_id is None
-            blacklist = refreshed.echo_sync_track.get("blacklisted_candidates", [])
-            assert "peer1|test.flac" in blacklist
-            assert "test.flac" in blacklist
+            assert "blacklisted_candidates" not in (refreshed.echo_sync_track or {})
+            blacklisted_ids = [
+                b.get("candidate_id") if isinstance(b, dict) else b
+                for b in (refreshed.blacklisted_candidates or [])
+            ]
+            assert "peer1|test.flac" in blacklisted_ids

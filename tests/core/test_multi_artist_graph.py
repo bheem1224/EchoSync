@@ -32,7 +32,7 @@ def test_atomic_artist_splitting_and_track_artists_persistence(in_memory_db):
         raw_title="Rewrite The Stars",
         artist_name="Zac Efron, Zendaya",
         album_title="The Greatest Showman",
-        duration=217000,
+        duration_ms=217000,
         media=[
             EchosyncMedia(
                 file_path="/music/greatest_showman/rewrite_the_stars.flac",
@@ -94,7 +94,7 @@ def test_multi_artist_candidate_retrieval(in_memory_db):
         raw_title="One Kiss",
         artist_name="Calvin Harris feat. Dua Lipa",
         album_title="One Kiss",
-        duration=214000,
+        duration_ms=214000,
         media=[
             EchosyncMedia(
                 file_path="/music/calvin_harris/one_kiss.flac",
@@ -140,21 +140,21 @@ def test_complex_multi_artist_delimiters(in_memory_db):
             raw_title="Song A",
             artist_name="Armin van Buuren & Brennan Heart ft. Andreas Moe",
             album_title="Album A",
-            duration=180000,
+            duration_ms=180000,
             media=[EchosyncMedia(file_path="/music/a.flac")],
         ),
         EchosyncTrack(
             raw_title="Song B",
             artist_name="Marshmello vs. Svdden Death",
             album_title="Album B",
-            duration=190000,
+            duration_ms=190000,
             media=[EchosyncMedia(file_path="/music/b.flac")],
         ),
         EchosyncTrack(
             raw_title="Song C",
             artist_name="Artist One / Artist Two / Artist Three",
             album_title="Album C",
-            duration=200000,
+            duration_ms=200000,
             media=[EchosyncMedia(file_path="/music/c.flac")],
         ),
     ]

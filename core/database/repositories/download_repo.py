@@ -85,8 +85,8 @@ class DownloadRepository:
     def get_actionable_queue(self, limit: int = 30) -> list[DownloadQueue]:
         """Fetch actionable items ready for search/dispatch (QUEUED or RETRYING).
 
-        Strictly excludes tasks in DOWNLOADING, VERIFYING, COMPLETED, and FAILED
-        to prevent concurrent worker collisions.
+        Strictly excludes tasks in DOWNLOADING, VERIFYING, COMPLETED, FAILED,
+        CANCELLED, and PENDING_BLOCKED to prevent concurrent worker collisions.
         """
         actionable_statuses = [
             DownloadStatus.QUEUED.value,
@@ -97,6 +97,8 @@ class DownloadRepository:
             DownloadStatus.VERIFYING.value,
             DownloadStatus.COMPLETED.value,
             DownloadStatus.FAILED.value,
+            DownloadStatus.CANCELLED.value,
+            DownloadStatus.PENDING_BLOCKED.value,
         ]
         with self._get_session() as session:
             return (
@@ -112,10 +114,12 @@ class DownloadRepository:
             )
 
     def get_active_downloads(self) -> list[DownloadQueue]:
-        """Fetch items currently in DOWNLOADING or VERIFYING state."""
+        """Fetch items currently active (SEARCHING, DOWNLOADING, VERIFYING, or RETRYING)."""
         active_statuses = [
+            DownloadStatus.SEARCHING.value,
             DownloadStatus.DOWNLOADING.value,
             DownloadStatus.VERIFYING.value,
+            DownloadStatus.RETRYING.value,
         ]
         with self._get_session() as session:
             return (
@@ -201,11 +205,18 @@ class DownloadRepository:
             to_status=DownloadStatus.COMPLETED,
         )
 
-    def transition_to_retrying_or_failed(self, item_id: int, reason: str) -> bool:
+    def transition_to_retrying_or_failed(
+        self,
+        item_id: int,
+        reason: str = "CANDIDATE_FAILED",
+        failed_candidate_id: str | None = None,
+        max_retries: int = 3,
+    ) -> bool:
         """Rotate candidate on verification failure or transfer error.
 
-        Appends rejected candidate to blacklisted_candidates, pops next candidate from stack,
-        and transitions to RETRYING or FAILED.
+        Appends rejected candidate to blacklisted_candidates, pops next candidate from stack
+        if available, increments retry_count, clears active_candidate_id when exhausted or
+        stack empty, and transitions to RETRYING or FAILED.
         """
         with self._get_session() as session:
             item = session.get(DownloadQueue, item_id)
@@ -213,7 +224,11 @@ class DownloadRepository:
                 logger.warning(f"DownloadQueue item {item_id} not found for candidate rotation")
                 return False
 
-            rotated = item.rotate_candidate(reason)
+            rotated = item.rotate_candidate(
+                failed_candidate_id=failed_candidate_id,
+                max_retries=max_retries,
+                reason=reason,
+            )
             item.updated_at = utc_now()
             with db_write_lease(task_name="transition_to_retrying_or_failed"):
                 session.commit()

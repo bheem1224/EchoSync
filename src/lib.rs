@@ -454,6 +454,37 @@ pub fn compare_chromaprints(py: Python<'_>, fp1: String, fp2: String) -> PyResul
     }
 }
 
+/// Compare one target Chromaprint against multiple `(id, chromaprint)` candidates in parallel.
+/// Returns `(id, similarity)` pairs >= `min_similarity`, sorted descending by similarity.
+#[pyfunction]
+#[pyo3(signature = (target_fp, candidates, min_similarity=0.0))]
+pub fn batch_compare_chromaprints(
+    py: Python<'_>,
+    target_fp: String,
+    candidates: Vec<(String, String)>,
+    min_similarity: f64,
+) -> PyResult<Vec<(String, f64)>> {
+    let results = py.allow_threads(|| {
+        audio::fingerprint::batch_compare_chromaprints(&target_fp, &candidates, min_similarity)
+    });
+    Ok(results)
+}
+
+/// Find the highest-scoring Chromaprint candidate matching `target_fp` above `min_similarity`.
+#[pyfunction]
+#[pyo3(signature = (target_fp, candidates, min_similarity=0.85))]
+pub fn find_best_chromaprint_match(
+    py: Python<'_>,
+    target_fp: String,
+    candidates: Vec<(String, String)>,
+    min_similarity: f64,
+) -> PyResult<Option<(String, f64)>> {
+    let result = py.allow_threads(|| {
+        audio::fingerprint::find_best_chromaprint_match(&target_fp, &candidates, min_similarity)
+    });
+    Ok(result)
+}
+
 /// Compute deterministic BLAKE3 hash strictly over raw decoded PCM audio frames.
 #[pyfunction]
 pub fn hash_pcm_stream(py: Python<'_>, file_path: String) -> PyResult<String> {
@@ -547,6 +578,8 @@ fn echosync_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(fingerprint_audio, m)?)?;
     m.add_function(wrap_pyfunction!(fingerprint_and_hash_audio, m)?)?;
     m.add_function(wrap_pyfunction!(compare_chromaprints, m)?)?;
+    m.add_function(wrap_pyfunction!(batch_compare_chromaprints, m)?)?;
+    m.add_function(wrap_pyfunction!(find_best_chromaprint_match, m)?)?;
     m.add_function(wrap_pyfunction!(hash_pcm_stream, m)?)?;
     m.add_function(wrap_pyfunction!(generate_audio_signature, m)?)?;
     m.add_function(wrap_pyfunction!(verify_audio_signature, m)?)?;

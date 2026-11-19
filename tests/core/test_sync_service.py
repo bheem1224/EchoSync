@@ -2,7 +2,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from services.sync_service import PlaylistSyncService
+from services.playlist_sync import PlaylistSyncService
 
 
 class FakeSpotifyClient:
@@ -40,7 +40,7 @@ class FakeSpotifyClient:
 def patch_spotify_client(monkeypatch):
     # intercept SpotifyClient constructor to return fake instance
     def factory(provider_name, account_id=None, **kwargs):
-        if provider_name in ("spotify", "EchoSync.Spotify"):
+        if provider_name in ("spotify", "EchoSync.Spotify", "default_source"):
             return FakeSpotifyClient(account_id=account_id)
         return MagicMock()
 
@@ -60,9 +60,6 @@ def patch_spotify_client(monkeypatch):
     fake_storage.list_accounts.return_value = [{"id": 1}, {"id": 2}]
     monkeypatch.setattr(
         "services.storage_service.get_storage_service", lambda: fake_storage
-    )
-    monkeypatch.setattr(
-        "core.file_handling.storage.get_storage_service", lambda: fake_storage
     )
 
     yield

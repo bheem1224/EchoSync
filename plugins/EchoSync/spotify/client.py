@@ -42,7 +42,7 @@ class ConfigCacheHandler(CacheHandler):
             accounts = []
         if not accounts:
             try:
-                from core.file_handling.storage import get_storage_service
+                from services.storage_service import get_storage_service
 
                 accounts = get_storage_service().list_accounts("spotify")
             except Exception:
@@ -76,18 +76,9 @@ class ConfigCacheHandler(CacheHandler):
             if not target_account_id:
                 return None
 
-            from database.config_database import get_config_database
+            from core.nexus_framework.sdk import sdk
 
-            db = get_config_database()
-            token_data = db.get_account_token(target_account_id)
-
-            if not token_data:
-                try:
-                    from core.nexus_framework.plugin_SDK import sdk
-
-                    token_data = sdk.accounts.get_token(target_account_id)
-                except Exception:
-                    token_data = None
+            token_data = sdk.accounts.get_token(target_account_id)
 
             if not token_data:
                 logger.debug(
@@ -149,9 +140,7 @@ class ConfigCacheHandler(CacheHandler):
                 )
                 return
 
-            from database.config_database import get_config_database
-
-            db = get_config_database()
+            from core.nexus_framework.sdk import sdk
 
             access_token = token_info.get("access_token")
             refresh_token = token_info.get("refresh_token")
@@ -169,7 +158,7 @@ class ConfigCacheHandler(CacheHandler):
 
             # If no refresh token provided, try to preserve existing one
             if not refresh_token:
-                existing_token = db.get_account_token(target_account_id)
+                existing_token = sdk.accounts.get_token(target_account_id)
                 if (
                     existing_token
                     and existing_token.get("refresh_token")
@@ -184,7 +173,7 @@ class ConfigCacheHandler(CacheHandler):
                 f"Saving token for account {target_account_id}: access={bool(access_token)}, refresh={bool(refresh_token)}, expires={expires_at}"
             )
 
-            success = db.save_account_token(
+            success = sdk.accounts.save_token(
                 account_id=target_account_id,
                 access_token=access_token,
                 refresh_token=refresh_token if refresh_token else None,
@@ -198,8 +187,8 @@ class ConfigCacheHandler(CacheHandler):
                     f"Successfully persisted Spotify tokens for account {target_account_id}"
                 )
                 try:
-                    db.mark_account_authenticated(target_account_id)
-                    db.toggle_account_active(target_account_id, True)
+                    sdk.accounts.mark_account_authenticated(target_account_id)
+                    sdk.accounts.toggle_account_active(target_account_id, True)
                 except Exception as e:
                     logger.debug(f"Failed to mark account as authenticated: {e}")
             else:
@@ -278,7 +267,7 @@ class SpotifyClient(SyncServiceProvider):
         if not self.is_configured():
             return
 
-        from core.health_check import HealthCheckResult
+        from core.task_manager.health import HealthCheckResult
 
         def spotify_health_check() -> HealthCheckResult:
             try:
@@ -336,7 +325,7 @@ class SpotifyClient(SyncServiceProvider):
             accounts = []
         if not accounts:
             try:
-                from core.file_handling.storage import get_storage_service
+                from services.storage_service import get_storage_service
 
                 accounts = get_storage_service().list_accounts("spotify")
             except Exception:
@@ -441,11 +430,8 @@ class SpotifyClient(SyncServiceProvider):
                 except Exception:
                     pass
 
-            # 3. Check Database service_config (canonical ID 2391116200, EchoSync.Spotify, Spotify, spotify)
+            # 3. Check SDK service_config across canonical service identifiers
             try:
-                from database.config_database import get_config_database
-
-                db = get_config_database()
                 for lookup_key in [
                     2391116200,
                     "EchoSync.Spotify",
@@ -455,20 +441,18 @@ class SpotifyClient(SyncServiceProvider):
                 ]:
                     if creds["client_id"] and creds["client_secret"]:
                         break
-                    svc_id = db.get_service_id(lookup_key)
-                    if svc_id:
-                        if not creds["client_id"]:
-                            creds["client_id"] = db.get_service_config(
-                                svc_id, "client_id"
-                            )
-                        if not creds["client_secret"]:
-                            creds["client_secret"] = db.get_service_config(
-                                svc_id, "client_secret"
-                            )
-                        if not creds["redirect_uri"]:
-                            creds["redirect_uri"] = db.get_service_config(
-                                svc_id, "redirect_uri"
-                            )
+                    if not creds["client_id"]:
+                        creds["client_id"] = self.sdk.config.get_for_service(
+                            lookup_key, "client_id"
+                        )
+                    if not creds["client_secret"]:
+                        creds["client_secret"] = self.sdk.config.get_for_service(
+                            lookup_key, "client_secret"
+                        )
+                    if not creds["redirect_uri"]:
+                        creds["redirect_uri"] = self.sdk.config.get_for_service(
+                            lookup_key, "redirect_uri"
+                        )
             except Exception:
                 pass
 
@@ -675,7 +659,7 @@ class SpotifyClient(SyncServiceProvider):
         from flask import jsonify, redirect
         from spotipy.oauth2 import SpotifyOAuth
 
-        from core.file_handling.storage import get_storage_service
+        from services.storage_service import get_storage_service
 
         try:
             code = args.get("code")
@@ -700,7 +684,7 @@ class SpotifyClient(SyncServiceProvider):
                 account_id = int(state)
             except (ValueError, TypeError):
                 account_id = None
-            from core.file_handling.storage import get_storage_service
+            from services.storage_service import get_storage_service
 
             storage = get_storage_service()
             client_id = storage.get_service_config("spotify", "client_id")
@@ -785,11 +769,8 @@ class SpotifyClient(SyncServiceProvider):
         except Exception:
             pass
 
-        # Check DB service_config
+        # Check SDK service_config across canonical identifiers
         try:
-            from database.config_database import get_config_database
-
-            db = get_config_database()
             for lookup_key in [
                 2391116200,
                 "EchoSync.Spotify",
@@ -797,18 +778,17 @@ class SpotifyClient(SyncServiceProvider):
                 "Spotify",
                 "spotify",
             ]:
-                svc_id = db.get_service_id(lookup_key)
-                if (
-                    svc_id
-                    and db.get_service_config(svc_id, "client_id")
-                    and db.get_service_config(svc_id, "client_secret")
+                if self.sdk.config.get_for_service(
+                    lookup_key, "client_id"
+                ) and self.sdk.config.get_for_service(
+                    lookup_key, "client_secret"
                 ):
                     return True
         except Exception:
             pass
 
         # Check storage if we can potentially configure it
-        from core.file_handling.storage import get_storage_service
+        from services.storage_service import get_storage_service
 
         storage = get_storage_service()
         return bool(
@@ -928,12 +908,12 @@ class SpotifyClient(SyncServiceProvider):
             items = ((results or {}).get("tracks") or {}).get("items") or []
             if not items:
                 return None
+            from dataclasses import replace
+
             track = self._convert_track(items[0])
             if track:
-                if not isinstance(track.identifiers, dict):
-                    track.identifiers = {}
-                track.identifiers["source"] = "EchoSync.spotify"
-                track.isrc = canonical
+                base_ids = dict(track.identifiers) if isinstance(track.identifiers, dict) else {}
+                track = replace(track, identifiers={**base_ids, "source": "EchoSync.spotify"}, isrc=canonical)
             return track
         except Exception as exc:
             logger.warning("Spotify search_by_isrc(%s) failed: %s", canonical, exc)

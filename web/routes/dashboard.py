@@ -60,7 +60,7 @@ def _ensure_file():
 def command_center():
     """Aggregated command center dashboard data."""
     try:
-        from services.health_check import get_system_health
+        from core.task_manager.health_service import get_system_health
 
         health_data = get_system_health()
     except Exception as e:
@@ -69,7 +69,7 @@ def command_center():
 
     try:
         from database.music_database import get_database
-        from web.services.library_service import LibraryAdapter
+        from services.library_service import LibraryAdapter
 
         adapter = LibraryAdapter()
         lib_overview = adapter.overview()

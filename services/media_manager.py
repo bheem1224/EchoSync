@@ -6,9 +6,34 @@ from core.nexus_framework.plugin_loader import PluginRegistry
 from core.settings import config_manager
 from core.tiered_logger import get_logger
 from core.utils import PathMapper
-from database.music_database import Track, get_database
+from database import music_database as _music_db_module
+from database.music_database import Track
+from database.music_database import get_database as _orig_get_database
+
+get_database = _orig_get_database
 
 logger = get_logger("media_manager")
+
+_LOSSLESS_FORMATS: frozenset[str] = frozenset(
+    {"flac", "alac", "wav", "dsd", "dsf", "dff", "ape"}
+)
+
+
+def _media_quality_key(media: Any) -> tuple[int, int, int, int]:
+    """Return canonical quality tuple matching Track.get_best_media()."""
+    fmt = (getattr(media, "file_format", None) or "").lower().lstrip(".")
+    is_lossless = 1 if fmt in _LOSSLESS_FORMATS else 0
+    return (
+        is_lossless,
+        getattr(media, "bitrate", None) or 0,
+        getattr(media, "sample_rate", None) or 0,
+        getattr(media, "bit_depth", None) or 0,
+    )
+
+
+def sort_media_by_quality(media_files: list[Any]) -> list[Any]:
+    """Sort LocalMedia items descending by (is_lossless, bitrate, sample_rate, bit_depth)."""
+    return sorted(media_files or [], key=_media_quality_key, reverse=True)
 
 
 class MediaManagerService:
@@ -21,7 +46,9 @@ class MediaManagerService:
     def db(self):
         if self._db is not None:
             return self._db
-        return get_database()
+        if get_database is not _orig_get_database:
+            return get_database()
+        return _music_db_module.get_database()
 
     @db.setter
     def db(self, value):
@@ -206,19 +233,87 @@ class MediaManagerService:
         """Return the library hierarchy (Artist -> Album -> Tracks)."""
         return self.db.get_library_hierarchy()
 
-    def get_track_stream(self, track_id: int) -> str | None:
+    @staticmethod
+    def order_media_files(media_files: list[Any]) -> list[Any]:
+        """Order LocalMedia items by (is_lossless, bitrate, sample_rate, bit_depth) descending."""
+        return sort_media_by_quality(media_files)
+
+    @staticmethod
+    def get_best_media(track: Any) -> Any | None:
+        """Select highest-quality LocalMedia aligned with Track.get_best_media()."""
+        if track is None:
+            return None
+        if hasattr(track, "get_best_media") and callable(track.get_best_media):
+            best = track.get_best_media()
+            if best is not None:
+                return best
+        media_files = list(getattr(track, "media_files", None) or [])
+        if not media_files:
+            return None
+        return max(media_files, key=_media_quality_key)
+
+    def _resolve_ordered_candidate_paths(self, track_id: int | str) -> list[str]:
+        """Resolve candidate file paths ordered by Track.get_best_media() quality priority."""
+        if not hasattr(self.db, "session_scope"):
+            return []
+
+        from database.music_database import LocalMedia
+
+        candidates: list[str] = []
+        try:
+            with self.db.session_scope() as session:
+                track = None
+                if isinstance(track_id, int) or (
+                    isinstance(track_id, str) and track_id.isdigit()
+                ):
+                    tid = int(track_id)
+                    track = session.query(Track).filter(Track.id == tid).first()
+                if track is None:
+                    track = (
+                        session.query(Track)
+                        .filter(Track.sync_id == str(track_id))
+                        .first()
+                    )
+
+                if track is not None:
+                    ordered = self.order_media_files(list(track.media_files or []))
+                    candidates = [
+                        m.file_path
+                        for m in ordered
+                        if isinstance(getattr(m, "file_path", None), str) and m.file_path
+                    ]
+                else:
+                    lm = (
+                        session.query(LocalMedia)
+                        .filter(LocalMedia.media_id == str(track_id))
+                        .first()
+                    )
+                    if lm and isinstance(getattr(lm, "file_path", None), str) and lm.file_path:
+                        candidates = [lm.file_path]
+        except Exception as err:
+            logger.debug("Falling back to db.get_track_path for %s: %s", track_id, err)
+            return []
+        return candidates
+
+    def get_track_stream(self, track_id: int | str) -> str | None:
         """
         Get the local file path for a track.
         Returns None if track not found or file missing.
         """
-        # 1. Get raw path from database
-        file_path = self.db.get_track_path(track_id)
-        if not file_path:
+        # 1. Resolve ordered candidate paths using canonical lossless-first priority
+        candidate_paths = self._resolve_ordered_candidate_paths(track_id)
+        if not candidate_paths:
+            fallback_path = self.db.get_track_path(track_id)
+            if fallback_path:
+                candidate_paths = [fallback_path]
+
+        if not candidate_paths:
             return None
 
-        # 2. Check if file exists as-is (already local/mapped)
-        if os.path.exists(file_path):
-            return file_path
+        # 2. Check if any prioritized file exists as-is (already local/mapped)
+        for file_path in candidate_paths:
+            if os.path.exists(file_path):
+                return file_path
 
         # 3. If not found, try to apply path mappings from the active media server
         try:
@@ -234,38 +329,39 @@ class MediaManagerService:
                 logger.warning("No active media server configured to check path mappings")
                 return None
 
-            for active_server in active_servers:
-                try:
-                    server_type = active_server.split(".")[-1]
-                    service_id = storage.get_or_create_service_id(server_type)
-                    mappings_str = storage.get_service_config(service_id, "path_mappings")
+            for file_path in candidate_paths:
+                for active_server in active_servers:
+                    try:
+                        server_type = active_server.split(".")[-1]
+                        service_id = storage.get_or_create_service_id(server_type)
+                        mappings_str = storage.get_service_config(service_id, "path_mappings")
 
-                    mappings = []
-                    if mappings_str:
-                        try:
-                            mappings = json.loads(mappings_str)
-                        except Exception:
-                            mappings = []
+                        mappings = []
+                        if mappings_str:
+                            try:
+                                mappings = json.loads(mappings_str)
+                            except Exception:
+                                mappings = []
 
-                    if mappings:
-                        mapper = PathMapper(mappings)
-                        mapped_path = mapper.map_to_local(file_path)
+                        if mappings:
+                            mapper = PathMapper(mappings)
+                            mapped_path = mapper.map_to_local(file_path)
 
-                        if mapped_path != file_path and os.path.exists(mapped_path):
-                            logger.debug(
-                                f"Mapped remote path '{file_path}' to '{mapped_path}' using {server_type} mappings"
-                            )
-                            return mapped_path
-                        elif mapped_path != file_path:
-                            logger.warning(f"Mapped path does not exist: {mapped_path} (original: {file_path})")
-                except Exception as e:
-                    logger.error(f"Error applying path mappings for server {active_server}: {e}")
-                    continue
+                            if mapped_path != file_path and os.path.exists(mapped_path):
+                                logger.debug(
+                                    f"Mapped remote path '{file_path}' to '{mapped_path}' using {server_type} mappings"
+                                )
+                                return mapped_path
+                            elif mapped_path != file_path:
+                                logger.warning(f"Mapped path does not exist: {mapped_path} (original: {file_path})")
+                    except Exception as e:
+                        logger.error(f"Error applying path mappings for server {active_server}: {e}")
+                        continue
 
         except Exception as e:
             logger.error(f"Error checking local path for track {track_id}: {e}")
 
-        logger.warning(f"File path for track {track_id} does not exist: {file_path}")
+        logger.warning(f"File path for track {track_id} does not exist: {candidate_paths[0]}")
         return None
 
     def delete_track(self, track_id: int | str, delete_physical: bool = True, db: Any = None) -> bool:
@@ -313,7 +409,7 @@ class MediaManagerService:
 
                 # 2. Physical Deletion
                 if delete_physical:
-                    for media in list(track.media_files):
+                    for media in self.order_media_files(list(track.media_files)):
                         if media.file_path and not media.file_path.startswith("virtual://"):
                             try:
                                 track_path = Path(media.file_path).resolve()

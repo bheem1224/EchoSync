@@ -27,6 +27,7 @@ from sqlalchemy import (
     create_engine,
     event,
     or_,
+    text,
 )
 from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.orm import (
@@ -130,6 +131,7 @@ class Artist(Base):
     albums: Mapped[list[Album]] = relationship(back_populates="artist", cascade="all, delete-orphan")
     tracks: Mapped[list[Track]] = relationship(back_populates="artist", cascade="all, delete-orphan")
     track_associations: Mapped[list[TrackArtist]] = relationship(back_populates="artist", cascade="all, delete-orphan")
+    album_associations: Mapped[list[AlbumArtist]] = relationship(back_populates="artist", cascade="all, delete-orphan")
     aliases: Mapped[list[ArtistAlias]] = relationship(back_populates="artist", cascade="all, delete-orphan")
     attributes: Mapped[list[ArtistAttribute]] = relationship(back_populates="artist", cascade="all, delete-orphan")
     parent_artist: Mapped[Artist | None] = relationship("Artist", remote_side=[id], back_populates="sub_artists")
@@ -164,6 +166,18 @@ class Album(Base):
 
     artist: Mapped[Artist] = relationship(back_populates="albums")
     tracks: Mapped[list[Track]] = relationship(back_populates="album", cascade="all, delete-orphan")
+    artist_associations: Mapped[list[AlbumArtist]] = relationship(
+        "AlbumArtist",
+        back_populates="album",
+        cascade="all, delete-orphan",
+        order_by="AlbumArtist.position",
+    )
+    all_artists: Mapped[list[Artist]] = relationship(
+        "Artist",
+        secondary="album_artists",
+        order_by="AlbumArtist.position",
+        viewonly=True,
+    )
     attributes: Mapped[list[AlbumAttribute]] = relationship(back_populates="album", cascade="all, delete-orphan")
 
     @validates("title")
@@ -199,6 +213,14 @@ class Track(Base):
     isrc: Mapped[str | None] = mapped_column(String)
     sync_id: Mapped[str] = mapped_column(String, unique=True, index=True, nullable=False, default=generate_nanoid)
     release_type: Mapped[str | None] = mapped_column(String, index=True, default="album", server_default="album")
+    verification_tier: Mapped[str] = mapped_column(
+        String, nullable=False, default="unverified", server_default="unverified", index=True
+    )
+    canonical_mbid: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
+    version_type: Mapped[str] = mapped_column(
+        String, nullable=False, default="original", server_default="original", index=True
+    )
+    enhancement_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     global_rating: Mapped[float | None] = mapped_column(Float)
     metadata_status: Mapped[dict | None] = mapped_column(JSON, default=dict, server_default="{}")
 
@@ -283,6 +305,10 @@ class Track(Base):
 
     @property
     def is_verified(self) -> bool:
+        if self.verification_tier == "quarantined" or self.musicbrainz_id == "NOT_FOUND":
+            return False
+        if self.verification_tier in ("acoustid_verified", "manual_locked"):
+            return True
         if self.metadata_status and isinstance(self.metadata_status, dict):
             if "is_verified" in self.metadata_status:
                 return bool(self.metadata_status["is_verified"])
@@ -290,7 +316,14 @@ class Track(Base):
                 return bool(self.metadata_status["verified"])
         return bool(self.musicbrainz_id or (self.artist_id and self.album_id))
 
-    __table_args__ = (UniqueConstraint("sync_id", name="uq_tracks_sync_id"),)
+    __table_args__ = (
+        UniqueConstraint("sync_id", name="uq_tracks_sync_id"),
+        Index(
+            "ix_tracks_unverified",
+            "id",
+            sqlite_where=text("verification_tier = 'unverified'"),
+        ),
+    )
 
     album: Mapped[Album | None] = relationship(back_populates="tracks")
     artist: Mapped[Artist] = relationship(back_populates="tracks")
@@ -457,16 +490,33 @@ class TrackArtist(Base):
     """Junction table capturing all collaborating artists for a track with roles and position."""
 
     __tablename__ = "track_artists"
-    __table_args__ = (UniqueConstraint("track_id", "artist_id", "role", name="uq_track_artist_role"),)
+    __table_args__ = (
+        UniqueConstraint("track_id", "artist_id", "role", name="uq_track_artist_role"),
+        {"sqlite_with_rowid": False},
+    )
 
-    id: Mapped[int] = mapped_column(primary_key=True)
-    track_id: Mapped[int] = mapped_column(ForeignKey("tracks.id", ondelete="CASCADE"), nullable=False, index=True)
-    artist_id: Mapped[int] = mapped_column(ForeignKey("artists.id", ondelete="CASCADE"), nullable=False, index=True)
-    role: Mapped[str] = mapped_column(String, default="primary", nullable=False)
+    track_id: Mapped[int] = mapped_column(ForeignKey("tracks.id", ondelete="CASCADE"), primary_key=True, index=True)
+    artist_id: Mapped[int] = mapped_column(ForeignKey("artists.id", ondelete="CASCADE"), primary_key=True, index=True)
+    role: Mapped[str] = mapped_column(String, primary_key=True, default="primary")
     position: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
     track: Mapped[Track] = relationship(back_populates="artist_associations")
     artist: Mapped[Artist] = relationship(back_populates="track_associations")
+
+
+class AlbumArtist(Base):
+    """Junction table capturing all collaborating artists for an album with roles and position."""
+
+    __tablename__ = "album_artists"
+    __table_args__ = ({"sqlite_with_rowid": False},)
+
+    album_id: Mapped[int] = mapped_column(ForeignKey("albums.id", ondelete="CASCADE"), primary_key=True, index=True)
+    artist_id: Mapped[int] = mapped_column(ForeignKey("artists.id", ondelete="CASCADE"), primary_key=True, index=True)
+    role: Mapped[str] = mapped_column(String, primary_key=True, default="primary")
+    position: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    album: Mapped[Album] = relationship(back_populates="artist_associations")
+    artist: Mapped[Artist] = relationship(back_populates="album_associations")
 
 
 class LocalMedia(Base):
@@ -481,6 +531,7 @@ class LocalMedia(Base):
     sample_rate: Mapped[int | None] = mapped_column(Integer)
     bit_depth: Mapped[int | None] = mapped_column(Integer)
     channels: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     file_size_bytes: Mapped[int | None] = mapped_column(BigInteger)
     inode: Mapped[int | None] = mapped_column(BigInteger, index=True)
     mtime: Mapped[float | None] = mapped_column(Float)
@@ -701,7 +752,7 @@ def _ensure_alias_and_attribute_schema(engine) -> None:
             try:
                 conn.exec_driver_sql("""
                     CREATE TABLE IF NOT EXISTS track_aliases (
-                        id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+                        id INTEGER NOT NULL PRIMARY KEY,
                         track_id INTEGER NOT NULL,
                         plugin_id INTEGER,
                         name VARCHAR NOT NULL,
@@ -727,7 +778,7 @@ def _ensure_alias_and_attribute_schema(engine) -> None:
             try:
                 conn.exec_driver_sql("""
                     CREATE TABLE IF NOT EXISTS track_attributes (
-                        id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+                        id INTEGER NOT NULL PRIMARY KEY,
                         track_id INTEGER NOT NULL,
                         plugin_id INTEGER NOT NULL,
                         key VARCHAR(100) NOT NULL,
@@ -753,7 +804,7 @@ def _ensure_alias_and_attribute_schema(engine) -> None:
             try:
                 conn.exec_driver_sql("""
                     CREATE TABLE IF NOT EXISTS artist_attributes (
-                        id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+                        id INTEGER NOT NULL PRIMARY KEY,
                         artist_id INTEGER NOT NULL,
                         plugin_id INTEGER NOT NULL,
                         key VARCHAR(100) NOT NULL,
@@ -779,7 +830,7 @@ def _ensure_alias_and_attribute_schema(engine) -> None:
             try:
                 conn.exec_driver_sql("""
                     CREATE TABLE IF NOT EXISTS album_attributes (
-                        id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+                        id INTEGER NOT NULL PRIMARY KEY,
                         album_id INTEGER NOT NULL,
                         plugin_id INTEGER NOT NULL,
                         key VARCHAR(100) NOT NULL,
@@ -798,6 +849,124 @@ def _ensure_alias_and_attribute_schema(engine) -> None:
                     "CREATE INDEX IF NOT EXISTS ix_album_attr_lookup ON album_attributes (album_id, plugin_id, key);"
                 )
                 conn.commit()
+            except Exception:
+                pass
+
+            # 6. Idempotent column/index initialization for existing tracks & local_media tables
+            try:
+                track_cols = [row[1] for row in conn.exec_driver_sql("PRAGMA table_info(tracks);").fetchall()]
+                if track_cols:
+                    if "verification_tier" not in track_cols:
+                        conn.exec_driver_sql(
+                            "ALTER TABLE tracks ADD COLUMN verification_tier VARCHAR NOT NULL DEFAULT 'unverified';"
+                        )
+                    if "canonical_mbid" not in track_cols:
+                        conn.exec_driver_sql("ALTER TABLE tracks ADD COLUMN canonical_mbid VARCHAR;")
+                    if "version_type" not in track_cols:
+                        conn.exec_driver_sql(
+                            "ALTER TABLE tracks ADD COLUMN version_type VARCHAR NOT NULL DEFAULT 'original';"
+                        )
+                    if "enhancement_attempts" not in track_cols:
+                        conn.exec_driver_sql(
+                            "ALTER TABLE tracks ADD COLUMN enhancement_attempts INTEGER NOT NULL DEFAULT 0;"
+                        )
+                    conn.exec_driver_sql(
+                        "UPDATE tracks SET verification_tier = 'quarantined', musicbrainz_id = NULL WHERE musicbrainz_id = 'NOT_FOUND';"
+                    )
+                    conn.exec_driver_sql(
+                        "CREATE INDEX IF NOT EXISTS ix_tracks_verification_tier ON tracks (verification_tier);"
+                    )
+                    conn.exec_driver_sql(
+                        "CREATE INDEX IF NOT EXISTS ix_tracks_canonical_mbid ON tracks (canonical_mbid);"
+                    )
+                    conn.exec_driver_sql(
+                        "CREATE INDEX IF NOT EXISTS ix_tracks_version_type ON tracks (version_type);"
+                    )
+                    conn.exec_driver_sql(
+                        "CREATE INDEX IF NOT EXISTS ix_tracks_unverified ON tracks (id) WHERE verification_tier = 'unverified';"
+                    )
+                    conn.commit()
+            except Exception:
+                pass
+
+            try:
+                media_cols = [row[1] for row in conn.exec_driver_sql("PRAGMA table_info(local_media);").fetchall()]
+                if media_cols:
+                    if "duration_ms" not in media_cols:
+                        conn.exec_driver_sql("ALTER TABLE local_media ADD COLUMN duration_ms INTEGER;")
+                    conn.exec_driver_sql(
+                        "CREATE INDEX IF NOT EXISTS ix_local_media_duration_ms ON local_media (duration_ms);"
+                    )
+                    conn.commit()
+            except Exception:
+                pass
+
+            try:
+                # Drop obsolete track_artist_aliases referencing old track_artists(id)
+                taa_sql = conn.exec_driver_sql(
+                    "SELECT sql FROM sqlite_master WHERE type='table' AND name='track_artist_aliases';"
+                ).fetchone()
+                if taa_sql and taa_sql[0] and "track_artists" in taa_sql[0]:
+                    conn.exec_driver_sql("PRAGMA foreign_keys=OFF;")
+                    conn.exec_driver_sql("DROP TABLE IF EXISTS track_artist_aliases;")
+                    conn.exec_driver_sql("PRAGMA foreign_keys=ON;")
+                    conn.commit()
+
+                ta_cols = [row[1] for row in conn.exec_driver_sql("PRAGMA table_info(track_artists);").fetchall()]
+                if ta_cols and "id" in ta_cols:
+                    conn.exec_driver_sql("PRAGMA foreign_keys=OFF;")
+                    conn.exec_driver_sql("""
+                        CREATE TABLE track_artists__new (
+                            track_id INTEGER NOT NULL,
+                            artist_id INTEGER NOT NULL,
+                            role VARCHAR NOT NULL DEFAULT 'primary',
+                            position INTEGER NOT NULL DEFAULT 0,
+                            PRIMARY KEY (track_id, artist_id, role),
+                            FOREIGN KEY(track_id) REFERENCES tracks (id) ON DELETE CASCADE,
+                            FOREIGN KEY(artist_id) REFERENCES artists (id) ON DELETE CASCADE
+                        ) WITHOUT ROWID;
+                    """)
+                    conn.exec_driver_sql("""
+                        INSERT OR IGNORE INTO track_artists__new (track_id, artist_id, role, position)
+                        SELECT track_id, artist_id, COALESCE(role, 'primary'), MIN(COALESCE(position, 0))
+                        FROM track_artists
+                        GROUP BY track_id, artist_id, COALESCE(role, 'primary');
+                    """)
+                    conn.exec_driver_sql("DROP TABLE track_artists;")
+                    conn.exec_driver_sql("ALTER TABLE track_artists__new RENAME TO track_artists;")
+                    conn.exec_driver_sql(
+                        "CREATE INDEX IF NOT EXISTS ix_track_artists_track_id ON track_artists (track_id);"
+                    )
+                    conn.exec_driver_sql(
+                        "CREATE INDEX IF NOT EXISTS ix_track_artists_artist_id ON track_artists (artist_id);"
+                    )
+                    conn.exec_driver_sql("PRAGMA foreign_keys=ON;")
+                    conn.commit()
+            except Exception:
+                pass
+
+            try:
+                albums_cols = [row[1] for row in conn.exec_driver_sql("PRAGMA table_info(albums);").fetchall()]
+                aa_cols = [row[1] for row in conn.exec_driver_sql("PRAGMA table_info(album_artists);").fetchall()]
+                if albums_cols and not aa_cols:
+                    conn.exec_driver_sql("""
+                        CREATE TABLE IF NOT EXISTS album_artists (
+                            album_id INTEGER NOT NULL,
+                            artist_id INTEGER NOT NULL,
+                            role VARCHAR NOT NULL DEFAULT 'primary',
+                            position INTEGER NOT NULL DEFAULT 0,
+                            PRIMARY KEY (album_id, artist_id, role),
+                            FOREIGN KEY(album_id) REFERENCES albums (id) ON DELETE CASCADE,
+                            FOREIGN KEY(artist_id) REFERENCES artists (id) ON DELETE CASCADE
+                        ) WITHOUT ROWID;
+                    """)
+                    conn.exec_driver_sql(
+                        "CREATE INDEX IF NOT EXISTS ix_album_artists_album_id ON album_artists (album_id);"
+                    )
+                    conn.exec_driver_sql(
+                        "CREATE INDEX IF NOT EXISTS ix_album_artists_artist_id ON album_artists (artist_id);"
+                    )
+                    conn.commit()
             except Exception:
                 pass
     except Exception:
@@ -1406,11 +1575,13 @@ music_session_registry = scoped_session(lambda: get_database().SessionLocal)
 
 __all__ = [
     "Album",
+    "AlbumArtist",
     "Artist",
     "ArtistAlias",
     "AudioFingerprint",
     "Base",
     "ExternalIdentifier",
+    "LocalMedia",
     "MusicDatabase",
     "Track",
     "TrackAlias",

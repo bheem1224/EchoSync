@@ -27,11 +27,12 @@ def test_hydrate_track_deduplicates_redundant_artists(tmp_path):
         session.flush()
 
         # Redundant artist references in DTO (e.g. "W&W & W&W" or same artist repeated in primary)
-        dto = EchosyncTrack()
-        dto.title = "God Is a Girl"
-        dto.primary_artists = ["W&W", "w&w", "W&W"]
-        dto.featured_artists = ["AXMO", "AXMO"]
-        dto.remixers = ["Steve Aoki", "Steve Aoki"]
+        dto = EchosyncTrack(
+            title="God Is a Girl",
+            primary_artists=["W&W", "w&w", "W&W"],
+            featured_artists=["AXMO", "AXMO"],
+            remixers=["Steve Aoki", "Steve Aoki"],
+        )
 
         hydrated = adapter.hydrate_track(dto, session, track)
         session.flush()
@@ -79,11 +80,12 @@ def test_reconcile_media_assignment_flushes_deduplicated_track_artists(tmp_path)
         session.flush()
 
         # Incoming metadata with redundant artist credits decomposing to duplicate primary artists
-        dto = EchosyncTrack()
-        dto.title = "Repeat After Me"
-        # Decomposes with "Armin van Buuren" listed redundantly
-        dto.artist_name = "Armin van Buuren, Armin van Buuren & Dimitri Vegas & Like Mike"
-        dto.edition = "Club Mix"
+        dto = EchosyncTrack(
+            title="Repeat After Me",
+            # Decomposes with "Armin van Buuren" listed redundantly
+            artist_name="Armin van Buuren, Armin van Buuren & Dimitri Vegas & Like Mike",
+            edition="Club Mix",
+        )
 
         # Reconcile media assignment (triggers decoupling or hydration)
         reconciled = reconcile_media_assignment(session, media, dto)
@@ -130,9 +132,7 @@ def test_rehydrate_existing_track_explicit_flush_ordering(tmp_path):
         session.flush()
 
         # Re-hydrate the same track with the same artist
-        dto = EchosyncTrack()
-        dto.title = "Spaceman"
-        dto.primary_artists = ["Hardwell"]
+        dto = EchosyncTrack(title="Spaceman", primary_artists=["Hardwell"])
 
         hydrated = adapter.hydrate_track(dto, session, track)
         # Without explicit delete flush ordering, this would raise IntegrityError

@@ -3,7 +3,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 
-from web.auth import require_auth
+from web.auth import require_auth, require_scope
 
 
 class ManagerSettingsRequest(BaseModel):
@@ -352,7 +352,7 @@ def ui_beta_opt(request: Request, payload: UIBetaRequest | None = None, _=Depend
 
 
 @router.get("/suggestion-candidates")
-def get_suggestion_candidates(limit: int = Query(100), _=Depends(require_auth)):
+def get_suggestion_candidates(limit: int = Query(100), _=Depends(require_scope("service:suggestions:read"))):
     """Get consensus-threshold candidates from working DB using the 10-point lifecycle model."""
     work_db = get_working_database()
     limit = limit or 100
@@ -621,7 +621,7 @@ def get_action_queue(_=Depends(require_auth)):
 
 
 @router.post("/track/{track_id}/force_delete")
-def force_delete_track(track_id: int, _=Depends(require_auth)):
+def force_delete_track(track_id: int, _=Depends(require_scope("service:library:edit"))):
     """Force immediate lifecycle delete execution for a track, bypassing timers."""
     sync_id = _sync_id_from_track_id(track_id)
     if not sync_id:
@@ -1042,7 +1042,7 @@ def get_trends(
 
 
 @router.get("/search")
-def search_library(q: str = Query(None), _=Depends(require_auth)):
+def search_library(q: str = Query(None), _=Depends(require_scope("service:library:read"))):
     """Unified search endpoint."""
     query = q
     if not query:
@@ -1230,7 +1230,7 @@ def _hydrate_duplicate_tracks(ctx: dict, sync_id: str | None = None) -> tuple[di
 
 
 @router.get("/queue/suggestions")
-def get_suggestion_queue(_=Depends(require_auth)):
+def get_suggestion_queue(_=Depends(require_scope("service:suggestions:read"))):
     work_db = get_working_database()
     try:
         with work_db.session_scope() as session:

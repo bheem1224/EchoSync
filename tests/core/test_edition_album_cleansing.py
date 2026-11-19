@@ -3,6 +3,7 @@
 from unittest.mock import MagicMock
 
 from core.db.echo_sync_track import EchosyncTrack
+from core.matching_engine.track_parser import normalize_track_dto
 from core.metadata.adapter import ResolutionAdapter
 from core.metadata.engine import _create_resolved_track
 from database.music_database import Album, Artist, Track
@@ -12,11 +13,13 @@ from web.api_app import create_app
 
 
 def test_echosync_track_cleanses_album_release_title_and_extracts_edition():
-    """Verify that EchosyncTrack strips version descriptors from album_title and sets edition."""
-    track = EchosyncTrack(
-        raw_title="Dusk Till Dawn",
-        artist_name="ZAYN feat. Sia",
-        album_title="Dusk Till Dawn (Radio Edit)",
+    """Verify that normalizing EchosyncTrack strips version descriptors from album_title and sets edition."""
+    track = normalize_track_dto(
+        EchosyncTrack(
+            raw_title="Dusk Till Dawn",
+            artist_name="ZAYN feat. Sia",
+            album_title="Dusk Till Dawn (Radio Edit)",
+        )
     )
     assert track.title == "Dusk Till Dawn"
     assert track.album_title == "Dusk Till Dawn"

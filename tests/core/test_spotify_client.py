@@ -25,7 +25,7 @@ def test_is_configured_false(spotify_client):
     # Reset sp to test unconfigured state
     spotify_client.sp = None
     with (
-        patch("core.file_handling.storage.get_storage_service") as mock_storage,
+        patch("services.storage_service.get_storage_service") as mock_storage,
         patch("database.config_database.get_config_database") as mock_db_fn,
     ):
         mock_db = MagicMock()
@@ -300,7 +300,7 @@ def test_client_credentials_fallback_when_no_user_accounts(monkeypatch):
             return_value={"client_id": "app_id", "client_secret": "app_sec"},
         ),
         patch("core.account_manager.AccountManager.list_accounts", return_value=[]),
-        patch("core.file_handling.storage.get_storage_service", return_value=mock_storage),
+        patch("services.storage_service.get_storage_service", return_value=mock_storage),
         patch(
             "core.account_manager.AccountManager.get_service_config",
             side_effect=lambda svc, key: {
@@ -371,7 +371,7 @@ def test_spotify_liked_songs_get_playlist_tracks(spotify_client):
     assert len(tracks) == 1
     assert tracks[0].title == "Liked Track 1"
     assert tracks[0].artist_name == "Cool Artist"
-    assert tracks[0].duration == 180000
+    assert tracks[0].duration_ms == 180000
     mock_sp.current_user_saved_tracks.assert_called_once_with(limit=50)
 
 

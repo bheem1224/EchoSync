@@ -73,10 +73,14 @@ def _track_to_dict(track: Any, source: str) -> dict[str, Any]:
         if isinstance(track, dict)
         else None
     )
-    duration = getattr(track, "duration", None) or (
-        track.get("duration_ms") or track.get("duration")
-        if isinstance(track, dict)
-        else None
+    duration = (
+        getattr(track, "duration_ms", None)
+        or getattr(track, "duration", None)
+        or (
+            track.get("duration_ms") or track.get("duration")
+            if isinstance(track, dict)
+            else None
+        )
     )
     year = getattr(track, "release_year", None) or (
         track.get("release_year") or track.get("year")
@@ -141,18 +145,21 @@ def dispatch_isrc_lookup(isrc: str) -> EchosyncTrack | None:
 
         if track is not None:
             if isinstance(track, EchosyncTrack):
-                if not isinstance(track.identifiers, dict):
-                    track.identifiers = {}
-                if not track.identifiers.get("source"):
-                    track.identifiers["source"] = provider_name
+                from dataclasses import replace as _replace
+
+                idents = dict(track.identifiers) if isinstance(track.identifiers, dict) else {}
+                if not idents.get("source"):
+                    idents["source"] = provider_name
+                    track = _replace(track, identifiers=idents)
                 return track
             elif isinstance(track, dict):
                 track_obj = EchosyncTrack(
                     raw_title=track.get("title") or track.get("raw_title") or "",
+                    title=track.get("title") or track.get("raw_title") or "",
                     artist_name=track.get("artist") or track.get("artist_name") or "",
                     album_title=track.get("album") or track.get("album_title") or "",
                     release_year=track.get("release_year") or track.get("year"),
-                    duration=track.get("duration_ms") or track.get("duration"),
+                    duration_ms=track.get("duration_ms") or track.get("duration"),
                     isrc=canonical,
                     musicbrainz_id=track.get("musicbrainz_recording_id")
                     or track.get("musicbrainz_id")
@@ -213,6 +220,7 @@ def _dispatch_isrc_via_providers(
                 if isinstance(track, dict):
                     track = EchosyncTrack(
                         raw_title=track.get("raw_title") or track.get("title") or "",
+                        title=track.get("title") or track.get("raw_title") or "",
                         artist_name=track.get("artist")
                         or track.get("artist_name")
                         or "",
@@ -220,7 +228,7 @@ def _dispatch_isrc_via_providers(
                         or track.get("album_title")
                         or "",
                         release_year=track.get("release_year") or track.get("year"),
-                        duration=track.get("duration_ms") or track.get("duration"),
+                        duration_ms=track.get("duration_ms") or track.get("duration"),
                         isrc=isrc,
                         musicbrainz_id=track.get("musicbrainz_recording_id")
                         or track.get("musicbrainz_id")

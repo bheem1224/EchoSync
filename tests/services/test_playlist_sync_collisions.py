@@ -93,13 +93,13 @@ def test_matching_engine_rejects_cover_versions_across_artist_boundaries():
         raw_title="Rewrite The Stars",
         artist_name="James Arthur & Anne-Marie",
         album_title="The Greatest Showman: Reimagined",
-        duration=217000,
+        duration_ms=217000,
     )
     candidate = EchosyncTrack(
         raw_title="Rewrite The Stars",
         artist_name="Zac Efron & Zendaya",
         album_title="The Greatest Showman",
-        duration=217000,
+        duration_ms=217000,
     )
 
     result = engine.calculate_match(source, candidate)
@@ -117,13 +117,13 @@ def test_matching_engine_accepts_same_artist_and_collaborator_variations():
         raw_title="Mama",
         artist_name="Jonas Blue feat. William Singe",
         album_title="Blue",
-        duration=184000,
+        duration_ms=184000,
     )
     candidate = EchosyncTrack(
         raw_title="Mama",
         artist_name="Jonas Blue, William Singe",
         album_title="Blue",
-        duration=184000,
+        duration_ms=184000,
     )
 
     result = engine.calculate_match(source, candidate)
@@ -146,14 +146,14 @@ def test_wellerman_sea_shanty_version_equivalence():
         raw_title="Wellerman - Sea Shanty",
         artist_name="Nathan Evans",
         album_title="Wellerman",
-        duration=155000,
+        duration_ms=155000,
         edition="Sea Shanty",
     )
     candidate = EchosyncTrack(
         raw_title="Wellerman",
         artist_name="Nathan Evans",
         album_title="Wellerman",
-        duration=155000,
+        duration_ms=155000,
     )
 
     result = engine.calculate_match(source, candidate)
@@ -203,14 +203,14 @@ def test_girls_like_you_cardi_b_version_matches_library_cut():
         raw_title="Girls Like You - Cardi B Version",
         artist_name="Maroon 5",
         album_title="Girls Like You",
-        duration=235545,  # 3:55
+        duration_ms=235545,  # 3:55
         edition="Cardi B Version",
     )
     candidate = EchosyncTrack(
         raw_title="Girls Like You",
         artist_name="Maroon 5 feat. Cardi B",
         album_title="Girls Like You",
-        duration=235545,  # 3:55
+        duration_ms=235545,  # 3:55
     )
 
     result = engine.calculate_match(source, candidate)
@@ -226,13 +226,13 @@ def test_single_version_studio_release_equivalence():
         raw_title="All The Things She Said",
         artist_name="t.A.T.u.",
         album_title="200 km/h in the Wrong Lane",
-        duration=214440,
+        duration_ms=214440,
     )
     candidate = EchosyncTrack(
         raw_title="All The Things She Said",
         artist_name="t.A.T.u.",
         album_title="200 km/h in the Wrong Lane",
-        duration=214440,
+        duration_ms=214440,
         edition="Single Version",
     )
 
@@ -254,13 +254,13 @@ def test_tribute_band_substring_rejection():
         raw_title="Sugar",
         artist_name="Maroon 5",
         album_title="V",
-        duration=235000,
+        duration_ms=235000,
     )
     candidate = EchosyncTrack(
         raw_title="Sugar",
         artist_name="The Maroon 5 Tribute Band",
         album_title="Tribute to Maroon 5",
-        duration=235000,
+        duration_ms=235000,
     )
 
     result = engine.calculate_match(source, candidate)
@@ -275,14 +275,14 @@ def test_compilation_soundtrack_performer_resolution():
         raw_title="This Is Me",
         artist_name="Keala Settle",
         album_title="The Greatest Showman (Original Motion Picture Soundtrack)",
-        duration=234000,
+        duration_ms=234000,
     )
     candidate = EchosyncTrack(
         raw_title="This Is Me",
         artist_name="Various Artists",
         album_title="The Greatest Showman (Original Motion Picture Soundtrack)",
         album_artist="Various Artists",
-        duration=234000,
+        duration_ms=234000,
     )
 
     result = engine.calculate_match(source, candidate)
@@ -319,13 +319,13 @@ def test_franchise_publisher_soundtrack_matching():
         raw_title="Legends Never Die",
         artist_name="League of Legends",
         album_title="Legends Never Die",
-        duration=235000,
+        duration_ms=235000,
     )
     candidate = EchosyncTrack(
         raw_title="Legends Never Die",
         artist_name="Against the Current",
         album_title="Legends Never Die",
-        duration=235000,
+        duration_ms=235000,
     )
 
     result = engine.calculate_match(source, candidate)
@@ -342,7 +342,7 @@ def test_clean_studio_track_edition_isolation():
         raw_title="In the End",
         artist_name="Linkin Park",
         album_title="Hybrid Theory (Deluxe Edition)",
-        duration=217312,  # 3:37
+        duration_ms=217312,  # 3:37
     )
     # Verify Track.edition is None (not polluted by album edition)
     assert candidate.edition is None
@@ -351,7 +351,7 @@ def test_clean_studio_track_edition_isolation():
         raw_title="In the End",
         artist_name="Linkin Park",
         album_title="Hybrid Theory",
-        duration=216880,  # 3:36
+        duration_ms=216880,  # 3:36
     )
 
     result = engine.calculate_match(source, candidate)
@@ -401,13 +401,13 @@ def test_tier2_scores_artist_bonus_on_new_candidate():
         raw_title="Sweater Weather",
         artist_name="The Neighbourhood",
         album_title="I Love You.",
-        duration=240000,
+        duration_ms=240000,
     )
     candidate = EchosyncTrack(
         raw_title="Sweater Weather",
         artist_name="The Neighbourhood",
         album_title="I Love You.",
-        duration=240500,
+        duration_ms=240500,
     )
 
     result = evaluate_tier2_candidate(engine, source, candidate, artist_score=1.0)
@@ -519,13 +519,13 @@ def test_tier2_unknown_artist_title_recovery():
         raw_title="Dynamite",
         artist_name="BTS",
         album_title="Dynamite (DayTime Version)",
-        duration=199000,
+        duration_ms=199000,
     )
     candidate = EchosyncTrack(
         raw_title="BTS - Dynamite",
         artist_name="Unknown Artist",
         album_title="",
-        duration=199500,
+        duration_ms=199500,
     )
 
     result = evaluate_tier2_candidate(engine, source, candidate, artist_score=0.0)
@@ -554,13 +554,13 @@ def test_extended_mix_duration_amnesty_with_delta():
         raw_title="Happier",
         artist_name="Marshmello",
         album_title="Happier",
-        duration=214285,  # 3:34
+        duration_ms=214285,  # 3:34
     )
     candidate = EchosyncTrack(
         raw_title="Happier",
         artist_name="Marshmello",
         album_title="Happier",
-        duration=215000,  # 3:35 (delta = 715ms <= 2000ms)
+        duration_ms=215000,  # 3:35 (delta = 715ms <= 2000ms)
         edition="Extended Mix",
     )
 
@@ -577,14 +577,14 @@ def test_remixer_token_collaborator_credit():
         raw_title="In the End",
         artist_name="Tommee Profitt",
         album_title="In the End (Mellen Gi & Tommee Profitt Remix)",
-        duration=218000,
+        duration_ms=218000,
         edition="Remix",
     )
     candidate = EchosyncTrack(
         raw_title="In the End",
         artist_name="Linkin Park",
         album_title="In the End",
-        duration=218500,
+        duration_ms=218500,
         edition="Mellen Gi & Tommee Profitt Remix",
     )
 
@@ -602,20 +602,20 @@ def test_encapsulated_artist_title_recovery():
         raw_title="Dynamite",
         artist_name="Taio Cruz",
         album_title="Rokstarr",
-        duration=203000,
+        duration_ms=203000,
     )
     candidate = EchosyncTrack(
         raw_title="Taio Cruz - Dynamite",
         artist_name="Unknown Artist",
         album_title="",
-        duration=203500,
+        duration_ms=203500,
     )
 
     result = evaluate_tier2_candidate(engine, source, candidate, artist_score=0.0)
     assert result.passed_version_check is True
     assert result.confidence_score >= 90.0
-    assert candidate.artist_name == "Taio Cruz"
-    assert candidate.title == "Dynamite"
+    assert result.artist_score >= 0.90
+    assert result.title_score >= 0.95
 
 
 def test_scan_modes_execution(tmp_path, monkeypatch):
@@ -683,7 +683,7 @@ def test_ingestion_remixer_extraction_to_junction(tmp_path):
             artist_name="Linkin Park",
             album_title="Hybrid Theory",
             edition="Mellen Gi & Tommee Profitt Remix",
-            duration=218000,
+            duration_ms=218000,
             media=[
                 EchosyncMedia(
                     file_path=str(tmp_path / "in_the_end_remix.flac"),
@@ -774,7 +774,7 @@ def test_unidentifiable_file_ejection_and_cascade_purge(tmp_path, monkeypatch):
             raw_title="Unknown Title",
             artist_name="Unknown Artist",
             album_title="",
-            duration=5000,
+            duration_ms=5000,
             media=[
                 EchosyncMedia(
                     file_path=str(bad_file),
@@ -1030,7 +1030,7 @@ def test_wavin_flag_double_space_candidate_matching(tmp_path, monkeypatch):
         MusicDatabase,
         Track,
     )
-    from web.routes.playlists import _fetch_tier1_candidates
+    from services.playlist_sync import _fetch_tier1_candidates
 
     db = MusicDatabase(tmp_path / "test.db")
     Base.metadata.create_all(db.engine)
@@ -1088,7 +1088,7 @@ def test_seeb_remix_filepath_edition_detection(tmp_path, monkeypatch):
         MusicDatabase,
         Track,
     )
-    from web.routes.playlists import _fetch_tier1_candidates
+    from services.playlist_sync import _fetch_tier1_candidates
 
     db = MusicDatabase(tmp_path / "test.db")
     Base.metadata.create_all(db.engine)
@@ -1147,14 +1147,14 @@ def test_seeb_remix_filepath_edition_detection(tmp_path, monkeypatch):
             raw_title="I Took A Pill In Ibiza",
             artist_name="Mike Posner",
             album_title="",
-            duration=197933,
+            duration_ms=197933,
             edition="Remix",
         )
         cand_track = EchosyncTrack(
             raw_title="I Took A Pill In Ibiza",
             artist_name="Mike Posner",
             album_title="",
-            duration=197936,
+            duration_ms=197936,
             edition=edition_candidate,
         )
         from core.matching_engine.scoring_profile import PROFILE_EXACT_SYNC

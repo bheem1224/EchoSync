@@ -213,9 +213,10 @@ class DeduplicationService:
             engine = WeightedMatchingEngine(PROFILE_DUPLICATE_DETECTION)
             source_et = EchosyncTrack(
                 raw_title=winner.title,
+                title=winner.title,
                 artist_name=winner.artist.name if winner.artist else "",
                 album_title=winner.album.title if winner.album else "",
-                duration=winner.duration,
+                duration_ms=winner.duration,
                 fingerprint=chromaprint,
             )
 
@@ -224,9 +225,10 @@ class DeduplicationService:
             for loser in losers:
                 candidate_et = EchosyncTrack(
                     raw_title=loser.title,
+                    title=loser.title,
                     artist_name=loser.artist.name if loser.artist else "",
                     album_title=loser.album.title if loser.album else "",
-                    duration=loser.duration,
+                    duration_ms=loser.duration,
                     fingerprint=chromaprint,
                 )
                 match_res = engine.calculate_match(source_et, candidate_et)
@@ -287,15 +289,99 @@ class DeduplicationService:
             )
             return payload
 
-    def scan_library_duplicates(self) -> dict[str, Any]:
-        """Full scan of music database for both 1:N relational duplicates and cross-track acoustic duplicates."""
-        from services.library_hygiene import LibraryHygieneService
+    def backfill_missing_fingerprints(
+        self,
+        batch_size: int = 50,
+        progress_callback: Any | None = None,
+        max_items: int | None = None,
+    ) -> int:
+        """Scan LocalMedia records lacking an AudioFingerprint and generate Chromaprints in batches."""
+        import os
 
+        from core.task_manager import db_write_lease
+        from core.utils import PathMapper
+
+        generated_count = 0
         try:
-            hygiene = LibraryHygieneService(self.db)
-            hygiene.backfill_missing_fingerprints()
+            with self.db.session_scope() as session:
+                unfingerprinted_ids = [
+                    row[0]
+                    for row in session.query(LocalMedia.id)
+                    .outerjoin(
+                        AudioFingerprint,
+                        LocalMedia.media_id == AudioFingerprint.media_id,
+                    )
+                    .filter(AudioFingerprint.id.is_(None))
+                    .all()
+                ]
+
+            if not unfingerprinted_ids:
+                return 0
+
+            if max_items:
+                unfingerprinted_ids = unfingerprinted_ids[:max_items]
+
+            total = len(unfingerprinted_ids)
+            processed = 0
+            for i in range(0, total, batch_size):
+                batch_ids = unfingerprinted_ids[i : i + batch_size]
+                with db_write_lease(task_name="backfill_fingerprints"), self.db.session_scope() as session:
+                    media_batch = session.query(LocalMedia).filter(LocalMedia.id.in_(batch_ids)).all()
+                    for media in media_batch:
+                        fpath = media.file_path
+                        if not fpath:
+                            continue
+                        if not os.path.exists(fpath):
+                            mapped = PathMapper.to_local(fpath)
+                            if mapped and os.path.exists(mapped):
+                                fpath = mapped
+                            else:
+                                continue
+
+                        try:
+                            fp, _ = FingerprintGenerator.generate_with_duration(fpath)
+                            if fp:
+                                session.add(
+                                    AudioFingerprint(
+                                        media_id=media.media_id,
+                                        chromaprint=fp,
+                                    )
+                                )
+                                generated_count += 1
+                        except Exception as e:
+                            logger.debug("Could not fingerprint %s: %s", fpath, e)
+
+                    session.commit()
+
+                processed += len(batch_ids)
+                status_msg = f"Fingerprinted {processed}/{total} audio files ({round((processed / total) * 100, 1)}%)"
+                if progress_callback:
+                    try:
+                        progress_callback(processed, total, status_msg)
+                    except Exception:
+                        pass
+                event_bus.publish(
+                    "job_progress",
+                    {
+                        "job_name": "duplicate_scan_job",
+                        "current": processed,
+                        "total": total,
+                        "status": status_msg,
+                        "percentage": round((processed / total) * 100, 1) if total > 0 else 0,
+                    },
+                )
         except Exception as e:
-            logger.warning(f"Failed to backfill missing fingerprints during deduplication scan: {e}")
+            logger.warning("Error during fingerprint backfill: %s", e, exc_info=True)
+
+        return generated_count
+
+    def scan_library_duplicates(self, backfill: bool = True) -> dict[str, Any]:
+        """Full scan of music database for both 1:N relational duplicates and cross-track acoustic duplicates."""
+        if backfill:
+            try:
+                self.backfill_missing_fingerprints()
+            except Exception as e:
+                logger.warning(f"Failed to backfill missing fingerprints during deduplication scan: {e}")
 
         results = {
             "relational_duplicates": [],

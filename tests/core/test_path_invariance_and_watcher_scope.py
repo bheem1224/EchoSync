@@ -219,11 +219,10 @@ def test_ensure_path_invariance_resolves_collision(tmp_path, memory_db, monkeypa
     assert not source_file.exists()
 
 
-def test_library_watcher_targets_downloads_not_library(tmp_path, monkeypatch):
-    """LibraryWatcherService must schedule watcher exclusively on downloads directory, never library directory."""
+def test_library_watcher_targets_library_not_downloads(tmp_path, monkeypatch):
+    """LibraryWatcherService must schedule watcher exclusively on library directory, never downloads directory."""
     downloads_dir = tmp_path / "downloads"
     library_dir = tmp_path / "library"
-    library_dir.mkdir(parents=True, exist_ok=True)
 
     monkeypatch.setattr(config_manager, "get_downloads_dir", lambda: downloads_dir)
     monkeypatch.setattr(config_manager, "get_library_dir", lambda: library_dir)
@@ -242,14 +241,15 @@ def test_library_watcher_targets_downloads_not_library(tmp_path, monkeypatch):
 
     watcher.start()
 
-    # Invariant: downloads directory was automatically created
-    assert downloads_dir.exists()
+    # Invariant: library directory was automatically created; downloads_dir was not touched
+    assert library_dir.exists()
+    assert not downloads_dir.exists()
 
-    # Invariant: Observer scheduled exclusively on downloads directory
+    # Invariant: Observer scheduled exclusively on library directory
     assert len(scheduled_targets) == 1
     scheduled_path, recursive = scheduled_targets[0]
-    assert Path(scheduled_path).resolve() == downloads_dir.resolve()
-    assert Path(scheduled_path).resolve() != library_dir.resolve()
+    assert Path(scheduled_path).resolve() == library_dir.resolve()
+    assert Path(scheduled_path).resolve() != downloads_dir.resolve()
     assert recursive is True
 
     watcher.stop()

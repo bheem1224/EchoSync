@@ -100,10 +100,11 @@ def _create_resolved_track(
     request: Any = None,
     edition: Any = _UNSET,
 ) -> EchosyncTrack:
-    from core.db.echo_sync_track import EchosyncMedia
+    from core.db.echo_sync_track import EchosyncMedia, classify_version_type
     from core.matching_engine.track_parser import (
         decompose_artists,
         extract_version_descriptors,
+        normalize_track_dto,
         sanitize_soundtrack_title,
     )
 
@@ -136,14 +137,18 @@ def _create_resolved_track(
         )
     )
 
+    resolved_duration_ms = duration_ms if duration_ms and duration_ms > 0 else None
     track = EchosyncTrack(
         raw_title=title or "",
+        title=clean_t or title or "",
+        display_title=title or "",
         artist_name=artist or "",
         album_title=final_album,
         edition=edition,
         version=version,
+        version_type=classify_version_type(version, edition),
         sync_id=sync_id,
-        duration=duration_ms,
+        duration_ms=resolved_duration_ms,
         track_number=track_number,
         disc_number=disc_number,
         release_year=year,
@@ -163,14 +168,13 @@ def _create_resolved_track(
             EchosyncMedia(
                 media_id=media_id,
                 file_path=str(file_path) if file_path else None,
+                duration_ms=resolved_duration_ms,
             )
         ]
         if (media_id or file_path)
         else [],
     )
-    if clean_t:
-        track.title = clean_t
-    return track
+    return normalize_track_dto(track)
 
 
 def _extract_release_details(
@@ -449,8 +453,8 @@ class MetadataResolutionEngine:
                 baseline_album=request.album_title or (request.album if hasattr(request, "album") else ""),
                 baseline_isrc=request.isrc,
                 chromaprint=request.fingerprint,
-                duration=float(request.duration / 1000.0) if request.duration else None,
-                duration_ms=request.duration,
+                duration=float(request.duration_ms / 1000.0) if request.duration_ms else None,
+                duration_ms=request.duration_ms,
                 track=request,
             )
         else:
@@ -469,7 +473,9 @@ class MetadataResolutionEngine:
         result = self._execute_waterfall(req)
 
         # ── Stage 6: Entity Alias Resolution ──────────────────────────────────
-        result.alias_proposals = self._resolve_aliases(req, result)
+        from dataclasses import replace as _replace
+
+        result = _replace(result, alias_proposals=self._resolve_aliases(req, result))
         return result
 
     # Alias for uniform resolution engine invocations
@@ -501,7 +507,7 @@ class MetadataResolutionEngine:
             log_prefix="[resolution_engine] [acoustid-isolated]",
         )
         chromaprint = baseline_track.fingerprint
-        duration_ms = baseline_track.duration or 0
+        duration_ms = baseline_track.duration_ms or 0
         if chromaprint:
             request.chromaprint = chromaprint
         raw_tags = baseline_track
@@ -578,8 +584,10 @@ class MetadataResolutionEngine:
 
     def _resolve_aliases(self, request: ResolutionRequest, result: EchosyncTrack) -> list[EntityAliasProposal]:
         """Stage 6: Query active language packs and plugins for entity alias proposals."""
+        from dataclasses import replace
+
         if not result.sync_id and request.sync_id:
-            result.sync_id = request.sync_id
+            result = replace(result, sync_id=request.sync_id)
 
         if not result.sync_id:
             return []
@@ -629,6 +637,8 @@ class MetadataResolutionEngine:
             return []
 
     def _execute_waterfall(self, request: ResolutionRequest) -> EchosyncTrack:
+        from dataclasses import replace
+
         if not hasattr(request, "_diagnostics") or request._diagnostics is None:
             request._diagnostics = []
         result = self._execute_waterfall_inner(request)
@@ -638,23 +648,26 @@ class MetadataResolutionEngine:
             or getattr(request, "dry_run", False)
             or getattr(request, "ignore_embedded_mbid", False)
         )
+        updates: dict[str, Any] = {}
         if (
             not is_forced
             and hasattr(request, "_signature_locked_title")
             and hasattr(request, "_signature_locked_artist")
         ):
-            result.raw_title = request._signature_locked_title
-            result.title = request._signature_locked_title
-            result.artist_name = request._signature_locked_artist
+            updates["raw_title"] = request._signature_locked_title
+            updates["title"] = request._signature_locked_title
+            updates["artist_name"] = request._signature_locked_artist
             if result.resolution_method and not str(result.resolution_method).startswith("signature_verified"):
-                result.resolution_method = f"signature_verified_merged_with_{result.resolution_method}"
-            result.confidence_score = 1.0
+                updates["resolution_method"] = f"signature_verified_merged_with_{result.resolution_method}"
+            updates["confidence_score"] = 1.0
         if (
             (not result.diagnostics or len(result.diagnostics) == 0)
             and hasattr(request, "_diagnostics")
             and request._diagnostics
         ):
-            result.diagnostics = list(request._diagnostics)
+            updates["diagnostics"] = list(request._diagnostics)
+        if updates:
+            result = replace(result, **updates)
         return result
 
     def _execute_waterfall_inner(self, request: ResolutionRequest) -> EchosyncTrack:
@@ -725,7 +738,7 @@ class MetadataResolutionEngine:
             log_prefix="[resolution_engine]",
         )
         chromaprint = baseline_track.fingerprint
-        duration_ms = baseline_track.duration or duration_ms
+        duration_ms = baseline_track.duration_ms or duration_ms
         if chromaprint:
             request.chromaprint = chromaprint
 
@@ -1126,7 +1139,9 @@ class MetadataResolutionEngine:
 
         # ── Stage 2: Local Chromaprint Cache ──────────────────────────────────
         if chromaprint and not request.ignore_cache and not force_mode:
-            cached_meta = self._check_local_chromaprint_cache(chromaprint, sync_id=request.sync_id)
+            cached_meta = self._check_local_chromaprint_cache(
+                chromaprint, sync_id=request.sync_id, duration_ms=duration_ms
+            )
             if cached_meta:
                 cand_title = cached_meta.get("title")
 
@@ -1643,8 +1658,10 @@ class MetadataResolutionEngine:
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 
-    def _check_local_chromaprint_cache(self, chromaprint: str, sync_id: str | None = None) -> dict[str, Any] | None:
-        return self.cache.check_local(chromaprint, sync_id)
+    def _check_local_chromaprint_cache(
+        self, chromaprint: str, sync_id: str | None = None, duration_ms: int | None = None
+    ) -> dict[str, Any] | None:
+        return self.cache.check_local(chromaprint, duration_ms=duration_ms, sync_id=sync_id)
 
     def _resolve_acoustid(
         self,
@@ -2402,16 +2419,19 @@ class MetadataResolutionEngine:
 
                     query_track = EchosyncTrack(
                         raw_title=query_title,
+                        title=query_title,
                         artist_name=query_artist,
                         album_title=query_album,
-                        duration=file_duration_ms if file_duration_ms > 0 else None,
+                        duration_ms=file_duration_ms if file_duration_ms > 0 else None,
                     )
+                    cand_ver = cand_meta.get("disambiguation") or cand_meta.get("version")
                     cand_track = EchosyncTrack(
                         raw_title=c_title,
+                        title=c_title,
                         artist_name=c_artist,
                         album_title=c_album,
-                        duration=cand_dur_ms,
-                        version=cand_meta.get("disambiguation") or cand_meta.get("version"),
+                        duration_ms=cand_dur_ms,
+                        version=cand_ver,
                     )
                     dynamic_base, dynamic_limit = compute_dynamic_duration_bounds(cand_acoustid_score or 0.0)
                     match_res = self.matcher.calculate_match(
@@ -2797,7 +2817,7 @@ class MetadataResolutionEngine:
             if not isrc_track:
                 return None
 
-            cand_title = isrc_track.title
+            cand_title = isrc_track.title or getattr(isrc_track, "raw_title", "") or ""
             if (
                 cand_title
                 and not has_signature
@@ -2831,7 +2851,7 @@ class MetadataResolutionEngine:
             )
 
             return {
-                "title": isrc_track.title,
+                "title": cand_title,
                 "artist": isrc_track.artist_name,
                 "album": isrc_track.album_title,
                 "year": isrc_track.release_year,
@@ -2839,7 +2859,7 @@ class MetadataResolutionEngine:
                 "disc_number": isrc_track.disc_number,
                 "musicbrainz_track_id": mbid,
                 "musicbrainz_release_id": rel_id,
-                "duration_ms": isrc_track.duration,
+                "duration_ms": isrc_track.duration_ms,
             }
         except Exception as exc:
             logger.warning("[resolution_engine] ISRC resolution error: %s", exc)
@@ -2889,9 +2909,10 @@ class MetadataResolutionEngine:
 
         query_track = EchosyncTrack(
             raw_title=sanitized_title,
+            title=sanitized_title,
             artist_name=baseline_artist,
             album_title=baseline_album,
-            duration=file_duration_ms if file_duration_ms > 0 else None,
+            duration_ms=file_duration_ms if file_duration_ms > 0 else None,
         )
 
         try:
@@ -2966,9 +2987,9 @@ class MetadataResolutionEngine:
 
                 # Stage 5 MusicBrainz Text Waterfall Duration Decay Curve
                 text_dur_weight = 1.0
-                if file_duration_ms > 0 and cand.duration:
+                if file_duration_ms > 0 and cand.duration_ms:
                     try:
-                        cand_dur_val = float(cand.duration)
+                        cand_dur_val = float(cand.duration_ms)
                         cand_dur_sec = cand_dur_val / 1000.0 if cand_dur_val > 1000 else cand_dur_val
                         track_dur_sec = file_duration_ms / 1000.0
                         text_dur_weight = calculate_text_duration_weight(track_dur_sec, cand_dur_sec)

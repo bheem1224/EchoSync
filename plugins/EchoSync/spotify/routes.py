@@ -39,21 +39,17 @@ def get_settings():
 
         redirect_uri = _get_redirect_uri()
 
-        # Fallback to database service_config if not yet in plugin sdk namespace
+        # Fallback to SDK service_config if not yet in primary plugin sdk namespace
         if not client_id or not client_secret:
-            from database.config_database import get_config_database
-
-            db = get_config_database()
-            svc_id = (
-                db.get_service_id(2391116200) or db.get_service_id("Spotify") or db.get_service_id("EchoSync.Spotify")
-            )
-            if svc_id:
-                client_id = client_id or db.get_service_config(svc_id, "client_id") or ""
-                client_secret = client_secret or db.get_service_config(svc_id, "client_secret") or ""
+            for lookup_key in (2391116200, "Spotify", "EchoSync.Spotify"):
+                client_id = client_id or sdk.config.get_for_service(lookup_key, "client_id") or ""
+                client_secret = client_secret or sdk.config.get_for_service(lookup_key, "client_secret") or ""
+                if client_id and client_secret:
+                    break
 
         # Legacy storage fallback
         if not client_id or not client_secret:
-            from core.file_handling.storage import get_storage_service
+            from services.storage_service import get_storage_service
 
             storage = get_storage_service()
             client_id = client_id or storage.get_service_config("spotify", "client_id") or ""
@@ -92,21 +88,17 @@ async def save_settings(request: Request):
         if redirect_uri:
             sdk.config.set("redirect_uri", redirect_uri)
 
-        # Also mirror into database service_config
-        from database.config_database import get_config_database
-
-        db = get_config_database()
-        svc_id = db.get_service_id(2391116200) or db.get_service_id("Spotify") or db.get_service_id("EchoSync.Spotify")
-        if svc_id:
+        # Also mirror into canonical service_config via SDK
+        for lookup_key in (2391116200, "Spotify", "EchoSync.Spotify"):
             if client_id:
-                db.set_service_config(svc_id, "client_id", client_id, is_sensitive=False)
+                sdk.config.set_for_service(lookup_key, "client_id", client_id, is_sensitive=False)
             if client_secret:
-                db.set_service_config(svc_id, "client_secret", client_secret, is_sensitive=True)
+                sdk.config.set_for_service(lookup_key, "client_secret", client_secret, is_sensitive=True)
             if redirect_uri:
-                db.set_service_config(svc_id, "redirect_uri", redirect_uri, is_sensitive=False)
+                sdk.config.set_for_service(lookup_key, "redirect_uri", redirect_uri, is_sensitive=False)
 
         # Also mirror into storage for legacy callers
-        from core.file_handling.storage import get_storage_service
+        from services.storage_service import get_storage_service
 
         storage = get_storage_service()
         storage.ensure_service(
@@ -222,21 +214,16 @@ def begin_auth(account_id: int | None = None):
 
         client_id = sdk.config.get("client_id")
         client_secret = sdk.secrets.get("client_secret")
-        redirect_uri = _get_redirect_uri()
 
         if not client_id or not client_secret:
-            from database.config_database import get_config_database
-
-            db = get_config_database()
-            svc_id = (
-                db.get_service_id(2391116200) or db.get_service_id("Spotify") or db.get_service_id("EchoSync.Spotify")
-            )
-            if svc_id:
-                client_id = client_id or db.get_service_config(svc_id, "client_id")
-                client_secret = client_secret or db.get_service_config(svc_id, "client_secret")
+            for lookup_key in (2391116200, "Spotify", "EchoSync.Spotify"):
+                client_id = client_id or sdk.config.get_for_service(lookup_key, "client_id")
+                client_secret = client_secret or sdk.config.get_for_service(lookup_key, "client_secret")
+                if client_id and client_secret:
+                    break
 
         if not client_id or not client_secret:
-            from core.file_handling.storage import get_storage_service
+            from services.storage_service import get_storage_service
 
             storage = get_storage_service()
             client_id = client_id or storage.get_service_config("spotify", "client_id")
@@ -337,10 +324,9 @@ def oauth_callback(
 
         client_id = sdk.config.get("client_id")
         client_secret = sdk.secrets.get("client_secret")
-        redirect_uri = _get_redirect_uri()
 
         if not client_id or not client_secret:
-            from core.file_handling.storage import get_storage_service
+            from services.storage_service import get_storage_service
 
             storage = get_storage_service()
             client_id = client_id or storage.get_service_config("spotify", "client_id")
@@ -356,6 +342,7 @@ def oauth_callback(
 
         from .client import CallbackBypassCacheHandler
 
+        redirect_uri = _get_redirect_uri()
         auth_manager = SpotifyOAuth(
             client_id=client_id,
             client_secret=client_secret,

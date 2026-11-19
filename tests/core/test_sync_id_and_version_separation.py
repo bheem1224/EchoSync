@@ -1,25 +1,30 @@
 from core.database.repositories.track_repo import TrackRepository, bulk_upsert_tracks
 from core.db.echo_sync_track import EchosyncMedia, EchosyncTrack
+from core.matching_engine.track_parser import normalize_track_dto
 from database.music_database import Base, LocalMedia, Track, get_database
 
 
 def test_echosync_track_nanoid_generation():
-    """Verify EchosyncTrack defaults to an 8-char NanoID, never legacy ss:track:meta:."""
-    t1 = EchosyncTrack(
-        raw_title="Safe and Sound",
-        artist_name="Capital Cities",
-        album_title="In a Tidal Wave of Mystery",
+    """Verify normalized EchosyncTrack defaults to an 8-char NanoID, never legacy ss:track:meta:."""
+    t1 = normalize_track_dto(
+        EchosyncTrack(
+            raw_title="Safe and Sound",
+            artist_name="Capital Cities",
+            album_title="In a Tidal Wave of Mystery",
+        )
     )
     assert t1.sync_id is not None
     assert len(t1.sync_id) == 8
     assert not t1.sync_id.startswith("ss:")
 
     # Explicit non-legacy sync_id is preserved
-    t2 = EchosyncTrack(
-        sync_id="custom_sync_123",
-        raw_title="Safe and Sound",
-        artist_name="Capital Cities",
-        album_title="In a Tidal Wave of Mystery",
+    t2 = normalize_track_dto(
+        EchosyncTrack(
+            sync_id="custom_sync_123",
+            raw_title="Safe and Sound",
+            artist_name="Capital Cities",
+            album_title="In a Tidal Wave of Mystery",
+        )
     )
     assert t2.sync_id == "custom_sync_123"
 
@@ -37,7 +42,7 @@ def test_track_version_separation_and_no_collapsing():
             raw_title="Safe and Sound",
             artist_name="Capital Cities",
             album_title="In a Tidal Wave of Mystery",
-            duration=193000,
+            duration_ms=193000,
             edition=None,
             media=[
                 EchosyncMedia(
@@ -51,7 +56,7 @@ def test_track_version_separation_and_no_collapsing():
             raw_title="Safe and Sound (Remix)",
             artist_name="Capital Cities",
             album_title="In a Tidal Wave of Mystery",
-            duration=343000,
+            duration_ms=343000,
             edition="Remix",
             media=[
                 EchosyncMedia(
@@ -90,7 +95,7 @@ def test_track_version_separation_and_no_collapsing():
             raw_title="Safe and Sound",
             artist_name="Capital Cities",
             album_title="In a Tidal Wave of Mystery",
-            duration=193500,
+            duration_ms=193500,
             edition=None,
             media=[
                 EchosyncMedia(
@@ -125,7 +130,7 @@ def test_legacy_sync_id_in_batch_is_remediated_to_nanoid():
             raw_title="Test Title",
             artist_name="Test Artist",
             album_title="Test Album",
-            duration=200000,
+            duration_ms=200000,
             media=[
                 EchosyncMedia(
                     file_path="/music/test.flac",
@@ -315,7 +320,7 @@ def test_decouple_collapsed_media_files_and_rescan():
             raw_title="Safe and Sound",
             artist_name="Capital Cities",
             album_title="In a Tidal Wave of Mystery",
-            duration=193000,
+            duration_ms=193000,
             edition=None,
             media=[
                 EchosyncMedia(
@@ -328,7 +333,7 @@ def test_decouple_collapsed_media_files_and_rescan():
             raw_title="Safe and Sound (Remix)",
             artist_name="Capital Cities",
             album_title="In a Tidal Wave of Mystery",
-            duration=343000,
+            duration_ms=343000,
             edition="Remix",
             media=[
                 EchosyncMedia(
@@ -361,7 +366,7 @@ def test_rescan_clears_stale_edition_tags():
             raw_title="In the End",
             artist_name="Linkin Park",
             album_title="Hybrid Theory",
-            duration=217312,
+            duration_ms=217312,
             edition="Remix",
             media=[
                 EchosyncMedia(
@@ -381,7 +386,7 @@ def test_rescan_clears_stale_edition_tags():
             raw_title="In the End",
             artist_name="Linkin Park",
             album_title="Hybrid Theory",
-            duration=217312,
+            duration_ms=217312,
             edition=None,
             media=[
                 EchosyncMedia(

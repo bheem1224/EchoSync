@@ -1,24 +1,15 @@
-import logging
-import re
 import time
-import uuid
-from difflib import SequenceMatcher
 from typing import Any
 from urllib.parse import quote
+import uuid
 
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, ConfigDict
 
-from core.db.echo_sync_track import EchosyncTrack
 from core.event_bus import event_bus
-from core.hook_manager import hook_manager
-from core.job_queue import job_queue
-from core.matching_engine.matching_engine import WeightedMatchingEngine
-from core.matching_engine.text_utils import (
-    normalize_title as _normalize_candidate_title,
-)
 from core.personalized_playlists import get_personalized_playlists_service
 from core.sync_history import sync_history
+from core.task_manager.task_queue import job_queue
 from core.tiered_logger import get_logger
 from database.music_database import MusicDatabase
 
@@ -80,118 +71,13 @@ class MatchDiagnosticRequest(BaseModel):
     album: str | None = None
 
 
-# In-memory store for ad-hoc analysis jobs started via API
-ANALYSIS_JOBS = {}
+# Bounded thread-safe TTL + max-size cache imported from services.playlist_sync
+from services.playlist_sync import ANALYSIS_JOBS
 
 logger = get_logger("playlists_api")
 router = APIRouter(prefix="/api/v1/core/playlists", tags=["Playlists"])
 api_v1_router = APIRouter(prefix="/api/v1/playlists", tags=["Playlists"])
 legacy_router = APIRouter(prefix="/api/playlists", tags=["Playlists"])
-double_v1_router = APIRouter(prefix="/api/v1/v1/core/playlists", tags=["Playlists"])
-
-# ── Semantic Substring Failsafe — safe OST filler dictionary ──────────────────
-# Words that commonly appear in longer CJK/English OST title variants but do NOT
-# change the track's identity.  If a title delta (the extra part of the longer
-# string after the shared shorter title is removed) is composed *entirely* of
-# these words the two strings refer to the same track and a 0.95 title score is
-# awarded.  Any unrecognised token (e.g. 'Part 2', 'Remix', 'Live') causes the
-# substring boost to be withheld, preventing false-positive Swap Cases.
-_OST_SAFE_WORDS = {
-    "电视剧",
-    "网剧",
-    "影视剧",
-    "影視劇",
-    "电影",
-    "片头曲",
-    "片尾曲",
-    "主题曲",
-    "插曲",
-    "推广曲",
-    "原声带",
-    "原声",
-    "配乐",
-    "ost",
-    "theme",
-    "opening",
-    "ending",
-    "soundtrack",
-    "original",
-    "remastered",
-    "remaster",
-    "acoustic",
-    "live",
-    "radio",
-    "single",
-    "extended",
-    "club",
-    "version",
-    "edit",
-    "mix",
-    "remix",
-    "bootleg",
-    "official",
-    "song",
-    "shanty",
-    "sea",
-    "uefa",
-    "euro",
-    "anthem",
-    "from",
-    "la",
-    "deluxe",
-    "pt",
-    "part",
-    "vol",
-    "volume",
-    "viii",
-    "vii",
-    "iii",
-    "iv",
-    "vi",
-    "ix",
-    "ii",
-    "i",
-    "x",
-    "v",
-    "gabry",
-    "ponte",
-    "ice",
-    "pop",
-}
-
-
-class _OstSafeMatcher:
-    def match(self, text: str):
-        if not text:
-            return None
-        s = re.sub(r"[\s\-_]+", "", str(text).lower())
-        if not s:
-            return True
-        n = len(s)
-        dp = [False] * (n + 1)
-        dp[0] = True
-        for i in range(n):
-            if not dp[i]:
-                continue
-            if s[i].isdigit():
-                dp[i + 1] = True
-            for w in _OST_SAFE_WORDS:
-                if s.startswith(w, i):
-                    dp[i + len(w)] = True
-        return True if dp[n] else None
-
-
-_OST_SAFE_RE = _OstSafeMatcher()
-# ──────────────────────────────────────────────────────────────────────────────
-
-# ── Pinyin artist-matching constants ─────────────────────────────────────────
-# When the best artist score after primary-name + alias checks is still below
-# _PINYIN_ARTIST_THRESHOLD, a Hanzi → Pinyin transliteration fallback is tried.
-# _PINYIN_ARTIST_PASS is the minimum token_sort_ratio (0–100) required for that
-# fallback to override the alias-based score and accept the match.
-_PINYIN_ARTIST_THRESHOLD = 0.85  # only enter Pinyin path when score is below this
-_PINYIN_ARTIST_PASS = 90  # token_sort_ratio needed to accept the match
-# ──────────────────────────────────────────────────────────────────────────────
 
 
 def _get_provider_for_account(provider_id, acc_id=None):
@@ -299,338 +185,14 @@ def _extract_target_identifier(candidate):
     return getattr(candidate, "id", None)
 
 
-def _cmp_titles(
-    a: str,
-    b: str,
-    context_score: float = 0.0,
-    drama_ctx: bool = False,
-) -> float:
-    """Lightweight title similarity score (0–1), matching the engine's _fuzzy_match logic.
-
-    Lowercases, strips non-word/non-space characters, collapses whitespace, then runs
-    SequenceMatcher.  Used to pick the best candidate title or alias before scoring.
-
-    Semantic Substring Failsafe (Step 4 of the matching pipeline):
-      When the plain fuzzy ratio falls below 0.90 *and* we have a confident artist
-      or drama-context match (`context_score >= 0.80` or `drama_ctx=True`), the
-      function checks whether the shorter normalised title is a whole-word substring
-      of the longer one.  If yes, the "delta" (the extra characters in the longer
-      string) is extracted and validated against `_OST_SAFE_RE`:
-        • Delta is entirely safe OST filler ⇒ title_score forced to 0.95.
-        • Delta contains ANY unrecognised token (e.g. 'Part 2', 'Remix', 'Live')
-          ⇒ substring boost is withheld; the plain ratio is returned, preventing a
-          false-positive Swap Case (e.g. matching Part 1 instead of Part 2).
-    """
-
-    def _n(s: str) -> str:
-        s = s.lower()
-        s = re.sub(r"[^\w\s]", "", s)
-        return " ".join(s.split())
-
-    a_n, b_n = _n(a), _n(b)
-    if not a_n or not b_n:
-        return 0.0
-    ratio = SequenceMatcher(None, a_n, b_n).ratio()
-
-    # ── Semantic Substring Failsafe ───────────────────────────────────────────
-    # Only activate when the plain ratio hasn't already passed AND we have a
-    # confident external signal (artist similarity ≥ 80% OR drama context hit)
-    # to guard against unrelated short-title collisions.
-    if ratio < 0.90 and (context_score >= 0.80 or drama_ctx):
-        shorter, longer = (a_n, b_n) if len(a_n) <= len(b_n) else (b_n, a_n)
-        if len(shorter) >= 3 and re.search(r"(?<![\w])" + re.escape(shorter) + r"(?![\w])", longer):
-            # Extract delta: strip the shared prefix and collapse leftover whitespace.
-            delta_raw = re.sub(r"(?<![\w])" + re.escape(shorter) + r"(?![\w])", "", longer, count=1)
-            # Strip ALL punctuation and separators; keep only word characters.
-            delta_words = re.sub(r"[^\w]", "", delta_raw, flags=re.UNICODE)
-            if not delta_words:
-                # Delta is purely separators / punctuation — same track.
-                logger.debug(
-                    "Substring failsafe: '%s' ⊂ '%s' — delta is empty after strip → score=0.95",
-                    shorter,
-                    longer,
-                )
-                ratio = 0.95
-            elif _OST_SAFE_RE.match(delta_words):
-                # Delta is composed entirely of safe OST filler tokens.
-                logger.debug(
-                    "Substring failsafe: '%s' ⊂ '%s' — delta '%s' is safe filler → score=0.95",
-                    shorter,
-                    longer,
-                    delta_words,
-                )
-                ratio = 0.95
-            else:
-                # Delta contains unrecognised text — do NOT boost; prevents Swap Cases.
-                logger.debug(
-                    "Substring failsafe: '%s' ⊂ '%s' — delta '%s' contains unrecognised token "
-                    "→ rejecting substring match",
-                    shorter,
-                    longer,
-                    delta_words,
-                )
-    # ── End Semantic Substring Failsafe ──────────────────────────────────────
-
-    return ratio
-
-
-_TRIBUTE_DELTA_TOKENS = {
-    "tribute",
-    "tribute band",
-    "cover band",
-    "karaoke",
-    "sound-alike",
-    "soundalike",
-    "parody",
-    "style of",
-    "in the style of",
-    "celebration",
-    "orchestra",
-    "instrumental version",
-    "piano tribute",
-}
-
-
-def _cmp_artists(a: str, b: str) -> float:
-    """Artist similarity score (0–1) with hardened substring-containment boost.
-
-    Normalises both strings identically to _cmp_titles, then returns the
-    SequenceMatcher ratio OR 0.95 (whichever is higher) when one normalised
-    form is fully contained in the other, UNLESS the delta difference contains
-    tribute/cover/karaoke qualifiers (e.g. 'The Maroon 5 Tribute Band' vs 'Maroon 5').
-    """
-
-    def _n(s: str) -> str:
-        s = s.lower()
-        s = re.sub(r"[^\w\s]", "", s)
-        return " ".join(s.split())
-
-    a_n, b_n = _n(a), _n(b)
-    if not a_n or not b_n:
-        return 0.0
-    if a_n == b_n:
-        return 1.0
-
-    from core.matching_engine.text_utils import is_franchise_entity
-
-    if is_franchise_entity(a) or is_franchise_entity(b):
-        return 0.90
-
-    ratio = SequenceMatcher(None, a_n, b_n).ratio()
-    if a_n in b_n or b_n in a_n:
-        shorter, longer = (a_n, b_n) if len(a_n) < len(b_n) else (b_n, a_n)
-        delta = re.sub(r"(?<![\w])" + re.escape(shorter) + r"(?![\w])", "", longer).strip()
-        delta_lower = delta.lower()
-        delta_tokens = set(re.findall(r"\b\w+\b", delta_lower))
-
-        has_tribute = any(t in delta_lower or t in delta_tokens for t in _TRIBUTE_DELTA_TOKENS)
-        if not has_tribute:
-            return max(ratio, 0.95)
-
-    return ratio
-
-
-def _fetch_tier1_candidates(conn, search_title, base_search_title, track_artist, track_duration):
-    """Execute the Tier 1 artist+title candidate query with search-expansion hook support.
-
-    Fires the ``search_expansion`` hook to collect plugin-provided alternative
-    search strings (e.g. Pinyin / Romaji transliterations from the CJK plugin),
-    then runs a single SQL query that matches against Track.title,
-    Track.sort_title, and track_aliases.name.  The artist-anchored conditions
-    are preserved for the default terms; expanded terms are searched without an
-    artist anchor to handle 'Various Artists' and similar mis-tagged libraries.
-
-    Returns a list of unique row tuples: (id, title, duration, edition,
-    artist_name, artist_id, sort_title, album_title).
-    """
-    from sqlalchemy import text as _sql
-
-    # Request plugin-provided alternative search strings.
-    expanded_terms = hook_manager.apply_filters(
-        "search_expansion",
-        [],
-        title=search_title,
-        artist=track_artist,
-    )
-    if not isinstance(expanded_terms, list):
-        expanded_terms = []
-
-    # Deduplicate expanded terms; skip strings already covered by the base search.
-    seen_terms = {search_title.lower(), base_search_title.lower()}
-    clean_expanded = []
-    for t in expanded_terms:
-        if isinstance(t, str) and t.strip() and t.strip().lower() not in seen_terms:
-            seen_terms.add(t.strip().lower())
-            clean_expanded.append(t.strip())
-
-    title_norm = search_title.replace("\u2019", "'").replace("\u2018", "'")
-
-    from core.matching_engine.text_utils import normalize_title
-
-    norm_search = normalize_title(search_title)
-    params = {
-        "artist_exact": track_artist,
-        "artist_pattern": f"%{track_artist}%",
-        "title_exact": search_title,
-        "title_pattern": f"%{search_title}%",
-        "base_title_pattern": f"%{base_search_title}%",
-        "title_norm_pattern": f"%{title_norm}%",
-        "norm_search_pattern": f"%{norm_search}%",
-        "duration": track_duration or 0,
-    }
-
-    # Returns an alias-aware LIKE fragment for a named SQL parameter.
-    # Matches Track.title, Track.sort_title, Track.normalized_title, or any track_aliases.name row.
-    def _am(param):
-        return (
-            f"(LOWER(t.title) LIKE LOWER(:{param})"
-            f" OR (t.sort_title IS NOT NULL AND LOWER(t.sort_title) LIKE LOWER(:{param}))"
-            f" OR (t.normalized_title IS NOT NULL AND LOWER(t.normalized_title) LIKE LOWER(:{param}))"
-            f" OR EXISTS (SELECT 1 FROM track_aliases ta_x"
-            f" WHERE ta_x.track_id = t.id AND LOWER(ta_x.name) LIKE LOWER(:{param})))"
-        )
-
-    # Broad Funnel: match title/aliases loosely, completely ignoring artist and duration filters in WHERE.
-    base_where = (
-        f"{_am('title_pattern')}\n"
-        f"        OR {_am('base_title_pattern')}\n"
-        f"        OR {_am('norm_search_pattern')}\n"
-        f"        OR (LOWER(REPLACE(REPLACE(t.title, char(8217), char(39)), char(8216), char(39)))"
-        f" LIKE LOWER(:title_norm_pattern))"
-    )
-
-    # Plugin-expanded terms: no artist anchor — covers 'Various Artists' mis-tags.
-    exp_parts = []
-    for i, term in enumerate(clean_expanded):
-        pkey = f"exp_{i}"
-        params[pkey] = f"%{term}%"
-        exp_parts.append(_am(pkey))
-    exp_where = ("\n        OR " + "\n        OR ".join(exp_parts)) if exp_parts else ""
-
-    from core.matching_engine.text_utils import split_artist_collaborators
-
-    primary_art, collabs = split_artist_collaborators(track_artist or "")
-    all_artists = ([primary_art] + collabs) if primary_art else ([track_artist] if track_artist else [])
-
-    artist_order_parts = [
-        "(LOWER(a.name) = LOWER(:artist_exact) OR (a.sort_name IS NOT NULL AND LOWER(a.sort_name) = LOWER(:artist_exact)) OR (ta_a.name IS NOT NULL AND LOWER(ta_a.name) = LOWER(:artist_exact)) OR (alb_a.name IS NOT NULL AND LOWER(alb_a.name) = LOWER(:artist_exact)))"
-    ]
-    for i, art in enumerate(all_artists):
-        k = f"art_token_{i}"
-        params[k] = art
-        artist_order_parts.append(
-            f"(LOWER(a.name) = LOWER(:{k}) OR (a.sort_name IS NOT NULL AND LOWER(a.sort_name) = LOWER(:{k})) OR (ta_a.name IS NOT NULL AND LOWER(ta_a.name) = LOWER(:{k})) OR (alb_a.name IS NOT NULL AND LOWER(alb_a.name) = LOWER(:{k})))"
-        )
-    artist_order_sql = " OR ".join(artist_order_parts)
-
-    sql = _sql(f"""
-        SELECT DISTINCT t.id, t.title, t.duration, t.edition,
-               a.name AS artist_name, a.id AS artist_id,
-               t.sort_title, al.title AS album_title, lm.file_path
-        FROM tracks t
-        JOIN artists a ON t.artist_id = a.id
-        LEFT JOIN track_artists ta ON t.id = ta.track_id
-        LEFT JOIN artists ta_a ON ta.artist_id = ta_a.id
-        LEFT JOIN albums al ON t.album_id = al.id
-        LEFT JOIN artists alb_a ON al.artist_id = alb_a.id
-        JOIN local_media lm ON t.id = lm.track_id
-        WHERE ({base_where}{exp_where})
-        ORDER BY
-            ({artist_order_sql}) DESC,
-            (LOWER(t.title) = LOWER(:title_exact)) DESC,
-            ABS(t.duration - :duration) ASC
-        LIMIT 50
-    """)
-
-    return conn.execute(sql, params).fetchall()
-
-
-def _fetch_tier2_candidates(conn, search_title, track_duration, duration_window_ms):
-    """Execute the Tier 2 title-exact + duration-window query with alias support.
-
-    Fires the ``search_expansion`` hook so that transliterated strings returned
-    by plugins are also matched against Track.title, Track.sort_title, and
-    track_aliases.name with LIKE (transliterations are rarely exact-match).
-    The base title-exact conditions retain the original strict equality so non-CJK
-    tracks are unaffected.
-
-    Returns a list of unique row tuples compatible with the existing candidate loop.
-    """
-    from sqlalchemy import text as _sql
-
-    expanded_terms = hook_manager.apply_filters(
-        "search_expansion",
-        [],
-        title=search_title,
-        artist="",
-    )
-    if not isinstance(expanded_terms, list):
-        expanded_terms = []
-
-    seen_terms = {search_title.lower()}
-    clean_expanded = []
-    for t in expanded_terms:
-        if isinstance(t, str) and t.strip() and t.strip().lower() not in seen_terms:
-            seen_terms.add(t.strip().lower())
-            clean_expanded.append(t.strip())
-
-    duration_min = track_duration - duration_window_ms
-    duration_max = track_duration + duration_window_ms
-
-    from core.matching_engine.text_utils import normalize_title
-
-    norm_search = normalize_title(search_title)
-    params = {
-        "title_exact": search_title,
-        "title_pattern": f"%{search_title}%",
-        "norm_search_pattern": f"%{norm_search}%",
-        "duration": track_duration,
-    }
-
-    # Base title-exact conditions (original Tier 2) replaced with broad funnel LIKE/alias checks.
-    base_where = (
-        "LOWER(t.title) LIKE LOWER(:title_pattern)\n"
-        "        OR (t.sort_title IS NOT NULL AND LOWER(t.sort_title) LIKE LOWER(:title_pattern))\n"
-        "        OR (t.normalized_title IS NOT NULL AND LOWER(t.normalized_title) LIKE LOWER(:norm_search_pattern))\n"
-        "        OR EXISTS (SELECT 1 FROM track_aliases ta_x\n"
-        "                   WHERE ta_x.track_id = t.id AND (LOWER(ta_x.name) LIKE LOWER(:title_pattern) OR LOWER(ta_x.name) LIKE LOWER(:norm_search_pattern)))"
-    )
-
-    # Expanded terms use LIKE — transliterations need fuzzy title matching.
-    exp_parts = []
-    for i, term in enumerate(clean_expanded):
-        pkey = f"exp_{i}"
-        params[pkey] = f"%{term}%"
-        exp_parts.append(
-            f"(LOWER(t.title) LIKE LOWER(:{pkey})"
-            f" OR (t.sort_title IS NOT NULL AND LOWER(t.sort_title) LIKE LOWER(:{pkey}))"
-            f" OR (t.normalized_title IS NOT NULL AND LOWER(t.normalized_title) LIKE LOWER(:{pkey}))"
-            f" OR EXISTS (SELECT 1 FROM track_aliases ta_x"
-            f" WHERE ta_x.track_id = t.id AND LOWER(ta_x.name) LIKE LOWER(:{pkey})))"
-        )
-    exp_where = ("\n        OR " + "\n        OR ".join(exp_parts)) if exp_parts else ""
-
-    sql = _sql(f"""
-        SELECT DISTINCT t.id, t.title, t.duration, t.edition,
-               a.name AS artist_name, a.id AS artist_id,
-               t.sort_title, al.title AS album_title, lm.file_path
-        FROM tracks t
-        JOIN artists a ON t.artist_id = a.id
-        LEFT JOIN albums al ON t.album_id = al.id
-        JOIN local_media lm ON t.id = lm.track_id
-        WHERE ({base_where}{exp_where})
-        ORDER BY ABS(t.duration - :duration) ASC
-        LIMIT 30
-    """)
-
-    return conn.execute(sql, params).fetchall()
-
-
 def _analyze_playlists_internal(source, target_source, playlists, quality_profile="Auto"):
-    """Run the canonical playlist matching flow used by both manual and scheduled syncs."""
-    from services.playlist_sync import analyze_playlists
+    """Run the canonical playlist matching flow via PlaylistSyncService."""
+    from services.playlist_sync import PlaylistSyncService
 
-    return analyze_playlists(source, target_source, playlists, target_quality=quality_profile)
+    service = PlaylistSyncService(db=MusicDatabase())
+    return service.analyze_playlists(
+        source, target_source, playlists, target_quality=quality_profile
+    )
 
 
 @router.get("/")
@@ -666,10 +228,9 @@ def analyze_playlists(payload_obj: PlaylistAnalyzeSchema | None = None):
 @router.post("/match-diagnostics")
 @api_v1_router.post("/match-diagnostics")
 @legacy_router.post("/match-diagnostics")
-@double_v1_router.post("/match-diagnostics")
 def match_diagnostics(payload: MatchDiagnosticRequest):
     """Evaluate candidate tracks against ExactSyncProfile and return structured match trace."""
-    from services.playlist_sync import evaluate_single_track_diagnostics, get_cached_match_trace
+    from services.playlist_sync import PlaylistSyncService, get_cached_match_trace
 
     query_title = (payload.title or "").strip()
     query_artist = (payload.artist or "").strip()
@@ -680,7 +241,8 @@ def match_diagnostics(payload: MatchDiagnosticRequest):
     if cached is not None:
         return cached
 
-    return evaluate_single_track_diagnostics(
+    service = PlaylistSyncService(db=MusicDatabase())
+    return service.evaluate_single_track_diagnostics(
         title=query_title,
         artist=query_artist,
         duration_ms=query_duration,
@@ -716,18 +278,26 @@ def start_analyze_job(payload_obj: PlaylistAnalyzeSchema | None = None):
     }
 
     def _job_func():
-        ANALYSIS_JOBS[job_id]["status"] = "running"
-        ANALYSIS_JOBS[job_id]["started_at"] = time.time()
+        ANALYSIS_JOBS.update_item(
+            job_id,
+            {"status": "running", "started_at": time.time()},
+        )
         try:
             res = _analyze_playlists_internal(source, target_source, playlists, quality_profile)
-            ANALYSIS_JOBS[job_id]["result"] = res
-            ANALYSIS_JOBS[job_id]["status"] = "finished"
+            ANALYSIS_JOBS.update_item(
+                job_id,
+                {"result": res, "status": "finished", "finished_at": time.time()},
+            )
         except Exception as e:
             logger.error(f"Background analysis job {job_id} failed: {e}", exc_info=True)
-            ANALYSIS_JOBS[job_id]["error"] = "Playlist analysis failed"
-            ANALYSIS_JOBS[job_id]["status"] = "failed"
-        finally:
-            ANALYSIS_JOBS[job_id]["finished_at"] = time.time()
+            ANALYSIS_JOBS.update_item(
+                job_id,
+                {
+                    "error": "Playlist analysis failed",
+                    "status": "failed",
+                    "finished_at": time.time(),
+                },
+            )
 
     # Register a one-off job and execute it immediately
     from core.nexus_framework.plugin_loader import get_plugin_capabilities
@@ -736,7 +306,7 @@ def start_analyze_job(payload_obj: PlaylistAnalyzeSchema | None = None):
     if not source_caps:
         return {"error": f"Source plugin {source} not found"}
 
-    target_caps = get_plugin_capabilities(target)
+    _ = get_plugin_capabilities(target)
 
     try:
         job_queue.register_job(job_name, _job_func, interval_seconds=None, start_after=0, enabled=True)
@@ -1028,7 +598,7 @@ def _sync_to_plex(
                     raw_title=track_title,
                     artist_name=track_artist,
                     album_title=track_album or "",
-                    duration=track_duration,
+                    duration_ms=track_duration,
                     media=local_media_list,
                 )
 
@@ -1442,7 +1012,7 @@ def sync_events(request: Request, job: str | None = None, since: int | str | Non
     }
 
 
-for extra_r in (api_v1_router, legacy_router, double_v1_router):
+for extra_r in (api_v1_router, legacy_router):
     extra_r.add_api_route("/sync/events", sync_events, methods=["GET"])
 
 
@@ -1466,8 +1036,8 @@ def sync_history_endpoint(request: Request):
 async def download_missing_tracks(request: Request):
     """Trigger downloads for missing tracks identified during analysis.
 
-    Directly queues tracks to the download_manager's queue.
-    No separate job is created - the main download_manager job handles processing.
+    Delegates to PlaylistSyncService.queue_missing_downloads, applying target_quality
+    exclusively to the missing-track download queue.
     """
     try:
         payload = await request.json()
@@ -1480,76 +1050,10 @@ async def download_missing_tracks(request: Request):
         return {"accepted": False, "error": "missing tracks list required"}
 
     try:
-        from core.db.echo_sync_track import EchosyncTrack
-        from services.download_manager import get_download_manager
+        from services.playlist_sync import PlaylistSyncService
 
-        download_manager = get_download_manager()
-        success_count = 0
-        failed_count = 0
-
-        # Queue all tracks directly to the download manager
-        # The existing download_manager job will process them
-        for track_info in missing:
-            try:
-                # Prefer full serialized source track when present so metadata survives queueing.
-                source_track_payload = track_info.get("source_track")
-                if isinstance(source_track_payload, dict):
-                    track = EchosyncTrack.from_dict(source_track_payload)
-                else:
-                    duration_ms = track_info.get("duration_ms")
-                    if duration_ms is None:
-                        duration_ms = track_info.get("duration")
-
-                    identifiers = {}
-                    source_identifier = track_info.get("source_identifier")
-                    if source_identifier:
-                        identifiers["spotify"] = str(source_identifier)
-
-                    # Create EchosyncTrack from fallback metadata, preserving ISRC when provided.
-                    track = EchosyncTrack(
-                        raw_title=track_info.get("title"),
-                        artist_name=track_info.get("artist"),
-                        album_title=track_info.get("album") or "",
-                        duration=duration_ms,
-                        isrc=track_info.get("isrc"),
-                        identifiers=identifiers,
-                    )
-
-                # Queue the download (no separate job needed)
-                download_id = download_manager.queue_download(track, quality_profile_id=target_quality)
-
-                if download_id:
-                    success_count += 1
-                    logger.info(f"Queued for download: {track.title} by {track.artist_name} (ID: {download_id})")
-                else:
-                    failed_count += 1
-                    logger.warning(f"Failed to queue: {track.title} by {track.artist_name}")
-            except Exception as e:
-                failed_count += 1
-                logger.error(f"Error queuing track: {e}")
-
-        if success_count > 0:
-            if hasattr(download_manager, "process_downloads_now"):
-                try:
-                    download_manager.process_downloads_now()
-                except Exception as proc_err:
-                    logger.warning(f"Error calling process_downloads_now: {proc_err}")
-            try:
-                from core.task_manager.task_queue import task_queue
-
-                # Enqueue/trigger the asynchronous background download runner
-                task_queue.trigger_job_by_name("download_queue_runner")
-            except Exception as e:
-                logger.warning(f"Queued downloads but background trigger failed: {e}")
-
-        return {
-            "accepted": True,
-            "track_count": len(missing),
-            "queued": success_count,
-            "failed": failed_count,
-            "message": f"Queued {success_count} tracks to download_manager (failed: {failed_count})",
-        }
-
+        service = PlaylistSyncService()
+        return service.queue_missing_downloads(missing=missing, target_quality=target_quality)
     except Exception as e:
         logger.error(f"Failed to queue downloads: {e}", exc_info=True)
         return {"accepted": False, "error": "Failed to queue downloads"}

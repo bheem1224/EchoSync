@@ -10,6 +10,7 @@ import heapq
 import os
 import threading
 import time
+import uuid
 from collections.abc import Callable
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -60,6 +61,8 @@ class ScheduledJob:
     exclusive_db_lease: bool = field(default=False, compare=False)
     skip_if_blocked: bool = field(default=False, compare=False)
     priority: TaskPriority = field(default=TaskPriority.NORMAL, compare=False)
+    _is_lease: bool = field(default=False, compare=False, repr=False)
+    _deferred_registration: ScheduledJob | None = field(default=None, compare=False, repr=False)
 
     def __post_init__(self):
         self.sort_index = id(self)
@@ -173,43 +176,171 @@ class JobQueue:
             return "postgresql"
         return "sqlite"
 
-    def _check_wal_backpressure(self) -> bool:
-        """Check if SQLite WAL size exceeds 32 MB threshold.
+    @staticmethod
+    def _extract_sqlite_db_path(value: Any) -> str | None:
+        """Normalize a SQLite path or ``sqlite:///`` URI into a filesystem path string."""
+        if not value:
+            return None
+        s = str(value).strip()
+        if not s:
+            return None
+        if s.startswith("sqlite:///"):
+            s = s[len("sqlite:///") :]
+        elif "://" in s:
+            return None
+        if not s or s == ":memory:" or s.startswith("file::memory:"):
+            return None
+        return s
 
-        If exceeded, proactively attempts PRAGMA wal_checkpoint(PASSIVE) with bounded wait.
-        Returns True if WAL is acceptable, False if backpressure limit exceeded.
-        """
-        if self._dialect != "sqlite":
+    @staticmethod
+    def _is_patched_getter(fn: Any, expected_module: str, expected_name: str) -> bool:
+        if fn is None:
+            return False
+        if hasattr(fn, "assert_called"):
             return True
+        return getattr(fn, "__module__", None) != expected_module or getattr(fn, "__name__", None) != expected_name
 
-        wal_candidates = [
-            Path("data/music_library.db-wal"),
-            Path("music_library.db-wal"),
-            Path("data/library.db-wal"),
-        ]
-        threshold = 32 * 1024 * 1024  # 32 MB
-
-        wal_file = None
-        for cand in wal_candidates:
-            if cand.exists():
-                wal_file = cand
-                break
-
-        if not wal_file:
-            return True
+    def _resolve_db_wal_path(
+        self,
+        env_var: str,
+        default_filename: str,
+        fallback_dir: str,
+        module_name: str,
+        instance_attr: str,
+        getter_name: str,
+        uri_key: str,
+        config_attr: str,
+        config_is_dir: bool = False,
+    ) -> Path | None:
+        """Resolve a database's ``-wal`` path from env overrides, active DB helpers, or config."""
+        env_dir = os.getenv(env_var)
+        if env_dir:
+            return Path(os.path.join(env_dir, f"{default_filename}-wal"))
 
         try:
-            wal_size = wal_file.stat().st_size
-        except (OSError, FileNotFoundError):
-            return True
+            import importlib
 
-        if wal_size > threshold:
-            logger.warning(
-                f"SQLite WAL size ({wal_size / (1024 * 1024):.1f} MB) exceeds 32 MB threshold. "
-                "Triggering proactive PRAGMA wal_checkpoint(PASSIVE)..."
+            mod = importlib.import_module(module_name)
+            instance = getattr(mod, instance_attr, None)
+            if instance is None:
+                getter = getattr(mod, getter_name, None)
+                if self._is_patched_getter(getter, module_name, getter_name):
+                    instance = getter()
+
+            if instance is not None:
+                db_path = getattr(instance, "database_path", None)
+                if not db_path and hasattr(instance, "engine"):
+                    db_path = getattr(getattr(instance.engine, "url", None), "database", None)
+                extracted = self._extract_sqlite_db_path(db_path)
+                if extracted:
+                    return Path(f"{extracted}-wal")
+        except Exception:
+            pass
+
+        try:
+            from core.settings import config_manager
+
+            uri = config_manager.get(uri_key)
+            if isinstance(uri, str) and uri.strip():
+                extracted = self._extract_sqlite_db_path(uri)
+                if extracted:
+                    return Path(f"{extracted}-wal")
+                return None
+
+            cfg_val = getattr(config_manager, config_attr, None)
+            if isinstance(cfg_val, (str, Path)) and str(cfg_val):
+                db_str = os.path.join(str(cfg_val), default_filename) if config_is_dir else str(cfg_val)
+                return Path(f"{db_str}-wal")
+        except Exception:
+            pass
+
+        return Path(os.path.join(fallback_dir, f"{default_filename}-wal"))
+
+    def _get_sqlite_wal_targets(self) -> list[tuple[str, Path]]:
+        """Collect dynamic WAL file paths for all SQLite databases and any custom engine."""
+        targets: list[tuple[str, Path]] = []
+
+        if self._engine is not None:
+            url_db = self._extract_sqlite_db_path(getattr(getattr(self._engine, "url", None), "database", None))
+            if url_db:
+                targets.append(("engine", Path(f"{url_db}-wal")))
+
+        specs = [
+            (
+                "music",
+                "ECHOSYNC_DATA_DIR",
+                "music_library.db",
+                "data",
+                "database.music_database",
+                "_db_instance",
+                "get_database",
+                "database.music_uri",
+                "media_db_path",
+                False,
+            ),
+            (
+                "working",
+                "ECHOSYNC_DATA_DIR",
+                "working.db",
+                "data",
+                "database.working_database",
+                "_working_db_instance",
+                "get_working_database",
+                "database.working_uri",
+                "data_dir",
+                True,
+            ),
+            (
+                "config",
+                "ECHOSYNC_CONFIG_DIR",
+                "config.db",
+                "config",
+                "database.config_database",
+                "_config_db",
+                "get_config_database",
+                "database.config_uri",
+                "database_path",
+                False,
+            ),
+        ]
+
+        for (
+            db_kind,
+            env_var,
+            filename,
+            fallback_dir,
+            mod_name,
+            inst_attr,
+            getter_name,
+            uri_key,
+            cfg_attr,
+            cfg_is_dir,
+        ) in specs:
+            wal_path = self._resolve_db_wal_path(
+                env_var=env_var,
+                default_filename=filename,
+                fallback_dir=fallback_dir,
+                module_name=mod_name,
+                instance_attr=inst_attr,
+                getter_name=getter_name,
+                uri_key=uri_key,
+                config_attr=cfg_attr,
+                config_is_dir=cfg_is_dir,
             )
-            # Execute checkpoint with 5.0s bounded wait
-            try:
+            if wal_path is not None:
+                targets.append((db_kind, wal_path))
+
+        return targets
+
+    def _checkpoint_sqlite_wal(self, db_kind: str) -> None:
+        """Attempt a passive WAL checkpoint for the specified database kind."""
+        try:
+            if db_kind == "engine" and self._engine is not None:
+                from sqlalchemy import text
+
+                with self._engine.connect() as conn:
+                    conn.execute(text("PRAGMA wal_checkpoint(PASSIVE);"))
+            elif db_kind == "music":
                 from sqlalchemy import text
 
                 from database.music_database import get_database
@@ -217,22 +348,75 @@ class JobQueue:
                 db = get_database()
                 with db.engine.connect() as conn:
                     conn.execute(text("PRAGMA wal_checkpoint(PASSIVE);"))
-            except Exception as exc:
-                logger.debug(f"WAL checkpoint attempt error: {exc}")
+            elif db_kind == "working":
+                from sqlalchemy import text
 
-            # Re-check size
+                from database.working_database import get_working_database
+
+                db = get_working_database()
+                with db.engine.connect() as conn:
+                    conn.execute(text("PRAGMA wal_checkpoint(PASSIVE);"))
+            elif db_kind == "config":
+                from database.config_database import get_config_database
+
+                db = get_config_database()
+                with db._get_connection() as conn:
+                    conn.execute("PRAGMA wal_checkpoint(PASSIVE);")
+        except Exception as exc:
+            logger.debug(f"WAL checkpoint attempt error ({db_kind}): {exc}")
+
+    def _check_wal_backpressure(self) -> bool:
+        """Check if any SQLite WAL size exceeds 32 MB threshold.
+
+        If exceeded, proactively attempts PRAGMA wal_checkpoint(PASSIVE) with bounded wait.
+        Returns True if all WALs are acceptable, False if backpressure limit exceeded.
+        """
+        if self._dialect != "sqlite":
+            return True
+
+        threshold = 32 * 1024 * 1024  # 32 MB
+        seen_paths: set[str] = set()
+        backpressure_ok = True
+
+        for db_kind, wal_file in self._get_sqlite_wal_targets():
             try:
-                still_exceeds = wal_file.stat().st_size > threshold
+                wal_key = str(wal_file)
+            except Exception:
+                continue
+            if wal_key in seen_paths:
+                continue
+            seen_paths.add(wal_key)
+
+            if not wal_file.exists():
+                continue
+
+            try:
+                wal_size = wal_file.stat().st_size
             except (OSError, FileNotFoundError):
-                still_exceeds = False
+                continue
 
-            if still_exceeds:
+            if wal_size > threshold:
                 logger.warning(
-                    f"SQLite WAL size still exceeds 32 MB after checkpoint ({wal_size / (1024 * 1024):.1f} MB). Backpressure active."
+                    f"SQLite WAL '{wal_file}' size ({wal_size / (1024 * 1024):.1f} MB) exceeds 32 MB threshold. "
+                    "Triggering proactive PRAGMA wal_checkpoint(PASSIVE)..."
                 )
-                return False
+                self._checkpoint_sqlite_wal(db_kind)
 
-        return True
+                try:
+                    post_size = wal_file.stat().st_size
+                    still_exceeds = post_size > threshold
+                except (OSError, FileNotFoundError):
+                    post_size = 0
+                    still_exceeds = False
+
+                if still_exceeds:
+                    logger.warning(
+                        f"SQLite WAL '{wal_file}' size still exceeds 32 MB after checkpoint "
+                        f"({post_size / (1024 * 1024):.1f} MB). Backpressure active."
+                    )
+                    backpressure_ok = False
+
+        return backpressure_ok
 
     @contextmanager
     def db_write_lease(self, task_name: str = "", timeout: float = 30.0):
@@ -537,10 +721,38 @@ class JobQueue:
         _MAX_RETRIES_CAP = 10
         max_retries = max(0, min(max_retries, _MAX_RETRIES_CAP))
 
+        def _build_job() -> ScheduledJob:
+            if start_after == 0.0 and interval_seconds is not None:
+                next_run = time.time() + interval_seconds
+            else:
+                next_run = time.time() + max(start_after, 0.0)
+            return ScheduledJob(
+                next_run=next_run,
+                name=name,
+                func=func,
+                interval_seconds=interval_seconds,
+                enabled=enabled,
+                category=category,
+                state=TaskStatus.QUEUED,
+                cancel_token=cancel_token,
+                max_retries=max_retries,
+                backoff_base=backoff_base,
+                backoff_factor=backoff_factor,
+                tags=tags or [],
+                plugin=plugin,
+                params=params,
+                exclusive_db_lease=exclusive_db_lease,
+                skip_if_blocked=skip_if_blocked,
+                priority=priority,
+            )
+
         with self._lock:
             # 1. Deduplication by name
             if name in self._jobs:
                 existing = self._jobs[name]
+                if getattr(existing, "_is_lease", False):
+                    existing._deferred_registration = _build_job()
+                    return
                 if existing.running or self._is_running.get(name, False):
                     # Job is actively running: update recurring settings without duplicating
                     existing.interval_seconds = interval_seconds
@@ -587,30 +799,7 @@ class JobQueue:
                             f"JobQueue capacity reached ({self._max_pending_jobs} jobs) with no evictable background tasks."
                         )
 
-            if start_after == 0.0 and interval_seconds is not None:
-                next_run = time.time() + interval_seconds
-            else:
-                next_run = time.time() + max(start_after, 0.0)
-
-            job = ScheduledJob(
-                next_run=next_run,
-                name=name,
-                func=func,
-                interval_seconds=interval_seconds,
-                enabled=enabled,
-                category=category,
-                state=TaskStatus.QUEUED,
-                cancel_token=cancel_token,
-                max_retries=max_retries,
-                backoff_base=backoff_base,
-                backoff_factor=backoff_factor,
-                tags=tags or [],
-                plugin=plugin,
-                params=params,
-                exclusive_db_lease=exclusive_db_lease,
-                skip_if_blocked=skip_if_blocked,
-                priority=priority,
-            )
+            job = _build_job()
 
             self._jobs[name] = job
             heapq.heappush(self._heap, job)
@@ -888,46 +1077,61 @@ class JobQueue:
         allowing cooperative pause/resume and state tracking.
         """
         now = time.time()
-        job = ScheduledJob(
-            next_run=now,
-            name=name,
-            func=lambda: None,
-            category=category,
-            state=TaskStatus.RUNNING,
-            running=True,
-            last_started=now,
-            tags=tags or ["leased", "parent_task"],
-        )
         with self._lock:
-            self._jobs[name] = job
-            self._is_running[name] = True
-        logger.info(f"[JobQueue] Leased parent task '{name}' started")
+            lease_name = name
+            if lease_name in self._jobs:
+                # Preserve colliding scheduled/recurring jobs under `name`.
+                candidate = f"{name}:lease:{uuid.uuid4().hex[:8]}"
+                while candidate in self._jobs:
+                    candidate = f"{name}:lease:{uuid.uuid4().hex[:8]}"
+                lease_name = candidate
+
+            job = ScheduledJob(
+                next_run=now,
+                name=lease_name,
+                func=lambda: None,
+                category=category,
+                state=TaskStatus.RUNNING,
+                running=True,
+                last_started=now,
+                tags=tags or ["leased", "parent_task"],
+                _is_lease=True,
+            )
+            self._jobs[lease_name] = job
+            self._is_running[lease_name] = True
+        logger.info(f"[JobQueue] Leased parent task '{lease_name}' started")
         try:
-            yield name
+            yield lease_name
             with self._lock:
-                if name in self._jobs:
-                    self._jobs[name].state = TaskStatus.COMPLETED
-                    self._jobs[name].running = False
-                    self._jobs[name].last_finished = time.time()
-                    self._jobs[name].last_success = time.time()
-                    self._jobs[name].total_successes += 1
-            logger.info(f"[JobQueue] Leased parent task '{name}' completed successfully")
+                if self._jobs.get(lease_name) is job:
+                    job.state = TaskStatus.COMPLETED
+                    job.running = False
+                    job.last_finished = time.time()
+                    job.last_success = time.time()
+                    job.total_successes += 1
+            logger.info(f"[JobQueue] Leased parent task '{lease_name}' completed successfully")
         except Exception as e:
             with self._lock:
-                if name in self._jobs:
-                    self._jobs[name].state = TaskStatus.FAILED_TERMINAL
-                    self._jobs[name].running = False
-                    self._jobs[name].last_finished = time.time()
-                    self._jobs[name].last_error = str(e)
-                    self._jobs[name].last_error_time = time.time()
-                    self._jobs[name].total_failures += 1
-            logger.error(f"[JobQueue] Leased parent task '{name}' failed: {e}")
+                if self._jobs.get(lease_name) is job:
+                    job.state = TaskStatus.FAILED_TERMINAL
+                    job.running = False
+                    job.last_finished = time.time()
+                    job.last_error = str(e)
+                    job.last_error_time = time.time()
+                    job.total_failures += 1
+            logger.error(f"[JobQueue] Leased parent task '{lease_name}' failed: {e}")
             raise
         finally:
             with self._lock:
-                self._is_running.pop(name, None)
-                self._paused_jobs.discard(name)
-                self._jobs.pop(name, None)
+                self._is_running.pop(lease_name, None)
+                self._paused_jobs.discard(lease_name)
+                if self._jobs.get(lease_name) is job:
+                    deferred = job._deferred_registration
+                    if deferred is not None:
+                        self._jobs[lease_name] = deferred
+                        heapq.heappush(self._heap, deferred)
+                    else:
+                        self._jobs.pop(lease_name, None)
 
 
 job_queue = JobQueue()

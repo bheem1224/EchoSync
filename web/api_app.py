@@ -20,8 +20,8 @@ from core.tiered_logger import get_logger
 logger = get_logger("api_app")
 
 # Core routers that have been migrated to FastAPI
-from web.routes.accounts import router as accounts_bp
-from web.routes.auth import router as auth_bp
+from web.routes.accounts import router as accounts_bp, users_auth_router as users_auth_bp
+from web.routes.auth import legacy_router as auth_legacy_bp, router as auth_bp
 from web.routes.dashboard import dashboard_bp, dashboards_bp
 from web.routes.downloads import core_router as core_downloads_bp
 
@@ -37,13 +37,13 @@ from web.routes.media import router as media_bp
 from web.routes.media_server import router as media_server_bp
 
 # Batch 3A routers
-from web.routes.metadata import router as metadata_bp
 from web.routes.metadata_review import (
+    metadata_router as metadata_bp,
     review_tasks_router as review_tasks_bp,
     router as metadata_review_bp,
+    v1_metadata_router as v1_metadata_bp,
 )
 from web.routes.playlists import api_v1_router as playlists_v1_bp
-from web.routes.playlists import double_v1_router as playlists_double_v1_bp
 from web.routes.playlists import legacy_router as playlists_legacy_bp
 from web.routes.playlists import router as playlists_bp
 from web.routes.plugins import legacy_router as legacy_plugins_bp
@@ -114,8 +114,19 @@ async def lifespan(app: FastAPI):
         logger.warning(f"Could not initialize on-demand verbose logging: {log_err}")
 
     # Initialize Plugins
+    testing = getattr(app.state, "testing", False) or getattr(app, "testing", False)
+    _pre_lifespan_registry_snapshot = None
     try:
         from core.nexus_framework.plugin_loader import PluginLoader, PluginRegistry
+
+        if testing:
+            _pre_lifespan_registry_snapshot = (
+                dict(PluginRegistry._plugins),
+                dict(PluginRegistry._plugin_sources),
+                set(PluginRegistry._disabled_plugins),
+                dict(PluginRegistry._quality_options),
+                dict(PluginRegistry._mounted_subapps),
+            )
 
         app_root = Path(__file__).parent.parent
         loader = PluginLoader(app_root, main_app=app)
@@ -148,7 +159,7 @@ async def lifespan(app: FastAPI):
     # In ASGI, lifespan runs once per worker. If we have multiple workers, they all run it.
     # Uvicorn without workers (reload=False) means 1 worker.
     if not testing and not _backend_started:
-        from core.backend_services import start_services
+        from core.task_manager.backend_services import start_services
         from core.task_manager.models import OwnerType, ProcessCategory, ProcessOwner
         from core.task_manager.supervisor import supervisor
         from core.task_manager.system_jobs import register_all_system_jobs
@@ -229,6 +240,24 @@ async def lifespan(app: FastAPI):
     except Exception as log_err:
         logger.warning(f"Error disabling verbose file logging on shutdown: {log_err}")
 
+    if testing and _pre_lifespan_registry_snapshot is not None:
+        try:
+            from core.nexus_framework.plugin_loader import PluginRegistry
+
+            prev_plugins, prev_sources, prev_disabled, prev_quality, prev_mounted = _pre_lifespan_registry_snapshot
+            PluginRegistry._plugins.clear()
+            PluginRegistry._plugins.update(prev_plugins)
+            PluginRegistry._plugin_sources.clear()
+            PluginRegistry._plugin_sources.update(prev_sources)
+            PluginRegistry._disabled_plugins.clear()
+            PluginRegistry._disabled_plugins.update(prev_disabled)
+            PluginRegistry._quality_options.clear()
+            PluginRegistry._quality_options.update(prev_quality)
+            PluginRegistry._mounted_subapps.clear()
+            PluginRegistry._mounted_subapps.update(prev_mounted)
+        except Exception as cleanup_err:
+            logger.warning(f"Error restoring PluginRegistry after test lifespan: {cleanup_err}")
+
 
 def create_app(testing: bool = False) -> FastAPI:
     app = FastAPI(
@@ -292,7 +321,9 @@ def create_app(testing: bool = False) -> FastAPI:
 
     # Mount migrated routers
     app.include_router(accounts_bp)
+    app.include_router(users_auth_bp)
     app.include_router(auth_bp)
+    app.include_router(auth_legacy_bp)
     app.include_router(core_plugins_bp)
     app.include_router(legacy_plugins_bp)
     app.include_router(system_bp)
@@ -309,6 +340,7 @@ def create_app(testing: bool = False) -> FastAPI:
     app.include_router(search_v1_bp)
     app.include_router(jobs_bp)
     app.include_router(metadata_bp)
+    app.include_router(v1_metadata_bp)
     app.include_router(metadata_review_bp)
     app.include_router(review_tasks_bp)
     app.include_router(local_metadata_bp)
@@ -328,7 +360,6 @@ def create_app(testing: bool = False) -> FastAPI:
     app.include_router(playlists_bp)
     app.include_router(playlists_v1_bp)
     app.include_router(playlists_legacy_bp)
-    app.include_router(playlists_double_v1_bp)
 
     # SPA Support
     custom_ui_path = config_manager.get("custom_ui_path")

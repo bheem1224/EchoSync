@@ -1,29 +1,16 @@
 # plugins/EchoSync/local_server/database_cleanup.py
 
-from collections import defaultdict
 from pathlib import Path
 
-from sqlalchemy import delete, update
-
-from core.job_queue import register_job
-from core.plugins.sdk import compute_plugin_crc32
-from core.task_manager.task_queue import db_write_lease
+from core.nexus_framework.sdk import compute_plugin_crc32, sdk
+from core.settings import config_manager
+from core.task_manager.task_queue import db_write_lease, register_job
 from core.tiered_logger import get_logger
-from database.music_database import (
-    Album,
-    Artist,
-    AudioFingerprint,
-    ExternalIdentifier,
-    LocalMedia,
-    Track,
-    get_database,
-)
 
 PLUGIN_NAMESPACE = "EchoSync.local_server"
 PLUGIN_CRC32 = compute_plugin_crc32(PLUGIN_NAMESPACE)
 logger = get_logger("jobs.database_cleanup", plugin_id=PLUGIN_CRC32)
 
-# Import or redefine BaseJob depending on your core structure
 try:
     from core.jobs.reorganize_library_job import BaseJob
 except ImportError:
@@ -34,12 +21,7 @@ except ImportError:
 
 
 def _canonicalize_path(file_path: str) -> str:
-    """Produce a deterministic canonical form for a file path.
-
-    This prevents duplicate LocalMedia rows caused by different representations
-    of the same physical file (e.g. symlinks, casing, trailing slashes, or
-    different mount prefixes).
-    """
+    """Produce a deterministic canonical form for a file path."""
     if not file_path or file_path.startswith("virtual://"):
         return file_path
     try:
@@ -48,7 +30,9 @@ def _canonicalize_path(file_path: str) -> str:
         return file_path
 
 
-from core.settings import config_manager
+def get_database():
+    """Governed SDK accessor for canonical library database."""
+    return sdk.library.get_database()
 
 
 class DatabaseCleanupJob(BaseJob):
@@ -60,151 +44,32 @@ class DatabaseCleanupJob(BaseJob):
     def execute(self, *args, **kwargs):
         logger.info("Starting manual Database Cleanup Job...")
         db = get_database()
+        skip_rogue = hasattr(Path, "PYTEST_CURRENT_TEST_ENV")
+        sanctioned_prefixes = tuple(config_manager.get("SANCTIONED_PATH_PREFIXES", ["/data/library/"]))
 
-        with db_write_lease(task_name=f"plugin_{PLUGIN_CRC32}"), db.session_scope() as session:
-            # ==========================================
-            # Phase 0: Physical Layer Sweep (LocalMedia)
-            # ==========================================
-            self.update_progress(0, 100, "Phase 0: Evicting missing physical media...")
-
-            missing_media = []
-            all_media = session.query(LocalMedia).all()
-            for media in all_media:
-                exists = Path(media.file_path).exists() if media.file_path else False
-                print(f"DEBUG PHASE 0: path={media.file_path} exists={exists}")
-                if not media.file_path or not exists:
-                    missing_media.append(media)
-                    session.delete(media)
-            session.flush()
-            logger.info(
-                f"[Phase 0] Evicted {len(missing_media)} LocalMedia records pointing to missing physical files."
+        with db_write_lease(task_name=f"plugin_{PLUGIN_CRC32}"):
+            stats = sdk.library.cleanup_library_database(
+                db=db,
+                progress_callback=self.update_progress,
+                canonicalize_path=_canonicalize_path,
+                sanctioned_prefixes=sanctioned_prefixes,
+                skip_rogue_sweep=skip_rogue,
             )
 
-            # ==========================================
-            # Phase 0.5: Rogue Path Filter (Phase 1.5)
-            # ==========================================
-            self.update_progress(10, 100, "Phase 0.5: Evicting rogue mount entries...")
-
-            if not hasattr(Path, "PYTEST_CURRENT_TEST_ENV"):
-                sanctioned_prefixes = tuple(config_manager.get("SANCTIONED_PATH_PREFIXES", ["/data/library/"]))
-                from sqlalchemy import or_
-
-                # Build an OR condition for all sanctioned prefixes
-                prefix_conditions = [LocalMedia.file_path.startswith(prefix) for prefix in sanctioned_prefixes]
-
-                rogue_media = (
-                    session.query(LocalMedia)
-                    .filter(
-                        ~LocalMedia.file_path.startswith("virtual://"),
-                        ~or_(*prefix_conditions),
-                    )
-                    .all()
-                )
-
-                for media in rogue_media:
-                    logger.info(f"Purging rogue mount entry: {media.file_path}")
-                    session.delete(media)
-                session.flush()
-                logger.info(
-                    f"[Phase 0.5] Evicted {len(rogue_media)} rogue mount LocalMedia records outside {sanctioned_prefixes}."
-                )
-            else:
-                logger.info("Test environment detected, skipping rogue path sweep.")
-
-            # ==========================================
-            # Phase 1: Orphaned Track Purge
-            # ==========================================
-            self.update_progress(20, 100, "Phase 1: Evicting tracks without media...")
-
-            empty_tracks = session.query(Track).filter(~Track.media_files.any()).all()
-            deleted_track_count = len(empty_tracks)
-            for track in empty_tracks:
-                session.delete(track)
-
-            session.commit()
-            logger.info(f"[Phase 1] Purged {deleted_track_count} Tracks missing physical media.")
-
-            # ==========================================
-            # Phase 2: Same-File Row Flattening (Optional cleanup)
-            # ==========================================
-            self.update_progress(40, 100, "Phase 2: Flattening redundant file paths...")
-
-            # Group LocalMedia by canonical path and delete redundancies to prevent multi-track collisions
-            path_groups = defaultdict(list)
-            all_media = (
-                session.query(LocalMedia).filter(LocalMedia.file_path.isnot(None), LocalMedia.file_path != "").all()
-            )
-            for media in all_media:
-                canon = _canonicalize_path(media.file_path)
-                path_groups[canon].append(media)
-
-            flattened_duplicate_count = 0
-            for file_path, group in path_groups.items():
-                if len(group) > 1:
-                    group.sort(key=lambda m: m.id)
-                    keeper = group[0]
-                    redundant_media = group[1:]
-                    for duplicate in redundant_media:
-                        # Move identifiers and fingerprints to keeper via raw SQL
-                        session.execute(
-                            update(ExternalIdentifier)
-                            .where(ExternalIdentifier.media_id == duplicate.media_id)
-                            .values(media_id=keeper.media_id)
-                        )
-                        session.execute(
-                            update(AudioFingerprint)
-                            .where(AudioFingerprint.media_id == duplicate.media_id)
-                            .values(media_id=keeper.media_id)
-                        )
-                        # Delete the duplicate media row
-                        session.execute(delete(LocalMedia).where(LocalMedia.id == duplicate.id))
-                        flattened_duplicate_count += 1
-
-            # Flush updates to DB and expire loaded collections to force reload
-            session.flush()
-            session.expire_all()
-            session.commit()
-            logger.info(
-                f"[Phase 2] Deduplicated {flattened_duplicate_count} redundant media rows pointing to the same canonical path."
-            )
-
-            # ==========================================
-            # Phase 3: Structural Orphan Purge
-            # ==========================================
-            self.update_progress(66, 100, "Phase 3: Purging structural orphans...")
-
-            # Delete albums without tracks
-            empty_albums = session.query(Album).filter(~Album.tracks.any()).all()
-            empty_album_count = len(empty_albums)
-            for album in empty_albums:
-                session.delete(album)
-
-            # Delete artists without tracks AND without albums
-            empty_artists = session.query(Artist).filter(~Artist.tracks.any(), ~Artist.albums.any()).all()
-            empty_artist_count = len(empty_artists)
-            for artist in empty_artists:
-                session.delete(artist)
-
-            session.commit()
-            logger.info(
-                f"[Phase 3] Purged {empty_album_count} orphaned Albums and {empty_artist_count} orphaned Artists."
-            )
-
-        self.update_progress(100, 100, "Database cleanup complete.")
-        logger.info("Manual Database Cleanup Job finished successfully.")
+        logger.info(
+            "Manual Database Cleanup Job finished successfully: %s",
+            stats,
+        )
 
 
 def register_database_cleanup_job(enabled: bool = True):
-    """
-    Registration snippet for the global JobRegistry (job_queue).
-    Set with a massive interval and delay so it never runs automatically.
-    """
+    """Registration snippet for the global JobRegistry (job_queue)."""
     job_instance = DatabaseCleanupJob()
 
     register_job(
         name="database_cleanup",
         func=job_instance.execute,
-        interval_seconds=315360000,  # 10 years
-        start_after=315360000,  # 10 years
+        interval_seconds=315360000,
+        start_after=315360000,
         enabled=enabled,
     )

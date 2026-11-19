@@ -12,6 +12,8 @@ Handles:
 from __future__ import annotations
 
 import asyncio
+import threading
+from collections.abc import Callable, Coroutine
 from pathlib import Path
 from typing import Any
 
@@ -26,8 +28,10 @@ PLUGIN_NAMESPACE = "EchoSync.slskd"
 PLUGIN_CRC32 = compute_plugin_crc32(PLUGIN_NAMESPACE)
 logger = get_logger("slskd_plugin", plugin_id=PLUGIN_CRC32)
 
-_RECONNECT_LOCK = asyncio.Lock()
+_RECONNECT_LOCK = threading.Lock()
+_RECONNECT_STATE_LOCK = threading.Lock()
 _RECONNECT_ATTEMPTS = 0
+_EVENT_SUBSCRIPTIONS: list[tuple[str, Callable[[dict[str, Any]], None]]] = []
 
 
 def _get_slskd_provider():
@@ -72,50 +76,8 @@ def _resolve_task_id_from_payload(payload: dict[str, Any]) -> int | None:
     if not filename and not username:
         return None
 
-    norm_filename = filename.replace("\\", "/").split("/")[-1].strip().lower()
-
     try:
-        from core.database.models.working import DownloadQueue, DownloadStatus
-        from database.working_database import get_working_database
-
-        work_db = get_working_database()
-        with work_db.session_scope() as session:
-            # Look for active/downloading or verifying items
-            active_items = (
-                session.query(DownloadQueue)
-                .filter(
-                    DownloadQueue.status.in_(
-                        [
-                            DownloadStatus.DOWNLOADING.value,
-                            DownloadStatus.VERIFYING.value,
-                            DownloadStatus.QUEUED.value,
-                            DownloadStatus.SEARCHING.value,
-                            "downloading",
-                            "verifying",
-                            "queued",
-                            "searching",
-                        ]
-                    )
-                )
-                .order_by(DownloadQueue.id.desc())
-                .all()
-            )
-
-            for item in active_items:
-                # Check candidate_id or provider_id (format: username|filename)
-                cand_id = item.active_candidate_id or item.plugin_id or ""
-                if cand_id:
-                    c_lower = cand_id.lower()
-                    if norm_filename and norm_filename in c_lower:
-                        return item.id
-                    if username and username.lower() in c_lower:
-                        return item.id
-
-                # Check echo_sync_track filename
-                track = item.echo_sync_track or {}
-                t_file = track.get("file_path") or track.get("title") or ""
-                if norm_filename and norm_filename in str(t_file).lower():
-                    return item.id
+        return sdk.working.resolve_active_download_task_id(filename=filename, username=username)
     except Exception as e:
         logger.warning("Error resolving task_id from payload: %s", e)
 
@@ -182,26 +144,9 @@ async def on_webhook_received(slug: str, payload: dict[str, Any]) -> None:
         # Transition DownloadQueue state to VERIFYING
         if task_id:
             try:
-                task_id = int(task_id) if str(task_id).isdigit() else task_id
-                import datetime
-
-                from core.database.models.working import DownloadQueue, DownloadStatus
-                from database.working_database import get_working_database
-
-                work_db = get_working_database()
                 with db_write_lease(task_name=f"plugin_{PLUGIN_CRC32}"):
-                    with work_db.session_scope() as session:
-                        task = session.get(DownloadQueue, task_id)
-                        if task:
-                            task.status = DownloadStatus.VERIFYING.value
-                            if file_path and task.echo_sync_track is not None:
-                                track_dict = dict(task.echo_sync_track)
-                                track_dict["downloaded_file_path"] = file_path
-                                task.echo_sync_track = track_dict
-                            task.updated_at = datetime.datetime.now(datetime.UTC)
-                            session.commit()
-                            session.refresh(task)
-                            logger.info("DownloadQueue %s transitioned to VERIFYING", task_id)
+                    if sdk.working.transition_download_to_verifying(task_id, file_path=file_path):
+                        logger.info("DownloadQueue %s transitioned to VERIFYING", task_id)
             except Exception as e:
                 logger.error("Failed to transition DownloadQueue %s to VERIFYING: %s", task_id, e)
 
@@ -242,7 +187,8 @@ async def on_webhook_received(slug: str, payload: dict[str, Any]) -> None:
         "connected",
     ]:
         global _RECONNECT_ATTEMPTS
-        _RECONNECT_ATTEMPTS = 0
+        with _RECONNECT_STATE_LOCK:
+            _RECONNECT_ATTEMPTS = 0
         logger.info("SoulseekClientConnected matched: client connected.")
         event_bus.publish(
             {
@@ -277,18 +223,9 @@ async def _on_download_completed_or_failed(event_data: dict[str, Any]) -> None:
 
     if not username and task_id:
         try:
-            from core.database.models.working import DownloadQueue
-            from database.working_database import get_working_database
-
-            work_db = get_working_database()
-            with work_db.session_scope() as session:
-                item = session.get(DownloadQueue, int(task_id))
-                if item:
-                    cand = item.active_candidate_id or item.plugin_id or ""
-                    if "|" in cand:
-                        parts = cand.split("|", 1)
-                        username = parts[0]
-                        transfer_id = parts[1]
+            username, resolved_transfer_id = sdk.working.get_download_candidate_identity(task_id)
+            if resolved_transfer_id:
+                transfer_id = resolved_transfer_id
         except Exception as e:
             logger.debug("Could not lookup transfer identity for task %s: %s", task_id, e)
 
@@ -308,14 +245,21 @@ async def _on_service_degraded(event_data: dict[str, Any]) -> None:
         return
 
     global _RECONNECT_ATTEMPTS
-    async with _RECONNECT_LOCK:
-        delay = min(60, (2**_RECONNECT_ATTEMPTS))
-        _RECONNECT_ATTEMPTS = min(_RECONNECT_ATTEMPTS + 1, 6)
+    if not _RECONNECT_LOCK.acquire(blocking=False):
+        logger.debug("Reconnect already in progress for %s; skipping duplicate trigger.", PLUGIN_NAMESPACE)
+        return
+
+    try:
+        with _RECONNECT_STATE_LOCK:
+            delay = min(60, (2**_RECONNECT_ATTEMPTS))
+            _RECONNECT_ATTEMPTS = min(_RECONNECT_ATTEMPTS + 1, 6)
+            attempt_num = _RECONNECT_ATTEMPTS
+
         logger.warning(
             "Service degraded detected for %s. Attempting reconnect after %ds (attempt %d)...",
             PLUGIN_NAMESPACE,
             delay,
-            _RECONNECT_ATTEMPTS,
+            attempt_num,
         )
         await asyncio.sleep(delay)
 
@@ -323,9 +267,70 @@ async def _on_service_degraded(event_data: dict[str, Any]) -> None:
         success = await provider.reconnect_server()
         if success:
             logger.info("Successfully requested slskd server reconnect.")
-            _RECONNECT_ATTEMPTS = 0
+            with _RECONNECT_STATE_LOCK:
+                _RECONNECT_ATTEMPTS = 0
         else:
             logger.error("Failed to request slskd server reconnect.")
+    finally:
+        _RECONNECT_LOCK.release()
+
+
+def _dispatch_async_event_handler(
+    coro_fn: Callable[[dict[str, Any]], Coroutine[Any, Any, None]],
+    event_data: dict[str, Any],
+    task_name: str,
+) -> None:
+    """Synchronous thread-safe bridge executing an async slskd event coroutine cleanly."""
+    payload = dict(event_data or {})
+
+    def _log_task_exception(task: asyncio.Task[Any]) -> None:
+        try:
+            exc = task.exception()
+            if exc is not None:
+                logger.error("Unhandled error in %s: %s", task_name, exc, exc_info=exc)
+        except asyncio.CancelledError:
+            pass
+
+    try:
+        loop = asyncio.get_running_loop()
+        task = loop.create_task(coro_fn(payload))
+        task.add_done_callback(_log_task_exception)
+    except RuntimeError:
+
+        def _run_in_thread() -> None:
+            try:
+                asyncio.run(coro_fn(payload))
+            except Exception as exc:
+                logger.error("Error in supervised handler %s: %s", task_name, exc, exc_info=True)
+
+        supervisor.spawn_supervised_thread(
+            target=_run_in_thread,
+            name=task_name,
+            owner_id=str(PLUGIN_CRC32),
+            owner_type=OwnerType.PLUGIN,
+            bound_to_general_pool=True,
+        )
+
+
+def _handle_download_completed(data: dict[str, Any]) -> None:
+    """Synchronous EventBus subscriber for DOWNLOAD_COMPLETED."""
+    _dispatch_async_event_handler(
+        _on_download_completed_or_failed, data, "slskd_download_completed"
+    )
+
+
+def _handle_download_failed(data: dict[str, Any]) -> None:
+    """Synchronous EventBus subscriber for DOWNLOAD_FAILED."""
+    _dispatch_async_event_handler(
+        _on_download_completed_or_failed, data, "slskd_download_failed"
+    )
+
+
+def _handle_service_degraded(data: dict[str, Any]) -> None:
+    """Synchronous EventBus subscriber for SERVICE_DEGRADED."""
+    _dispatch_async_event_handler(
+        _on_service_degraded, data, "slskd_service_degraded"
+    )
 
 
 def initialize_plugin() -> None:
@@ -349,49 +354,20 @@ def initialize_plugin() -> None:
         # 2. Register functional webhook handler for this plugin's CRC32 ID
         register_webhook_handler(crc32_id, on_webhook_received)
 
-        # 3. Bind EventBus subscribers
-        def _handle_completed(data: dict):
-            try:
-                loop = asyncio.get_running_loop()
-                loop.create_task(_on_download_completed_or_failed(data))
-            except RuntimeError:
-                supervisor.spawn_supervised_thread(
-                    target=lambda: asyncio.run(_on_download_completed_or_failed(data)),
-                    name="slskd_download_completed",
-                    owner_id=str(PLUGIN_CRC32),
-                    owner_type=OwnerType.PLUGIN,
-                    bound_to_general_pool=True,
-                )
+        # 3. Bind synchronous thread-safe EventBus subscribers idempotently
+        for old_event, old_handler in list(_EVENT_SUBSCRIPTIONS):
+            event_bus.unsubscribe(old_event, old_handler)
+        _EVENT_SUBSCRIPTIONS.clear()
 
-        def _handle_failed(data: dict):
-            try:
-                loop = asyncio.get_running_loop()
-                loop.create_task(_on_download_completed_or_failed(data))
-            except RuntimeError:
-                supervisor.spawn_supervised_thread(
-                    target=lambda: asyncio.run(_on_download_completed_or_failed(data)),
-                    name="slskd_download_failed",
-                    owner_id=str(PLUGIN_CRC32),
-                    owner_type=OwnerType.PLUGIN,
-                    bound_to_general_pool=True,
-                )
+        subscriptions = [
+            ("DOWNLOAD_COMPLETED", _handle_download_completed),
+            ("DOWNLOAD_FAILED", _handle_download_failed),
+            ("SERVICE_DEGRADED", _handle_service_degraded),
+        ]
+        for event_name, handler in subscriptions:
+            event_bus.subscribe(event_name, handler)
+            _EVENT_SUBSCRIPTIONS.append((event_name, handler))
 
-        def _handle_degraded(data: dict):
-            try:
-                loop = asyncio.get_running_loop()
-                loop.create_task(_on_service_degraded(data))
-            except RuntimeError:
-                supervisor.spawn_supervised_thread(
-                    target=lambda: asyncio.run(_on_service_degraded(data)),
-                    name="slskd_service_degraded",
-                    owner_id=str(PLUGIN_CRC32),
-                    owner_type=OwnerType.PLUGIN,
-                    bound_to_general_pool=True,
-                )
-
-        event_bus.subscribe("DOWNLOAD_COMPLETED", _handle_completed)
-        event_bus.subscribe("DOWNLOAD_FAILED", _handle_failed)
-        event_bus.subscribe("SERVICE_DEGRADED", _handle_degraded)
         logger.info("EchoSync.slskd event listeners initialized successfully.")
     except Exception as e:
         logger.error("Failed to initialize EchoSync.slskd plugin module: %s", e, exc_info=True)

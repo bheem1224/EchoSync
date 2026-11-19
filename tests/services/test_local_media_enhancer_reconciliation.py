@@ -301,10 +301,11 @@ def test_reconcile_collapsing_orphan_prune_cascade_safety(tmp_path):
         album_id = album.id
         artist_id = artist.id
 
-        dto = EchosyncTrack()
-        dto.title = "Track A"
-        dto.artist_name = "Shared Artist"
-        dto.musicbrainz_id = "mbid-target-123"
+        dto = EchosyncTrack(
+            title="Track A",
+            artist_name="Shared Artist",
+            musicbrainz_id="mbid-target-123",
+        )
 
         reconciled = reconcile_media_assignment(session, media, dto)
         assert reconciled is not None

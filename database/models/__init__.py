@@ -23,7 +23,7 @@ def current_epoch():
 
 class Service(Base):
     __tablename__ = "services"
-    id = Column(Integer, primary_key=True, autoincrement=True)
+    id = Column(Integer, primary_key=True)
     name = Column(String, nullable=False)
     absolute_install_path = Column(String, nullable=True)
     loaded_modules = Column(String, nullable=True)
@@ -61,6 +61,7 @@ class Service(Base):
     verified_source = Column(Boolean, default=False, server_default="0")
     privileged_mode = Column(Boolean, default=False, server_default="0")
     permissions = Column(String, default="[]", server_default="[]")
+    granted_scopes = Column(Text, default="[]", server_default="[]")
 
     configs = relationship("ServiceConfig", back_populates="service", cascade="all, delete-orphan")
     accounts = relationship("Account", back_populates="service", cascade="all, delete-orphan")
@@ -74,7 +75,7 @@ class Service(Base):
 
 class ServiceConfig(Base):
     __tablename__ = "service_config"
-    id = Column(Integer, primary_key=True, autoincrement=True)
+    id = Column(Integer, primary_key=True)
     service_id = Column(Integer, ForeignKey("services.id", ondelete="CASCADE"), nullable=False)
     config_key = Column(String, nullable=False)
     config_value = Column(Text)
@@ -87,7 +88,7 @@ class ServiceConfig(Base):
 
 class Account(Base):
     __tablename__ = "accounts"
-    id = Column(Integer, primary_key=True, autoincrement=True)
+    id = Column(Integer, primary_key=True)
     service_id = Column(Integer, ForeignKey("services.id", ondelete="CASCADE"), nullable=False)
     account_name = Column(String)
     display_name = Column(String)
@@ -110,7 +111,7 @@ class Account(Base):
 
 class AccountToken(Base):
     __tablename__ = "account_tokens"
-    id = Column(Integer, primary_key=True, autoincrement=True)
+    id = Column(Integer, primary_key=True)
     account_id = Column(
         Integer,
         ForeignKey("accounts.id", ondelete="CASCADE"),
@@ -146,7 +147,7 @@ class QualityProfile(Base):
 
 class QualityProfileStep(Base):
     __tablename__ = "quality_profile_steps"
-    id = Column(Integer, primary_key=True, autoincrement=True)
+    id = Column(Integer, primary_key=True)
     profile_id = Column(String, ForeignKey("quality_profiles.id", ondelete="CASCADE"), nullable=False)
     priority = Column(Integer, nullable=False)
     rules = Column(JSON)
@@ -169,7 +170,7 @@ class PKCESession(Base):
 
 class AccountMapping(Base):
     __tablename__ = "account_mappings"
-    id = Column(Integer, primary_key=True, autoincrement=True)
+    id = Column(Integer, primary_key=True)
 
     # 1. Generic Pointers: Both columns point directly to the accounts table
     source_account_id = Column(Integer, ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False)
@@ -193,7 +194,7 @@ class AccountMapping(Base):
 
 class PluginSnapshot(Base):
     __tablename__ = "plugin_snapshots"
-    id = Column(Integer, primary_key=True, autoincrement=True)
+    id = Column(Integer, primary_key=True)
     plugin_id = Column(Integer, nullable=False, unique=True)
     snapshot_data = Column(Text, nullable=False)
     expires_at = Column(Integer, nullable=False)
@@ -208,7 +209,7 @@ class UIComponent(Base):
     """
 
     __tablename__ = "ui_components"
-    id = Column(Integer, primary_key=True, autoincrement=True)
+    id = Column(Integer, primary_key=True)
     plugin_id = Column(Integer, nullable=True, index=True)  # CRC32 integer; nullable for core components
     tag_name = Column(String, unique=True, nullable=False)  # e.g. es-spotify-card
     component_type = Column(String, nullable=False, index=True)  # card, page, settings, theme
@@ -226,18 +227,85 @@ class UIComponent(Base):
     )
 
 
+class User(Base):
+    __tablename__ = "users"
+    id = Column(String, primary_key=True)
+    username = Column(String, unique=True, nullable=False)
+    password_hash = Column(String, nullable=True)
+    auth_provider = Column(String, nullable=False, default="local", server_default="local")
+    oidc_subject = Column(String, unique=True, nullable=True)
+    is_active = Column(Integer, nullable=False, default=1, server_default="1")
+    created_at = Column(Integer, default=current_epoch)
+
+    role_assignments = relationship("UserRoleAssignment", back_populates="user", cascade="all, delete-orphan")
+    managed_accounts = relationship("UserManagedAccount", back_populates="user", cascade="all, delete-orphan")
+    api_keys = relationship("ApiKey", back_populates="user", cascade="all, delete-orphan")
+
+
+class Role(Base):
+    __tablename__ = "roles"
+    id = Column(Integer, primary_key=True)
+    name = Column(String, unique=True, nullable=False)
+    is_system = Column(Integer, nullable=False, default=0, server_default="0")
+    permissions_json = Column(Text, nullable=False)
+
+    user_assignments = relationship("UserRoleAssignment", back_populates="role", cascade="all, delete-orphan")
+
+
+class UserRoleAssignment(Base):
+    __tablename__ = "user_role_assignments"
+    __table_args__ = ({"sqlite_with_rowid": False},)
+
+    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    role_id = Column(Integer, ForeignKey("roles.id", ondelete="CASCADE"), primary_key=True)
+
+    user = relationship("User", back_populates="role_assignments")
+    role = relationship("Role", back_populates="user_assignments")
+
+
+class UserManagedAccount(Base):
+    __tablename__ = "user_managed_accounts"
+    __table_args__ = ({"sqlite_with_rowid": False},)
+
+    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    server_plugin_id = Column(Integer, primary_key=True)
+    managed_account_id = Column(String, primary_key=True)
+
+    user = relationship("User", back_populates="managed_accounts")
+
+
+class ApiKey(Base):
+    __tablename__ = "api_keys"
+    id = Column(String, primary_key=True)
+    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    name = Column(String, nullable=False)
+    key_prefix = Column(String, nullable=False, index=True)
+    key_hash = Column(String, nullable=False)
+    scopes_json = Column(Text, nullable=False)
+    expires_at = Column(Integer, nullable=True)
+    revoked_at = Column(Integer, nullable=True)
+    created_at = Column(Integer, default=current_epoch)
+
+    user = relationship("User", back_populates="api_keys")
+
+
 __all__ = [
     "Account",
     "AccountMapping",
     "AccountToken",
+    "ApiKey",
     "Base",
     "PKCESession",
     "PluginSnapshot",
     "QualityProfile",
     "QualityProfileStep",
+    "Role",
     "Service",
     "ServiceConfig",
     "SystemSetting",
     "UIComponent",
+    "User",
+    "UserManagedAccount",
+    "UserRoleAssignment",
     "current_epoch",
 ]

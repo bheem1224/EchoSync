@@ -130,12 +130,12 @@ def test_feature_extraction_and_junction_query_without_you():
     source = EchosyncTrack(
         raw_title="Without You (feat. Usher)",
         artist_name="David Guetta",
-        duration=208000,
+        duration_ms=208000,
     )
     candidate = EchosyncTrack(
         raw_title="Without You",
         artist_name="David Guetta & Usher",
-        duration=208000,
+        duration_ms=208000,
     )
 
     result = engine.calculate_match(source, candidate, context="sync")
@@ -157,14 +157,14 @@ def test_album_parenthetical_qualifier_amnesty_artemas():
         raw_title="i like the way you kiss me",
         artist_name="Artemas",
         album_title="i like the way you kiss me",
-        duration=142000,
+        duration_ms=142000,
     )
     candidate = EchosyncTrack(
         raw_title="i like the way you kiss me",
         artist_name="Artemas",
         album_title="i like the way you kiss me (burnt)",
         edition="burnt",
-        duration=142000,
+        duration_ms=142000,
     )
 
     result = engine.calculate_match(source, candidate, context="sync")

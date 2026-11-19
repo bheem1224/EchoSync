@@ -91,7 +91,7 @@ def test_track_repo_bulk_upsert_persists_and_updates_telemetry(memory_db):
         raw_title="Time",
         artist_name="Pink Floyd",
         album_title="The Dark Side of the Moon",
-        duration=425000,
+        duration_ms=425000,
         media=[
             EchosyncMedia(
                 file_path="/music/Pink Floyd/Time.flac",
@@ -117,7 +117,7 @@ def test_track_repo_bulk_upsert_persists_and_updates_telemetry(memory_db):
         raw_title="Time",
         artist_name="Pink Floyd",
         album_title="The Dark Side of the Moon",
-        duration=425000,
+        duration_ms=425000,
         media=[
             EchosyncMedia(
                 file_path="/music/Pink Floyd/Time.flac",

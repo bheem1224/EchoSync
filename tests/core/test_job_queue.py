@@ -1,6 +1,6 @@
 import time
 
-from core.job_queue import JobQueue, ScheduledJob
+from core.task_manager.task_queue import JobQueue, ScheduledJob
 
 
 def test_scheduled_job_clears_running_lock_and_disposes_working_db(monkeypatch):

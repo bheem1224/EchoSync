@@ -147,13 +147,13 @@ def score_acoustid_candidate(
         raw_title=query_title or c_title,
         artist_name=query_artist,
         album_title=baseline_album or c_album,
-        duration=file_duration_ms if file_duration_ms > 0 else None,
+        duration_ms=file_duration_ms if file_duration_ms > 0 else None,
     )
     cand_track = EchosyncTrack(
         raw_title=c_title,
         artist_name=c_artist,
         album_title=c_album,
-        duration=cand_dur_ms,
+        duration_ms=cand_dur_ms,
         version=candidate.get("disambiguation") or candidate.get("version"),
     )
     match_res = matcher.calculate_match(query_track, cand_track)

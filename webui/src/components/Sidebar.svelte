@@ -58,6 +58,7 @@
     { label: '── Plugin Store',   href: null, divider: true },
     { label: 'Plugin Store',      href: '/settings/plugin-store' },
     { label: '── Other',          href: null, divider: true },
+    { label: 'Users & Access',    href: '/settings/users' },
     { label: 'Metadata',          href: '/settings/metadata' },
     { label: 'Search',            href: '/settings/search' },
     { label: 'Misc',              href: '/settings/misc' },

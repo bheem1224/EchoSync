@@ -12,7 +12,7 @@ from core.backup_manager import backup_manager
 from core.settings import config_manager
 from core.tiered_logger import get_logger
 from database.config_database import ConfigDatabase
-from web.auth import require_auth
+from web.auth import require_auth, require_scope
 from web.dependencies import get_config_db
 
 logger = get_logger("system_route")
@@ -490,8 +490,8 @@ async def map_system_accounts(request: Request, config_db: ConfigDatabase = Depe
         return {"error": "Failed to map system accounts"}
 
 
-@router.post("/settings", dependencies=[Depends(require_auth)])
-@router.patch("/settings", dependencies=[Depends(require_auth)])
+@router.post("/settings", dependencies=[Depends(require_scope("service:system:edit"))])
+@router.patch("/settings", dependencies=[Depends(require_scope("service:system:edit"))])
 async def update_settings(request: Request):
     """Update application settings (partial update).
 
@@ -921,7 +921,7 @@ async def trigger_metadata_enhancement(request: Request):
         return {"error": "Manual metadata enhancement failed"}
 
 
-@router.post("/reset/state", dependencies=[Depends(require_auth)])
+@router.post("/reset/state", dependencies=[Depends(require_scope("service:system:edit"))])
 def reset_state():
     """Drops all tables in working.db and calls create_all() to give a clean operational slate."""
     try:
@@ -937,7 +937,7 @@ def reset_state():
         return {"success": False, "error": "Failed to reset system state"}
 
 
-@router.post("/reset/library", dependencies=[Depends(require_auth)])
+@router.post("/reset/library", dependencies=[Depends(require_scope("service:system:edit"))])
 def reset_library():
     """Drops and recreates all tables in music_library.db (Wipes the media database, forces a re-crawl)."""
     try:
@@ -956,7 +956,7 @@ def reset_library():
         return {"success": False, "error": "Failed to reset library"}
 
 
-@router.post("/reset/factory", dependencies=[Depends(require_auth)])
+@router.post("/reset/factory", dependencies=[Depends(require_scope("service:system:edit"))])
 def reset_factory():
     """Deletes working.db, music_library.db, and config.db, triggering OOBE on next boot."""
     try:

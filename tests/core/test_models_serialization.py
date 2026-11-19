@@ -8,7 +8,7 @@ def test_core_model_to_dict_includes_extended_metadata_fields():
         raw_title="Serialize Me",
         artist_name="Artist",
         album_title="Album",
-        duration=123456,
+        duration_ms=123456,
         isrc="USRC10000001",
         version="Live",
         is_compilation=True,
@@ -62,7 +62,7 @@ def test_core_model_from_dict_hydrates_extended_metadata_fields():
 
     track = EchosyncTrack.from_dict(payload)
 
-    assert track.duration == 222000
+    assert track.duration_ms == 222000
     assert track.isrc == "USRC10000002"
     assert track.version == "Remaster"
     assert track.is_compilation is False

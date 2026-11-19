@@ -1,6 +1,8 @@
 import logging
 from typing import Any
 
+from sqlalchemy import text
+
 from core.settings import config_manager
 from core.task_manager.health import health_check_registry
 
@@ -37,21 +39,6 @@ def get_system_health() -> dict[str, Any]:
             session.execute(text("SELECT 1"))
         core_healthy = True
         core_message = "Core services operational"
-    except NameError:
-        # Fallback if 'text' is not imported, though SQLAlchemy usually requires it for raw strings
-        try:
-            from sqlalchemy import text
-
-            from database import get_database
-
-            db = get_database()
-            with db.session_scope() as session:
-                session.execute(text("SELECT 1"))
-            core_healthy = True
-            core_message = "Core services operational"
-        except Exception as e:
-            logger.error(f"Core health check failed (fallback): {e}", exc_info=True)
-            core_message = "Core database connection failed"
     except Exception as e:
         logger.error(f"Core health check failed: {e}", exc_info=True)
         core_message = "Core database connection failed"
@@ -172,7 +159,7 @@ def get_system_health() -> dict[str, Any]:
             import math
 
             units = ("B", "KB", "MB", "GB", "TB")
-            i = int(math.floor(math.log(storage_bytes, 1024)))
+            i = min(int(math.floor(math.log(storage_bytes, 1024))), len(units) - 1)
             p = math.pow(1024, i)
             s = round(storage_bytes / p, 1)
             storage_str = f"{s} {units[i]}"

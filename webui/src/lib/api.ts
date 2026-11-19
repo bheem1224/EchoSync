@@ -1,13 +1,51 @@
-import apiClient from '../api/client';
+import apiClient, {
+  API_BASE_URL,
+  getCookie,
+  getAuthStatus,
+  setupAdmin,
+  login,
+  logout,
+  getCurrentUser,
+  getOidcLoginUrl,
+  listUsers,
+  createUser,
+  listRoles,
+  assignUserRoles,
+  listManagedAccounts,
+  assignManagedAccount,
+  removeManagedAccount,
+  listApiKeys,
+  createApiKey,
+  deleteApiKey,
+  type AuthUser,
+  type AuthStatus,
+  type ManagedAccountBinding,
+  type ApiKeyRecord,
+} from '../api/client';
 
-export function getCookie(name: string): string | null {
-    if (typeof document === 'undefined') return null;
-    const value = `; ${document.cookie}`;
-    const parts = value.split(`; ${name}=`);
-    if (parts.length === 2) {
-        return parts.pop()?.split(';').shift() || null;
-    }
-    return null;
-}
+export {
+  API_BASE_URL,
+  getCookie,
+  getAuthStatus,
+  setupAdmin,
+  login,
+  logout,
+  getCurrentUser,
+  getOidcLoginUrl,
+  listUsers,
+  createUser,
+  listRoles,
+  assignUserRoles,
+  listManagedAccounts,
+  assignManagedAccount,
+  removeManagedAccount,
+  listApiKeys,
+  createApiKey,
+  deleteApiKey,
+  type AuthUser,
+  type AuthStatus,
+  type ManagedAccountBinding,
+  type ApiKeyRecord,
+};
 
 export default apiClient;

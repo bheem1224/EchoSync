@@ -16,7 +16,7 @@ from plexapi.library import MusicSection
 from plexapi.server import PlexServer
 
 from core.db.echo_sync_track import EchosyncTrack
-from core.health_check import HealthCheckResult
+from core.task_manager.health import HealthCheckResult
 from core.nexus_framework.plugin_SDK import (
     MediaServerProvider,
     MetadataRichness,
@@ -1447,8 +1447,11 @@ class PlexClient(MediaServerProvider):
                     )
                 )
 
-            track = EchosyncTrack(
+            from core.matching_engine.track_parser import normalize_track_dto
+
+            track = normalize_track_dto(EchosyncTrack(
                 raw_title=title,
+                title=title,
                 artist_name=artist,
                 album_artist=album_artist,
                 album_title=album,
@@ -1456,14 +1459,14 @@ class PlexClient(MediaServerProvider):
                 sort_title=_safe_getattr(plex_track, "titleSort", None),
                 artist_sort_name=_safe_getattr(plex_track, "grandparentSortTitle", None),
                 album_sort_title=_safe_getattr(plex_track, "parentSortTitle", None),
-                duration=duration_ms,
+                duration_ms=duration_ms,
                 track_number=track_number,
                 disc_number=disc_number,
                 release_year=year,
                 added_at=added_at,
                 media=media,
                 identifiers=identifiers,
-            )
+            ))
 
             if track:
                 logger.debug(
@@ -1550,7 +1553,7 @@ class PlexClient(MediaServerProvider):
             # Fallback to service config / secrets / legacy storage
             token = self.config.get("token") or (hasattr(self, "secrets") and self.secrets.get("token"))
             if not token:
-                from core.file_handling.storage import get_storage_service
+                from services.storage_service import get_storage_service
 
                 try:
                     storage = get_storage_service()
@@ -1570,7 +1573,7 @@ class PlexClient(MediaServerProvider):
             base_url = _safe_getattr(self, "kvs", None) and (self.kvs.get("base_url") or self.kvs.get("server_url"))
 
         if not base_url:
-            from core.file_handling.storage import get_storage_service
+            from services.storage_service import get_storage_service
 
             try:
                 storage = get_storage_service()

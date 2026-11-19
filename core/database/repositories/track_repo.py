@@ -21,6 +21,7 @@ from core.database.utils import calculate_safe_batch_size
 from core.db.echo_sync_track import EchosyncMedia, EchosyncTrack
 from core.matching_engine.text_utils import split_artists
 from core.metadata.schemas import EntityAliasProposal
+from core.security.rbac import Principal, enforce_contract_scope
 from core.task_manager.task_queue import db_write_lease
 from database import _canonicalize_path
 from database.music_database import (
@@ -196,6 +197,25 @@ class TrackRepository:
 
     # --- Enhancement Query ---
 
+    @staticmethod
+    def _exclude_quarantined_tracks(query):
+        """Filter out tracks quarantined after repeated enhancement misses."""
+        max_reattempts = 5
+        return query.filter(
+            Track.verification_tier != "quarantined",
+            not_(
+                and_(
+                    or_(Track.musicbrainz_id == "NOT_FOUND", Track.musicbrainz_id.is_(None)),
+                    func.coalesce(
+                        Track.enhancement_attempts,
+                        func.json_extract(Track.metadata_status, "$.enhancement_attempts"),
+                        0,
+                    ).cast(Integer)
+                    >= max_reattempts,
+                )
+            ),
+        )
+
     @classmethod
     def get_tracks_for_enhancement(
         cls,
@@ -207,7 +227,9 @@ class TrackRepository:
         missing_plugin: str | None = None,
         exclude_ids: set[int] | list[int] | None = None,
         offset: int = 0,
+        principal: Principal | None = None,
     ) -> list[Track]:
+        enforce_contract_scope(principal, "contract:tracks:read")
         from sqlalchemy import case
 
         query = (
@@ -293,19 +315,7 @@ class TrackRepository:
                     )
                 )
 
-            MAX_REATTEMPTS = 5
-            query = query.filter(
-                not_(
-                    and_(
-                        Track.musicbrainz_id == "NOT_FOUND",
-                        func.coalesce(
-                            func.json_extract(Track.metadata_status, "$.enhancement_attempts"),
-                            0,
-                        ).cast(Integer)
-                        >= MAX_REATTEMPTS,
-                    )
-                )
-            )
+            query = cls._exclude_quarantined_tracks(query)
 
         if exclude_ids:
             ex_list = list(exclude_ids)
@@ -332,7 +342,9 @@ class TrackRepository:
         offset: int = 0,
         limit: int | None = None,
         force_mode: bool = False,
+        principal: Principal | None = None,
     ) -> list[MediaTrackTuple]:
+        enforce_contract_scope(principal, "contract:tracks:read")
         from sqlalchemy import case, Integer, and_, or_, func, not_
         from sqlalchemy.orm import joinedload, selectinload
         from database.music_database import LocalMedia, Track, Artist, Album
@@ -422,19 +434,7 @@ class TrackRepository:
                     )
                 )
 
-            MAX_REATTEMPTS = 5
-            query = query.filter(
-                not_(
-                    and_(
-                        Track.musicbrainz_id == "NOT_FOUND",
-                        func.coalesce(
-                            func.json_extract(Track.metadata_status, "$.enhancement_attempts"),
-                            0,
-                        ).cast(Integer)
-                        >= MAX_REATTEMPTS,
-                    )
-                )
-            )
+            query = cls._exclude_quarantined_tracks(query)
 
         if exclude_ids:
             ex_list = list(exclude_ids)
@@ -503,17 +503,17 @@ class TrackRepository:
     # --- Core Upsert ---
 
     @classmethod
-    def resolve_artists_and_albums(cls, session: Session, tracks: list[EchosyncTrack]) -> None:
-        """
-        Batch resolve and upsert missing Artists and Albums, attaching their IDs
-        back onto the EchosyncTrack instances.
-        """
+    def _resolve_artists_and_albums_internal(
+        cls, session: Session, tracks: list[EchosyncTrack]
+    ) -> tuple[list[EchosyncTrack], list[list[tuple[int, str, int]]]]:
+        """Batch resolve Artists and Albums, returning updated frozen tracks and artist associations."""
         if not tracks:
-            return
+            return [], []
+
+        from dataclasses import replace
 
         default_artist_id = cls.get_or_create_default_artist(session)
 
-        # ── Step 0a: Batch Resolve & Upsert Atomic Artists & Remixer Extraction ───
         import re
 
         _REMIX_MATCH_RE = re.compile(r"^(.*?)\s+(?:remix|mix|edit|bootleg|flip)$", re.IGNORECASE)
@@ -538,25 +538,27 @@ class TrackRepository:
         }
 
         all_atomic_artist_names = set()
-        for t in tracks:
+        raw_artist_tokens_list: list[list[str]] = []
+        raw_remixer_tokens_list: list[list[str]] = []
+        updated_tracks: list[EchosyncTrack] = list(tracks)
+
+        for idx, t in enumerate(updated_tracks):
             art = getattr(t, "artist_name", None) or getattr(t, "artist", None) or getattr(t, "album_artist", None)
             if art and art.strip() and art.strip().lower() != "unknown artist":
                 tokens = split_artists(art.strip())
                 if not tokens:
                     tokens = [art.strip()]
-                t._raw_artist_tokens = tokens
+                raw_artist_tokens_list.append(tokens)
                 for tok in tokens:
                     all_atomic_artist_names.add(tok)
             else:
-                t._raw_artist_tokens = ["Unknown Artist"]
+                raw_artist_tokens_list.append(["Unknown Artist"])
 
-            # Also ensure album_artist (TPE2) is collected if present
             alb_art = getattr(t, "album_artist", None)
             if alb_art and alb_art.strip() and alb_art.strip().lower() != "unknown artist":
                 all_atomic_artist_names.add(alb_art.strip())
 
-            # Ingestion-Time Remixer Graph Extraction
-            remixer_tokens = []
+            remixer_tokens: list[str] = []
             ed_str = getattr(t, "edition", None) or ""
             raw_title_str = getattr(t, "raw_title", None) or getattr(t, "title", None) or ""
 
@@ -584,12 +586,14 @@ class TrackRepository:
                 remixer_tokens = split_artists(remix_prefix)
                 for r_tok in remixer_tokens:
                     all_atomic_artist_names.add(r_tok)
-                # Sanitize edition to "Remix"
-                t.edition = "Remix"
+                if isinstance(t, EchosyncTrack):
+                    updated_tracks[idx] = replace(t, edition="Remix", version_type="remix")
+                else:
+                    t.edition = "Remix"
 
-            t._raw_remixer_tokens = remixer_tokens
+            raw_remixer_tokens_list.append(remixer_tokens)
 
-        artist_map = {}  # lower name -> artist_id
+        artist_map = {}
         if all_atomic_artist_names:
             existing_artists = session.query(Artist).filter(Artist.name.in_(list(all_atomic_artist_names))).all()
             for a in existing_artists:
@@ -600,8 +604,7 @@ class TrackRepository:
             missing_artists = [name for name in all_atomic_artist_names if name.lower() not in artist_map]
             if missing_artists:
                 for name in missing_artists:
-                    new_artist = Artist(name=name)
-                    session.add(new_artist)
+                    session.add(Artist(name=name))
                 session.flush()
                 new_artists_db = session.query(Artist).filter(Artist.name.in_(missing_artists)).all()
                 for a in new_artists_db:
@@ -609,53 +612,51 @@ class TrackRepository:
                     if a.normalized_name:
                         artist_map[a.normalized_name.lower()] = a.id
 
-        # Update track objects with resolved primary artist_id and associations
-        for t in tracks:
-            tokens = getattr(t, "_raw_artist_tokens", ["Unknown Artist"])
-            primary_name = tokens[0] if tokens else "Unknown Artist"
-            t.artist_id = artist_map.get(primary_name.lower(), default_artist_id)
+        resolved_associations: list[list[tuple[int, str, int]]] = []
+        resolved_album_artist_ids: list[int] = []
+        album_pairs = set()
 
-            associations = []
+        for idx, t in enumerate(updated_tracks):
+            tokens = raw_artist_tokens_list[idx]
+            primary_name = tokens[0] if tokens else "Unknown Artist"
+            primary_artist_id = artist_map.get(primary_name.lower(), default_artist_id)
+
+            associations: list[tuple[int, str, int]] = []
             for i, tok in enumerate(tokens):
                 a_id = artist_map.get(tok.lower(), default_artist_id)
                 role = "primary" if i == 0 else "featured"
                 associations.append((a_id, role, i))
 
-            remixer_tokens = getattr(t, "_raw_remixer_tokens", [])
+            remixer_tokens = raw_remixer_tokens_list[idx]
             for r_idx, r_tok in enumerate(remixer_tokens):
                 a_id = artist_map.get(r_tok.lower(), default_artist_id)
                 associations.append((a_id, "remixer", len(tokens) + r_idx))
 
-            t._resolved_artist_associations = associations
+            resolved_associations.append(associations)
 
-        # ── Step 0b: Batch Resolve & Upsert Albums ────────────────────────────
-        # Decouple TPE1 (performer) from TPE2 (album artist / compilation).
-        # For compilation albums (e.g. "Various Artists"), Album.artist_id attaches to
-        # the compilation artist entity while Track.artist_id remains the track performer.
-        album_pairs = set()  # (album_title, album_artist_id)
-        for t in tracks:
             alb_art = getattr(t, "album_artist", None)
             if alb_art and alb_art.strip():
-                album_artist_id = artist_map.get(alb_art.strip().lower(), t.artist_id)
+                album_artist_id = artist_map.get(alb_art.strip().lower(), primary_artist_id)
             else:
-                album_artist_id = getattr(t, "artist_id", None) or default_artist_id
+                album_artist_id = primary_artist_id
+            resolved_album_artist_ids.append(album_artist_id)
 
-            t._resolved_album_artist_id = album_artist_id
             alb = getattr(t, "album_title", None) or getattr(t, "album", None)
             if alb and alb.strip():
-                alb_clean = alb.strip()
-                album_pairs.add((alb_clean, album_artist_id))
+                album_pairs.add((alb.strip(), album_artist_id))
 
-        album_map = {}  # (album_title.lower(), album_artist_id) -> album_id
+            if isinstance(t, EchosyncTrack):
+                updated_tracks[idx] = replace(t, artist_id=primary_artist_id)
+            else:
+                t.artist_id = primary_artist_id
+
+        album_map = {}
         if album_pairs:
             all_album_titles = list({pair[0] for pair in album_pairs})
             all_artist_ids = list({pair[1] for pair in album_pairs})
             existing_albums = (
                 session.query(Album)
-                .filter(
-                    Album.title.in_(all_album_titles),
-                    Album.artist_id.in_(all_artist_ids),
-                )
+                .filter(Album.title.in_(all_album_titles), Album.artist_id.in_(all_artist_ids))
                 .all()
             )
             for alb in existing_albums:
@@ -664,8 +665,7 @@ class TrackRepository:
             missing_albums = [pair for pair in album_pairs if (pair[0].lower(), pair[1]) not in album_map]
             if missing_albums:
                 for title, a_id in missing_albums:
-                    new_album = Album(title=title, artist_id=a_id)
-                    session.add(new_album)
+                    session.add(Album(title=title, artist_id=a_id))
                 session.flush()
                 new_albums_db = (
                     session.query(Album)
@@ -678,13 +678,32 @@ class TrackRepository:
                 for alb in new_albums_db:
                     album_map[(alb.title.lower(), alb.artist_id)] = alb.id
 
-        # Update track objects with resolved IDs
-        for t in tracks:
+        for idx, t in enumerate(updated_tracks):
             alb_str = (getattr(t, "album_title", None) or getattr(t, "album", "") or "").strip().lower()
-            alb_aid = getattr(t, "_resolved_album_artist_id", t.artist_id)
-            t.album_id = album_map.get((alb_str, alb_aid))
+            alb_aid = resolved_album_artist_ids[idx]
+            resolved_album_id = album_map.get((alb_str, alb_aid))
+            if isinstance(t, EchosyncTrack):
+                updated_tracks[idx] = replace(t, album_id=resolved_album_id)
+            else:
+                t.album_id = resolved_album_id
 
-    def bulk_upsert_tracks(self_or_cls, session_or_tracks: Any, tracks: list[EchosyncTrack] | None = None) -> int:
+        return updated_tracks, resolved_associations
+
+    @classmethod
+    def resolve_artists_and_albums(cls, session: Session, tracks: list[EchosyncTrack]) -> list[EchosyncTrack]:
+        """Batch resolve and upsert missing Artists and Albums, replacing immutable track DTOs in `tracks`."""
+        updated, _ = cls._resolve_artists_and_albums_internal(session, tracks)
+        tracks[:] = updated
+        return tracks
+
+    def bulk_upsert_tracks(
+        self_or_cls,
+        session_or_tracks: Any,
+        tracks: list[EchosyncTrack] | None = None,
+        *,
+        principal: Principal | None = None,
+    ) -> int:
+        enforce_contract_scope(principal, "contract:tracks:edit")
         if isinstance(self_or_cls, Session):
             # Called as TrackRepository.bulk_upsert_tracks(session, tracks)
             tracks_list = session_or_tracks if isinstance(session_or_tracks, list) else (tracks or [])
@@ -710,12 +729,22 @@ class TrackRepository:
         if not tracks:
             return 0
 
+        from dataclasses import replace
+
+        from core.matching_engine.track_parser import normalize_track_dto
+
         now = datetime.now(UTC)
         default_artist_id = cls.get_or_create_default_artist(session)
 
-        # Ensure artists and albums are resolved if not already set
-        if any(getattr(t, "artist_id", None) is None for t in tracks):
-            cls.resolve_artists_and_albums(session, tracks)
+        tracks = [
+            normalize_track_dto(t, generate_sync_id=False)
+            if isinstance(t, EchosyncTrack) and (not t.title or (t.artist_name and not t.primary_artists))
+            else t
+            for t in tracks
+        ]
+
+        # Ensure artists and albums are resolved via non-mutating internal resolver
+        tracks, resolved_associations = cls._resolve_artists_and_albums_internal(session, tracks)
 
         # Batch lookup existing tracks by (normalized_title, artist_id, normalized_edition), sync_id, or file_path
         batch_titles = set()
@@ -831,7 +860,6 @@ class TrackRepository:
                         db_sid in assigned_sync_ids_in_batch and assigned_sync_ids_in_batch[db_sid] != t_identity
                     )
                     if title_matches and artist_matches and not sid_collision:
-                        t.sync_id = db_sid
                         assigned_sync_ids_in_batch[db_sid] = t_identity
                         return db_sid
 
@@ -844,7 +872,6 @@ class TrackRepository:
                         clean_sid in assigned_sync_ids_in_batch and assigned_sync_ids_in_batch[clean_sid] != t_identity
                     )
                     if not sid_collision:
-                        t.sync_id = clean_sid
                         assigned_sync_ids_in_batch[clean_sid] = t_identity
                         return clean_sid
 
@@ -864,7 +891,6 @@ class TrackRepository:
                     if sid.startswith("ss:"):
                         sid = generate_nanoid()
                         existing_track_map[key] = (sid, t_dur or existing_dur)
-                t.sync_id = sid
                 assigned_sync_ids_in_batch[sid] = t_identity
                 return sid
 
@@ -878,7 +904,6 @@ class TrackRepository:
 
             existing_track_map[key] = (sid, t_dur)
             assigned_sync_ids_in_batch[sid] = t_identity
-            t.sync_id = sid
             return sid
 
         # --- Phase 1: Batch UPSERT tracks ---
@@ -886,8 +911,10 @@ class TrackRepository:
         sync_ids_in_batch = []
         seen_sync_ids = set()
 
-        for t in tracks:
+        for idx, t in enumerate(tracks):
             sync_id = _get_or_assign_sync_id(t)
+            if isinstance(t, EchosyncTrack) and t.sync_id != sync_id:
+                tracks[idx] = replace(t, sync_id=sync_id)
             sync_ids_in_batch.append(sync_id)
             if sync_id in seen_sync_ids:
                 continue
@@ -916,6 +943,7 @@ class TrackRepository:
                     "disc_number": getattr(t, "disc_number", None),
                     "musicbrainz_id": mbid,
                     "isrc": getattr(t, "isrc", None),
+                    "version_type": getattr(t, "version_type", None) or "original",
                     "added_at": now,
                 }
             )
@@ -938,6 +966,7 @@ class TrackRepository:
                     "disc_number": func.coalesce(stmt.excluded.disc_number, Track.disc_number),
                     "musicbrainz_id": func.coalesce(stmt.excluded.musicbrainz_id, Track.musicbrainz_id),
                     "isrc": func.coalesce(stmt.excluded.isrc, Track.isrc),
+                    "version_type": func.coalesce(stmt.excluded.version_type, Track.version_type),
                 },
             )
             result = session.execute(upsert_stmt)
@@ -955,13 +984,13 @@ class TrackRepository:
 
         # --- Phase 1b: Batch UPSERT TrackArtist associations ---
         track_artist_values = []
-        for t in tracks:
-            sync_id = t.sync_id
+        for idx, t in enumerate(tracks):
+            sync_id = sync_ids_in_batch[idx]
             track_id = sync_id_to_track_id.get(sync_id)
             if not track_id:
                 continue
 
-            associations = getattr(t, "_resolved_artist_associations", None)
+            associations = resolved_associations[idx] if idx < len(resolved_associations) else None
             if not associations:
                 a_id = getattr(t, "artist_id", None) or default_artist_id
                 associations = [(a_id, "primary", 0)]
@@ -1007,12 +1036,14 @@ class TrackRepository:
                         sample_rate=getattr(t, "sample_rate", None),
                         bit_depth=getattr(t, "bit_depth", None),
                         channels=getattr(t, "channels", None),
+                        duration_ms=getattr(t, "duration_ms", None) or getattr(t, "duration", None),
                         file_size_bytes=getattr(t, "file_size_bytes", None) or getattr(t, "file_size", None),
                         inode=getattr(t, "inode", None),
                         mtime=getattr(t, "mtime", None),
                     )
                 )
 
+            track_duration_ms = getattr(t, "duration_ms", None) or getattr(t, "duration", None)
             for m in media_list:
                 raw_path = getattr(m, "file_path", None)
                 if not raw_path:
@@ -1029,6 +1060,7 @@ class TrackRepository:
                         "sample_rate": getattr(m, "sample_rate", None),
                         "bit_depth": getattr(m, "bit_depth", None),
                         "channels": getattr(m, "channels", None),
+                        "duration_ms": getattr(m, "duration_ms", None) or track_duration_ms,
                         "file_size_bytes": getattr(m, "file_size_bytes", None),
                         "inode": getattr(m, "inode", None),
                         "mtime": getattr(m, "mtime", None),
@@ -1051,6 +1083,7 @@ class TrackRepository:
                         "sample_rate": media_stmt.excluded.sample_rate,
                         "bit_depth": media_stmt.excluded.bit_depth,
                         "channels": media_stmt.excluded.channels,
+                        "duration_ms": func.coalesce(media_stmt.excluded.duration_ms, LocalMedia.duration_ms),
                         "file_size_bytes": media_stmt.excluded.file_size_bytes,
                         "inode": media_stmt.excluded.inode,
                         "mtime": media_stmt.excluded.mtime,

@@ -9,6 +9,7 @@ from typing import Any
 import requests
 from packaging import version
 
+from core.nexus_framework.permissions import compute_permission_delta
 from core.path_security import PathTraversalError, resolve_safe_path, validate_zip_entry
 from core.request_manager import RequestManager
 from core.settings import config_manager
@@ -22,110 +23,6 @@ class PrivilegeEscalationError(Exception):
         self.escalations = escalations
         self.plugin_id = plugin_id
         super().__init__("Privilege escalation detected")
-
-
-def compute_permission_delta(
-    current_manifest: dict, new_manifest: dict, filter_safe_scopes: bool = False
-) -> list[dict]:
-    """
-    Computes newly requested permissions between current_manifest and new_manifest.
-    Returns a list of escalation dictionaries:
-      [
-        {
-          "scope": str,
-          "description": str,
-          ...
-        }
-      ]
-    """
-    escalations: list[dict] = []
-
-    current_manifest = current_manifest or {}
-    new_manifest = new_manifest or {}
-
-    curr_perms = current_manifest.get("permissions") if isinstance(current_manifest.get("permissions"), dict) else {}
-    new_perms = new_manifest.get("permissions") if isinstance(new_manifest.get("permissions"), dict) else {}
-
-    # 1. Privileged Mode
-    curr_priv = bool(
-        current_manifest.get("privileged")
-        or current_manifest.get("privileged_mode")
-        or curr_perms.get("privileged_mode")
-    )
-    new_priv = bool(
-        new_manifest.get("privileged") or new_manifest.get("privileged_mode") or new_perms.get("privileged_mode")
-    )
-    if new_priv and not curr_priv:
-        escalations.append(
-            {
-                "scope": "privileged_mode",
-                "description": "Requests privileged operating system and subprocess access.",
-            }
-        )
-
-    # 2. Network Domains
-    curr_domains_raw = current_manifest.get("network_domains")
-    if curr_domains_raw is None:
-        curr_domains_raw = curr_perms.get("network_domains", [])
-    curr_domains = set(curr_domains_raw if isinstance(curr_domains_raw, list) else [])
-
-    new_domains_raw = new_manifest.get("network_domains")
-    if new_domains_raw is None:
-        new_domains_raw = new_perms.get("network_domains", [])
-    new_domains = set(new_domains_raw if isinstance(new_domains_raw, list) else [])
-
-    added_domains = sorted(list(new_domains - curr_domains))
-    if added_domains:
-        escalations.append(
-            {
-                "scope": "network_domains",
-                "added": added_domains,
-                "description": f"Requests network egress to new domains: {', '.join(added_domains)}",
-            }
-        )
-
-    # 3. Database Scopes (read_library, mutate_aliases, mutate_attributes)
-    curr_db = curr_perms.get("database") if isinstance(curr_perms.get("database"), dict) else {}
-    new_db = new_perms.get("database") if isinstance(new_perms.get("database"), dict) else {}
-
-    db_descriptions = {
-        "read_library": "Requests permission to read canonical library data.",
-        "mutate_aliases": "Requests permission to write entity aliases to library.",
-        "mutate_attributes": "Requests permission to write entity attributes to library.",
-        "mutate_working": "Requests permission to modify working database tables.",
-    }
-
-    all_db_keys = set(list(db_descriptions.keys()) + list(new_db.keys()))
-    for key in sorted(all_db_keys):
-        is_curr = bool(curr_db.get(key) or curr_perms.get(f"database.{key}") or curr_perms.get(key))
-        is_new = bool(new_db.get(key) or new_perms.get(f"database.{key}") or new_perms.get(key))
-        if is_new and not is_curr:
-            desc = db_descriptions.get(key, f"Requests permission to access database scope {key}.")
-            escalations.append({"scope": f"database.{key}", "description": desc})
-
-    # 4. WASM File System Access
-    curr_fs_raw = current_manifest.get("wasm_fs_access") or curr_perms.get("wasm_fs_access", [])
-    curr_fs = set(curr_fs_raw if isinstance(curr_fs_raw, list) else [])
-    new_fs_raw = new_manifest.get("wasm_fs_access") or new_perms.get("wasm_fs_access", [])
-    new_fs = set(new_fs_raw if isinstance(new_fs_raw, list) else [])
-    added_fs = sorted(list(new_fs - curr_fs))
-    if added_fs:
-        escalations.append(
-            {
-                "scope": "wasm_fs_access",
-                "added": added_fs,
-                "description": f"Requests file system access to paths: {', '.join(added_fs)}",
-            }
-        )
-
-    if filter_safe_scopes:
-        escalations = [
-            e
-            for e in escalations
-            if e.get("scope") not in ("database.read_library", "read_library", "metadata.read", "metadata")
-        ]
-
-    return escalations
 
 
 class PluginStore:
@@ -881,15 +778,21 @@ class PluginStore:
                             conn = db._open_connection()
                             try:
                                 c = conn.cursor()
-                                c.execute(
-                                    "SELECT permissions, privileged_mode FROM services WHERE plugin_id=?",
-                                    (target_plugin_id,),
-                                )
+                                try:
+                                    c.execute(
+                                        "SELECT COALESCE(granted_scopes, permissions), privileged_mode FROM services WHERE plugin_id=?",
+                                        (target_plugin_id,),
+                                    )
+                                except Exception:
+                                    c.execute(
+                                        "SELECT permissions, privileged_mode FROM services WHERE plugin_id=?",
+                                        (target_plugin_id,),
+                                    )
                                 row = c.fetchone()
                                 if row:
                                     try:
                                         db_perms = json.loads(row[0]) if row[0] else {}
-                                        if isinstance(db_perms, dict):
+                                        if isinstance(db_perms, (dict, list)):
                                             old_manifest["permissions"] = db_perms
                                     except Exception:
                                         pass
@@ -902,6 +805,16 @@ class PluginStore:
                         escalations = compute_permission_delta(old_manifest, new_manifest, filter_safe_scopes=True)
 
                         if escalations:
+                            try:
+                                from core.task_manager import PluginLifecycleState, plugin_state_manager
+
+                                plugin_state_manager.set_state(
+                                    strict_namespace,
+                                    PluginLifecycleState.AWAITING_CONSENT,
+                                    f"Update requires consent for {len(escalations)} new scope(s).",
+                                )
+                            except Exception:
+                                pass
                             logger.warning(
                                 f"Aborting install/update for {plugin_id}: Privilege escalation detected ({len(escalations)} scopes). Requires user consent."
                             )
@@ -919,13 +832,10 @@ class PluginStore:
                     with open(manifest_file, "r") as f:
                         manifest_data = json.load(f)
 
-                    # This allows official plugins to bypass the AST scanner safely.
-                    if plugin_info.get("_source_repo") == self.default_repo:
-                        manifest_data["verified_source"] = "official"
-                        manifest_data["author"] = "EchoSync"
-
                     # Stamping correct version into manifest prevents infinite update loops
                     # if the zip artifact has a lagging version string
+                    if plugin_info.get("_source_repo") == self.default_repo and not manifest_data.get("author"):
+                        manifest_data["author"] = "EchoSync"
                     if channel == "beta" and plugin_info.get("beta_version"):
                         manifest_data["version"] = plugin_info.get("beta_version")
                     elif channel in ["stable", "release"] and plugin_info.get("version"):
@@ -1140,13 +1050,9 @@ class PluginStore:
 
                     db = get_config_database()
 
-                    import urllib.parse
+                    from core.security import is_privileged_or_verified
 
-                    parsed_dl = urllib.parse.urlparse(download_url)
-                    is_official = parsed_dl.netloc == "raw.githubusercontent.com" and parsed_dl.path.startswith(
-                        "/bheem1224/EchoSync"
-                    )
-                    manifest_verified = 1 if (is_official or new_manifest.get("verified_source") == "official") else 0
+                    manifest_verified = 1 if is_privileged_or_verified(new_manifest) else 0
                     manifest_privileged = (
                         1
                         if (
@@ -1180,6 +1086,12 @@ class PluginStore:
                     )
                     int_plugin_id = computed_plugin_id
 
+                    granted_payload = None
+                    if not is_update or force_consent:
+                        from core.nexus_framework.permissions import build_granted_scopes_payload
+
+                        granted_payload = json.dumps(build_granted_scopes_payload(new_manifest))
+
                     with db_write_lease(task_name="update_plugin_service"):
                         db.register_service(
                             name=manifest_name,
@@ -1192,6 +1104,7 @@ class PluginStore:
                             verified_source=manifest_verified,
                             privileged_mode=manifest_privileged,
                             permissions=manifest_permissions,
+                            granted_scopes=granted_payload,
                         )
 
                     logger.info(
@@ -1538,7 +1451,7 @@ class PluginStore:
 
             # 2. Disable and remove jobs
             try:
-                from core.job_queue import job_queue
+                from core.task_manager.task_queue import job_queue
 
                 job_queue.kill_jobs_by_plugin(db_plugin_id)
                 job_queue.kill_jobs_by_plugin(service_id)
@@ -1550,7 +1463,7 @@ class PluginStore:
 
             # Unregister health checks for the plugin
             try:
-                from core.health_check import health_check_registry
+                from core.task_manager.health import health_check_registry
 
                 # Try unregistering both full clean_id and short name
                 health_check_registry.unregister_check(clean_id)
@@ -1558,7 +1471,7 @@ class PluginStore:
                 health_check_registry.unregister_check(short_name)
 
                 # Unregister the jobs from job_queue
-                from core.job_queue import job_queue
+                from core.task_manager.task_queue import job_queue
 
                 job_queue.unregister_job(f"health_check_{clean_id}")
                 job_queue.unregister_job(f"health_check_{short_name}")

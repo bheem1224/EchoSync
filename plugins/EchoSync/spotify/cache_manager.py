@@ -1,8 +1,7 @@
+from datetime import UTC, datetime
 import json
 import os
-from datetime import UTC, datetime
-
-from sqlalchemy import JSON, Column, DateTime, MetaData, String, Table, create_engine
+import sqlite3
 
 from core.event_bus import event_bus
 from core.matching_engine.text_utils import generate_deterministic_id
@@ -23,29 +22,33 @@ class SpotifyCacheManager:
         if self.sdk:
             plugin_data_dir = self.sdk.get_plugin_data_dir()
             os.makedirs(plugin_data_dir, exist_ok=True)
-            cache_db_path = os.path.join(plugin_data_dir, "cache.db")
-            self.engine = create_engine(f"sqlite:///{cache_db_path}")
+            self.cache_db_path = os.path.join(plugin_data_dir, "cache.db")
         else:
             raise ValueError("SpotifyCacheManager requires SDK instance to acquire isolated cache database")
 
-        self.metadata = MetaData()
         self._ensure_tables()
         self._register_listeners()
+
+    def _connect(self) -> sqlite3.Connection:
+        return sqlite3.connect(self.cache_db_path)
 
     def _ensure_tables(self):
         """Ensure the playlist table exists."""
         try:
-            self.table = Table(
-                "playlists",
-                self.metadata,
-                Column("playlist_id", String, primary_key=True),
-                Column("name", String),
-                Column("snapshot_id", String, nullable=True),
-                Column("sync_ids", JSON),
-                Column("raw_data", JSON),
-                Column("last_synced", DateTime(timezone=True)),
-            )
-            self.metadata.create_all(self.engine)
+            with self._connect() as conn:
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS playlists (
+                        playlist_id TEXT PRIMARY KEY,
+                        name TEXT,
+                        snapshot_id TEXT,
+                        sync_ids TEXT,
+                        raw_data TEXT,
+                        last_synced TEXT
+                    )
+                    """
+                )
+                conn.commit()
         except Exception as e:
             logger.error(f"Failed to create cache table: {e}")
 
@@ -64,18 +67,12 @@ class SpotifyCacheManager:
         if not sync_id:
             return
 
-        # Extract base sync_id by stripping query parameters
         base_sync_id = sync_id.split("?")[0]
 
         try:
-            from sqlalchemy.orm import sessionmaker
-
-            Session = sessionmaker(bind=self.engine)
-            with Session() as session:
-                query = session.query(self.table.c.playlist_id, self.table.c.sync_ids)
-                results = query.all()
-
-                for playlist_id, sync_ids_json in results:
+            with self._connect() as conn:
+                rows = conn.execute("SELECT playlist_id, sync_ids FROM playlists").fetchall()
+                for playlist_id, sync_ids_json in rows:
                     sync_ids = []
                     if sync_ids_json:
                         try:
@@ -93,15 +90,11 @@ class SpotifyCacheManager:
                                 "playlist_id": playlist_id,
                             }
                         )
-                        # Trigger for all matching playlists
         except Exception as e:
             logger.error(f"Error checking cached playlists for {base_sync_id}: {e}")
 
     def save_playlist(self, playlist_data: dict):
-        """
-        Save a fetched Spotify playlist to the local cache.
-        Extracts base sync_ids from the tracks.
-        """
+        """Save a fetched Spotify playlist to the local cache."""
         if not playlist_data:
             return
 
@@ -128,40 +121,31 @@ class SpotifyCacheManager:
             base_sync_id = self._generate_base_sync_id(artist, title)
             sync_ids.append(base_sync_id)
 
-        raw_data = playlist_data
-        last_synced = datetime.now(UTC)
+        last_synced = datetime.now(UTC).isoformat()
 
         try:
-            from sqlalchemy.orm import sessionmaker
-
-            Session = sessionmaker(bind=self.engine)
-            with db_write_lease(task_name=f"plugin_{PLUGIN_CRC32}"), Session() as session:
-                # Basic upsert logic (check then update/insert)
-                existing = session.query(self.table).filter(self.table.c.playlist_id == playlist_id).first()
-                if existing:
-                    stmt = (
-                        self.table.update()
-                        .where(self.table.c.playlist_id == playlist_id)
-                        .values(
-                            name=name,
-                            snapshot_id=snapshot_id,
-                            sync_ids=sync_ids,
-                            raw_data=raw_data,
-                            last_synced=last_synced,
-                        )
-                    )
-                    session.execute(stmt)
-                else:
-                    stmt = self.table.insert().values(
-                        playlist_id=playlist_id,
-                        name=name,
-                        snapshot_id=snapshot_id,
-                        sync_ids=sync_ids,
-                        raw_data=raw_data,
-                        last_synced=last_synced,
-                    )
-                    session.execute(stmt)
-                session.commit()
+            with db_write_lease(task_name=f"plugin_{PLUGIN_CRC32}"), self._connect() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO playlists (playlist_id, name, snapshot_id, sync_ids, raw_data, last_synced)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(playlist_id) DO UPDATE SET
+                        name = excluded.name,
+                        snapshot_id = excluded.snapshot_id,
+                        sync_ids = excluded.sync_ids,
+                        raw_data = excluded.raw_data,
+                        last_synced = excluded.last_synced
+                    """,
+                    (
+                        playlist_id,
+                        name,
+                        snapshot_id,
+                        json.dumps(sync_ids),
+                        json.dumps(playlist_data),
+                        last_synced,
+                    ),
+                )
+                conn.commit()
             logger.info(f"Cached Spotify playlist {playlist_id} ({name}) with {len(sync_ids)} tracks.")
         except Exception as e:
             logger.error(f"Error saving playlist to cache: {e}")
@@ -169,11 +153,8 @@ class SpotifyCacheManager:
     def list_cached_playlists(self) -> list:
         """Return all cached playlists as a list of dicts with 'playlist_id' and 'name'."""
         try:
-            from sqlalchemy.orm import sessionmaker
-
-            Session = sessionmaker(bind=self.engine)
-            with Session() as session:
-                rows = session.query(self.table.c.playlist_id, self.table.c.name).all()
+            with self._connect() as conn:
+                rows = conn.execute("SELECT playlist_id, name FROM playlists").fetchall()
             return [{"playlist_id": row[0], "name": row[1]} for row in rows]
         except Exception as e:
             logger.error(f"Error listing cached playlists: {e}")
@@ -182,34 +163,27 @@ class SpotifyCacheManager:
     def get_snapshot_id(self, playlist_id: str) -> str | None:
         """Return the cached snapshot_id for *playlist_id*, or None if not cached."""
         try:
-            from sqlalchemy.orm import sessionmaker
-
-            Session = sessionmaker(bind=self.engine)
-            with Session() as session:
-                row = session.query(self.table.c.snapshot_id).filter(self.table.c.playlist_id == playlist_id).first()
+            with self._connect() as conn:
+                row = conn.execute(
+                    "SELECT snapshot_id FROM playlists WHERE playlist_id = ?",
+                    (playlist_id,),
+                ).fetchone()
                 return row[0] if row else None
         except Exception as e:
             logger.error(f"Error reading snapshot_id for {playlist_id}: {e}")
             return None
 
     def get_snapshot_ids_bulk(self, playlist_ids: list[str]) -> dict[str, str | None]:
-        """Return a dict mapping playlist_id → cached snapshot_id for all requested IDs.
-
-        Missing entries are returned as ``None`` so callers can distinguish
-        *stale* (snapshot mismatch) from *missing* (never cached).
-        """
+        """Return a dict mapping playlist_id → cached snapshot_id for all requested IDs."""
         if not playlist_ids:
             return {}
         try:
-            from sqlalchemy.orm import sessionmaker
-
-            Session = sessionmaker(bind=self.engine)
-            with Session() as session:
-                rows = (
-                    session.query(self.table.c.playlist_id, self.table.c.snapshot_id)
-                    .filter(self.table.c.playlist_id.in_(playlist_ids))
-                    .all()
-                )
+            placeholders = ",".join("?" for _ in playlist_ids)
+            with self._connect() as conn:
+                rows = conn.execute(
+                    f"SELECT playlist_id, snapshot_id FROM playlists WHERE playlist_id IN ({placeholders})",
+                    tuple(playlist_ids),
+                ).fetchall()
             cached = {row[0]: row[1] for row in rows}
             return {pid: cached.get(pid) for pid in playlist_ids}
         except Exception as e:
@@ -217,18 +191,13 @@ class SpotifyCacheManager:
             return {pid: None for pid in playlist_ids}
 
     def get_cached_tracks(self, playlist_id: str) -> list | None:
-        """Return the list of ``EchosyncTrack`` objects stored in *raw_data*, or
-        ``None`` when the playlist has not been cached yet.
-
-        The raw Spotify track items are re-converted so callers always receive
-        the same ``EchosyncTrack`` objects that the live API would produce.
-        """
+        """Return the list of EchosyncTrack objects stored in raw_data, or None when not cached."""
         try:
-            from sqlalchemy.orm import sessionmaker
-
-            Session = sessionmaker(bind=self.engine)
-            with Session() as session:
-                row = session.query(self.table.c.raw_data).filter(self.table.c.playlist_id == playlist_id).first()
+            with self._connect() as conn:
+                row = conn.execute(
+                    "SELECT raw_data FROM playlists WHERE playlist_id = ?",
+                    (playlist_id,),
+                ).fetchone()
             if not row or not row[0]:
                 return None
             raw = row[0] if isinstance(row[0], dict) else json.loads(row[0])
@@ -236,7 +205,6 @@ class SpotifyCacheManager:
             items = tracks_page.get("items", []) if isinstance(tracks_page, dict) else []
             if not items:
                 return None
-            # Import lazily to avoid circular deps at module load time
             from core.db.echo_sync_track import EchosyncTrack
 
             tracks = []
@@ -253,11 +221,11 @@ class SpotifyCacheManager:
                     album_title=(album.get("name") if isinstance(album, dict) else "") or "",
                     duration=track_obj.get("duration_ms"),
                     isrc=(track_obj.get("external_ids") or {}).get("isrc"),
+                    identifiers={
+                        "spotify": track_obj.get("id"),
+                        "provider_id": track_obj.get("id"),
+                    },
                 )
-                t.identifiers = {
-                    "spotify": track_obj.get("id"),
-                    "provider_id": track_obj.get("id"),
-                }
                 tracks.append(t)
             return tracks if tracks else None
         except Exception as e:

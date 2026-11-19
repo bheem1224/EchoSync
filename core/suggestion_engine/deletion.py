@@ -192,18 +192,14 @@ def process_lifecycle_actions() -> dict[str, Any]:
     for item in grouped.values():
         action = item["lifecycle_action"]
         queued_at = item["queued_at"]
-        if queued_at is None:
-            if action == DELETE_MONTH_END:
-                summary["delete_skipped"] += 1
-            elif action == UPGRADE_WEEK_END:
-                summary["upgrade_skipped"] += 1
-            continue
 
         if action == DELETE_MONTH_END:
             if (
                 not auto_delete_enabled
+                or queued_at is None
                 or queued_at > delete_cutoff
                 or item["admin_exempt_deletion"]
+                or item["admin_force_upgrade"]
             ):
                 summary["delete_skipped"] += 1
                 continue
@@ -215,10 +211,10 @@ def process_lifecycle_actions() -> dict[str, Any]:
             continue
 
         if action == UPGRADE_WEEK_END:
-            if (
+            if not item["admin_force_upgrade"] and (
                 not auto_upgrade_enabled
+                or queued_at is None
                 or queued_at > upgrade_cutoff
-                or item["admin_force_upgrade"]
             ):
                 summary["upgrade_skipped"] += 1
                 continue
@@ -241,7 +237,7 @@ def apply_lifecycle_actions_batch(
     from sqlalchemy import and_, func, or_
 
     from core.tiered_logger import get_logger
-    from database.music_database import Artist, ExternalIdentifier, Track
+    from database.music_database import Artist, ExternalIdentifier, LocalMedia, Track
     from database.music_database import get_database as get_music_database
 
     logger = get_logger("deletion")
@@ -305,22 +301,31 @@ def apply_lifecycle_actions_batch(
 
             if track_mapping:
                 track_ids = list(track_mapping.values())
-                ext_idents = (
-                    music_session.query(
-                        ExternalIdentifier.track_id, ExternalIdentifier.provider_item_id
+                ext_mapping: dict[int, set[str]] = {}
+                plugin_item_ids: set[str] = set()
+                for i in range(0, len(track_ids), chunk_size):
+                    track_chunk = track_ids[i : i + chunk_size]
+                    ext_idents = (
+                        music_session.query(
+                            LocalMedia.track_id, ExternalIdentifier.plugin_item_id
+                        )
+                        .join(
+                            ExternalIdentifier,
+                            ExternalIdentifier.media_id == LocalMedia.media_id,
+                        )
+                        .filter(
+                            LocalMedia.track_id.in_(track_chunk),
+                            ExternalIdentifier.plugin_item_id.isnot(None),
+                        )
+                        .all()
                     )
-                    .filter(
-                        ExternalIdentifier.track_id.in_(track_ids),
-                        ExternalIdentifier.provider_item_id.isnot(None),
-                    )
-                    .all()
-                )
+                    for t_id, p_item_id in ext_idents:
+                        if p_item_id:
+                            ext_mapping.setdefault(t_id, set()).add(p_item_id)
+                            plugin_item_ids.add(p_item_id)
 
-                ext_mapping = {row[0]: row[1] for row in ext_idents}
-
-                # Fetch playback history for the resolved provider_item_ids
-                provider_item_ids = set(ext_mapping.values())
-                if provider_item_ids:
+                # Fetch playback history for the resolved plugin_item_ids
+                if plugin_item_ids:
                     from datetime import timedelta
 
                     from database.working_database import PlaybackHistory
@@ -329,19 +334,19 @@ def apply_lifecycle_actions_batch(
                     with db.session_scope() as w_session:
                         # Chunk the playback history query too
                         listen_counts = {}
-                        provider_list = list(provider_item_ids)
-                        for i in range(0, len(provider_list), chunk_size):
-                            chunk = provider_list[i : i + chunk_size]
+                        plugin_item_list = list(plugin_item_ids)
+                        for i in range(0, len(plugin_item_list), chunk_size):
+                            chunk = plugin_item_list[i : i + chunk_size]
                             counts = (
                                 w_session.query(
-                                    PlaybackHistory.provider_item_id,
+                                    PlaybackHistory.plugin_item_id,
                                     func.count(PlaybackHistory.id),
                                 )
                                 .filter(
-                                    PlaybackHistory.provider_item_id.in_(chunk),
+                                    PlaybackHistory.plugin_item_id.in_(chunk),
                                     PlaybackHistory.listened_at >= cutoff_date,
                                 )
-                                .group_by(PlaybackHistory.provider_item_id)
+                                .group_by(PlaybackHistory.plugin_item_id)
                                 .all()
                             )
 
@@ -352,12 +357,13 @@ def apply_lifecycle_actions_batch(
                     for artist_name, title, base_sync_id in parsed_tracks:
                         t_id = track_mapping.get((artist_name, title))
                         if t_id:
-                            p_id = ext_mapping.get(t_id)
-                            if p_id and listen_counts.get(p_id, 0) >= 5:
-                                vetoed_sync_ids.add(base_sync_id)
-                                logger.info(
-                                    f"Vetoed Deletion: Track '{p_id}' is actively trending ({listen_counts[p_id]} listens/30d)."
-                                )
+                            for p_id in ext_mapping.get(t_id, ()):
+                                if listen_counts.get(p_id, 0) >= 5:
+                                    vetoed_sync_ids.add(base_sync_id)
+                                    logger.info(
+                                        f"Vetoed Deletion: Track '{p_id}' is actively trending ({listen_counts[p_id]} listens/30d)."
+                                    )
+                                    break
 
     # 3. Apply state updates to WorkingDB in a single transaction with nested savepoints
     with db.session_scope() as session:

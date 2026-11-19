@@ -12,7 +12,7 @@ def test_primary_artist_query_fallback():
         raw_title="Energy",
         artist_name="Disclosure, Mick Jenkins",
         album_title="Energy",
-        duration=290000,
+        duration_ms=290000,
     )
 
     searched_queries = []
@@ -37,7 +37,7 @@ def test_primary_artist_query_fallback():
         raw_title="Energy",
         artist_name="Disclosure",
         album_title="Energy",
-        duration=290000,
+        duration_ms=290000,
         musicbrainz_id="rec-123",
     )
 
@@ -60,7 +60,7 @@ def test_unquoted_artist_tokens_and_collaborative_scoring():
         raw_title="New Vibe Who Dis",
         artist_name="Madison Mars, Feldz",
         album_title="",
-        duration=180000,
+        duration_ms=180000,
     )
 
     searched_queries = []
@@ -83,7 +83,7 @@ def test_unquoted_artist_tokens_and_collaborative_scoring():
         raw_title="New Vibe Who Dis",
         artist_name="Madison Mars feat. Feldz",
         album_title="New Vibe Who Dis",
-        duration=180000,
+        duration_ms=180000,
         musicbrainz_id="rec-madison",
     )
 
@@ -105,7 +105,7 @@ def test_recording_only_query_expanded_limit():
         raw_title="Strobe",
         artist_name="deadmau5",
         album_title="For Lack of a Better Name",
-        duration=637000,
+        duration_ms=637000,
     )
 
     searched_queries = []
@@ -127,7 +127,7 @@ def test_recording_only_query_expanded_limit():
         raw_title="Strobe",
         artist_name="deadmau5",
         album_title="For Lack of a Better Name",
-        duration=637000,
+        duration_ms=637000,
         musicbrainz_id="rec-strobe",
     )
 

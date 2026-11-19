@@ -1,12 +1,25 @@
+from dataclasses import replace
+import mimetypes
+import os
 import re
 from pathlib import Path
 from typing import Any, cast
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from core.db.echo_sync_track import EchosyncTrack
+from core.db.schemas import (
+    ApproveMatchRequest,
+    IgnoreTaskRequest,
+    ManualSearchRequest,
+    QueueDetailResponse,
+    QueueItemDetailSchema,
+    QueueItemSchema,
+    QueueListResponse,
+    SuccessResponse,
+)
 from core.enums import Capability
 from core.matching_engine.fingerprinting import FingerprintGenerator
 from core.nexus_framework import plugin_loader
@@ -21,6 +34,8 @@ from web.auth import require_auth
 logger = get_logger("metadata_review_route")
 router = APIRouter(prefix="/api/v1/core/metadata_review", tags=["Metadata Review"])
 review_tasks_router = APIRouter(prefix="/api/v1/review/tasks", tags=["Metadata Review Tasks"])
+metadata_router = APIRouter(prefix="/api/v1/core/metadata", tags=["Metadata"])
+v1_metadata_router = APIRouter(prefix="/api/v1/metadata", tags=["Metadata"])
 
 
 class CreateReviewTaskRequest(BaseModel):
@@ -51,20 +66,88 @@ class ISRCLookupRequest(BaseModel):
     metadata: dict[str, Any] | None = None
 
 
+_MEDIA_NANOID_RE = re.compile(r"^[A-Za-z0-9_-]{3,64}$")
+
+
+def _is_integer_like_id(value: str) -> bool:
+    if not value:
+        return True
+    if value.isdigit():
+        return True
+    if value[0] in ("+", "-") and value[1:].isdigit():
+        return True
+    return False
+
+
+def _is_valid_nanoid_media_id(raw_media_id: Any) -> bool:
+    if raw_media_id is None or isinstance(raw_media_id, (bool, int, float)):
+        return False
+    cleaned = str(raw_media_id).strip().split("?")[0].strip()
+    if not cleaned or _is_integer_like_id(cleaned):
+        return False
+    if "/" in cleaned or "\\" in cleaned or ":" in cleaned or ".." in cleaned:
+        return False
+    return bool(_MEDIA_NANOID_RE.fullmatch(cleaned))
+
+
+def _validate_media_id(raw_media_id: Any) -> str:
+    """Validate that a supplied media_id is a NanoID string (not an int PK or path string)."""
+    if isinstance(raw_media_id, (bool, int, float)):
+        raise HTTPException(
+            status_code=400,
+            detail="Integer primary keys are not allowed. Provide a valid string NanoID media_id.",
+        )
+    cleaned = str(raw_media_id or "").strip().split("?")[0].strip()
+    if not cleaned or _is_integer_like_id(cleaned):
+        raise HTTPException(
+            status_code=400,
+            detail="Integer primary keys are not allowed. Provide a valid string NanoID media_id.",
+        )
+    if (
+        "/" in cleaned
+        or "\\" in cleaned
+        or ":" in cleaned
+        or ".." in cleaned
+        or not _MEDIA_NANOID_RE.fullmatch(cleaned)
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid media_id format. Path strings are not allowed; provide a valid string NanoID media_id.",
+        )
+    return cleaned
+
+
+def _mark_review_task_failed(working_db: Any, task_id: int, error_message: str) -> None:
+    """Persist background approval failure state and error details onto ReviewTask."""
+    try:
+        from sqlalchemy.orm.attributes import flag_modified
+
+        with working_db.session_scope() as w_session:
+            task_row = w_session.query(ReviewTask).filter(ReviewTask.id == task_id).first()
+            if not task_row:
+                return
+            task_row.status = "failed"
+            updated_data = dict(task_row.track_data or {})
+            updated_data["error"] = error_message
+            task_row.track_data = updated_data
+            flag_modified(task_row, "track_data")
+    except Exception as persist_err:
+        logger.error(f"Failed to persist error state for review task {task_id}: {persist_err}", exc_info=True)
+
+
 def _get_media_file_path(media_id: str) -> str | None:
-    if not media_id:
+    if not _is_valid_nanoid_media_id(media_id):
         return None
-    if "/" in media_id or "\\" in media_id or media_id.startswith("virtual://"):
-        return media_id
+    cleaned_media_id = str(media_id).strip().split("?")[0].strip()
     from database.music_database import LocalMedia
 
     db = get_database()
     try:
         with db.session_scope() as session:
-            media = session.query(LocalMedia).filter(LocalMedia.media_id == media_id).first()
+            media = session.query(LocalMedia).filter(LocalMedia.media_id == cleaned_media_id).first()
             return media.file_path if media else None
     except Exception as exc:
-        logger.error(f"Failed to lookup media path for {media_id}: {exc}")
+        logger.error(f"Failed to lookup media path for {cleaned_media_id}: {exc}")
     return None
 
 
@@ -291,10 +374,13 @@ def _serialize_task(
             detected["album"] = album_val
 
     media_id_val = None
-    if getattr(task, "media_id", None) and not ("/" in str(task.media_id) or "\\" in str(task.media_id)):
-        media_id_val = str(task.media_id)
+    raw_task_mid = getattr(task, "media_id", None)
+    if raw_task_mid and _is_valid_nanoid_media_id(raw_task_mid):
+        media_id_val = str(raw_task_mid).strip()
     elif isinstance(task.track_data, dict) and task.track_data.get("media_id"):
-        media_id_val = str(task.track_data.get("media_id"))
+        td_mid = task.track_data.get("media_id")
+        if _is_valid_nanoid_media_id(td_mid):
+            media_id_val = str(td_mid).strip()
 
     if not media_id_val and task.file_path:
         db = get_database()
@@ -312,6 +398,8 @@ def _serialize_task(
         "id": task.id,
         "file_path": task.file_path,
         "media_id": media_id_val,
+        "status": getattr(task, "status", None),
+        "error": track_data.get("error") if isinstance(track_data, dict) else None,
         "detected_metadata": detected,
         "proposed_metadata": detected,
         "current_metadata": current_metadata if current_metadata is not None else _read_current_metadata(task),
@@ -382,8 +470,8 @@ def _musicbrainz_text_search(metadata_provider, track: Any) -> EchosyncTrack | N
                             artist_name=first_match.get("artist") or artist,
                             album_title=first_match.get("album", ""),
                             identifiers={"musicbrainz": mb_id},
+                            musicbrainz_id=mb_id,
                         )
-                        ret_track.musicbrainz_id = mb_id
                         logger.debug(f"[MusicBrainz Search] Converted dict to EchosyncTrack with mb_id: '{mb_id}'")
                         return ret_track
             else:
@@ -460,7 +548,7 @@ def _build_track_from_metadata(file_path: Path, metadata: dict[str, Any]):
         artist_name=artist,
         album_title=album,
         edition=cast(str | None, metadata.get("edition") or metadata.get("version")),
-        duration=_coerce_int(metadata.get("duration_ms") or metadata.get("duration")),
+        duration_ms=_coerce_int(metadata.get("duration_ms") or metadata.get("duration")),
         isrc=cast(str | None, metadata.get("isrc")),
         musicbrainz_id=cast(
             str | None,
@@ -475,11 +563,11 @@ def _build_track_from_metadata(file_path: Path, metadata: dict[str, Any]):
         disc_number=_coerce_int(metadata.get("disc_number")),
         media=[media_item],
         identifiers={source: str(provider_id)} if provider_id else {},
+        fingerprint=(
+            metadata.get("fingerprint") or metadata.get("chromaprint") or metadata.get("acoustid_fingerprint")
+        ),
+        acoustid_id=metadata.get("acoustid_id") or metadata.get("acoustid"),
     )
-    track.fingerprint = (
-        metadata.get("fingerprint") or metadata.get("chromaprint") or metadata.get("acoustid_fingerprint")
-    )
-    track.acoustid_id = metadata.get("acoustid_id") or metadata.get("acoustid")
     return track
 
 
@@ -1018,16 +1106,17 @@ def create_review_task(
         if payload.confidence_score is not None:
             conf_score = payload.confidence_score
 
-    if not req_media_id and media_id:
+    if not req_media_id and media_id is not None:
         req_media_id = media_id
 
+    if isinstance(track_dict, dict) and "media_id" in track_dict and track_dict["media_id"] is not None:
+        validated_dict_mid = _validate_media_id(track_dict["media_id"])
+        track_dict["media_id"] = validated_dict_mid
+        if req_media_id is None:
+            req_media_id = validated_dict_mid
+
     if req_media_id is not None:
-        req_media_id = str(req_media_id).strip().split("?")[0]
-        if not req_media_id or req_media_id.isdigit():
-            raise HTTPException(
-                status_code=400,
-                detail="Integer primary keys are not allowed. Provide a valid string NanoID media_id.",
-            )
+        req_media_id = _validate_media_id(req_media_id)
 
     db = get_database()
     if req_media_id:
@@ -1091,6 +1180,16 @@ def update_review_queue_item(task_id: int, payload: UpdateReviewQueueRequest, _=
     if not isinstance(metadata, dict):
         raise HTTPException(status_code=400, detail="Invalid metadata payload")
 
+    validated_payload_media_id: str | None = None
+    if payload.media_id is not None:
+        validated_payload_media_id = _validate_media_id(payload.media_id)
+    if "media_id" in metadata and metadata["media_id"] is not None:
+        validated_meta_mid = _validate_media_id(metadata["media_id"])
+        metadata = dict(metadata)
+        metadata["media_id"] = validated_meta_mid
+        if validated_payload_media_id is None:
+            validated_payload_media_id = validated_meta_mid
+
     db = get_working_database()
     try:
         with db.session_scope() as session:
@@ -1098,14 +1197,8 @@ def update_review_queue_item(task_id: int, payload: UpdateReviewQueueRequest, _=
             if not task:
                 raise HTTPException(status_code=404, detail="Task not found")
 
-            if payload.media_id is not None:
-                cleaned_media_id = str(payload.media_id).strip().split("?")[0]
-                if not cleaned_media_id or cleaned_media_id.isdigit():
-                    raise HTTPException(
-                        status_code=400,
-                        detail="Integer primary keys are not allowed. Provide a valid string NanoID media_id.",
-                    )
-                task.media_id = cleaned_media_id
+            if validated_payload_media_id is not None:
+                task.media_id = validated_payload_media_id
 
             # Update/Merge into track_data blob incrementally
             if not task.track_data:
@@ -1139,37 +1232,6 @@ def update_review_queue_item(task_id: int, payload: UpdateReviewQueueRequest, _=
         raise HTTPException(status_code=500, detail="Failed to update review task")
 
 
-def _process_approval_background(task_id: int, final_metadata: dict[str, Any]):
-    """Background processor for approval tasks to prevent thread blocking."""
-    db = get_working_database()
-    try:
-        with db.session_scope() as session:
-            task = session.query(ReviewTask).filter(ReviewTask.id == task_id).first()
-            if not task:
-                return
-
-            media_path = task.file_path
-            if not media_path:
-                return
-            file_path = Path(media_path)
-            if not file_path.exists() or not file_path.is_file():
-                return
-
-            enhancer = get_metadata_enhancer()
-
-            # Identify the file first to check AcoustID fingerprint asynchronously if needed
-            # even though we are approving, triggering the metadata enhancer tag_file handles the core logic
-            enhancer.tag_file(file_path, final_metadata)
-
-            task_media_id = getattr(task, "media_id", None)
-            _import_single_file(file_path, final_metadata, media_id=task_media_id)
-
-            task.detected_metadata = final_metadata
-            task.status = "approved"
-    except Exception as e:
-        logger.error(f"Background approval task {task_id} failed: {e}", exc_info=True)
-
-
 @router.post("/{task_id}/approve")
 def approve_review_queue_item(
     task_id: int,
@@ -1186,6 +1248,10 @@ def approve_review_queue_item(
     if not isinstance(final_metadata, dict):
         raise HTTPException(status_code=400, detail="Invalid metadata payload")
 
+    if "media_id" in final_metadata and final_metadata["media_id"] is not None:
+        final_metadata = dict(final_metadata)
+        final_metadata["media_id"] = _validate_media_id(final_metadata["media_id"])
+
     db = get_working_database()
     try:
         with db.session_scope() as session:
@@ -1200,14 +1266,14 @@ def approve_review_queue_item(
             if not file_path.exists() or not file_path.is_file():
                 raise HTTPException(status_code=404, detail="File does not exist")
 
-            from core.job_queue import job_queue
+            from core.task_manager.task_queue import job_queue
 
             def _background_approval_task():
+                working_db = get_working_database()
                 try:
                     from core.db.echo_sync_track import EchosyncTrack
 
                     # 1. Resolve task details in fresh working DB session
-                    working_db = get_working_database()
                     file_path_str = None
                     task_media_id = None
                     track_dict = None
@@ -1223,12 +1289,16 @@ def approve_review_queue_item(
                             track_dict = task_row.detected_metadata
 
                     if not file_path_str:
-                        logger.error(f"Task {task_id} has no file_path")
+                        msg = f"Task {task_id} has no file_path"
+                        logger.error(msg)
+                        _mark_review_task_failed(working_db, task_id, msg)
                         return
 
                     file_path_obj = Path(file_path_str)
                     if not file_path_obj.exists() or not file_path_obj.is_file():
-                        logger.error(f"Physical file does not exist: {file_path_str}")
+                        msg = f"Physical file does not exist: {file_path_str}"
+                        logger.error(msg)
+                        _mark_review_task_failed(working_db, task_id, msg)
                         return
 
                     # Construct EchosyncTrack object from staging track_data
@@ -1245,49 +1315,50 @@ def approve_review_queue_item(
                     }
 
                     # Update staged_track properties with any modifications from final_metadata (stripping physical fields)
+                    staged_updates: dict[str, Any] = {}
                     if final_metadata:
                         if final_metadata.get("title"):
-                            staged_track.raw_title = final_metadata["title"]
-                            staged_track.title = final_metadata["title"]
-                            staged_track.display_title = final_metadata["title"]
+                            staged_updates["raw_title"] = final_metadata["title"]
+                            staged_updates["title"] = final_metadata["title"]
+                            staged_updates["display_title"] = final_metadata["title"]
                         if "edition" in final_metadata:
-                            staged_track.edition = final_metadata["edition"]
+                            staged_updates["edition"] = final_metadata["edition"]
                         elif "version" in final_metadata:
-                            staged_track.edition = final_metadata["version"]
+                            staged_updates["edition"] = final_metadata["version"]
                         if final_metadata.get("artist"):
-                            staged_track.artist_name = final_metadata["artist"]
+                            staged_updates["artist_name"] = final_metadata["artist"]
                         if final_metadata.get("album"):
-                            staged_track.album_title = final_metadata["album"]
+                            staged_updates["album_title"] = final_metadata["album"]
                         if final_metadata.get("year"):
                             try:
-                                staged_track.release_year = int(final_metadata["year"])
+                                staged_updates["release_year"] = int(final_metadata["year"])
                             except Exception:
                                 pass
                         if final_metadata.get("track_number"):
                             try:
-                                staged_track.track_number = int(final_metadata["track_number"])
+                                staged_updates["track_number"] = int(final_metadata["track_number"])
                             except Exception:
                                 pass
                         if final_metadata.get("disc_number"):
                             try:
-                                staged_track.disc_number = int(final_metadata["disc_number"])
+                                staged_updates["disc_number"] = int(final_metadata["disc_number"])
                             except Exception:
                                 pass
                         mbid_val = final_metadata.get("musicbrainz_id") or final_metadata.get("mbid")
                         if mbid_val:
-                            staged_track.musicbrainz_id = str(mbid_val).strip()
+                            staged_updates["musicbrainz_id"] = str(mbid_val).strip()
                         if final_metadata.get("isrc"):
-                            staged_track.isrc = final_metadata["isrc"]
+                            staged_updates["isrc"] = final_metadata["isrc"]
                         acoustid_val = final_metadata.get("acoustid_id") or final_metadata.get("acoustid")
                         if acoustid_val:
-                            staged_track.acoustid_id = str(acoustid_val).strip()
+                            staged_updates["acoustid_id"] = str(acoustid_val).strip()
                         fp_val = (
                             final_metadata.get("fingerprint")
                             or final_metadata.get("chromaprint")
                             or final_metadata.get("acoustid_fingerprint")
                         )
                         if fp_val:
-                            staged_track.fingerprint = str(fp_val).strip()
+                            staged_updates["fingerprint"] = str(fp_val).strip()
 
                     # Derive physical properties purely from DSP inspection of container
                     import echosync_core
@@ -1295,9 +1366,12 @@ def approve_review_queue_item(
                     native_props = echosync_core.extract_metadata(str(file_path_obj)) or {}
                     native_dur = native_props.get("duration_ms")
                     if native_dur is not None:
-                        staged_track.duration = int(native_dur)
+                        staged_updates["duration_ms"] = int(native_dur)
                     elif native_props.get("duration") is not None:
-                        staged_track.duration = int(round(float(native_props["duration"]) * 1000))
+                        staged_updates["duration_ms"] = int(round(float(native_props["duration"]) * 1000))
+
+                    if staged_updates:
+                        staged_track = replace(staged_track, **staged_updates)
 
                     # Merge the finalized metadata back to dict for tagging
                     metadata_to_tag = {
@@ -1325,16 +1399,10 @@ def approve_review_queue_item(
                         enhancer.tag_file_verified(file_path_obj, metadata_to_tag)
                     except MetadataWriteVerificationError as e:
                         logger.error(f"Tag verification failed for {file_path_obj}; aborting library import: {e}")
-                        raise HTTPException(
-                            status_code=500,
-                            detail="Failed to verify written tags on disk",
-                        )
+                        raise RuntimeError(f"Failed to verify written tags on disk: {e}") from e
                     except Exception as e:
                         logger.error(f"Unexpected error during tag verification for {file_path_obj}: {e}")
-                        raise HTTPException(
-                            status_code=500,
-                            detail="Failed to verify written tags on disk",
-                        )
+                        raise RuntimeError(f"Failed to verify written tags on disk: {e}") from e
 
                     # 3. Calculate target relocation path using build_destination_path
                     from core.path_formatter import build_disambiguated_destination_path
@@ -1422,7 +1490,12 @@ def approve_review_queue_item(
                             logger.info(f"Successfully deleted review task {task_id}")
 
                 except Exception as e:
-                    logger.error(f"Background approval failed: {e}", exc_info=True)
+                    logger.error(f"Background approval failed for task {task_id}: {e}", exc_info=True)
+                    _mark_review_task_failed(
+                        working_db,
+                        task_id,
+                        str(e) or type(e).__name__,
+                    )
 
             # Register and run the task as a one-off background job
             job_name = f"approve_metadata_{task_id}"
@@ -1486,12 +1559,32 @@ def reject_and_delete_review_queue_item(task_id: int, _=Depends(require_auth)):
                 # Delete the physical file if it exists and is within allowed directory
                 if resolved_file and resolved_file.exists() and resolved_file.is_file():
                     try:
-                        import os
+                        from core.io_gatekeeper import Gatekeeper
 
-                        os.unlink(str(resolved_file))
+                        dl_dir = config_manager.get("storage.download_dir") or config_manager.get("download_dir")
+                        lib_dir = config_manager.get("storage.library_dir") or config_manager.get("library_dir")
+                        poor_dir = config_manager.get("storage.poor_metadata_dir")
+
+                        in_default_roots = any(
+                            d and resolved_file.is_relative_to(Path(d).resolve())
+                            for d in (dl_dir, lib_dir)
+                        )
+                        if not in_default_roots and poor_dir and resolved_file.is_relative_to(Path(poor_dir).resolve()):
+                            allowed_roots = [
+                                Path(d).resolve() for d in (dl_dir, lib_dir, poor_dir) if d
+                            ]
+                            Gatekeeper(allowed_roots=allowed_roots).authorize_and_execute(
+                                operation="delete_file",
+                                target_uri=str(resolved_file),
+                            )
+                        else:
+                            Gatekeeper.authorize_and_execute(
+                                operation="delete_file",
+                                target_uri=str(resolved_file),
+                            )
                         logger.info(f"Deleted physical file for rejected task {task_id}: {resolved_file}")
                     except Exception as del_err:
-                        logger.warning(f"Failed to unlink file {resolved_file} for task {task_id}: {del_err}")
+                        logger.warning(f"Failed to delete file {resolved_file} for task {task_id}: {del_err}")
 
             # Update status to rejected
             task.status = "rejected"
@@ -1691,7 +1784,7 @@ def lookup_review_queue_item_acoustid(task_id: int, _=Depends(require_auth)):
                     if not task.track_data:
                         task.track_data = {}
                     task.track_data["fingerprint"] = clamped_fingerprint
-                    track_obj.fingerprint = clamped_fingerprint
+                    track_obj = replace(track_obj, fingerprint=clamped_fingerprint)
                     flag_modified(task, "track_data")
 
                     # Update database record wrapped inside db_write_lease
@@ -1712,7 +1805,7 @@ def lookup_review_queue_item_acoustid(task_id: int, _=Depends(require_auth)):
                         except Exception as db_err:
                             logger.error(f"Failed to update clamped fingerprint in main db: {db_err}")
 
-            duration_ms = _coerce_int(track_obj.duration)
+            duration_ms = _coerce_int(track_obj.duration_ms)
             duration_sec = duration_ms / 1000.0 if (duration_ms and duration_ms > 0) else None
 
             engine = MetadataResolutionEngine(
@@ -1736,7 +1829,7 @@ def lookup_review_queue_item_acoustid(task_id: int, _=Depends(require_auth)):
             res = engine.resolve_track(req, enabled_stages=["acoustid"])
 
             if res.chromaprint:
-                track_obj.fingerprint = res.chromaprint
+                track_obj = replace(track_obj, fingerprint=res.chromaprint)
 
             if not res or res.confidence_score < 0.60:
                 # Persist fingerprint even on miss so user can submit to AcoustID
@@ -1769,33 +1862,35 @@ def lookup_review_queue_item_acoustid(task_id: int, _=Depends(require_auth)):
                 )
 
             # Match found
+            updates: dict[str, Any] = {
+                "edition": res.edition,
+                "identifiers": {**(track_obj.identifiers or {}), "source": "acoustid_lookup"},
+            }
             if res.acoustid_id:
-                track_obj.acoustid_id = res.acoustid_id
+                updates["acoustid_id"] = res.acoustid_id
             if res.musicbrainz_track_id:
-                track_obj.musicbrainz_id = res.musicbrainz_track_id
+                updates["musicbrainz_id"] = res.musicbrainz_track_id
             if res.musicbrainz_release_id:
-                track_obj.mb_release_id = res.musicbrainz_release_id
+                updates["mb_release_id"] = res.musicbrainz_release_id
             if res.title:
-                track_obj.title = res.title
-                track_obj.raw_title = res.title
-                track_obj.display_title = res.title
-            track_obj.edition = res.edition
+                updates["title"] = res.title
+                updates["raw_title"] = res.title
+                updates["display_title"] = res.title
             if res.artist:
-                track_obj.artist_name = res.artist
+                updates["artist_name"] = res.artist
             if res.album:
-                track_obj.album_title = res.album
+                updates["album_title"] = res.album
             if res.year:
-                track_obj.release_year = res.year
+                updates["release_year"] = res.year
             if res.track_number is not None:
-                track_obj.track_number = res.track_number
+                updates["track_number"] = res.track_number
             if res.disc_number is not None:
-                track_obj.disc_number = res.disc_number
+                updates["disc_number"] = res.disc_number
             if res.isrc:
-                track_obj.isrc = res.isrc
-
-            track_obj.identifiers["source"] = "acoustid_lookup"
+                updates["isrc"] = res.isrc
             if res.chromaprint:
-                track_obj.fingerprint = res.chromaprint
+                updates["fingerprint"] = res.chromaprint
+            track_obj = replace(track_obj, **updates)
             res_dict = res.to_dict()
             res_dict["edition"] = res.edition
             if res.chromaprint:
@@ -1828,7 +1923,7 @@ def lookup_review_queue_item_acoustid(task_id: int, _=Depends(require_auth)):
                     logger.debug(f"Failed to update fingerprint in main db on match: {db_err}")
 
             updated_fields = []
-            if track_obj.title:
+            if track_obj.title or track_obj.raw_title:
                 updated_fields.append("title")
             if track_obj.edition:
                 updated_fields.append("edition")
@@ -2008,11 +2103,16 @@ def lookup_review_queue_item_musicbrainz(task_id: int, payload: MusicBrainzLooku
             track_obj = EchosyncTrack.from_dict(task.track_data or {})
 
             # fallback if artist/title wasn't already in track_data but is passed in payload
+            fallback_updates: dict[str, Any] = {}
             if not track_obj.artist_name or track_obj.artist_name == "Unknown Artist":
-                track_obj.artist_name = artist
-            if not track_obj.title or track_obj.title == "Unknown Title":
-                track_obj.title = title
-            track_obj.raw_title = track_obj.title
+                fallback_updates["artist_name"] = artist
+            target_title_val = title if (not track_obj.title or track_obj.title == "Unknown Title") else track_obj.title
+            if target_title_val != track_obj.title:
+                fallback_updates["title"] = target_title_val
+            if target_title_val != track_obj.raw_title:
+                fallback_updates["raw_title"] = target_title_val
+            if fallback_updates:
+                track_obj = replace(track_obj, **fallback_updates)
 
             logger.debug(f"[MusicBrainz Route] Prepared EchosyncTrack for text search: {track_obj.to_dict()}")
 
@@ -2030,13 +2130,16 @@ def lookup_review_queue_item_musicbrainz(task_id: int, payload: MusicBrainzLooku
                 }
 
             logger.debug(f"[MusicBrainz Route] MusicBrainz match found: {found_track.to_dict()}")
-            found_track.identifiers["source"] = "musicbrainz_text_lookup"
+            found_track = replace(
+                found_track,
+                identifiers={**(found_track.identifiers or {}), "source": "musicbrainz_text_lookup"},
+            )
             task.track_data = found_track.to_dict()
             flag_modified(task, "track_data")
             task.confidence_score = max(float(task.confidence_score or 0.0), 0.85)
 
             updated_fields = []
-            if found_track.title:
+            if found_track.title or found_track.raw_title:
                 updated_fields.append("title")
             if found_track.edition:
                 updated_fields.append("edition")
@@ -2115,31 +2218,33 @@ def lookup_review_queue_item_isrc(task_id: int, payload: ISRCLookupRequest | Non
                 }
 
             track_obj = EchosyncTrack.from_dict(task.track_data or {})
-            if hasattr(track, "title") and track.title:
-                track_obj.title = track.title
-                track_obj.raw_title = track.title
+            isrc_updates: dict[str, Any] = {"isrc": canonical}
+            found_title = getattr(track, "title", None) or getattr(track, "raw_title", None)
+            if found_title:
+                isrc_updates["title"] = found_title
+                isrc_updates["raw_title"] = found_title
             if hasattr(track, "edition") and track.edition:
-                track_obj.edition = track.edition
+                isrc_updates["edition"] = track.edition
             elif hasattr(track, "version") and track.version:
-                track_obj.edition = track.version
+                isrc_updates["edition"] = track.version
             if hasattr(track, "artist_name") and track.artist_name:
-                track_obj.artist_name = track.artist_name
+                isrc_updates["artist_name"] = track.artist_name
             elif hasattr(track, "artist") and track.artist:
-                track_obj.artist_name = track.artist
+                isrc_updates["artist_name"] = track.artist
             if hasattr(track, "album_title") and track.album_title:
-                track_obj.album_title = track.album_title
+                isrc_updates["album_title"] = track.album_title
             elif hasattr(track, "album") and track.album:
-                track_obj.album_title = track.album
+                isrc_updates["album_title"] = track.album
             if hasattr(track, "release_year") and track.release_year:
-                track_obj.release_year = track.release_year
+                isrc_updates["release_year"] = track.release_year
             if hasattr(track, "musicbrainz_id") and track.musicbrainz_id:
-                track_obj.musicbrainz_id = track.musicbrainz_id
-            if hasattr(track, "duration") and track.duration:
-                track_obj.duration = track.duration
-            track_obj.isrc = canonical
+                isrc_updates["musicbrainz_id"] = track.musicbrainz_id
+            found_dur = getattr(track, "duration_ms", None) or getattr(track, "duration", None)
+            if found_dur:
+                isrc_updates["duration_ms"] = found_dur
             if hasattr(track, "identifiers") and isinstance(track.identifiers, dict):
-                for k, v in track.identifiers.items():
-                    track_obj.identifiers[k] = v
+                isrc_updates["identifiers"] = {**(track_obj.identifiers or {}), **track.identifiers}
+            track_obj = replace(track_obj, **isrc_updates)
 
             from sqlalchemy.orm.attributes import flag_modified
 
@@ -2148,7 +2253,7 @@ def lookup_review_queue_item_isrc(task_id: int, payload: ISRCLookupRequest | Non
             task.confidence_score = max(float(task.confidence_score or 0.0), 0.90)
 
             updated_fields = []
-            if track_obj.title:
+            if track_obj.title or track_obj.raw_title:
                 updated_fields.append("title")
             if track_obj.edition:
                 updated_fields.append("edition")
@@ -2162,7 +2267,7 @@ def lookup_review_queue_item_isrc(task_id: int, payload: ISRCLookupRequest | Non
                 updated_fields.append("musicbrainz_id")
             if track_obj.isrc:
                 updated_fields.append("isrc")
-            if track_obj.duration:
+            if track_obj.duration_ms:
                 updated_fields.append("duration")
 
             serialized = _serialize_task(task)
@@ -2303,3 +2408,302 @@ def simulate_review_pipeline(task_id: int, _=Depends(require_auth)):
     except Exception as e:
         logger.error(f"Failed pipeline simulation for task {task_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Pipeline simulation failed: {str(e)}")
+
+
+def _get_plugin(capability: Capability):
+    """Get the first available plugin with the given capability."""
+    return get_plugin_by_capability(capability)
+
+
+def _extract_source_metadata(file_path: Path) -> dict[str, Any]:
+    """Extract best-effort source metadata from local file tags/audio headers using echosync_core."""
+    import echosync_core
+
+    try:
+        meta = echosync_core.extract_metadata(str(file_path))
+        dur_ms = meta.get("duration_ms")
+        return {
+            "title": meta.get("title"),
+            "artist": meta.get("artist_name") or meta.get("artist"),
+            "album": meta.get("album_title") or meta.get("album"),
+            "duration_seconds": (dur_ms // 1000) if dur_ms else None,
+            "bitrate_kbps": meta.get("bitrate"),
+            "sample_rate": meta.get("sample_rate"),
+            "codec": meta.get("codec"),
+            "source": "echosync_core",
+        }
+    except Exception as e:
+        logger.warning(f"Failed to inspect file {file_path}: {e}")
+        return {
+            "title": None,
+            "artist": None,
+            "album": None,
+            "duration_seconds": None,
+            "bitrate_kbps": None,
+            "sample_rate_hz": None,
+            "channels": None,
+            "file_format": file_path.suffix.lower().lstrip("."),
+        }
+
+
+@metadata_router.get("/queue", response_model=QueueListResponse)
+@v1_metadata_router.get("/queue", response_model=QueueListResponse)
+def get_queue():
+    """Get items in the review queue."""
+    try:
+        db = get_working_database()
+        queue = []
+        with db.session_scope() as session:
+            try:
+                tasks = (
+                    session.query(ReviewTask)
+                    .filter(ReviewTask.status == "pending")
+                    .all()
+                )
+            except Exception as e:
+                if "no such table" in str(e).lower():
+                    logger.info("Review tasks table not found, returning empty queue.")
+                    return QueueListResponse(queue=[])
+                raise e
+
+            for task in tasks:
+                media_path = _get_media_file_path(task.media_id) or getattr(task, "file_path", None) or ""
+                queue.append(
+                    QueueItemSchema(
+                        id=task.id,
+                        file_path=media_path,
+                        filename=Path(media_path).name if media_path else "",
+                        detected_metadata=task.detected_metadata,
+                        confidence_score=task.confidence_score,
+                        created_at=task.created_at.isoformat() if task.created_at else None,
+                    )
+                )
+        return QueueListResponse(queue=queue)
+    except Exception as e:
+        logger.error(f"Error getting queue: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get queue: {e!s}")
+
+
+@metadata_router.get("/queue/{task_id}", response_model=QueueDetailResponse)
+@v1_metadata_router.get("/queue/{task_id}", response_model=QueueDetailResponse)
+def get_queue_item(task_id: int):
+    """Get full details for one review queue item, including source metadata."""
+    try:
+        db = get_working_database()
+        with db.session_scope() as session:
+            task = session.query(ReviewTask).filter(ReviewTask.id == task_id).first()
+            if not task or task.status != "pending":
+                raise HTTPException(status_code=404, detail="Task not found")
+
+            media_path = _get_media_file_path(task.media_id) or getattr(task, "file_path", None) or ""
+            file_path = Path(media_path) if media_path else Path("")
+            source_metadata = (
+                _extract_source_metadata(file_path)
+                if media_path and file_path.exists()
+                else None
+            )
+
+            item = QueueItemDetailSchema(
+                id=task.id,
+                file_path=media_path,
+                filename=file_path.name if media_path else "",
+                detected_metadata=task.detected_metadata,
+                confidence_score=task.confidence_score,
+                created_at=task.created_at.isoformat() if task.created_at else None,
+                source_metadata=source_metadata,
+                file_exists=file_path.exists() if media_path else False,
+            )
+            return QueueDetailResponse(item=item)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting queue item {task_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get queue item: {e!s}")
+
+
+@metadata_router.get("/queue/{task_id}/audio")
+@v1_metadata_router.get("/queue/{task_id}/audio")
+def stream_queue_audio(task_id: int):
+    """Stream audio file for a review queue item."""
+    try:
+        db = get_working_database()
+        with db.session_scope() as session:
+            task = session.query(ReviewTask).filter(ReviewTask.id == task_id).first()
+            if not task or task.status != "pending":
+                raise HTTPException(status_code=404, detail="Task not found")
+            media_path = _get_media_file_path(task.media_id) or getattr(task, "file_path", None) or ""
+            if not media_path:
+                raise HTTPException(status_code=404, detail="Media path not found")
+            file_path = Path(media_path)
+
+        if not file_path.exists() or not file_path.is_file():
+            raise HTTPException(status_code=404, detail="File no longer exists")
+
+        guessed_type, _ = mimetypes.guess_type(str(file_path))
+        return FileResponse(
+            path=str(file_path), media_type=guessed_type or "application/octet-stream"
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error streaming queue audio for task {task_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to stream audio")
+
+
+@metadata_router.post("/queue/approve", response_model=SuccessResponse)
+@v1_metadata_router.post("/queue/approve", response_model=SuccessResponse)
+def approve_match(payload: ApproveMatchRequest):
+    """Approve a match and process the file."""
+    try:
+        db = get_working_database()
+        enhancer = get_metadata_enhancer()
+        file_path = None
+
+        with db.session_scope() as session:
+            task = session.query(ReviewTask).filter(ReviewTask.id == payload.id).first()
+            if not task:
+                raise HTTPException(status_code=404, detail="Task not found")
+            media_path = _get_media_file_path(task.media_id) or getattr(task, "file_path", None) or ""
+            if not media_path:
+                raise HTTPException(status_code=404, detail="Media path not found")
+            file_path = Path(media_path)
+
+        if not file_path.exists():
+            raise HTTPException(status_code=404, detail="File no longer exists")
+
+        try:
+            enhancer.approve_match(file_path, payload.metadata)
+        except Exception as e:
+            logger.error(f"Approve failed: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+        return SuccessResponse(success=True)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error approving match: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@metadata_router.post("/queue/manual-search")
+@v1_metadata_router.post("/queue/manual-search")
+def manual_search(payload: ManualSearchRequest):
+    """Search for metadata manually."""
+    try:
+        provider = _get_plugin(Capability.FETCH_METADATA)
+        if not provider:
+            raise HTTPException(status_code=503, detail="No metadata provider available")
+
+        results = provider.search_metadata(payload.query)
+        return {"results": results}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error searching metadata: {e}")
+        raise HTTPException(status_code=500, detail="Search failed")
+
+
+@metadata_router.delete("/queue/ignore", response_model=SuccessResponse)
+@v1_metadata_router.delete("/queue/ignore", response_model=SuccessResponse)
+def ignore_task(payload: IgnoreTaskRequest):
+    """Ignore/Remove item from queue."""
+    try:
+        db = get_working_database()
+        with db.session_scope() as session:
+            task = session.query(ReviewTask).filter(ReviewTask.id == payload.id).first()
+            if task:
+                task.status = "ignored"
+            else:
+                raise HTTPException(status_code=404, detail="Task not found")
+
+        return SuccessResponse(success=True)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error ignoring task: {e}")
+        raise HTTPException(status_code=500, detail="Failed to ignore task")
+
+
+@metadata_router.get("/isrc/{isrc}")
+@v1_metadata_router.get("/isrc/{isrc}")
+def lookup_isrc(isrc: str):
+    """Resolve track metadata from an ISRC code using a capability-based plugin lookup."""
+    provider = get_plugin_by_capability(Capability.FETCH_BY_ISRC)
+    if not provider:
+        raise HTTPException(status_code=503, detail="No plugin available for ISRC lookups")
+
+    try:
+        from services.isrc_lookup_service import _normalise_isrc, _track_to_dict
+
+        canonical = _normalise_isrc(isrc)
+        if canonical is None:
+            raise HTTPException(status_code=400, detail=f"Invalid ISRC format: {isrc}")
+
+        track = provider.search_by_isrc(canonical)
+        if not track:
+            raise HTTPException(status_code=404, detail="Not found")
+
+        if isinstance(track, EchosyncTrack):
+            result = _track_to_dict(track, getattr(provider, "name", "plugin"))
+        else:
+            result = track
+
+        return {
+            "isrc": canonical,
+            "result": result,
+            "tried": [getattr(provider, "name", repr(provider))],
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error(
+            "ISRC lookup error via plugin %s: %s",
+            getattr(provider, "name", "plugin"),
+            exc,
+        )
+        raise HTTPException(status_code=500, detail="ISRC lookup execution failed")
+
+
+@metadata_router.get("/cover-art")
+@v1_metadata_router.get("/cover-art")
+def get_cover_art(path: str = Query(..., description="absolute path to audio file")):
+    """Extract embedded cover art from an audio file."""
+    try:
+        candidate_roots = [
+            config_manager.get("storage.library_dir"),
+            config_manager.get("library_dir"),
+            config_manager.get("download_dir"),
+            config_manager.get("storage.download_dir"),
+            config_manager.get("data_dir"),
+            ".",
+        ]
+        allowed_roots = [
+            os.path.abspath(os.path.realpath(str(r))) for r in candidate_roots if r
+        ]
+
+        target_abs = os.path.abspath(os.path.realpath(os.path.normpath(str(path))))
+        matched_root = None
+        for root_abs in allowed_roots:
+            if target_abs.startswith(root_abs + os.sep) or target_abs == root_abs:
+                matched_root = root_abs
+                break
+
+        if not matched_root:
+            raise HTTPException(status_code=403, detail="Security violation: Access denied")
+
+        if not os.path.isfile(target_abs):
+            raise HTTPException(status_code=404, detail="File not found")
+
+        parent_dir = os.path.dirname(target_abs)
+        for name in ["cover.jpg", "folder.jpg", "cover.png", "folder.png"]:
+            safe_name = os.path.basename(name)
+            fallback = os.path.abspath(os.path.join(parent_dir, safe_name))
+            if (fallback.startswith(matched_root + os.sep) or fallback == matched_root) and os.path.isfile(fallback):
+                return FileResponse(path=fallback)
+
+        raise HTTPException(status_code=404, detail="No cover art found")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error extracting cover art for {path}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to extract cover art")

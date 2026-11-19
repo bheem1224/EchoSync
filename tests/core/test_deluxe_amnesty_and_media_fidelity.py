@@ -30,14 +30,14 @@ def test_deluxe_edition_amnesty_clean_source():
         raw_title="Fix You",
         artist_name="Coldplay",
         album_title="X&Y",
-        duration=295000,
+        duration_ms=295000,
     )
     candidate = EchosyncTrack(
         raw_title="Fix You",
         artist_name="Coldplay",
         album_title="X&Y",
         edition="Deluxe Edition",
-        duration=295000,
+        duration_ms=295000,
     )
 
     # 1. Direct evaluate_version_compatibility verification
@@ -69,7 +69,7 @@ def test_extended_mix_excluded_from_amnesty():
         raw_title="Midnight City",
         artist_name="M83",
         album_title="Hurry Up, We're Dreaming",
-        duration=243000,
+        duration_ms=243000,
     )
     # Extended mix with significant duration difference (e.g. 60s longer)
     candidate = EchosyncTrack(
@@ -77,7 +77,7 @@ def test_extended_mix_excluded_from_amnesty():
         artist_name="M83",
         album_title="Hurry Up, We're Dreaming",
         edition="Extended Mix",
-        duration=303000,  # +60s duration
+        duration_ms=303000,  # +60s duration
     )
 
     # 1. Direct evaluate_version_compatibility verification
@@ -107,40 +107,40 @@ def test_fidelity_bonus_flac_over_mp3():
         raw_title="Blinding Lights",
         artist_name="The Weeknd",
         album_title="After Hours",
-        duration=200000,
+        duration_ms=200000,
     )
 
     cand_flac = EchosyncTrack(
         raw_title="Blinding Lights",
         artist_name="The Weeknd",
         album_title="After Hours",
-        duration=200000,
+        duration_ms=200000,
+        media=[
+            EchosyncMedia(
+                file_path="/music/The Weeknd/Blinding Lights.flac",
+                file_format="flac",
+                bitrate=1080,
+                sample_rate=44100,
+                bit_depth=16,
+            )
+        ],
     )
-    cand_flac.local_media = [
-        EchosyncMedia(
-            file_path="/music/The Weeknd/Blinding Lights.flac",
-            file_format="flac",
-            bitrate=1080,
-            sample_rate=44100,
-            bit_depth=16,
-        )
-    ]
 
     cand_mp3 = EchosyncTrack(
         raw_title="Blinding Lights",
         artist_name="The Weeknd",
         album_title="After Hours",
-        duration=200000,
+        duration_ms=200000,
+        media=[
+            EchosyncMedia(
+                file_path="/music/The Weeknd/Blinding Lights.mp3",
+                file_format="mp3",
+                bitrate=128,
+                sample_rate=44100,
+                bit_depth=16,
+            )
+        ],
     )
-    cand_mp3.local_media = [
-        EchosyncMedia(
-            file_path="/music/The Weeknd/Blinding Lights.mp3",
-            file_format="mp3",
-            bitrate=128,
-            sample_rate=44100,
-            bit_depth=16,
-        )
-    ]
 
     engine = WeightedMatchingEngine(ExactSyncProfile())
     res_flac = engine.calculate_match(source, cand_flac, context="sync")
@@ -166,7 +166,7 @@ def test_low_bitrate_deluxe_does_not_beat_high_bitrate_original():
         raw_title="Hotel California",
         artist_name="Eagles",
         album_title="Hotel California",
-        duration=390000,
+        duration_ms=390000,
     )
 
     # Deluxe Edition rip in low-bitrate MP3 128k
@@ -175,30 +175,30 @@ def test_low_bitrate_deluxe_does_not_beat_high_bitrate_original():
         artist_name="Eagles",
         album_title="Hotel California (Deluxe Edition)",
         edition="Deluxe Edition",
-        duration=390000,
+        duration_ms=390000,
+        media=[
+            EchosyncMedia(
+                file_path="/music/Eagles/Hotel California Deluxe.mp3",
+                file_format="mp3",
+                bitrate=128,
+            )
+        ],
     )
-    cand_deluxe_low.local_media = [
-        EchosyncMedia(
-            file_path="/music/Eagles/Hotel California Deluxe.mp3",
-            file_format="mp3",
-            bitrate=128,
-        )
-    ]
 
     # Standard original release in 320k MP3
     cand_orig_high = EchosyncTrack(
         raw_title="Hotel California",
         artist_name="Eagles",
         album_title="Hotel California",
-        duration=390000,
+        duration_ms=390000,
+        media=[
+            EchosyncMedia(
+                file_path="/music/Eagles/Hotel California.mp3",
+                file_format="mp3",
+                bitrate=320,
+            )
+        ],
     )
-    cand_orig_high.local_media = [
-        EchosyncMedia(
-            file_path="/music/Eagles/Hotel California.mp3",
-            file_format="mp3",
-            bitrate=320,
-        )
-    ]
 
     engine = WeightedMatchingEngine(ExactSyncProfile())
     res_deluxe = engine.calculate_match(source, cand_deluxe_low, context="sync")

@@ -171,20 +171,20 @@ class MediaScanManager:
             self._timer = None
             self._scan_start_time = time.time()
 
-        # Get the active media client
-        media_client, server_type = self._get_active_media_client()
-        if not media_client:
-            logger.error("❌ No active media client available for library scan")
-            self._reset_scan_state()
-            return
-
-        if not server_type:
-            logger.error("Operation aborted: Missing server type.")
-            return
-
-        logger.info(f"🎵 Starting {server_type.upper()} library scan...")
-
+        scan_initiated = False
         try:
+            # Get the active media client
+            media_client, server_type = self._get_active_media_client()
+            if not media_client:
+                logger.error("❌ No active media client available for library scan")
+                return
+
+            if not server_type:
+                logger.error("Operation aborted: Missing server type.")
+                return
+
+            logger.info(f"🎵 Starting {server_type.upper()} library scan...")
+
             success = self.trigger_library_scan_with_retry(media_client)
 
             if success:
@@ -194,13 +194,15 @@ class MediaScanManager:
 
                 # Start new periodic update system instead of completion detection
                 self._start_periodic_updates()
+                scan_initiated = True
             else:
                 logger.error("❌ Failed to initiate library scan for the active server")
-                self._reset_scan_state()
 
         except Exception:
             logger.error("Exception occurred during library scan for the active server")
-            self._reset_scan_state()
+        finally:
+            if not scan_initiated:
+                self._reset_scan_state()
 
     def _start_periodic_updates(self):
         """Start periodic database updates while media server is scanning"""

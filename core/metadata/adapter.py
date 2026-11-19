@@ -61,11 +61,13 @@ class ResolutionAdapter:
         if getattr(result, "isrc", None):
             track.isrc = result.isrc
 
-        if getattr(result, "duration", None):
+        from core.models import classify_version_type
+
+        if getattr(result, "duration_ms", None):
+            track.duration = int(result.duration_ms)
+        elif getattr(result, "duration", None):
             d_val = result.duration
             track.duration = d_val if d_val > 1000 else int(d_val * 1000)
-        elif getattr(result, "duration_ms", None):
-            track.duration = result.duration_ms
 
         mbid = getattr(result, "musicbrainz_id", None) or getattr(result, "musicbrainz_track_id", None)
         if mbid:
@@ -112,6 +114,12 @@ class ResolutionAdapter:
         elif getattr(result, "version", None):
             track.edition = result.version
 
+        track.version_type = (
+            getattr(result, "version_type", None)
+            if getattr(result, "version_type", None) and getattr(result, "version_type", None) != "original"
+            else classify_version_type(getattr(result, "version", None), track.edition)
+        )
+
         try:
             if ext_version:
                 track.version = ext_version
@@ -123,12 +131,22 @@ class ResolutionAdapter:
             pass
 
         # 3. Enforce Relational Artist Reconciliation
-        if getattr(result, "primary_artists", None):
-            primary = result.primary_artists
+        artist_str = getattr(result, "artist_name", None) or getattr(result, "artist", "") or ""
+        raw_primary = list(getattr(result, "primary_artists", None) or [])
+        has_valid_primary = bool(
+            raw_primary
+            and not (
+                len(raw_primary) == 1
+                and str(raw_primary[0]).strip().lower().startswith("unknown")
+                and artist_str
+                and not artist_str.strip().lower().startswith("unknown")
+            )
+        )
+        if has_valid_primary:
+            primary = raw_primary
             featured = getattr(result, "featured_artists", [])
             remixers = getattr(result, "remixers", [])
         else:
-            artist_str = getattr(result, "artist_name", None) or getattr(result, "artist", "")
             roles = decompose_artists(artist_str)
             primary = roles.get("primary", [])
             featured = roles.get("featured", [])
@@ -296,12 +314,12 @@ class ResolutionAdapter:
                     break
 
         if not matched_track:
-            t_title = (getattr(enhanced_dto, "title", None) or "").strip()
+            t_title = (getattr(enhanced_dto, "title", None) or getattr(enhanced_dto, "raw_title", None) or "").strip()
             t_artist = (
                 getattr(enhanced_dto, "artist", None) or getattr(enhanced_dto, "artist_name", None) or ""
             ).strip()
             t_edition = getattr(enhanced_dto, "edition", None)
-            t_duration = getattr(enhanced_dto, "duration", None) or getattr(enhanced_dto, "duration_ms", None)
+            t_duration = getattr(enhanced_dto, "duration_ms", None) or getattr(enhanced_dto, "duration", None)
 
             if t_title and t_artist:
                 from sqlalchemy import or_
@@ -493,7 +511,9 @@ class ResolutionAdapter:
                 )
                 from core.database.repositories.track_repo import TrackRepository
 
-                TrackRepository.resolve_artists_and_albums(session, [enhanced_dto])
+                resolved_dtos = TrackRepository.resolve_artists_and_albums(session, [enhanced_dto])
+                if resolved_dtos:
+                    enhanced_dto = resolved_dtos[0]
 
                 target_album_id = getattr(enhanced_dto, "album_id", None)
                 verified_album_id = None
@@ -512,12 +532,13 @@ class ResolutionAdapter:
                 resolved_artist_id = getattr(enhanced_dto, "artist_id", None) or current_track.artist_id
 
                 new_track = Track(
-                    title=enhanced_dto.title or current_track.title,
+                    title=enhanced_dto.title or enhanced_dto.raw_title or current_track.title,
                     sync_id=generate_nanoid(8),
                     edition=getattr(enhanced_dto, "edition", None) or getattr(enhanced_dto, "version", None),
                     musicbrainz_id=mbid if mbid != "NOT_FOUND" else None,
                     isrc=isrc,
-                    duration=enhanced_dto.duration or current_track.duration,
+                    duration=getattr(enhanced_dto, "duration_ms", None) or getattr(enhanced_dto, "duration", None) or current_track.duration,
+                    version_type=getattr(enhanced_dto, "version_type", None) or "original",
                     track_number=getattr(enhanced_dto, "track_number", None) or current_track.track_number,
                     disc_number=getattr(enhanced_dto, "disc_number", None) or current_track.disc_number,
                     artist_id=resolved_artist_id,
@@ -540,7 +561,9 @@ class ResolutionAdapter:
         if current_track:
             from core.database.repositories.track_repo import TrackRepository
 
-            TrackRepository.resolve_artists_and_albums(session, [enhanced_dto])
+            resolved_dtos = TrackRepository.resolve_artists_and_albums(session, [enhanced_dto])
+            if resolved_dtos:
+                enhanced_dto = resolved_dtos[0]
             current_track = self.hydrate_track(enhanced_dto, session, current_track)
             target_album_id = getattr(enhanced_dto, "album_id", None)
             if target_album_id:

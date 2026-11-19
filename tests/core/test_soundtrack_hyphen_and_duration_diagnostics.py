@@ -39,13 +39,13 @@ def test_test_b_duration_match_score_preserved_on_version_mismatch_veto():
     source = EchosyncTrack(
         raw_title="Lovely",
         artist_name="Billie Eilish & Khalid",
-        duration=200000,
+        duration_ms=200000,
     )
     candidate_remix = EchosyncTrack(
         raw_title="Lovely",
         artist_name="Billie Eilish & Khalid",
         edition="Remix",
-        duration=200000,
+        duration_ms=200000,
     )
 
     result = engine.calculate_match(source, candidate_remix, context="sync")

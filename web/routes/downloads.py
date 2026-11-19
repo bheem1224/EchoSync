@@ -1,15 +1,43 @@
+import asyncio
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from core.job_queue import list_jobs as jq_list_jobs
+from core.task_manager.task_queue import list_jobs as jq_list_jobs
 from core.tiered_logger import get_logger
-from database.working_database import DownloadQueue, get_working_database
+from database.working_database import DownloadQueue, DownloadStatus, get_working_database
 from services.download_manager import get_download_manager
 from time_utils import utc_now
 
 logger = get_logger("downloads_route")
 router = APIRouter(prefix="/api/v1/system/downloads", tags=["Downloads"])
 core_router = APIRouter(prefix="/api/v1/core/downloads", tags=["Downloads"])
+
+_ACTIVE_QUEUE_STATUSES = [
+    DownloadStatus.QUEUED.value,
+    DownloadStatus.SEARCHING.value,
+    DownloadStatus.DOWNLOADING.value,
+    DownloadStatus.VERIFYING.value,
+    DownloadStatus.RETRYING.value,
+    DownloadStatus.PENDING_BLOCKED.value,
+    "PAUSED",
+    "IN_PROGRESS",
+]
+
+_HISTORY_QUEUE_STATUSES = [
+    DownloadStatus.COMPLETED.value,
+    DownloadStatus.FAILED.value,
+    DownloadStatus.CANCELLED.value,
+    "FAILED_NO_RESULTS",
+    "FAILED_NO_MATCH",
+    "FAILED_START_DOWNLOAD",
+    "FAILED_ERROR",
+    "FAILED_NO_USERNAME",
+    "FAILED_NO_FILENAME",
+    "FAILED_TERMINAL",
+    "FAILED_MAX_RETRIES",
+    "NOT_FOUND",
+]
 
 
 # ---------------------------------------------------------------------------
@@ -52,19 +80,59 @@ def _to_ui_status(raw_status: str) -> str:
         return "QUEUED"
     if status == "searching":
         return "SEARCHING"
-    if status == "downloading":
+    if status in {"downloading", "in_progress"}:
         return "DOWNLOADING"
-    if status == "completed":
+    if status == "verifying":
+        return "VERIFYING"
+    if status == "retrying":
+        return "RETRYING"
+    if status in {"completed", "complete", "verified"}:
         return "COMPLETED"
     if status in {"failed_no_results", "not_found"}:
         return "NOT_FOUND"
     if status == "paused":
         return "PAUSED"
-    if status == "cancelled":
+    if status == "pending_blocked":
+        return "PENDING_BLOCKED"
+    if status in {"cancelled", "canceled"}:
         return "CANCELLED"
     if status.startswith("failed"):
         return "FAILED"
     return (raw_status or "UNKNOWN").upper()
+
+
+def _cancel_remote_transfers(items: list[DownloadQueue]) -> None:
+    """Best-effort cancellation of active remote provider transfers for deleted/cancelled items."""
+    targets = []
+    for item in items:
+        provider_ref = getattr(item, "provider_id", None)
+        active_cand = getattr(item, "active_candidate_id", None)
+        cancel_id = (
+            provider_ref
+            if (provider_ref and "|" in str(provider_ref))
+            else (active_cand or provider_ref)
+        )
+        if cancel_id:
+            targets.append(cancel_id)
+
+    if not targets:
+        return
+
+    dm = get_download_manager()
+    providers = dm._get_active_download_providers()
+    for cancel_id in targets:
+        for p in providers:
+            try:
+                if hasattr(p, "cancel_download"):
+                    p.cancel_download(cancel_id)
+                elif hasattr(p, "_async_cancel_download"):
+                    try:
+                        loop = asyncio.get_running_loop()
+                        loop.create_task(p._async_cancel_download(cancel_id))
+                    except RuntimeError:
+                        asyncio.run(p._async_cancel_download(cancel_id))
+            except Exception as ce:
+                logger.debug(f"Failed to cancel remote transfer {cancel_id}: {ce}")
 
 
 def _format_item(download) -> dict:
@@ -90,14 +158,19 @@ def _format_item(download) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def _get_queue_impl():
+def _get_queue_impl(status: str | None = None):
     try:
         with get_working_database().session_scope() as session:
-            downloads = (
-                session.query(DownloadQueue)
-                .order_by(DownloadQueue.created_at.desc())
-                .all()
-            )
+            query = session.query(DownloadQueue)
+            if status:
+                clean_status = status.strip().lower()
+                if clean_status == "active":
+                    query = query.filter(DownloadQueue.status.in_(_ACTIVE_QUEUE_STATUSES))
+                elif clean_status == "history":
+                    query = query.filter(DownloadQueue.status.in_(_HISTORY_QUEUE_STATUSES))
+                else:
+                    query = query.filter(DownloadQueue.status == clean_status.upper())
+            downloads = query.order_by(DownloadQueue.created_at.desc()).all()
             queue_items = [_format_item(d) for d in downloads]
             return {"total": len(queue_items), "items": queue_items}
     except Exception as e:
@@ -108,16 +181,9 @@ def _get_queue_impl():
 def _get_active_impl():
     try:
         with get_working_database().session_scope() as session:
-            active_statuses = [
-                "queued",
-                "searching",
-                "downloading",
-                "in_progress",
-                "paused",
-            ]
             downloads = (
                 session.query(DownloadQueue)
-                .filter(DownloadQueue.status.in_(active_statuses))
+                .filter(DownloadQueue.status.in_(_ACTIVE_QUEUE_STATUSES))
                 .order_by(DownloadQueue.created_at.asc())
                 .all()
             )
@@ -131,16 +197,9 @@ def _get_active_impl():
 def _get_history_impl():
     try:
         with get_working_database().session_scope() as session:
-            history_statuses = [
-                "completed",
-                "failed",
-                "failed_no_results",
-                "not_found",
-                "cancelled",
-            ]
             downloads = (
                 session.query(DownloadQueue)
-                .filter(DownloadQueue.status.in_(history_statuses))
+                .filter(DownloadQueue.status.in_(_HISTORY_QUEUE_STATUSES))
                 .order_by(DownloadQueue.updated_at.desc())
                 .limit(100)
                 .all()
@@ -187,27 +246,8 @@ def _delete_download_impl(download_id: int):
             if not download:
                 raise HTTPException(status_code=404, detail="DownloadQueue not found")
 
-            if download.status == "downloading" and download.provider_id:
-                dm = get_download_manager()
-                providers = dm._get_active_download_providers()
-                import asyncio
-
-                for p in providers:
-                    try:
-                        if hasattr(p, "cancel_download"):
-                            p.cancel_download(download.provider_id)
-                        elif hasattr(p, "_async_cancel_download"):
-                            try:
-                                loop = asyncio.get_running_loop()
-                                loop.create_task(
-                                    p._async_cancel_download(download.provider_id)
-                                )
-                            except RuntimeError:
-                                pass
-                    except Exception as ce:
-                        logger.debug(
-                            f"Failed to cancel remote transfer {download.provider_id}: {ce}"
-                        )
+            if download.status == DownloadStatus.DOWNLOADING.value:
+                _cancel_remote_transfers([download])
 
             session.delete(download)
             session.commit()
@@ -227,40 +267,23 @@ def _clear_queue_impl(
         with get_working_database().session_scope() as session:
             query = session.query(DownloadQueue)
             if status:
-                query = query.filter(DownloadQueue.status == status)
+                clean_status = status.strip().lower()
+                if clean_status == "active":
+                    query = query.filter(DownloadQueue.status.in_(_ACTIVE_QUEUE_STATUSES))
+                elif clean_status == "history":
+                    query = query.filter(DownloadQueue.status.in_(_HISTORY_QUEUE_STATUSES))
+                else:
+                    query = query.filter(DownloadQueue.status == clean_status.upper())
             elif scope == "failed":
-                query = query.filter(DownloadQueue.status.like("failed%"))
+                query = query.filter(DownloadQueue.status.ilike("failed%"))
             elif scope == "active":
-                query = query.filter(
-                    DownloadQueue.status.in_(
-                        ["queued", "searching", "downloading", "in_progress", "paused"]
-                    )
-                )
+                query = query.filter(DownloadQueue.status.in_(_ACTIVE_QUEUE_STATUSES))
 
-            active_downloads = query.filter(DownloadQueue.status == "downloading").all()
+            active_downloads = query.filter(
+                DownloadQueue.status == DownloadStatus.DOWNLOADING.value
+            ).all()
             if active_downloads:
-                dm = get_download_manager()
-                providers = dm._get_active_download_providers()
-                import asyncio
-
-                for item in active_downloads:
-                    if item.provider_id:
-                        for p in providers:
-                            try:
-                                if hasattr(p, "cancel_download"):
-                                    p.cancel_download(item.provider_id)
-                                elif hasattr(p, "_async_cancel_download"):
-                                    try:
-                                        loop = asyncio.get_running_loop()
-                                        loop.create_task(
-                                            p._async_cancel_download(item.provider_id)
-                                        )
-                                    except RuntimeError:
-                                        pass
-                            except Exception as ce:
-                                logger.debug(
-                                    f"Failed to cancel remote transfer {item.provider_id}: {ce}"
-                                )
+                _cancel_remote_transfers(active_downloads)
 
             count = query.delete(synchronize_session=False)
             session.commit()
@@ -288,7 +311,8 @@ def _requeue_download_impl(download_id: int):
             if not download:
                 raise HTTPException(status_code=404, detail="Download not found")
 
-            download.status = "queued"
+            download.status = DownloadStatus.QUEUED.value
+            download.error_reason = None
             download.updated_at = utc_now()
             session.commit()
 
@@ -313,7 +337,7 @@ def _pause_download_impl(download_id: int):
             if not download:
                 raise HTTPException(status_code=404, detail="DownloadQueue not found")
 
-            download.status = "paused"
+            download.status = "PAUSED"
             download.updated_at = utc_now()
             session.commit()
             return {"success": True, "message": f"Download {download_id} paused"}
@@ -335,7 +359,10 @@ def _cancel_download_impl(download_id: int):
             if not download:
                 raise HTTPException(status_code=404, detail="DownloadQueue not found")
 
-            download.status = "cancelled"
+            if download.status == DownloadStatus.DOWNLOADING.value:
+                _cancel_remote_transfers([download])
+
+            download.status = DownloadStatus.CANCELLED.value
             download.updated_at = utc_now()
             session.commit()
             return {"success": True, "message": f"Download {download_id} cancelled"}
@@ -351,13 +378,14 @@ def _requeue_all_failed_impl():
         with get_working_database().session_scope() as session:
             failed_items = (
                 session.query(DownloadQueue)
-                .filter(DownloadQueue.status.like("failed%"))
+                .filter(DownloadQueue.status.ilike("failed%"))
                 .all()
             )
             count = len(failed_items)
             for item in failed_items:
-                item.status = "queued"
+                item.status = DownloadStatus.QUEUED.value
                 item.retry_count = (item.retry_count or 0) + 1
+                item.error_reason = None
                 item.updated_at = utc_now()
             session.commit()
             logger.info(f"Re-queued {count} failed downloads")
@@ -376,7 +404,7 @@ def _delete_all_failed_impl():
         with get_working_database().session_scope() as session:
             count = (
                 session.query(DownloadQueue)
-                .filter(DownloadQueue.status.like("failed%"))
+                .filter(DownloadQueue.status.ilike("failed%"))
                 .delete(synchronize_session=False)
             )
             session.commit()
@@ -402,7 +430,7 @@ def _start_download_now_impl(download_id: int):
             if not download:
                 raise HTTPException(status_code=404, detail="DownloadQueue not found")
 
-            download.status = "queued"
+            download.status = DownloadStatus.QUEUED.value
             download.retry_count = (download.retry_count or 0) + 1
             download.updated_at = utc_now()
             session.commit()
@@ -428,33 +456,13 @@ def _delete_batch_impl(payload: BatchDeleteRequest):
             active_downloads = (
                 session.query(DownloadQueue)
                 .filter(
-                    DownloadQueue.id.in_(ids), DownloadQueue.status == "downloading"
+                    DownloadQueue.id.in_(ids),
+                    DownloadQueue.status == DownloadStatus.DOWNLOADING.value,
                 )
                 .all()
             )
             if active_downloads:
-                dm = get_download_manager()
-                providers = dm._get_active_download_providers()
-                import asyncio
-
-                for item in active_downloads:
-                    if item.provider_id:
-                        for p in providers:
-                            try:
-                                if hasattr(p, "cancel_download"):
-                                    p.cancel_download(item.provider_id)
-                                elif hasattr(p, "_async_cancel_download"):
-                                    try:
-                                        loop = asyncio.get_running_loop()
-                                        loop.create_task(
-                                            p._async_cancel_download(item.provider_id)
-                                        )
-                                    except RuntimeError:
-                                        pass
-                            except Exception as ce:
-                                logger.debug(
-                                    f"Failed to cancel remote transfer {item.provider_id}: {ce}"
-                                )
+                _cancel_remote_transfers(active_downloads)
 
             count = (
                 session.query(DownloadQueue)

@@ -12,6 +12,7 @@ This service focuses on:
 It does NOT move files or scan directories (see AutoImportService).
 """
 
+from dataclasses import replace
 import datetime
 import difflib
 import re
@@ -915,6 +916,7 @@ class RetroactiveEnhancer:
                 .join(AudioFingerprint, AudioFingerprint.media_id == LocalMedia.media_id)
                 .filter(
                     AudioFingerprint.chromaprint == chromaprint,
+                    Track.verification_tier != "quarantined",
                     Track.musicbrainz_id.isnot(None),
                     Track.musicbrainz_id != "",
                     Track.musicbrainz_id != "NOT_FOUND",
@@ -1308,6 +1310,9 @@ class RetroactiveEnhancer:
                     logger.debug("[enhancer] Failed to generate audio signature for track %d: %s", track_id, sig_err)
 
                 track.metadata_status = meta_status
+                track.enhancement_attempts = 0
+                if getattr(track, "verification_tier", None) != "manual_locked":
+                    track.verification_tier = "acoustid_verified"
                 track.mark_plugin_satisfied("EchoSync.cjk")
                 flag_modified(track, "metadata_status")
 
@@ -1345,8 +1350,11 @@ class RetroactiveEnhancer:
                 attempts = int(meta_status.get("enhancement_attempts", 0)) + 1
                 meta_status["enhancement_attempts"] = attempts
                 meta_status["last_enhancement_attempt"] = datetime.datetime.now(datetime.UTC).isoformat()
+                track.enhancement_attempts = attempts
                 if attempts >= 5:
-                    track.musicbrainz_id = "NOT_FOUND"
+                    track.verification_tier = "quarantined"
+                    if track.musicbrainz_id == "NOT_FOUND":
+                        track.musicbrainz_id = None
                     meta_status["enhanced"] = False
                     try:
                         from database.repositories.task_repository import TaskRepository
@@ -1697,15 +1705,18 @@ class RetroactiveEnhancer:
                             parsed_title = getattr(parsed_meta, "title", None) or getattr(
                                 parsed_meta, "raw_title", None
                             )
+                            tp_updates: dict[str, Any] = {}
                             if parsed_artist and not track.artist_name:
-                                track.artist_name = parsed_artist
+                                tp_updates["artist_name"] = parsed_artist
                             if parsed_title and not (track.title or track.raw_title):
-                                track.title = parsed_title
-                                track.raw_title = parsed_title
+                                tp_updates["title"] = parsed_title
+                                tp_updates["raw_title"] = parsed_title
                             if getattr(parsed_meta, "display_title", None) and not track.display_title:
-                                track.display_title = parsed_meta.display_title
+                                tp_updates["display_title"] = parsed_meta.display_title
                             if getattr(parsed_meta, "album_title", None) and not track.album_title:
-                                track.album_title = parsed_meta.album_title
+                                tp_updates["album_title"] = parsed_meta.album_title
+                            if tp_updates:
+                                track = replace(track, **tp_updates)
                     except Exception as tp_err:
                         logger.debug(f"TrackParser filename fallback error for {file_path_str}: {tp_err}")
 
@@ -1720,48 +1731,58 @@ class RetroactiveEnhancer:
                 if file_exists and not track.fingerprint:
                     try:
                         fingerprint, dur_sec = FingerprintGenerator.generate_with_duration(file_path_str)
+                        fp_updates: dict[str, Any] = {}
                         if fingerprint:
-                            track.fingerprint = fingerprint
-                            track.fingerprint_confidence = 1.0  # type: ignore[attr-defined]
-                        if (not track.duration or track.duration <= 0) and dur_sec:
-                            track.duration = round(float(dur_sec) * 1000)
+                            fp_updates["fingerprint"] = fingerprint
+                            fp_updates["extra_metadata"] = {
+                                **(track.extra_metadata or {}),
+                                "fingerprint_confidence": 1.0,
+                            }
+                        if (not track.duration_ms or track.duration_ms <= 0) and dur_sec:
+                            fp_updates["duration_ms"] = round(float(dur_sec) * 1000)
+                        if fp_updates:
+                            track = replace(track, **fp_updates)
                     except Exception as fp_err:
                         logger.warning(f"Failed to generate fingerprint for review task: {fp_err}")
 
                 # 3. Merge incoming match_data (metadata suggestion) if present
                 if isinstance(match_data, dict):
+                    md_updates: dict[str, Any] = {}
                     if match_data.get("title"):
-                        track.raw_title = match_data["title"]
-                        track.title = match_data["title"]
-                        track.display_title = match_data["title"]
+                        md_updates["raw_title"] = match_data["title"]
+                        md_updates["title"] = match_data["title"]
+                        md_updates["display_title"] = match_data["title"]
                     if match_data.get("artist"):
-                        track.artist_name = match_data["artist"]
+                        md_updates["artist_name"] = match_data["artist"]
                     if match_data.get("album"):
-                        track.album_title = match_data["album"]
+                        md_updates["album_title"] = match_data["album"]
                     if match_data.get("year"):
                         try:
-                            track.release_year = int(match_data["year"])
+                            md_updates["release_year"] = int(match_data["year"])
                         except Exception:
                             pass
                     if match_data.get("track_number"):
                         try:
-                            track.track_number = int(match_data["track_number"])
+                            md_updates["track_number"] = int(match_data["track_number"])
                         except Exception:
                             pass
                     if match_data.get("disc_number"):
                         try:
-                            track.disc_number = int(match_data["disc_number"])
+                            md_updates["disc_number"] = int(match_data["disc_number"])
                         except Exception:
                             pass
                     if match_data.get("musicbrainz_id"):
-                        track.musicbrainz_id = match_data["musicbrainz_id"]
+                        md_updates["musicbrainz_id"] = match_data["musicbrainz_id"]
                     if match_data.get("isrc"):
-                        track.isrc = match_data["isrc"]
-                    if match_data.get("duration"):
+                        md_updates["isrc"] = match_data["isrc"]
+                    raw_match_dur = match_data.get("duration_ms") or match_data.get("duration")
+                    if raw_match_dur:
                         try:
-                            track.duration = int(match_data["duration"])
+                            md_updates["duration_ms"] = int(raw_match_dur)
                         except Exception:
                             pass
+                    if md_updates:
+                        track = replace(track, **md_updates)
 
                 track_dict = track.to_dict()
 
@@ -1858,7 +1879,7 @@ class RetroactiveEnhancer:
             raw_title=title,
             artist_name=clean_a,
             album_title=track.album_title if hasattr(track, "album_title") and track.album_title else "",
-            duration=track.duration if hasattr(track, "duration") else None,
+            duration_ms=getattr(track, "duration_ms", None) or getattr(track, "duration", None),
         )
 
         engine_cls = ServiceRegistry.resolve("matching_engine") or WeightedMatchingEngine
@@ -2042,6 +2063,15 @@ class RetroactiveEnhancer:
         self._get_plugin(Capability.RESOLVE_FINGERPRINT, required_algorithm="chromaprint")
         self._get_plugin(Capability.FETCH_METADATA)
 
+        def _record_miss(item_dict: dict, force_quarantine: bool = False) -> int:
+            attempts_val = int(item_dict["metadata_status"].get("enhancement_attempts", 0)) + 1
+            item_dict["metadata_status"]["enhancement_attempts"] = attempts_val
+            item_dict["enhancement_attempts"] = attempts_val
+            if force_quarantine or attempts_val >= 5:
+                item_dict["verification_tier"] = "quarantined"
+                item_dict["metadata_status"]["enhanced"] = False
+            return attempts_val
+
         total_processed = 0
         processed_media_ids: set[int] = set()
         MAX_ITERATIONS = 50000  # safety cap — prevents infinite loops on persistent failures
@@ -2168,10 +2198,7 @@ class RetroactiveEnhancer:
                             "Enhancer skipping media ID %d: No file path.",
                             item["media_id_pk"],
                         )
-                        t_track.musicbrainz_id = "NOT_FOUND"
-                        item["metadata_status"]["enhancement_attempts"] = (
-                            item["metadata_status"].get("enhancement_attempts", 0) + 1
-                        )
+                        _record_miss(item, force_quarantine=True)
                         results_to_commit.append(item)
                         continue
 
@@ -2186,10 +2213,7 @@ class RetroactiveEnhancer:
                             item["media_id_pk"],
                             local_path_str,
                         )
-                        t_track.musicbrainz_id = "NOT_FOUND"
-                        item["metadata_status"]["enhancement_attempts"] = (
-                            item["metadata_status"].get("enhancement_attempts", 0) + 1
-                        )
+                        _record_miss(item, force_quarantine=True)
                         results_to_commit.append(item)
                         continue
 
@@ -2209,9 +2233,9 @@ class RetroactiveEnhancer:
                     found_isrc = file_tags.get("isrc") or t_track.isrc
 
                     if found_mbid:
-                        t_track.musicbrainz_id = found_mbid
+                        t_track = replace(t_track, musicbrainz_id=found_mbid)
                     if found_isrc:
-                        t_track.isrc = found_isrc
+                        t_track = replace(t_track, isrc=found_isrc)
 
                     # Extract artist if missing, unknown, or Various Artists
                     tag_artist = file_tags.get("artist")
@@ -2221,7 +2245,13 @@ class RetroactiveEnhancer:
                         not t_track.artist_name
                         or t_track.artist_name.strip().lower().startswith(("unknown", "various artist"))
                     ):
-                        t_track.artist_name = tag_artist.strip()
+                        t_track = replace(
+                            t_track,
+                            artist_name=tag_artist.strip(),
+                            primary_artists=[],
+                            featured_artists=[],
+                            remixers=[],
+                        )
                         item["metadata_status"]["artist_fixed_from_tags"] = True
                         item["metadata_changed"] = True
 
@@ -2230,7 +2260,7 @@ class RetroactiveEnhancer:
                     if (tag_album and tag_album.strip() and not tag_album.strip().lower().startswith("unknown")) and (
                         not t_track.album_title or t_track.album_title.strip().lower().startswith("unknown")
                     ):
-                        t_track.album_title = tag_album.strip()
+                        t_track = replace(t_track, album_title=tag_album.strip())
                         item["metadata_status"]["album_fixed_from_tags"] = True
                         item["metadata_changed"] = True
 
@@ -2239,20 +2269,20 @@ class RetroactiveEnhancer:
                     if (tag_title and tag_title.strip() and not tag_title.strip().lower().startswith("unknown")) and (
                         not t_track.title or t_track.title.strip().lower().startswith("unknown")
                     ):
-                        t_track.title = tag_title.strip()
+                        t_track = replace(t_track, title=tag_title.strip())
                         item["metadata_status"]["title_fixed_from_tags"] = True
                         item["metadata_changed"] = True
 
                     # Extract duration if missing
-                    if not t_track.duration or t_track.duration <= 0:
+                    if not t_track.duration_ms or t_track.duration_ms <= 0:
                         tag_dur = file_tags.get("duration_ms") or file_tags.get("duration")
                         if tag_dur:
                             try:
                                 t_dur_val = float(tag_dur)
                                 if 0 < t_dur_val < 10000:
-                                    t_track.duration = round(t_dur_val * 1000)
+                                    t_track = replace(t_track, duration_ms=round(t_dur_val * 1000))
                                 elif t_dur_val >= 10000:
-                                    t_track.duration = round(t_dur_val)
+                                    t_track = replace(t_track, duration_ms=round(t_dur_val))
                             except (ValueError, TypeError):
                                 pass
 
@@ -2277,21 +2307,29 @@ class RetroactiveEnhancer:
                             if (parent_artist and parent_artist.lower() not in non_artist_names) and (
                                 not t_track.artist_name or t_track.artist_name.strip().lower().startswith("unknown")
                             ):
-                                t_track.artist_name = parent_artist
+                                t_track = replace(
+                                    t_track,
+                                    artist_name=parent_artist,
+                                    primary_artists=[],
+                                    featured_artists=[],
+                                    remixers=[],
+                                )
                                 item["metadata_status"]["artist_fixed_from_path"] = True
                                 item["metadata_changed"] = True
                             if (parent_album and parent_album.lower() not in non_artist_names) and (
                                 not t_track.album_title or t_track.album_title.strip().lower().startswith("unknown")
                             ):
-                                t_track.album_title = parent_album
+                                t_track = replace(t_track, album_title=parent_album)
                                 item["metadata_status"]["album_fixed_from_path"] = True
                                 item["metadata_changed"] = True
+
+                    item["track"] = t_track
 
                     # Check cryptographic signature validity
                     sig_to_verify = file_tags.get("echosync_signature") or file_tags.get("ECHOSYNC_SIGNATURE")
                     if not sig_to_verify:
-                        sig_to_verify = item["metadata_status"].get("echosync_signature") or getattr(
-                            t_track, "echosync_signature", None
+                        sig_to_verify = item["metadata_status"].get("echosync_signature") or item.get(
+                            "echosync_signature"
                         )
 
                     sig_valid = False
@@ -2317,8 +2355,7 @@ class RetroactiveEnhancer:
                             local_path.name,
                         )
                         item["metadata_status"]["echosync_signature"] = None
-                        if hasattr(t_track, "echosync_signature"):
-                            t_track.echosync_signature = None
+                        item["echosync_signature"] = None
 
                     # Determine whether track has bad metadata that requires enhancement
                     is_bad_metadata = (
@@ -2395,8 +2432,7 @@ class RetroactiveEnhancer:
                                 )
                                 if sig:
                                     item["metadata_status"]["echosync_signature"] = sig
-                                    if hasattr(t_track, "echosync_signature"):
-                                        t_track.echosync_signature = sig
+                                    item["echosync_signature"] = sig
                                     try:
                                         echosync_core.write_metadata(
                                             str(local_path),
@@ -2466,15 +2502,13 @@ class RetroactiveEnhancer:
                                         logger.info(
                                             f"[enhancer] Targeted MBID fetch rejected for media {item['media_id_pk']}; demoting to acoustic waterfall"
                                         )
-                                        t_track.musicbrainz_id = None
+                                        t_track = replace(t_track, musicbrainz_id=None)
+                                        item["track"] = t_track
                                         item["ignore_embedded_mbid"] = True
                                         bucket_heavy.append((item, local_path, file_tags))
                                         continue
                                     else:
-                                        t_track.musicbrainz_id = "NOT_FOUND"
-                                        item["metadata_status"]["enhancement_attempts"] = (
-                                            item["metadata_status"].get("enhancement_attempts", 0) + 1
-                                        )
+                                        _record_miss(item, force_quarantine=True)
                                         results_to_commit.append(item)
                                         continue
 
@@ -2484,24 +2518,32 @@ class RetroactiveEnhancer:
                                         logger.info(
                                             f"[enhancer] Targeted MBID fetch returned candidate with no title for media {item['media_id_pk']}; demoting to acoustic waterfall"
                                         )
-                                        t_track.musicbrainz_id = None
+                                        t_track = replace(t_track, musicbrainz_id=None)
+                                        item["track"] = t_track
                                         item["ignore_embedded_mbid"] = True
                                         bucket_heavy.append((item, local_path, file_tags))
                                         continue
 
+                                target_updates: dict[str, Any] = {}
                                 if meta.get("title"):
-                                    t_track.title = meta["title"]
+                                    target_updates["title"] = meta["title"]
                                 if meta.get("artist"):
-                                    t_track.artist_name = meta["artist"]
+                                    target_updates["artist_name"] = meta["artist"]
+                                    target_updates["primary_artists"] = []
+                                    target_updates["featured_artists"] = []
+                                    target_updates["remixers"] = []
                                 if meta.get("album"):
-                                    t_track.album_title = meta["album"]
+                                    target_updates["album_title"] = meta["album"]
                                 if meta.get("year"):
                                     try:
-                                        t_track.release_year = int(meta["year"])
+                                        target_updates["release_year"] = int(meta["year"])
                                     except Exception:
                                         pass
                                 if not t_track.isrc and meta.get("isrc"):
-                                    t_track.isrc = meta.get("isrc")
+                                    target_updates["isrc"] = meta.get("isrc")
+                                if target_updates:
+                                    t_track = replace(t_track, **target_updates)
+                                    item["track"] = t_track
 
                                 update_tags = {}
                                 if meta.get("title"):
@@ -2565,14 +2607,12 @@ class RetroactiveEnhancer:
                                     logger.info(
                                         f"[enhancer] Targeted MBID fetch returned no valid data for media {item['media_id_pk']}; demoting to acoustic waterfall"
                                     )
-                                    t_track.musicbrainz_id = None
+                                    t_track = replace(t_track, musicbrainz_id=None)
+                                    item["track"] = t_track
                                     item["ignore_embedded_mbid"] = True
                                     bucket_heavy.append((item, local_path, file_tags))
                                 else:
-                                    t_track.musicbrainz_id = "NOT_FOUND"
-                                    item["metadata_status"]["enhancement_attempts"] = (
-                                        item["metadata_status"].get("enhancement_attempts", 0) + 1
-                                    )
+                                    _record_miss(item, force_quarantine=True)
                                     results_to_commit.append(item)
                     else:
                         for item, local_path, file_tags in bucket_target:
@@ -2582,21 +2622,19 @@ class RetroactiveEnhancer:
                                 logger.info(
                                     f"[enhancer] Targeted MBID fetch unavailable for media {item['media_id_pk']}; demoting to acoustic waterfall"
                                 )
-                                t_track.musicbrainz_id = None
+                                t_track = replace(t_track, musicbrainz_id=None)
+                                item["track"] = t_track
                                 item["ignore_embedded_mbid"] = True
                                 bucket_heavy.append((item, local_path, file_tags))
                             else:
-                                t_track.musicbrainz_id = "NOT_FOUND"
-                                item["metadata_status"]["enhancement_attempts"] = (
-                                    item["metadata_status"].get("enhancement_attempts", 0) + 1
-                                )
+                                _record_miss(item, force_quarantine=True)
                                 results_to_commit.append(item)
 
                 # Step 4: Heavyweight Fingerprint Discovery & Text Waterfall Fallback
                 for item, local_path, file_tags in bucket_heavy:
                     t_track = item["track"]
                     new_musicbrainz_id = None
-                    duration = t_track.duration
+                    duration = t_track.duration_ms
 
                     # Ensure this media file has a chromaprint
                     existing_fp = (item.get("fingerprint") or {}).get("chromaprint")
@@ -2619,31 +2657,32 @@ class RetroactiveEnhancer:
                             }
                             item["chromaprint"] = cp
                             if not t_track.fingerprint:
-                                t_track.fingerprint = cp
+                                t_track = replace(t_track, fingerprint=cp)
                         if (not duration or duration <= 0) and dur_sec:
                             duration = round(float(dur_sec) * 1000)
-                            t_track.duration = duration
+                            t_track = replace(t_track, duration_ms=duration)
                     else:
                         item["chromaprint"] = existing_fp
                         if not t_track.fingerprint:
-                            t_track.fingerprint = existing_fp
+                            t_track = replace(t_track, fingerprint=existing_fp)
                         if not duration or duration <= 0:
                             try:
                                 meta_d = echosync_core.extract_metadata(str(local_path))
                                 if meta_d and meta_d.get("duration"):
                                     dur_s = float(meta_d["duration"])
                                     duration = round(dur_s * 1000) if dur_s < 10000 else round(dur_s)
-                                    t_track.duration = duration
+                                    t_track = replace(t_track, duration_ms=duration)
                                 elif meta_d and meta_d.get("duration_ms"):
                                     duration = int(meta_d["duration_ms"])
-                                    t_track.duration = duration
+                                    t_track = replace(t_track, duration_ms=duration)
                                 else:
                                     _, dur_sec = FingerprintGenerator.generate_with_duration(str(local_path))
                                     if dur_sec:
                                         duration = round(float(dur_sec) * 1000)
-                                        t_track.duration = duration
+                                        t_track = replace(t_track, duration_ms=duration)
                             except Exception:
                                 pass
+                    item["track"] = t_track
 
                     target_cp = item.get("chromaprint") or t_track.fingerprint
                     resolved_from_cache = False
@@ -2682,20 +2721,31 @@ class RetroactiveEnhancer:
                                 new_musicbrainz_id = cached_meta.get("musicbrainz_id") or cached_meta.get(
                                     "musicbrainz_track_id"
                                 )
+                                cache_updates: dict[str, Any] = {}
                                 if cached_meta.get("title"):
-                                    t_track.title = cached_meta["title"]
+                                    cache_updates["title"] = cached_meta["title"]
                                 if cached_meta.get("artist") or cached_meta.get("artist_name"):
-                                    t_track.artist_name = cached_meta.get("artist") or cached_meta.get("artist_name")
+                                    cache_updates["artist_name"] = cached_meta.get("artist") or cached_meta.get(
+                                        "artist_name"
+                                    )
+                                    cache_updates["primary_artists"] = []
+                                    cache_updates["featured_artists"] = []
+                                    cache_updates["remixers"] = []
                                 if cached_meta.get("album") or cached_meta.get("album_title"):
-                                    t_track.album_title = cached_meta.get("album") or cached_meta.get("album_title")
+                                    cache_updates["album_title"] = cached_meta.get("album") or cached_meta.get(
+                                        "album_title"
+                                    )
                                 if cached_meta.get("year"):
-                                    t_track.release_year = cached_meta["year"]
+                                    cache_updates["release_year"] = cached_meta["year"]
                                 if cached_meta.get("isrc") and not t_track.isrc:
-                                    t_track.isrc = cached_meta["isrc"]
+                                    cache_updates["isrc"] = cached_meta["isrc"]
                                 if cached_meta.get("acoustid_id"):
-                                    t_track.acoustid_id = cached_meta["acoustid_id"]
+                                    cache_updates["acoustid_id"] = cached_meta["acoustid_id"]
                                     if "new_fingerprint" in item and item["new_fingerprint"]:
                                         item["new_fingerprint"]["acoustid_id"] = cached_meta["acoustid_id"]
+                                if cache_updates:
+                                    t_track = replace(t_track, **cache_updates)
+                                    item["track"] = t_track
                                 resolved_from_cache = True
 
                     # Authoritative candidate resolution via MetadataResolutionEngine
@@ -2744,40 +2794,47 @@ class RetroactiveEnhancer:
 
                             if res_result and res_result.confidence_score >= 0.60 and res_result.musicbrainz_track_id:
                                 new_musicbrainz_id = res_result.musicbrainz_track_id
+                                res_updates: dict[str, Any] = {}
                                 if res_result.title:
-                                    t_track.title = res_result.title
+                                    res_updates["title"] = res_result.title
                                 if res_result.artist:
-                                    t_track.artist_name = res_result.artist
+                                    res_updates["artist_name"] = res_result.artist
+                                    res_updates["primary_artists"] = list(getattr(res_result, "primary_artists", None) or [])
+                                    res_updates["featured_artists"] = list(getattr(res_result, "featured_artists", None) or [])
+                                    res_updates["remixers"] = list(getattr(res_result, "remixers", None) or [])
                                 if res_result.album:
                                     if (
                                         hasattr(t_track, "album_title")
                                         and t_track.album_title
                                         and t_track.album_title != res_result.album
                                     ):
-                                        t_track.custom_tags["COMPILATION_SOURCE"] = t_track.album_title
-                                    t_track.album_title = res_result.album
+                                        res_updates["custom_tags"] = {
+                                            **(t_track.custom_tags or {}),
+                                            "COMPILATION_SOURCE": t_track.album_title,
+                                        }
+                                    res_updates["album_title"] = res_result.album
                                 if res_result.musicbrainz_release_id:
-                                    t_track.mb_release_id = res_result.musicbrainz_release_id
+                                    res_updates["mb_release_id"] = res_result.musicbrainz_release_id
                                 if res_result.isrc:
-                                    t_track.isrc = res_result.isrc
+                                    res_updates["isrc"] = res_result.isrc
                                 rg_id = getattr(res_result, "release_group_id", None) or (
                                     res_result.extra_metadata.get("release_group_id")
                                     if res_result.extra_metadata
                                     else None
                                 )
                                 if rg_id:
-                                    t_track.release_group_id = rg_id
+                                    res_updates["release_group_id"] = rg_id
                                 if res_result.year:
                                     try:
-                                        t_track.release_year = int(res_result.year)
+                                        res_updates["release_year"] = int(res_result.year)
                                     except Exception:
                                         pass
                                 if res_result.track_number is not None:
-                                    t_track.track_number = res_result.track_number
+                                    res_updates["track_number"] = res_result.track_number
                                 if res_result.disc_number is not None:
-                                    t_track.disc_number = res_result.disc_number
+                                    res_updates["disc_number"] = res_result.disc_number
                                 if res_result.acoustid_id:
-                                    t_track.acoustid_id = res_result.acoustid_id
+                                    res_updates["acoustid_id"] = res_result.acoustid_id
                                     if "new_fingerprint" in item and item["new_fingerprint"]:
                                         item["new_fingerprint"]["acoustid_id"] = res_result.acoustid_id
                                 if res_result.chromaprint:
@@ -2785,12 +2842,16 @@ class RetroactiveEnhancer:
                                         item["new_fingerprint"] = item.get("new_fingerprint", {})
                                         item["new_fingerprint"]["chromaprint"] = res_result.chromaprint
                                     item["chromaprint"] = res_result.chromaprint
+                                if res_updates:
+                                    t_track = replace(t_track, **res_updates)
+                                    item["track"] = t_track
                                 item["metadata_changed"] = True
                         except Exception as res_err:
                             logger.debug("Candidate resolution error for %s: %s", t_track.title, res_err)
 
                     if new_musicbrainz_id:
-                        t_track.musicbrainz_id = new_musicbrainz_id
+                        t_track = replace(t_track, musicbrainz_id=new_musicbrainz_id)
+                        item["track"] = t_track
                         logger.info(
                             "Metadata Discovery Success: %s -> %s",
                             t_track.title,
@@ -2838,8 +2899,7 @@ class RetroactiveEnhancer:
                                 )
                                 if sig:
                                     item["metadata_status"]["echosync_signature"] = sig
-                                    if hasattr(t_track, "echosync_signature"):
-                                        t_track.echosync_signature = sig
+                                    item["echosync_signature"] = sig
                                     update_tags["echosync_signature"] = sig
                                     update_tags["ECHOSYNC_SIGNATURE"] = sig
                         except Exception as sig_err:
@@ -2872,14 +2932,11 @@ class RetroactiveEnhancer:
                             "Metadata discovery returned no matches for: %s",
                             t_track.title,
                         )
-                        attempts = int(item["metadata_status"].get("enhancement_attempts", 0)) + 1
-                        item["metadata_status"]["enhancement_attempts"] = attempts
+                        attempts = _record_miss(item, force_quarantine=False)
                         item["metadata_status"]["last_enhancement_attempt"] = datetime.datetime.now(
                             datetime.UTC
                         ).isoformat()
                         if attempts >= 5:
-                            t_track.musicbrainz_id = "NOT_FOUND"
-                            item["metadata_status"]["enhanced"] = False
                             try:
                                 from database.repositories.task_repository import TaskRepository
 
@@ -2903,7 +2960,8 @@ class RetroactiveEnhancer:
                                     task_err,
                                 )
                         else:
-                            t_track.musicbrainz_id = None
+                            t_track = replace(t_track, musicbrainz_id=None)
+                            item["track"] = t_track
 
                     results_to_commit.append(item)
 
@@ -2913,9 +2971,12 @@ class RetroactiveEnhancer:
                 from core.metadata.adapter import reconcile_media_assignment
                 from database.music_database import Album, Track, TrackArtist
 
-                changed_tracks = [res["track"] for res in results_to_commit if res.get("metadata_changed")]
-                if changed_tracks:
+                changed_items = [res for res in results_to_commit if res.get("metadata_changed")]
+                if changed_items:
+                    changed_tracks = [res["track"] for res in changed_items]
                     TrackRepository.resolve_artists_and_albums(session, changed_tracks)
+                    for res, resolved_track in zip(changed_items, changed_tracks):
+                        res["track"] = resolved_track
 
                 for res in results_to_commit:
                     media = session.get(LocalMedia, res["media_id_pk"])
@@ -2939,10 +3000,17 @@ class RetroactiveEnhancer:
                     if not reconciled_track:
                         continue
 
-                    if t_track.musicbrainz_id and t_track.musicbrainz_id != "NOT_FOUND":
+                    attempts_val = int(
+                        res.get("enhancement_attempts", res["metadata_status"].get("enhancement_attempts", 0)) or 0
+                    )
+                    reconciled_track.enhancement_attempts = attempts_val
+                    if res.get("verification_tier") == "quarantined" or attempts_val >= 5:
+                        reconciled_track.verification_tier = "quarantined"
+                        reconciled_track.musicbrainz_id = None
+                    elif t_track.musicbrainz_id and t_track.musicbrainz_id != "NOT_FOUND":
                         reconciled_track.musicbrainz_id = t_track.musicbrainz_id
-                    elif res["metadata_status"].get("enhancement_attempts", 0) >= 5:
-                        reconciled_track.musicbrainz_id = "NOT_FOUND"
+                        if getattr(reconciled_track, "verification_tier", None) != "manual_locked":
+                            reconciled_track.verification_tier = res.get("verification_tier", "acoustid_verified")
                     else:
                         reconciled_track.musicbrainz_id = None
 
@@ -2987,10 +3055,12 @@ class RetroactiveEnhancer:
                                         session.flush()
                                     album = existing_alb
                                     reconciled_track.album_id = album.id
-                                    t_track.album_id = album.id
+                                    t_track = replace(t_track, album_id=album.id)
+                                    res["track"] = t_track
                                 else:
                                     reconciled_track.album_id = None
-                                    t_track.album_id = None
+                                    t_track = replace(t_track, album_id=None)
+                                    res["track"] = t_track
 
                             candidate_year = None
                             if getattr(t_track, "release_year", None):
@@ -3047,10 +3117,9 @@ class RetroactiveEnhancer:
                     reconciled_track.metadata_status = res["metadata_status"]
                     flag_modified(reconciled_track, "metadata_status")
 
-                    if getattr(t_track, "echosync_signature", None):
-                        reconciled_track.echosync_signature = t_track.echosync_signature
-                    elif res["metadata_status"].get("echosync_signature"):
-                        reconciled_track.echosync_signature = res["metadata_status"]["echosync_signature"]
+                    sig_val = res.get("echosync_signature") or res["metadata_status"].get("echosync_signature")
+                    if sig_val:
+                        reconciled_track.echosync_signature = sig_val
 
                     # Save new fingerprint if generated
                     new_fp_data = res.get("new_fingerprint", {})

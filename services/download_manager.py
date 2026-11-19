@@ -160,6 +160,33 @@ class DownloadManager:
         event_bus.subscribe("DOWNLOAD_INTENT", self._on_download_intent)
         event_bus.subscribe("TRACK_IMPORTED", self._on_track_imported)
 
+    def _cancel_transfer_sync(self, providers: list[PluginBase], cancel_target: str) -> None:
+        """Best-effort synchronous cancellation of an upstream provider transfer."""
+        for p in providers:
+            try:
+                if hasattr(p, "cancel_download"):
+                    p.cancel_download(cancel_target)
+                elif hasattr(p, "_async_cancel_download"):
+                    try:
+                        loop = asyncio.get_running_loop()
+                        loop.create_task(p._async_cancel_download(cancel_target))
+                    except RuntimeError:
+                        asyncio.run(p._async_cancel_download(cancel_target))
+            except Exception as ce:
+                logger.debug(f"Failed to cancel remote transfer {cancel_target}: {ce}")
+
+    async def _cancel_transfer_async(self, providers: list[PluginBase], cancel_target: str) -> None:
+        """Best-effort asynchronous cancellation of an upstream provider transfer."""
+        for prov in providers:
+            try:
+                if hasattr(prov, "_async_cancel_download"):
+                    await prov._async_cancel_download(cancel_target)
+                elif hasattr(prov, "cancel_download"):
+                    loop = asyncio.get_running_loop()
+                    await loop.run_in_executor(None, prov.cancel_download, cancel_target)
+            except Exception as ce:
+                logger.debug(f"Failed to cancel remote transfer {cancel_target}: {ce}")
+
     def _on_track_imported(self, payload: dict) -> None:
         """
         Handle a TRACK_IMPORTED event by cancelling active/pending downloads
@@ -183,23 +210,29 @@ class DownloadManager:
                 DownloadStatus.QUEUED.value,
                 DownloadStatus.SEARCHING.value,
                 DownloadStatus.DOWNLOADING.value,
+                DownloadStatus.VERIFYING.value,
+                DownloadStatus.RETRYING.value,
             }
             cancelled_count = 0
 
             with self.work_db.session_scope() as session:
-                offset = 0
+                last_id = 0
                 batch_size = 25
+                providers: list[PluginBase] | None = None
                 while True:
                     items = (
                         session.query(DownloadQueue)
-                        .filter(DownloadQueue.status.in_(active_states))
+                        .filter(
+                            DownloadQueue.status.in_(active_states),
+                            DownloadQueue.id > last_id,
+                        )
                         .order_by(DownloadQueue.id.asc())
-                        .offset(offset)
                         .limit(batch_size)
                         .all()
                     )
                     if not items:
                         break
+                    last_id = items[-1].id
 
                     for item in items:
                         item_sig = self._normalize_track_signature(item.echo_sync_track or {})
@@ -221,21 +254,14 @@ class DownloadManager:
                         if is_match:
                             logger.info(f"Purging download {item.id} matching imported track '{track.title}'")
 
-                            if item.status == DownloadStatus.DOWNLOADING.value and item.provider_id:
-                                providers = self._get_active_download_providers()
-                                for p in providers:
-                                    try:
-                                        if hasattr(p, "cancel_download"):
-                                            p.cancel_download(item.provider_id)
-                                        elif hasattr(p, "_async_cancel_download"):
-                                            loop = asyncio.get_running_loop()
-                                            loop.create_task(p._async_cancel_download(item.provider_id))
-                                    except Exception as ce:
-                                        logger.debug(f"Failed to cancel remote transfer {item.provider_id}: {ce}")
+                            cancel_target = item.active_candidate_id or item.provider_id
+                            if item.status == DownloadStatus.DOWNLOADING.value and cancel_target:
+                                if providers is None:
+                                    providers = self._get_active_download_providers()
+                                self._cancel_transfer_sync(providers, cancel_target)
 
                             session.delete(item)
                             cancelled_count += 1
-                    offset += batch_size
 
             if cancelled_count > 0:
                 logger.info(f"Cancelled {cancelled_count} queued downloads for newly imported track.")
@@ -557,15 +583,16 @@ class DownloadManager:
 
         Returns the database ID of the new download record.
         """
-        logger.info(f"Queueing download: {track.artist_name} - {track.title}")
+        track_title = track.title or getattr(track, "raw_title", "") or ""
+        logger.info(f"Queueing download: {track.artist_name} - {track_title}")
 
         intent_val = intent.value if isinstance(intent, DownloadIntent) else str(intent)
 
         # Check if track already exists in library (use album + duration when available)
         album_name = getattr(track, "album_title", None) or getattr(track, "album", None)
-        duration_ms = getattr(track, "duration", None) or getattr(track, "duration_ms", None)
-        if self._track_exists_in_library(track.artist_name, track.title, album=album_name, duration=duration_ms):
-            logger.info(f"Skipping download: Track '{track.title}' by '{track.artist_name}' already exists in library")
+        duration_ms = getattr(track, "duration_ms", None) or getattr(track, "duration", None)
+        if self._track_exists_in_library(track.artist_name, track_title, album=album_name, duration=duration_ms):
+            logger.info(f"Skipping download: Track '{track_title}' by '{track.artist_name}' already exists in library")
             return 0  # 0 indicates no download created
 
         with self.work_db.session_scope() as session:
@@ -727,10 +754,14 @@ class DownloadManager:
             # Fetch queued items from DB
             queued_ids = []
             with self.work_db.session_scope() as session:
-                # Get up to 30 queued items to enable concurrent searches
+                # Get up to 30 actionable items (QUEUED or RETRYING) to enable concurrent searches
                 items = (
                     session.query(DownloadQueue)
-                    .filter(DownloadQueue.status.ilike("queued"))
+                    .filter(
+                        DownloadQueue.status.in_(
+                            [DownloadStatus.QUEUED.value, DownloadStatus.RETRYING.value]
+                        )
+                    )
                     .order_by(
                         DownloadQueue.retry_count.asc().nullsfirst(),
                         DownloadQueue.created_at.desc(),
@@ -853,7 +884,7 @@ class DownloadManager:
         # manual import, or a previous download cycle completing). Catching it here avoids
         # a redundant provider search and a duplicate file on disk.
         album_name = getattr(target_track, "album_title", None) or getattr(target_track, "album", None)
-        duration_ms = getattr(target_track, "duration", None)
+        duration_ms = getattr(target_track, "duration_ms", None) or getattr(target_track, "duration", None)
         if self._track_exists_in_library(
             target_track.artist_name,
             target_track.title,
@@ -867,7 +898,7 @@ class DownloadManager:
             return
 
         # Keep provider query broad; matching engine handles duration scoring/gating.
-        target_duration_ms = target_track.duration if target_track.duration else None
+        target_duration_ms = getattr(target_track, "duration_ms", None) or getattr(target_track, "duration", None) or None
 
         try:
             logger.info(f"Starting waterfall search for: {target_track.artist_name} - {target_track.title}")
@@ -1314,6 +1345,25 @@ class DownloadManager:
             )
             self._update_status(download_id, DownloadStatus.FAILED)
 
+    async def _handle_active_download_failure(
+        self,
+        db_id: int,
+        failed_candidate_id: str,
+        all_providers: list[PluginBase],
+        cancel_providers: list[PluginBase],
+        reason: str,
+    ) -> None:
+        """Cancel remote transfer, rotate candidate via DownloadRepository, and retry if not exhausted."""
+        await self._cancel_transfer_async(cancel_providers, failed_candidate_id)
+
+        rotated = self.repo.transition_to_retrying_or_failed(
+            db_id,
+            reason=reason,
+            failed_candidate_id=failed_candidate_id,
+        )
+        if rotated:
+            asyncio.create_task(self._execute_waterfall_search_and_download(db_id, all_providers))
+
     async def _check_active_downloads(self):
         """Poll providers for status of active downloads using waterfall strategy"""
         providers = self._get_active_download_providers()
@@ -1325,7 +1375,12 @@ class DownloadManager:
             # Find items marked 'downloading'
             items = session.query(DownloadQueue).filter(DownloadQueue.status == DownloadStatus.DOWNLOADING.value).all()
             for item in items:
-                active_downloads.append((item.id, item.provider_id))
+                transfer_id = (
+                    item.provider_id
+                    if (item.provider_id and "|" in item.provider_id)
+                    else (item.active_candidate_id or item.provider_id)
+                )
+                active_downloads.append((item.id, transfer_id))
 
         if not active_downloads:
             return
@@ -1408,39 +1463,19 @@ class DownloadManager:
                     elif new_status == DownloadStatus.FAILED.value:
                         logger.warning(
                             f"Download {db_id} transfer errored/rejected on {found_provider or 'provider'} "
-                            f"(ID: {provider_id}). Cancelling remote transfer and falling back to next candidate."
+                            f"(ID: {provider_id}). Cancelling remote transfer and rotating candidate."
                         )
-                        # Cancel remote transfer
                         active_prov = next(
                             (p for p in providers if p.name == found_provider),
                             providers[0],
                         )
-                        if hasattr(active_prov, "_async_cancel_download"):
-                            try:
-                                await active_prov._async_cancel_download(provider_id)
-                            except Exception as ce:
-                                logger.debug(f"Failed to cancel remote transfer {provider_id}: {ce}")
-
-                        with self.work_db.session_scope() as session:
-                            item = session.query(DownloadQueue).filter(DownloadQueue.id == db_id).first()
-                            if item:
-                                track_dict = dict(item.echo_sync_track or {})
-                                blacklist = list(track_dict.get("blacklisted_candidates") or [])
-                                if provider_id and provider_id not in blacklist:
-                                    blacklist.append(provider_id)
-                                    if "|" in provider_id:
-                                        _, fname = provider_id.split("|", 1)
-                                        if fname not in blacklist:
-                                            blacklist.append(fname)
-                                track_dict["blacklisted_candidates"] = blacklist
-                                item.echo_sync_track = track_dict
-                                item.status = "searching"
-                                item.provider_id = None
-                                item.updated_at = utc_now()
-                                with db_write_lease(task_name="active_download_failed_requeue"):
-                                    session.commit()
-
-                        asyncio.create_task(self._execute_waterfall_search_and_download(db_id, providers))
+                        await self._handle_active_download_failure(
+                            db_id,
+                            provider_id,
+                            providers,
+                            [active_prov],
+                            reason="TRANSFER_FAILED",
+                        )
                     else:
                         self._update_status(db_id, new_status, provider_id, speed, progress)
                         if new_status != DownloadStatus.DOWNLOADING.value:
@@ -1450,35 +1485,15 @@ class DownloadManager:
                 else:
                     logger.warning(
                         f"DownloadQueue {db_id} not found in active transfers (disappeared) - "
-                        f"treating as failed, cleaning remote state, and falling back to next candidate."
+                        f"treating as failed, cleaning remote state, and rotating candidate."
                     )
-                    for prov in providers:
-                        if hasattr(prov, "_async_cancel_download"):
-                            try:
-                                await prov._async_cancel_download(provider_id)
-                            except Exception:
-                                pass
-
-                    with self.work_db.session_scope() as session:
-                        item = session.query(DownloadQueue).filter(DownloadQueue.id == db_id).first()
-                        if item:
-                            track_dict = dict(item.echo_sync_track or {})
-                            blacklist = list(track_dict.get("blacklisted_candidates") or [])
-                            if provider_id and provider_id not in blacklist:
-                                blacklist.append(provider_id)
-                                if "|" in provider_id:
-                                    _, fname = provider_id.split("|", 1)
-                                    if fname not in blacklist:
-                                        blacklist.append(fname)
-                            track_dict["blacklisted_candidates"] = blacklist
-                            item.echo_sync_track = track_dict
-                            item.status = "searching"
-                            item.provider_id = None
-                            item.updated_at = utc_now()
-                            with db_write_lease(task_name="active_download_disappeared_requeue"):
-                                session.commit()
-
-                    asyncio.create_task(self._execute_waterfall_search_and_download(db_id, providers))
+                    await self._handle_active_download_failure(
+                        db_id,
+                        provider_id,
+                        providers,
+                        providers,
+                        reason="TRANSFER_DISAPPEARED",
+                    )
 
             except Exception as e:
                 logger.error(f"Error checking status for {db_id}: {e}")
@@ -1501,14 +1516,15 @@ class DownloadManager:
 
         # Build a core title for provider search by stripping bracketed/parenthetical
         # qualifiers, then applying standard normalization.
-        search_title = self._build_core_search_title(track.title)
-        if search_title != track.title:
-            logger.info(f"Normalized title for search: '{track.title}' -> '{search_title}'")
+        base_track_title = track.title or getattr(track, "raw_title", "") or ""
+        search_title = self._build_core_search_title(base_track_title)
+        if search_title != base_track_title:
+            logger.info(f"Normalized title for search: '{base_track_title}' -> '{search_title}'")
 
         primary_artist, collaborators = split_artist_collaborators(track.artist_name)
         wire_primary_artist = sanitize_query_for_wire(primary_artist or track.artist_name or "")
         wire_search_title = sanitize_query_for_wire(search_title)
-        target_dur = track.duration if track.duration else None
+        target_dur = getattr(track, "duration_ms", None) or getattr(track, "duration", None) or None
 
         # Strategy 1 (ISRC / Strict GUID if available - requires Capability.FETCH_BY_ISRC)
         if getattr(track, "isrc", None):
@@ -2094,7 +2110,7 @@ class DownloadManager:
         with self.work_db.session_scope() as session:
             item = session.get(DownloadQueue, download_id)
             if item:
-                rotated = item.rotate_candidate(reason)
+                rotated = item.rotate_candidate(reason=reason)
                 item.updated_at = utc_now()
                 with db_write_lease(task_name="handle_verification_failure"):
                     session.commit()
@@ -2169,7 +2185,13 @@ class DownloadManager:
         if not signature[0] or not signature[1]:
             return None
 
-        active_states = {DownloadStatus.QUEUED.value, DownloadStatus.SEARCHING.value, DownloadStatus.DOWNLOADING.value}
+        active_states = {
+            DownloadStatus.QUEUED.value,
+            DownloadStatus.SEARCHING.value,
+            DownloadStatus.DOWNLOADING.value,
+            DownloadStatus.VERIFYING.value,
+            DownloadStatus.RETRYING.value,
+        }
         with self.work_db.session_scope() as session:
             query = session.query(DownloadQueue)
             if not include_failed:
@@ -2310,7 +2332,7 @@ class DownloadManager:
         """
         try:
             with self.work_db.session_scope() as session:
-                offset = 0
+                last_id = 0
                 batch_size = 25
                 removed_count = 0
                 while True:
@@ -2329,15 +2351,16 @@ class DownloadManager:
                                     "failed",
                                     "failed_no_match",
                                 ]
-                            )
+                            ),
+                            DownloadQueue.id > last_id,
                         )
                         .order_by(DownloadQueue.id.asc())
-                        .offset(offset)
                         .limit(batch_size)
                         .all()
                     )
                     if not queued_items:
                         break
+                    last_id = queued_items[-1].id
 
                     for item in queued_items:
                         try:
@@ -2385,8 +2408,6 @@ class DownloadManager:
                                 removed_count += 1
                         except Exception as e:
                             logger.warning(f"Error checking queued item {item.id}: {e}")
-
-                    offset += batch_size
 
                 if removed_count > 0:
                     logger.info(f"Startup purge removed {removed_count} redundant items from download queue")

@@ -13,7 +13,7 @@ from core.nexus_framework.plugin_loader import get_all_plugins
 from core.nexus_framework.plugin_store import plugin_store
 from core.settings import config_manager
 from core.tiered_logger import get_logger
-from web.auth import require_auth
+from web.auth import require_auth, require_scope
 from web.services.plugin_registry import get_plugin, get_plugins_for_capability
 
 logger = get_logger("plugins_route")
@@ -273,7 +273,7 @@ class PluginActionRequest(BaseModel):
     consent_granted: bool | None = None
 
 
-@router.post("/install", dependencies=[Depends(require_auth)])
+@router.post("/install", dependencies=[Depends(require_scope("service:plugins:edit"))])
 def install_plugin(request: Request, data: PluginActionRequest):
     from core.nexus_framework.plugin_store import PrivilegeEscalationError
 
@@ -320,7 +320,7 @@ def install_plugin(request: Request, data: PluginActionRequest):
         raise HTTPException(status_code=500, detail="Failed to install plugin")
 
 
-@router.post("/update", dependencies=[Depends(require_auth)])
+@router.post("/update", dependencies=[Depends(require_scope("service:plugins:edit"))])
 def update_plugin(request: Request, data: PluginActionRequest):
     from core.nexus_framework.plugin_store import PrivilegeEscalationError
 
@@ -1586,7 +1586,7 @@ def get_plugin_details(plugin_id: str):
         raise HTTPException(status_code=500, detail="Failed to get plugin details")
 
 
-@router.get("/{plugin_id}/credentials", dependencies=[Depends(require_auth)])
+@router.get("/{plugin_id}/credentials", dependencies=[Depends(require_scope("service:plugins:read"))])
 def get_plugin_credentials(plugin_id: str):
     """Get credentials/configuration for a specific plugin."""
     try:
@@ -1640,7 +1640,7 @@ class SetCredentialsRequest(BaseModel):
     credentials: dict[str, Any] | None = None
 
 
-@router.post("/{plugin_id}/credentials", dependencies=[Depends(require_auth)])
+@router.post("/{plugin_id}/credentials", dependencies=[Depends(require_scope("service:plugins:edit"))])
 def set_plugin_credentials(plugin_id: str, data: SetCredentialsRequest):
     """Set credentials/configuration for a specific plugin."""
     try:

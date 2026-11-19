@@ -8,7 +8,6 @@ from services.library_service import (
     get_database_stats,
     invalidate_stats_cache,
 )
-import web.services.library_service as web_library_service
 
 
 def test_get_database_stats_caching():
@@ -110,10 +109,4 @@ def test_library_adapter_overview():
         assert overview["servers"][0]["track_count"] == 40
         assert overview["stats"]["total_tracks"] == 40
         assert overview["stats"]["database_size_mb"] == 15.0
-
-
-def test_web_services_compatibility_reexports():
-    assert web_library_service.LibraryAdapter is LibraryAdapter
-    assert web_library_service.get_database_stats is get_database_stats
-    assert web_library_service.invalidate_stats_cache is invalidate_stats_cache
 

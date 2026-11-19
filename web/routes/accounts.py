@@ -1,14 +1,18 @@
 from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
+from core.security.passwords import validate_password_policy
+from core.security.rbac import Principal
 from core.tiered_logger import get_logger
+from database.config_database import get_config_database
 from services.storage_service import get_storage_service
-from web.auth import require_auth
+from web.auth import require_auth, require_scope
 
 logger = get_logger("accounts_route")
 router = APIRouter(prefix="/api/v1/system/accounts", tags=["Accounts"])
+users_auth_router = APIRouter(prefix="/api/v1/auth", tags=["Users & RBAC"])
 
 
 class AccountResponse(BaseModel):
@@ -53,6 +57,116 @@ class AccountOverridesRequest(BaseModel):
     managed_user_id: str
     service_account_id: str
     action: str
+
+
+class CreateUserRequest(BaseModel):
+    username: str = Field(..., min_length=1, max_length=128)
+    password: str | None = None
+    roles: list[str] = Field(default_factory=lambda: ["member"])
+    auth_provider: str = "local"
+
+
+class AssignRolesRequest(BaseModel):
+    roles: list[str] = Field(..., min_length=1)
+
+
+class AssignManagedAccountRequest(BaseModel):
+    server_plugin_id: int
+    managed_account_id: str = Field(..., min_length=1)
+
+
+def _list_users_handler(_=Depends(require_scope("service:accounts:read"))):
+    users = get_config_database().list_users()
+    return {"users": users, "total": len(users)}
+
+
+def _create_user_handler(payload: CreateUserRequest, _=Depends(require_scope("service:accounts:edit"))):
+    db = get_config_database()
+    if payload.auth_provider == "local":
+        if payload.password is None:
+            raise HTTPException(status_code=422, detail="Password is required for local users.")
+        try:
+            validate_password_policy(payload.password)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+
+    try:
+        user = db.create_user(
+            username=payload.username,
+            password=payload.password,
+            auth_provider=payload.auth_provider,
+            roles=payload.roles,
+        )
+        return {"success": True, "user": user}
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+def _list_roles_handler(_=Depends(require_scope("service:accounts:read"))):
+    roles = get_config_database().list_roles()
+    return {"roles": roles, "total": len(roles)}
+
+
+def _assign_user_roles_handler(
+    user_id: str,
+    payload: AssignRolesRequest,
+    _=Depends(require_scope("service:accounts:edit")),
+):
+    db = get_config_database()
+    if not db.assign_user_roles(user_id, payload.roles):
+        raise HTTPException(status_code=404, detail="User not found.")
+    user = db.get_user_by_id(user_id)
+    return {"success": True, "user": user}
+
+
+def _list_managed_accounts_handler(
+    user_id: str,
+    principal: Principal = Depends(require_auth),
+):
+    if principal.user_id == user_id:
+        if not principal.has_scope("contract:accounts:read:own"):
+            raise HTTPException(status_code=403, detail="Missing required capability scope: contract:accounts:read:own")
+    elif not principal.has_scope("contract:accounts:read:any"):
+        raise HTTPException(status_code=403, detail="Missing required capability scope: contract:accounts:read:any")
+
+    assignments = get_config_database().get_user_managed_accounts(user_id)
+    return {"user_id": user_id, "managed_accounts": assignments, "total": len(assignments)}
+
+
+def _assign_managed_account_handler(
+    user_id: str,
+    payload: AssignManagedAccountRequest,
+    _=Depends(require_scope("service:accounts:edit")),
+):
+    db = get_config_database()
+    if not db.assign_managed_account(user_id, payload.server_plugin_id, payload.managed_account_id):
+        raise HTTPException(status_code=404, detail="User not found.")
+    assignments = db.get_user_managed_accounts(user_id)
+    return {"success": True, "managed_accounts": assignments}
+
+
+def _remove_managed_account_handler(
+    user_id: str,
+    server_plugin_id: int,
+    managed_account_id: str,
+    _=Depends(require_scope("service:accounts:edit")),
+):
+    get_config_database().remove_managed_account(user_id, server_plugin_id, managed_account_id)
+    return {"success": True}
+
+
+for _acct_rtr in (router, users_auth_router):
+    _acct_rtr.add_api_route("/users", _list_users_handler, methods=["GET"])
+    _acct_rtr.add_api_route("/users", _create_user_handler, methods=["POST"], status_code=201)
+    _acct_rtr.add_api_route("/roles", _list_roles_handler, methods=["GET"])
+    _acct_rtr.add_api_route("/users/{user_id}/roles", _assign_user_roles_handler, methods=["PUT", "POST"])
+    _acct_rtr.add_api_route("/users/{user_id}/managed-accounts", _list_managed_accounts_handler, methods=["GET"])
+    _acct_rtr.add_api_route("/users/{user_id}/managed-accounts", _assign_managed_account_handler, methods=["POST"], status_code=201)
+    _acct_rtr.add_api_route(
+        "/users/{user_id}/managed-accounts/{server_plugin_id}/{managed_account_id}",
+        _remove_managed_account_handler,
+        methods=["DELETE"],
+    )
 
 
 @router.get("/{service_name}", response_model=AccountResponse)

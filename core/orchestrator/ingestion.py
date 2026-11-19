@@ -60,10 +60,16 @@ def _parse_telemetry_dict(raw_dict: dict[str, Any]) -> EchosyncTrack | None:
 
         # Set mandatory constructor fields
         raw_dict["raw_title"] = title_val
+        raw_dict["title"] = title_val
+        raw_dict["display_title"] = title_val
         raw_dict["artist_name"] = artist_val
         raw_dict["album_title"] = album_val
         if duration_val is not None:
-            raw_dict["duration"] = duration_val
+            if isinstance(duration_val, float) and duration_val < 10000.0:
+                duration_val = int(round(duration_val * 1000.0))
+            else:
+                duration_val = int(round(float(duration_val)))
+            raw_dict["duration_ms"] = duration_val
         if mbid_val is not None:
             raw_dict["musicbrainz_id"] = mbid_val
         if year_val is not None:
@@ -89,6 +95,7 @@ def _parse_telemetry_dict(raw_dict: dict[str, Any]) -> EchosyncTrack | None:
                     sample_rate=flat_sample_rate,
                     bit_depth=flat_bit_depth,
                     channels=flat_channels,
+                    duration_ms=duration_val if isinstance(duration_val, int) else None,
                     file_size_bytes=flat_file_size,
                     inode=flat_inode,
                     mtime=flat_mtime,
@@ -98,12 +105,14 @@ def _parse_telemetry_dict(raw_dict: dict[str, Any]) -> EchosyncTrack | None:
         # Filter strictly by dataclass fields where f.init is True
         import dataclasses
 
+        from core.matching_engine.track_parser import normalize_track_dto
+
         valid_init_fields = {f.name for f in dataclasses.fields(EchosyncTrack) if f.init}
         clean_data = {k: v for k, v in raw_dict.items() if k in valid_init_fields}
+        clean_data["media"] = media_list
 
         track = EchosyncTrack(**clean_data)
-        track.media = media_list
-        return track
+        return normalize_track_dto(track)
     except Exception as e:
         logger.warning(f"Skipping invalid telemetry record: {e} | data={raw_dict}")
         return None

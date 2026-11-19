@@ -326,7 +326,7 @@ def test_c_matching_engine_junction_matching_and_remixer_bonus():
     query_track = EchosyncTrack(
         raw_title="I Took a Pill in Ibiza",
         artist_name="Seeb",
-        duration=195000,
+        duration_ms=195000,
     )
 
     result = engine.calculate_match(query_track, track)

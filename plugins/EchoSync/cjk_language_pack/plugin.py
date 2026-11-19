@@ -391,21 +391,9 @@ class CJKLanguagePackPlugin(PluginBase):
         """
         import asyncio
 
-        from database.music_database import Track, get_database
-
-        music_db = get_database()
         processed = 0
 
-        with db_write_lease(task_name=f"plugin_{PLUGIN_CRC32}"), music_db.get_session() as session:
-            tracks = (
-                session.query(Track)
-                .filter(
-                    Track.echosync_signature.isnot(None),
-                    Track.echosync_signature != "",
-                )
-                .all()
-            )
-
+        with db_write_lease(task_name=f"plugin_{PLUGIN_CRC32}"), self.library.signed_tracks_scope() as (session, tracks):
             for track in tracks:
                 await asyncio.sleep(0.01)  # cooperative yield
 

@@ -3,8 +3,10 @@ Zero-Trust I/O Gatekeeper (core/io_gatekeeper.py).
 Validates URI paths, enforces path traversal security boundaries, and dispatches sanitized POSIX paths to echosync_core.
 """
 
+import hashlib
 import logging
 import os
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -259,19 +261,9 @@ class Gatekeeper:
                 try:
                     echosync_core.safe_move_file(posix_path, validated_dst)
                 except (OSError, RuntimeError) as move_err:
-                    # Fallback in Python if cross-device / container volume permissions block atomic move
-                    import shutil
-
-                    try:
-                        shutil.copy2(posix_path, validated_dst)
-                        try:
-                            Path(posix_path).unlink()
-                        except OSError as del_err:
-                            logger.warning(
-                                f"File copied to library ({validated_dst}) but source could not be deleted ({posix_path}): {del_err}"
-                            )
-                    except (OSError, RuntimeError):
-                        raise move_err from None
+                    self._cross_volume_safe_move(
+                        echosync_core, posix_path, validated_dst, move_err
+                    )
 
                 execution_results.append(
                     {"src": posix_path, "dst": validated_dst, "status": "moved"}
@@ -315,3 +307,80 @@ class Gatekeeper:
             "validated_paths": validated_posix_paths,
             "execution_results": execution_results,
         }
+
+    @staticmethod
+    def _compute_file_digest(file_path: Path) -> str:
+        """Compute SHA-256 hex digest of a file using bounded streaming chunks."""
+        hasher = hashlib.sha256()
+        with file_path.open("rb") as fh:
+            for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+                hasher.update(chunk)
+        return hasher.hexdigest()
+
+    def _cross_volume_safe_move(
+        self,
+        echosync_core_mod: Any,
+        src_posix: str,
+        dst_posix: str,
+        move_err: Exception,
+    ) -> None:
+        """Cross-volume fallback: atomic temp copy, size/hash verify, promote, then delete source."""
+        src_path = Path(src_posix)
+        dst_path = Path(dst_posix)
+        if not src_path.exists():
+            raise move_err from None
+
+        src_size = src_path.stat().st_size
+        src_digest = self._compute_file_digest(src_path)
+        tmp_path = dst_path.with_name(f".{dst_path.name}.{uuid.uuid4().hex[:8]}.tmp")
+
+        try:
+            bytes_copied = echosync_core_mod.copy_file(src_posix, tmp_path.as_posix())
+            if not tmp_path.exists():
+                raise OSError(f"Cross-volume copy did not create staging file '{tmp_path}'")
+
+            tmp_size = tmp_path.stat().st_size
+            if tmp_size != src_size or (
+                isinstance(bytes_copied, int) and bytes_copied != src_size
+            ):
+                raise OSError(
+                    f"Cross-volume size mismatch for '{src_posix}': "
+                    f"expected {src_size}, got {tmp_size} (copied={bytes_copied})"
+                )
+
+            if self._compute_file_digest(tmp_path) != src_digest:
+                raise OSError(
+                    f"Cross-volume integrity verification failed for '{src_posix}'"
+                )
+
+            try:
+                echosync_core_mod.safe_move_file(tmp_path.as_posix(), dst_posix)
+            except (OSError, RuntimeError):
+                os.replace(tmp_path, dst_path)
+
+            if not dst_path.exists() or dst_path.stat().st_size != src_size:
+                raise OSError(
+                    f"Cross-volume promotion verification failed for '{dst_posix}'"
+                )
+
+            try:
+                echosync_core_mod.delete_file(src_posix)
+            except (OSError, RuntimeError) as del_err:
+                logger.warning(
+                    "File copied to library (%s) but source could not be deleted (%s): %s",
+                    dst_posix,
+                    src_posix,
+                    del_err,
+                )
+        except Exception as fallback_err:
+            if tmp_path.exists():
+                try:
+                    echosync_core_mod.delete_file(tmp_path.as_posix())
+                except Exception:
+                    try:
+                        tmp_path.unlink(missing_ok=True)
+                    except OSError:
+                        pass
+            if isinstance(fallback_err, (OSError, RuntimeError)):
+                raise fallback_err from move_err
+            raise move_err from fallback_err

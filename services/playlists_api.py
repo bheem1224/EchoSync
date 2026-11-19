@@ -357,6 +357,8 @@ def evaluate_tier2_candidate(
         candidate_track.artist_name or "",
         cand_raw_title,
     ):
+        from dataclasses import replace
+
         effective_artist_score = 1.0
         match = re.match(r"^(.*?)\s*[-–—]\s*(.*)$", cand_raw_title)
         if match:
@@ -364,8 +366,7 @@ def evaluate_tier2_candidate(
                 match.group(1).strip(),
                 match.group(2).strip(),
             )
-            candidate_track.artist_name = extracted_artist
-            candidate_track.title = extracted_title
+            candidate_track = replace(candidate_track, artist_name=extracted_artist, title=extracted_title)
         elif not candidate_track.artist_name or cand_art_clean in {
             "unknown artist",
             "unknown",
@@ -373,7 +374,7 @@ def evaluate_tier2_candidate(
             "various",
             "",
         }:
-            candidate_track.artist_name = source_track.artist_name
+            candidate_track = replace(candidate_track, artist_name=source_track.artist_name)
 
     if effective_artist_score >= 0.90:
         result = matching_engine.calculate_match(

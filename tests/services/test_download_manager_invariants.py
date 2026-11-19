@@ -256,13 +256,13 @@ def test_raw_matching_score_evaluation():
         raw_title="Around the World",
         artist_name="Daft Punk",
         album_title="Homework",
-        duration=429000,
+        duration_ms=429000,
     )
     candidate = EchosyncTrack(
         raw_title="Around the World",
         artist_name="Daft Punk",
         album_title="Homework",
-        duration=429000,
+        duration_ms=429000,
     )
 
     engine = WeightedMatchingEngine(PROFILE_DOWNLOAD_SEARCH)
