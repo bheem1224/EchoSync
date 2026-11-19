@@ -40,6 +40,14 @@ class DownloadStatus(str, enum.Enum):
     RETRYING = "RETRYING"
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
+    CANCELLED = "CANCELLED"
+    PENDING_BLOCKED = "PENDING_BLOCKED"
+
+    # Backward-compatible aliases
+    COMPLETE = "COMPLETED"
+    VERIFIED = "COMPLETED"
+    CANCELED = "CANCELLED"
+    IN_PROGRESS = "DOWNLOADING"
 
     def __eq__(self, other: object) -> bool:
         if isinstance(other, (str, DownloadStatus)):
@@ -108,16 +116,16 @@ class DownloadQueue(WorkingBase):
     )
 
     @validates("status")
-    def _validate_status(self, key: str, value: Any) -> str:
+    def _validate_status(self, key: str, value: Any) -> StatusStr:
         if isinstance(value, DownloadStatus):
-            return value.value
+            return StatusStr(value.value)
         if isinstance(value, str):
-            val_upper = value.upper()
+            val_upper = value.strip().upper()
             try:
-                return DownloadStatus[val_upper].value
+                return StatusStr(DownloadStatus[val_upper].value)
             except KeyError:
-                return value
-        return str(value)
+                return StatusStr(val_upper)
+        return StatusStr(str(value).upper())
 
     @validates("intent")
     def _validate_intent(self, key: str, value: Any) -> str:
@@ -144,41 +152,81 @@ class DownloadQueue(WorkingBase):
             kwargs["status"] = DownloadStatus.QUEUED.value
         super().__init__(**kwargs)
 
-    def rotate_candidate(self, reason: str) -> bool:
-        """Appends active candidate to blacklisted_candidates, pops next candidate from stack,
+    def rotate_candidate(
+        self,
+        failed_candidate_id: str | None = None,
+        max_retries: int = 3,
+        *,
+        reason: str | None = None,
+    ) -> bool:
+        """Record the failed candidate in blacklisted_candidates, increment retry_count,
 
-        increments retry_count, and sets status to RETRYING or FAILED.
+        clear active_candidate_id, and transition status to RETRYING (or FAILED when
+        retry_count >= max_retries).
         """
-        if self.active_candidate_id:
-            blacklist = list(self.blacklisted_candidates or [])
-            blacklist.append(
-                {"candidate_id": self.active_candidate_id, "reason": reason}
-            )
+        candidate_to_blacklist = (
+            failed_candidate_id or self.active_candidate_id or self.plugin_id
+        )
+        blacklist = list(self.blacklisted_candidates or [])
+        if candidate_to_blacklist:
+            existing_ids = {
+                b.get("candidate_id") if isinstance(b, dict) else str(b)
+                for b in blacklist
+            }
+            if candidate_to_blacklist not in existing_ids:
+                blacklist.append(
+                    {
+                        "candidate_id": candidate_to_blacklist,
+                        "reason": reason or "CANDIDATE_FAILED",
+                    }
+                )
             self.blacklisted_candidates = blacklist
 
+        blacklisted_ids = {
+            b.get("candidate_id") if isinstance(b, dict) else str(b)
+            for b in blacklist
+        }
+
+        retries = (self.retry_count if self.retry_count is not None else 0) + 1
+        self.retry_count = retries
+        self.active_candidate_id = None
+        self.plugin_id = None
+
+        if retries >= max_retries:
+            self.status = DownloadStatus.FAILED.value
+            self.error_reason = "CANDIDATES_EXHAUSTED"
+            return False
+
         stack = list(self.candidate_stack or [])
-        retries = self.retry_count if self.retry_count is not None else 0
-        if stack and retries < 3:
+        while stack:
             next_candidate = stack.pop(0)
-            self.candidate_stack = stack
-            self.active_candidate_id = (
+            next_id = (
                 next_candidate.get("id")
                 if isinstance(next_candidate, dict)
                 else str(next_candidate)
             )
-            self.retry_count = retries + 1
+            if next_id and next_id in blacklisted_ids:
+                continue
+            self.candidate_stack = stack
+            self.active_candidate_id = next_id
             self.status = DownloadStatus.RETRYING.value
             return True
 
-        self.status = DownloadStatus.FAILED.value
-        self.error_reason = "CANDIDATES_EXHAUSTED"
-        return False
+        self.candidate_stack = []
+        self.status = DownloadStatus.RETRYING.value
+        return True
 
-    def is_exhausted(self) -> bool:
-        """Returns True if retry_count >= 3, status is FAILED, or no candidates remain."""
+    def is_exhausted(self, max_retries: int = 3) -> bool:
+        """Returns True if retry_count >= max_retries, status is FAILED, or no candidates remain."""
         retries = self.retry_count if self.retry_count is not None else 0
-        if retries >= 3 or self.status == DownloadStatus.FAILED.value:
+        if retries >= max_retries or self.status == DownloadStatus.FAILED.value:
             return True
+        if self.status in (
+            DownloadStatus.QUEUED.value,
+            DownloadStatus.SEARCHING.value,
+            DownloadStatus.RETRYING.value,
+        ):
+            return False
         if not bool(self.candidate_stack) and not bool(self.active_candidate_id):
             return True
         return False
