@@ -1,6 +1,6 @@
 from datetime import UTC, datetime
 import json
-import os
+from pathlib import Path
 import sqlite3
 
 from core.event_bus import event_bus
@@ -20,9 +20,9 @@ class SpotifyCacheManager:
     def __init__(self, sdk=None):
         self.sdk = sdk
         if self.sdk:
-            plugin_data_dir = self.sdk.get_plugin_data_dir()
-            os.makedirs(plugin_data_dir, exist_ok=True)
-            self.cache_db_path = os.path.join(plugin_data_dir, "cache.db")
+            plugin_data_dir = Path(self.sdk.get_plugin_data_dir())
+            plugin_data_dir.mkdir(parents=True, exist_ok=True)
+            self.cache_db_path = str(plugin_data_dir / "cache.db")
         else:
             raise ValueError("SpotifyCacheManager requires SDK instance to acquire isolated cache database")
 

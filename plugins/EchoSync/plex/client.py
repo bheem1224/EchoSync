@@ -475,7 +475,7 @@ class PlexClient(MediaServerProvider):
             return False
 
     def _resolve_managed_user(self, target_user_id: str | None = None, source_account_name: str | None = None):
-        """Resolve a Plex managed user using stored IDs first, then explicit config.db mappings, then token-boundary fallbacks."""
+        """Resolve a Plex managed user using stored IDs first, then explicit account mappings, then token-boundary fallbacks."""
         if not self.server:
             return None
 
@@ -525,15 +525,15 @@ class PlexClient(MediaServerProvider):
                 if normalized_target_id in identities:
                     return user
 
-        # Step 2: Query explicit mappings in config.db account_mappings table
+        # Step 2: Query explicit account mappings via SDK storage facade
         if source_account_name:
             try:
-                from database.config_database import get_config_database
+                from core.nexus_framework.plugin_SDK import sdk
 
-                config_db = get_config_database()
-                if config_db:
-                    plex_service_id = config_db.get_or_create_service_id("plex")
-                    all_accounts = config_db.get_accounts(is_active=True)
+                storage = sdk.storage
+                if storage:
+                    plex_service_id = storage.get_service_id("plex")
+                    all_accounts = storage.list_accounts(is_active=True)
 
                     source_account_ids = []
                     for acc in all_accounts:
@@ -544,9 +544,9 @@ class PlexClient(MediaServerProvider):
                                 source_account_ids.append(acc["id"])
 
                     for s_id in source_account_ids:
-                        mappings = config_db.get_account_mappings(source_account_id=s_id)
+                        mappings = storage.get_account_mappings(source_account_id=s_id)
                         for m in mappings:
-                            mapped_acc = config_db.get_account(m["mapped_account_id"])
+                            mapped_acc = storage.get_account(m["mapped_account_id"])
                             if mapped_acc and mapped_acc.get("service_id") == plex_service_id:
                                 mapped_uid = self._normalize_plex_identity(mapped_acc.get("user_id"))
                                 if mapped_uid:
@@ -563,11 +563,11 @@ class PlexClient(MediaServerProvider):
                                         }
                                         if mapped_uid in u_identities:
                                             logger.info(
-                                                f"Resolved managed Plex user '{_safe_getattr(user, 'title', user)}' via config.db account_mappings."
+                                                f"Resolved managed Plex user '{_safe_getattr(user, 'title', user)}' via explicit account mappings."
                                             )
                                             return user
             except Exception as map_err:
-                logger.debug(f"Error querying config.db explicit account mappings: {map_err}")
+                logger.debug(f"Error querying explicit account mappings: {map_err}")
 
         # Step 3: Heuristic fallback using exact token boundary matching
         if normalized_source_name:

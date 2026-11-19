@@ -9,5 +9,18 @@
   "hooks": [],
   "min_echosync_version": "2.4.0",
   "beta_version": "2.4.3-beta.27",
-  "display_name": "Local Player"
+  "display_name": "Local Player",
+  "permissions": {
+    "database": {
+      "read_library": true
+    },
+    "contract:config:read:own": true,
+    "contract:tracks:read": true,
+    "contract:playlists:read:own": true
+  },
+  "capabilities": [
+    "contract:config:read:own",
+    "contract:tracks:read",
+    "contract:playlists:read:own"
+  ]
 }

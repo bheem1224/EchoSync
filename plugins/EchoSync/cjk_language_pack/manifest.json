@@ -13,6 +13,9 @@
     },
     "pipeline:enrich": true,
     "pipeline:intercept": true,
+    "contract:library:read": true,
+    "contract:aliases:edit": true,
+    "contract:attributes:edit": true,
     "network_domains": [
       "vgmdb.info",
       "musicbrainz.org"
@@ -20,7 +23,10 @@
   },
   "capabilities": [
     "pipeline:enrich",
-    "pipeline:intercept"
+    "pipeline:intercept",
+    "contract:library:read",
+    "contract:aliases:edit",
+    "contract:attributes:edit"
   ],
   "requirements": [],
   "hooks": [],

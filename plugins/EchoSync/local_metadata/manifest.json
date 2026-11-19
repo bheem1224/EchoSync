@@ -9,5 +9,16 @@
   "hooks": [],
   "min_echosync_version": "2.4.0",
   "beta_version": "2.4.3-beta.32",
-  "display_name": "Local Metadata"
+  "display_name": "Local Metadata",
+  "permissions": {
+    "database": {
+      "read_library": true
+    },
+    "contract:library:read": true,
+    "contract:tracks:read": true
+  },
+  "capabilities": [
+    "contract:library:read",
+    "contract:tracks:read"
+  ]
 }

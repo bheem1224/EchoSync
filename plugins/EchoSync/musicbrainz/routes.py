@@ -34,23 +34,22 @@ router = APIRouter()
 config_router = APIRouter()
 
 
+def _get_service_token() -> str | None:
+    token = sdk.config.get("user_token") or sdk.secrets.get("user_token")
+    if token:
+        return token
+    for svc_key in (2070622029, "EchoSync.Musicbrainz", "EchoSync.musicbrainz", "musicbrainz"):
+        token = sdk.config.get_for_service(svc_key, "user_token")
+        if token:
+            return token
+    return None
+
+
 @config_router.get("/config")
 def get_config():
     """Return the current MusicBrainz settings-card configuration."""
     try:
-        token = sdk.config.get("user_token") or sdk.secrets.get("user_token")
-        if not token:
-            from database.config_database import get_config_database
-
-            db = get_config_database()
-            svc_id = (
-                db.get_service_id(2070622029)
-                or db.get_service_id("EchoSync.Musicbrainz")
-                or db.get_service_id("EchoSync.musicbrainz")
-                or db.get_service_id("musicbrainz")
-            )
-            if svc_id:
-                token = db.get_service_config(svc_id, "user_token")
+        token = _get_service_token()
 
         auto_contribute = sdk.config.get("auto_contribute")
         return JSONResponse(
@@ -77,34 +76,14 @@ async def save_config(request: Request):
 
             enc_token = encrypt_string(payload["user_token"].strip())
             sdk.config.set("user_token", enc_token)
-            from database.config_database import get_config_database
-
-            db = get_config_database()
-            svc_id = (
-                db.get_service_id(2070622029)
-                or db.get_service_id("EchoSync.Musicbrainz")
-                or db.get_service_id("EchoSync.musicbrainz")
-                or db.get_service_id("musicbrainz")
-            )
-            if svc_id:
-                db.set_service_config(svc_id, "user_token", enc_token, is_sensitive=True)
+            for svc_key in (2070622029, "EchoSync.Musicbrainz", "EchoSync.musicbrainz", "musicbrainz"):
+                if sdk.config.set_for_service(svc_key, "user_token", enc_token, is_sensitive=True):
+                    break
 
         if "auto_contribute" in payload:
             sdk.config.set("auto_contribute", str(bool(payload["auto_contribute"])).lower())
 
-        token = sdk.config.get("user_token") or sdk.secrets.get("user_token")
-        if not token:
-            from database.config_database import get_config_database
-
-            db = get_config_database()
-            svc_id = (
-                db.get_service_id(2070622029)
-                or db.get_service_id("EchoSync.Musicbrainz")
-                or db.get_service_id("EchoSync.musicbrainz")
-                or db.get_service_id("musicbrainz")
-            )
-            if svc_id:
-                token = db.get_service_config(svc_id, "user_token")
+        token = _get_service_token()
 
         auto_contribute = sdk.config.get("auto_contribute")
         return JSONResponse(

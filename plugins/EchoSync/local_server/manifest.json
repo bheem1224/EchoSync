@@ -9,6 +9,26 @@
   "hooks": [],
   "min_echosync_version": "2.4.0",
   "beta_version": "2.4.3-beta.53",
-  "privileged": true,
-  "display_name": "Local Server"
+  "display_name": "Local Server",
+  "permissions": {
+    "database": {
+      "read_library": true
+    },
+    "contract:config:read:own": true,
+    "contract:library:read": true,
+    "contract:library:edit": true,
+    "contract:tracks:read": true,
+    "contract:playlists:read:own": true,
+    "contract:playlists:edit:own": true,
+    "service:library:read": true
+  },
+  "capabilities": [
+    "contract:config:read:own",
+    "contract:library:read",
+    "contract:library:edit",
+    "contract:tracks:read",
+    "contract:playlists:read:own",
+    "contract:playlists:edit:own",
+    "service:library:read"
+  ]
 }

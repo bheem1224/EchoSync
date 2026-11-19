@@ -9,5 +9,22 @@
   "hooks": [],
   "min_echosync_version": "2.4.0",
   "ui_manifest": "ui_manifest.json",
-  "beta_version": "2.4.3-beta.61"
+  "beta_version": "2.4.3-beta.61",
+  "permissions": {
+    "database": {
+      "read_library": true
+    },
+    "contract:config:read:own": true,
+    "contract:config:edit:own": true,
+    "contract:tracks:read": true,
+    "contract:playlists:read:own": true,
+    "contract:playlists:edit:own": true
+  },
+  "capabilities": [
+    "contract:config:read:own",
+    "contract:config:edit:own",
+    "contract:tracks:read",
+    "contract:playlists:read:own",
+    "contract:playlists:edit:own"
+  ]
 }

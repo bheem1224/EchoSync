@@ -211,8 +211,6 @@ async def start_oauth(request: Request):
     try:
         from plexapi.myplex import MyPlexPinLogin
 
-        from database.config_database import get_config_database
-
         pin_login = MyPlexPinLogin(oauth=True)
         session_id = str(uuid.uuid4())
 
@@ -234,8 +232,7 @@ async def start_oauth(request: Request):
 
         # Persist session to database so polling survives worker recycling / reloads
         try:
-            db = get_config_database()
-            db.store_pkce_session(
+            sdk.storage.store_pkce_session(
                 pkce_id=session_id,
                 service="plex",
                 account_id=0,
@@ -260,7 +257,7 @@ async def start_oauth(request: Request):
                     plex_oauth_sessions.pop(_session_id, None)
                     logger.info(f"Plex OAuth session cleaned up: {_session_id}")
             try:
-                get_config_database().delete_pkce_session(_session_id)
+                sdk.storage.delete_pkce_session(_session_id)
             except Exception:
                 pass
 
@@ -309,8 +306,6 @@ def poll_oauth(session_id: str):
     Returns: {completed, token?, error?}
     """
     try:
-        from database.config_database import get_config_database
-
         pin_login = None
         with plex_oauth_lock:
             pin_login = plex_oauth_sessions.get(session_id)
@@ -324,7 +319,7 @@ def poll_oauth(session_id: str):
         else:
             # Fallback to persistent DB session
             try:
-                db_session = get_config_database().get_pkce_session(session_id)
+                db_session = sdk.storage.get_pkce_session(session_id)
                 if db_session:
                     pin_id = db_session.get("code_verifier")
                     client_id = db_session.get("client_id") or "Echosync"

@@ -9,5 +9,31 @@
   "hooks": [],
   "min_echosync_version": "2.4.0",
   "ui_manifest": "ui_manifest.json",
-  "beta_version": "2.4.3-beta.116"
+  "beta_version": "2.4.3-beta.116",
+  "permissions": {
+    "database": {
+      "read_library": true,
+      "mutate_working": true
+    },
+    "contract:config:read:own": true,
+    "contract:config:edit:own": true,
+    "contract:secrets:read:own": true,
+    "contract:secrets:edit:own": true,
+    "contract:webhooks:read:own": true,
+    "contract:webhooks:edit:own": true,
+    "contract:downloads:read": true,
+    "contract:downloads:edit": true,
+    "contract:tracks:read": true
+  },
+  "capabilities": [
+    "contract:config:read:own",
+    "contract:config:edit:own",
+    "contract:secrets:read:own",
+    "contract:secrets:edit:own",
+    "contract:webhooks:read:own",
+    "contract:webhooks:edit:own",
+    "contract:downloads:read",
+    "contract:downloads:edit",
+    "contract:tracks:read"
+  ]
 }

@@ -9,5 +9,32 @@
   "hooks": [],
   "min_echosync_version": "2.4.0",
   "beta_version": "2.4.3-beta.109",
-  "verified_source": "official"
+  "verified_source": "official",
+  "permissions": {
+    "database": {
+      "read_library": true
+    },
+    "contract:accounts:read:own": true,
+    "contract:accounts:edit:own": true,
+    "contract:accounts:delete:own": true,
+    "contract:config:read:own": true,
+    "contract:config:edit:own": true,
+    "contract:secrets:read:own": true,
+    "contract:secrets:edit:own": true,
+    "contract:tracks:read": true,
+    "contract:playlists:read:own": true,
+    "contract:playlists:edit:own": true
+  },
+  "capabilities": [
+    "contract:accounts:read:own",
+    "contract:accounts:edit:own",
+    "contract:accounts:delete:own",
+    "contract:config:read:own",
+    "contract:config:edit:own",
+    "contract:secrets:read:own",
+    "contract:secrets:edit:own",
+    "contract:tracks:read",
+    "contract:playlists:read:own",
+    "contract:playlists:edit:own"
+  ]
 }

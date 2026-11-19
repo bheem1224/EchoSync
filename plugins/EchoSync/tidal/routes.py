@@ -25,23 +25,15 @@ def list_accounts():
         client_id = sdk.config.get("client_id", "") or ""
         client_secret_present = bool(sdk.secrets.get("client_secret"))
 
-        # Fallback to DB service_config if not in SDK namespace
+        # Fallback to SDK service_config if not in plugin namespace
         if not client_id or not client_secret_present:
-            from database.config_database import get_config_database
-
-            db = get_config_database()
-            svc_id = (
-                db.get_service_id(3106502486)
-                or db.get_service_id("EchoSync.Tidal")
-                or db.get_service_id("tidal")
-            )
-            if svc_id:
-                client_id = (
-                    client_id or db.get_service_config(svc_id, "client_id") or ""
-                )
+            for svc_key in (3106502486, "EchoSync.Tidal", "tidal"):
+                client_id = client_id or sdk.config.get_for_service(svc_key, "client_id") or ""
                 client_secret_present = client_secret_present or bool(
-                    db.get_service_config(svc_id, "client_secret")
+                    sdk.config.get_for_service(svc_key, "client_secret")
                 )
+                if client_id and client_secret_present:
+                    break
 
         for a in db_accounts:
             normalized = {
@@ -105,20 +97,11 @@ async def create_account(request: Request):
         sdk.config.set("client_id", client_id)
         sdk.secrets.set("client_secret", client_secret)
 
-        # Also mirror to database service_config
-        from database.config_database import get_config_database
-
-        db = get_config_database()
-        svc_id = (
-            db.get_service_id(3106502486)
-            or db.get_service_id("EchoSync.Tidal")
-            or db.get_service_id("tidal")
-        )
-        if svc_id:
-            db.set_service_config(svc_id, "client_id", client_id, is_sensitive=False)
-            db.set_service_config(
-                svc_id, "client_secret", client_secret, is_sensitive=True
-            )
+        # Also mirror to service_config via SDK
+        for svc_key in (3106502486, "EchoSync.Tidal", "tidal"):
+            if sdk.config.set_for_service(svc_key, "client_id", client_id, is_sensitive=False):
+                sdk.config.set_for_service(svc_key, "client_secret", client_secret, is_sensitive=True)
+                break
 
         logger.info(f"Created Tidal account {account_id} with credentials")
 
@@ -316,16 +299,10 @@ async def begin_auth(request: Request):
 
         client_id = sdk.config.get("client_id")
         if not client_id:
-            from database.config_database import get_config_database
-
-            db = get_config_database()
-            svc_id = (
-                db.get_service_id(3106502486)
-                or db.get_service_id("EchoSync.Tidal")
-                or db.get_service_id("tidal")
-            )
-            if svc_id:
-                client_id = db.get_service_config(svc_id, "client_id")
+            for svc_key in (3106502486, "EchoSync.Tidal", "tidal"):
+                client_id = sdk.config.get_for_service(svc_key, "client_id")
+                if client_id:
+                    break
 
         if not client_id:
             return JSONResponse(

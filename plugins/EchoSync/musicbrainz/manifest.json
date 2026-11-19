@@ -16,5 +16,26 @@
       "description": "Base URL for the MusicBrainz API"
     }
   },
-  "beta_version": "2.4.3-beta.87"
+  "beta_version": "2.4.3-beta.87",
+  "permissions": {
+    "database": {
+      "read_library": true
+    },
+    "contract:accounts:read:own": true,
+    "contract:accounts:edit:own": true,
+    "contract:accounts:delete:own": true,
+    "contract:config:read:own": true,
+    "contract:config:edit:own": true,
+    "contract:secrets:read:own": true,
+    "contract:tracks:read": true
+  },
+  "capabilities": [
+    "contract:accounts:read:own",
+    "contract:accounts:edit:own",
+    "contract:accounts:delete:own",
+    "contract:config:read:own",
+    "contract:config:edit:own",
+    "contract:secrets:read:own",
+    "contract:tracks:read"
+  ]
 }

@@ -322,7 +322,7 @@ def install_plugin(request: Request, data: PluginActionRequest):
 
 @router.post("/update", dependencies=[Depends(require_scope("service:plugins:edit"))])
 def update_plugin(request: Request, data: PluginActionRequest):
-    from core.nexus_framework.plugin_store import PrivilegeEscalationError
+    from core.nexus_framework.plugin_store import PluginSecurityError, PrivilegeEscalationError
 
     plugin_info = data.plugin
     force_consent = (
@@ -409,6 +409,19 @@ def update_plugin(request: Request, data: PluginActionRequest):
                 "escalations": e.escalations,
                 "plugin_id": str(e.plugin_id or db_plugin_id or ""),
                 "message": "This update requires elevated permissions.",
+            },
+        )
+    except PluginSecurityError as e:
+        from fastapi.responses import JSONResponse
+
+        return JSONResponse(
+            status_code=422,
+            content={
+                "status": "security_error",
+                "code": "PLUGIN_SECURITY_SCAN_FAILED",
+                "plugin_id": str(e.plugin_id or db_plugin_id or ""),
+                "detail": str(e),
+                "message": str(e),
             },
         )
     except HTTPException:

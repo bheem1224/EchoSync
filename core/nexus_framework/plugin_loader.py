@@ -311,7 +311,6 @@ _FORBIDDEN_BARE_CALLS: frozenset = frozenset(
         "__import__",
         "eval",
         "exec",
-        "getattr",
         "setattr",
         "globals",
         "locals",
@@ -490,6 +489,36 @@ class PluginSecurityScanner(ast.NodeVisitor):
                 self.violations.append((node.lineno, "forbidden string literal containing 'config.db'"))
         self.generic_visit(node)
 
+    def _validate_getattr_call(self, node: ast.Call) -> None:
+        """Allow 2- or 3-arg getattr(obj, 'static_public_attr'[, default]) while blocking dunder/dynamic introspection."""
+        if node.keywords or len(node.args) not in (2, 3):
+            self.violations.append((node.lineno, "unsafe call to getattr()"))
+            return
+
+        target, attr_arg = node.args[0], node.args[1]
+        if isinstance(target, ast.Name) and target.id in (
+            "os",
+            "sys",
+            "builtins",
+            "__builtins__",
+            "importlib",
+            "subprocess",
+            "ctypes",
+            "inspect",
+            "gc",
+        ):
+            self.violations.append((node.lineno, f"unsafe getattr() on sensitive object '{target.id}'"))
+            return
+
+        if not (isinstance(attr_arg, ast.Constant) and isinstance(attr_arg.value, str)):
+            self.violations.append((node.lineno, "dynamic attribute name in getattr() is forbidden"))
+            return
+
+        if attr_arg.value.startswith("_"):
+            self.violations.append(
+                (node.lineno, f"getattr() on private/dunder attribute '{attr_arg.value}' is forbidden")
+            )
+
     def visit_Call(self, node: ast.Call) -> None:
         func = node.func
 
@@ -497,6 +526,8 @@ class PluginSecurityScanner(ast.NodeVisitor):
             # Pattern 1: bare open(...)
             if func.id in _FORBIDDEN_BARE_CALLS:
                 self.violations.append((node.lineno, f"bare call to {func.id}()"))
+            elif func.id == "getattr":
+                self._validate_getattr_call(node)
 
         elif isinstance(func, ast.Attribute):
             attr = func.attr

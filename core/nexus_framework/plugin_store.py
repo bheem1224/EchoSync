@@ -25,6 +25,12 @@ class PrivilegeEscalationError(Exception):
         super().__init__("Privilege escalation detected")
 
 
+class PluginSecurityError(Exception):
+    def __init__(self, message: str = "Plugin failed security verification", plugin_id: Any = None):
+        self.plugin_id = plugin_id
+        super().__init__(message)
+
+
 class PluginStore:
     compute_permission_delta = staticmethod(compute_permission_delta)
 
@@ -606,11 +612,20 @@ class PluginStore:
             else (binascii.crc32(str(plugin_id).lower().encode("utf-8")) & 0xFFFFFFFF)
         )
 
-        # Nexus Framework: Resolve nested path (dots to slashes)
+        # Nexus Framework: Resolve canonical lowercase plugin folder (dots to slashes)
         folder_path = plugin_info.get("path")
         if not folder_path:
             clean_id = str(plugin_id)
-            folder_path = clean_id.replace(".", "/")
+            parts = clean_id.split(".")
+            if len(parts) >= 2:
+                folder_path = f"{parts[0]}/{parts[-1].lower()}"
+            else:
+                folder_path = clean_id.lower()
+        else:
+            path_parts = [p for p in str(folder_path).replace("\\", "/").strip("/").split("/") if p]
+            if path_parts:
+                path_parts[-1] = path_parts[-1].lower()
+            folder_path = "/".join(path_parts)
 
         clean_folder = os.path.normpath(str(folder_path)).replace("\\", "/").strip("/")
         dest_dir = resolve_safe_path(self.plugins_dir, clean_folder)
@@ -749,13 +764,23 @@ class PluginStore:
                     logger.error(f"Invalid characters in manifest author or name: {manifest_author}.{manifest_name}")
                     return False
 
-                # Dynamically calculate target directories based on strict_namespace
-                dest_dir = resolve_safe_path(self.plugins_dir, f"{manifest_author}/{manifest_name}")
+                # Dynamically calculate target directories using canonical lowercase folder_name
+                folder_name = str(manifest_name).lower()
+                dest_dir = resolve_safe_path(self.plugins_dir, f"{manifest_author}/{folder_name}")
+                legacy_dest_dir = resolve_safe_path(self.plugins_dir, f"{manifest_author}/{manifest_name}")
 
-                # Check case-insensitively to reuse existing folder names and prevent casing duplicates
-                existing_dest = dest_dir if dest_dir.exists() else None
-                if existing_dest:
-                    dest_dir = existing_dest
+                if legacy_dest_dir.exists() and (
+                    not dest_dir.exists() or not os.path.samefile(legacy_dest_dir, dest_dir)
+                ):
+                    if not dest_dir.exists():
+                        dest_dir.parent.mkdir(parents=True, exist_ok=True)
+                        os.rename(str(legacy_dest_dir), str(dest_dir))
+                    else:
+                        for db_file in legacy_dest_dir.glob("*.db"):
+                            target_db = dest_dir / db_file.name
+                            if not target_db.exists():
+                                shutil.copy2(db_file, target_db)
+                        shutil.rmtree(legacy_dest_dir, ignore_errors=True)
 
                 beta_dir = dest_dir / "beta"
                 if channel == "beta":
@@ -994,7 +1019,7 @@ class PluginStore:
                         target_dir.parent.mkdir(parents=True, exist_ok=True)
                     os.rename(str(tmp_dir), str(target_dir))
                     logger.info(f"Successfully installed {plugin_id} artifact via atomic swap")
-                    if backup_dir and backup_dir.exists():
+                    if not is_update and backup_dir and backup_dir.exists():
                         shutil.rmtree(backup_dir, ignore_errors=True)
                 except Exception as swap_err:
                     logger.error("Installation halted: Atomic directory swap failed.")
@@ -1120,17 +1145,39 @@ class PluginStore:
                 if is_update:
                     try:
                         from core.nexus_framework.plugin_loader import PluginLoader
+                        from core.task_manager import PluginLifecycleState, plugin_state_manager
 
                         app_root = Path(__file__).parent.parent
                         loader = PluginLoader(app_root)
-                        loader.reload_plugin(int_plugin_id)
+                        reload_ok = loader.reload_plugin(int_plugin_id)
+
+                        state_candidates = [folder_name, strict_namespace, manifest_name, str(plugin_id)]
+                        error_status = None
+                        for cand in dict.fromkeys(c for c in state_candidates if c):
+                            st = plugin_state_manager.get_state(cand)
+                            if st.state == PluginLifecycleState.ERROR:
+                                error_status = st
+                                break
+
+                        if error_status is not None or reload_ok is False:
+                            err_msg = (
+                                error_status.message
+                                if error_status and error_status.message
+                                else f"Plugin {plugin_id} entered ERROR state during hot-swap reload."
+                            )
+                            raise PluginSecurityError(err_msg, plugin_id=int_plugin_id)
+
+                        if backup_dir and backup_dir.exists():
+                            shutil.rmtree(backup_dir, ignore_errors=True)
                         logger.info(f"Live-swap successful for {plugin_id} (int: {int_plugin_id}).")
                     except Exception as e:
                         logger.error(f"Live-swap failed for {plugin_id}. Initiating rollback...")
                         logger.debug(f"Raw exception data: {e}", exc_info=True)
 
                         # Atomic State Rollback
-                        if is_update and target_plugin_id and "service_config" in state_snapshot:
+                        if is_update and (
+                            (backup_dir and backup_dir.exists()) or (target_plugin_id and "service_config" in state_snapshot)
+                        ):
                             try:
                                 logger.info(f"Restoring previous state for {plugin_id}...")
 
@@ -1152,114 +1199,115 @@ class PluginStore:
                                         dest_dir / f"{manifest_name}.db",
                                     )
 
-                                # 2. Database Rollback
-                                db = get_config_database()
-                                w_db = get_working_database()
-                                service_id = db.get_service_id(target_plugin_id)
+                                # 2. Database Rollback (if snapshot captured)
+                                if target_plugin_id and "service_config" in state_snapshot:
+                                    db = get_config_database()
+                                    w_db = get_working_database()
+                                    service_id = db.get_service_id(target_plugin_id)
 
-                                from sqlalchemy import create_engine
-                                from sqlalchemy.orm import sessionmaker
+                                    from sqlalchemy import create_engine
+                                    from sqlalchemy.orm import sessionmaker
 
-                                from database.models import (
-                                    Account,
-                                    AccountToken,
-                                    ServiceConfig,
-                                )
-
-                                config_engine = create_engine(f"sqlite:///{db.database_path}")
-                                ConfigSession = sessionmaker(bind=config_engine)
-                                with ConfigSession() as config_session:
-                                    try:
-                                        # Purge corrupted rows
-                                        config_session.query(ServiceConfig).filter(
-                                            ServiceConfig.service_id == service_id
-                                        ).delete()
-
-                                        # Delete tokens and accounts
-                                        accounts_to_delete = (
-                                            config_session.query(Account).filter(Account.service_id == service_id).all()
-                                        )
-                                        acc_ids = [acc.id for acc in accounts_to_delete]
-                                        if acc_ids:
-                                            config_session.query(AccountToken).filter(
-                                                AccountToken.account_id.in_(acc_ids)
-                                            ).delete(synchronize_session=False)
-                                        config_session.query(Account).filter(Account.service_id == service_id).delete(
-                                            synchronize_session=False
-                                        )
-
-                                        # Restore service configs
-                                        for row in state_snapshot["service_config"]:
-                                            cfg = ServiceConfig(
-                                                service_id=service_id,
-                                                config_key=row["config_key"],
-                                                config_value=row["config_value"],
-                                                is_sensitive=row["is_sensitive"],
-                                            )
-                                            config_session.add(cfg)
-
-                                        # Restore accounts
-                                        for row in state_snapshot["accounts"]:
-                                            acc = Account(
-                                                id=row["id"],
-                                                service_id=service_id,
-                                                account_name=row["account_name"],
-                                                display_name=row["display_name"],
-                                                user_id=row["user_id"],
-                                                account_email=row["account_email"],
-                                                is_active=row["is_active"],
-                                                is_authenticated=row["is_authenticated"],
-                                                last_authenticated_at=row["last_authenticated_at"],
-                                            )
-                                            config_session.add(acc)
-
-                                        # Restore tokens
-                                        for row in state_snapshot["tokens"]:
-                                            tok = AccountToken(
-                                                account_id=row["account_id"],
-                                                access_token=row["access_token"],
-                                                refresh_token=row["refresh_token"],
-                                                token_type=row["token_type"],
-                                                expires_at=row["expires_at"],
-                                                scope=row["scope"],
-                                            )
-                                            config_session.add(tok)
-
-                                        config_session.flush()
-                                        with db_write_lease(task_name="plugin_store_rollback_config"):
-                                            config_session.commit()
-                                    except Exception as db_rollback_err:
-                                        config_session.rollback()
-                                        raise db_rollback_err
-                                    finally:
-                                        config_session.close()
-                                        config_engine.dispose()
-
-                                session = w_db.session()
-                                try:
-                                    session.execute(
-                                        text("DELETE FROM plugin_state_kvs WHERE plugin_id=:pid"),
-                                        {"pid": str(target_plugin_id)},
+                                    from database.models import (
+                                        Account,
+                                        AccountToken,
+                                        ServiceConfig,
                                     )
-                                    for row in state_snapshot["kvs"]:
+
+                                    config_engine = create_engine(f"sqlite:///{db.database_path}")
+                                    ConfigSession = sessionmaker(bind=config_engine)
+                                    with ConfigSession() as config_session:
+                                        try:
+                                            # Purge corrupted rows
+                                            config_session.query(ServiceConfig).filter(
+                                                ServiceConfig.service_id == service_id
+                                            ).delete()
+
+                                            # Delete tokens and accounts
+                                            accounts_to_delete = (
+                                                config_session.query(Account).filter(Account.service_id == service_id).all()
+                                            )
+                                            acc_ids = [acc.id for acc in accounts_to_delete]
+                                            if acc_ids:
+                                                config_session.query(AccountToken).filter(
+                                                    AccountToken.account_id.in_(acc_ids)
+                                                ).delete(synchronize_session=False)
+                                            config_session.query(Account).filter(Account.service_id == service_id).delete(
+                                                synchronize_session=False
+                                            )
+
+                                            # Restore service configs
+                                            for row in state_snapshot["service_config"]:
+                                                cfg = ServiceConfig(
+                                                    service_id=service_id,
+                                                    config_key=row["config_key"],
+                                                    config_value=row["config_value"],
+                                                    is_sensitive=row["is_sensitive"],
+                                                )
+                                                config_session.add(cfg)
+
+                                            # Restore accounts
+                                            for row in state_snapshot["accounts"]:
+                                                acc = Account(
+                                                    id=row["id"],
+                                                    service_id=service_id,
+                                                    account_name=row["account_name"],
+                                                    display_name=row["display_name"],
+                                                    user_id=row["user_id"],
+                                                    account_email=row["account_email"],
+                                                    is_active=row["is_active"],
+                                                    is_authenticated=row["is_authenticated"],
+                                                    last_authenticated_at=row["last_authenticated_at"],
+                                                )
+                                                config_session.add(acc)
+
+                                            # Restore tokens
+                                            for row in state_snapshot["tokens"]:
+                                                tok = AccountToken(
+                                                    account_id=row["account_id"],
+                                                    access_token=row["access_token"],
+                                                    refresh_token=row["refresh_token"],
+                                                    token_type=row["token_type"],
+                                                    expires_at=row["expires_at"],
+                                                    scope=row["scope"],
+                                                )
+                                                config_session.add(tok)
+
+                                            config_session.flush()
+                                            with db_write_lease(task_name="plugin_store_rollback_config"):
+                                                config_session.commit()
+                                        except Exception as db_rollback_err:
+                                            config_session.rollback()
+                                            raise db_rollback_err
+                                        finally:
+                                            config_session.close()
+                                            config_engine.dispose()
+
+                                    session = w_db.session()
+                                    try:
                                         session.execute(
-                                            text(
-                                                "INSERT INTO plugin_state_kvs (plugin_id, key, value) VALUES (:pid, :k, :v)"
-                                            ),
-                                            {
-                                                "pid": str(target_plugin_id),
-                                                "k": row["key"],
-                                                "v": row["value"],
-                                            },
+                                            text("DELETE FROM plugin_state_kvs WHERE plugin_id=:pid"),
+                                            {"pid": str(target_plugin_id)},
                                         )
-                                    session.flush()
-                                    with db_write_lease(task_name="plugin_store_rollback_working"):
-                                        session.commit()
-                                except Exception:
-                                    session.rollback()
-                                    raise
-                                finally:
-                                    session.close()
+                                        for row in state_snapshot["kvs"]:
+                                            session.execute(
+                                                text(
+                                                    "INSERT INTO plugin_state_kvs (plugin_id, key, value) VALUES (:pid, :k, :v)"
+                                                ),
+                                                {
+                                                    "pid": str(target_plugin_id),
+                                                    "k": row["key"],
+                                                    "v": row["value"],
+                                                },
+                                            )
+                                        session.flush()
+                                        with db_write_lease(task_name="plugin_store_rollback_working"):
+                                            session.commit()
+                                    except Exception:
+                                        session.rollback()
+                                        raise
+                                    finally:
+                                        session.close()
 
                                 logger.info("Rollback of files and database completed.")
 
@@ -1284,6 +1332,8 @@ class PluginStore:
                         else:
                             system_state.restart_pending = True
 
+                        if isinstance(e, PluginSecurityError):
+                            raise e
                         return False
 
                 else:
@@ -1317,7 +1367,7 @@ class PluginStore:
                 if tmp_dir.exists():
                     shutil.rmtree(tmp_dir, ignore_errors=True)
 
-        except PrivilegeEscalationError:
+        except (PrivilegeEscalationError, PluginSecurityError):
             raise
         except Exception as e:
             logger.error("Rollback operation halted: Atomic state restoration failed.")
@@ -1329,8 +1379,12 @@ class PluginStore:
     def _cleanup_beta_subfolder(self, folder_id: str) -> bool:
         import shutil
 
-        # Convert dots to slashes for nested path support
-        path_name = folder_id.replace(".", "/")
+        # Convert dots to slashes with canonical lowercase folder segment
+        parts = str(folder_id).split(".")
+        if len(parts) >= 2:
+            path_name = f"{parts[0]}/{parts[-1].lower()}"
+        else:
+            path_name = str(folder_id).lower()
         beta_path = resolve_safe_path(self.plugins_dir, f"{path_name}/beta")
         if beta_path.exists():
             shutil.rmtree(beta_path, ignore_errors=True)

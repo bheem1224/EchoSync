@@ -439,7 +439,7 @@ class TidalClient(SyncServiceProvider):
                 logger.warning(f"Error shutting down Tidal OAuth sidecar: {e}")
             finally:
                 self.auth_server = None
-                reg_id = getattr(self, "_auth_server_reg_id", None)
+                reg_id = self._auth_server_reg_id if hasattr(self, "_auth_server_reg_id") else None
                 if reg_id:
                     supervisor.unregister_process(reg_id)
                     self._auth_server_reg_id = None

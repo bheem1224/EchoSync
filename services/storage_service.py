@@ -47,13 +47,33 @@ class StorageService:
 
     # ----- account management ---------------------------------------------------
 
-    def list_accounts(self, service_name: str | None = None) -> list[dict[str, Any]]:
+    def list_accounts(
+        self, service_name: str | None = None, is_active: bool | None = None
+    ) -> list[dict[str, Any]]:
         """Return account lists for a given service."""
         from database.config_database import get_config_database
 
         db = get_config_database()
         service_id = db.get_or_create_service_id(service_name) if service_name else None
-        return db.get_accounts(service_id=service_id)
+        return db.get_accounts(service_id=service_id, is_active=is_active)
+
+    def get_service_id(self, service_name: str) -> int | None:
+        """Return or create the service_id for a service name."""
+        from database.config_database import get_config_database
+
+        return get_config_database().get_or_create_service_id(service_name)
+
+    def get_account(self, account_id: int) -> dict[str, Any] | None:
+        """Return an account record by ID."""
+        from database.config_database import get_config_database
+
+        return get_config_database().get_account(account_id)
+
+    def get_account_mappings(self, source_account_id: int | None = None) -> list[dict[str, Any]]:
+        """Return explicit account mappings, optionally filtered by source_account_id."""
+        from database.config_database import get_config_database
+
+        return get_config_database().get_account_mappings(source_account_id=source_account_id)
 
     def ensure_account(
         self,

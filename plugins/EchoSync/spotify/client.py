@@ -731,7 +731,7 @@ class SpotifyClient(SyncServiceProvider):
                 )
                 storage.mark_account_authenticated(account_id)
             except Exception as e:
-                logger.error(f"Failed to persist tokens to config.db: {e}")
+                logger.error(f"Failed to persist tokens: {e}")
 
             try:
                 storage.toggle_account_active(account_id, True)

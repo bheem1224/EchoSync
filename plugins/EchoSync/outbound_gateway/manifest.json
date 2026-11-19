@@ -9,5 +9,16 @@
   "hooks": [],
   "min_echosync_version": "2.4.0",
   "beta_version": "2.4.3-beta.30",
-  "display_name": "Outbound Gateway"
+  "display_name": "Outbound Gateway",
+  "permissions": {
+    "database": {
+      "read_library": true
+    },
+    "contract:config:read:own": true,
+    "contract:tracks:read": true
+  },
+  "capabilities": [
+    "contract:config:read:own",
+    "contract:tracks:read"
+  ]
 }

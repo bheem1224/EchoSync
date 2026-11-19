@@ -8,5 +8,18 @@
   "requirements": [],
   "hooks": [],
   "min_echosync_version": "2.4.0",
-  "beta_version": "2.4.3-beta.38"
+  "beta_version": "2.4.3-beta.38",
+  "permissions": {
+    "database": {
+      "read_library": true
+    },
+    "contract:config:read:own": true,
+    "contract:config:edit:own": true,
+    "contract:tracks:read": true
+  },
+  "capabilities": [
+    "contract:config:read:own",
+    "contract:config:edit:own",
+    "contract:tracks:read"
+  ]
 }
