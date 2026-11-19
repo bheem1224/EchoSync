@@ -12,7 +12,7 @@ from pydantic import BaseModel, ConfigDict
 from core.db.echo_sync_track import EchosyncTrack
 from core.event_bus import event_bus
 from core.hook_manager import hook_manager
-from core.job_queue import job_queue
+from core.task_manager.task_queue import job_queue
 from core.matching_engine.matching_engine import WeightedMatchingEngine
 from core.matching_engine.text_utils import (
     normalize_title as _normalize_candidate_title,
@@ -87,7 +87,6 @@ logger = get_logger("playlists_api")
 router = APIRouter(prefix="/api/v1/core/playlists", tags=["Playlists"])
 api_v1_router = APIRouter(prefix="/api/v1/playlists", tags=["Playlists"])
 legacy_router = APIRouter(prefix="/api/playlists", tags=["Playlists"])
-double_v1_router = APIRouter(prefix="/api/v1/v1/core/playlists", tags=["Playlists"])
 
 # ── Semantic Substring Failsafe — safe OST filler dictionary ──────────────────
 # Words that commonly appear in longer CJK/English OST title variants but do NOT
@@ -666,7 +665,6 @@ def analyze_playlists(payload_obj: PlaylistAnalyzeSchema | None = None):
 @router.post("/match-diagnostics")
 @api_v1_router.post("/match-diagnostics")
 @legacy_router.post("/match-diagnostics")
-@double_v1_router.post("/match-diagnostics")
 def match_diagnostics(payload: MatchDiagnosticRequest):
     """Evaluate candidate tracks against ExactSyncProfile and return structured match trace."""
     from services.playlist_sync import evaluate_single_track_diagnostics, get_cached_match_trace
@@ -1442,7 +1440,7 @@ def sync_events(request: Request, job: str | None = None, since: int | str | Non
     }
 
 
-for extra_r in (api_v1_router, legacy_router, double_v1_router):
+for extra_r in (api_v1_router, legacy_router):
     extra_r.add_api_route("/sync/events", sync_events, methods=["GET"])
 
 

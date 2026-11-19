@@ -43,7 +43,6 @@ from web.routes.metadata_review import (
     router as metadata_review_bp,
 )
 from web.routes.playlists import api_v1_router as playlists_v1_bp
-from web.routes.playlists import double_v1_router as playlists_double_v1_bp
 from web.routes.playlists import legacy_router as playlists_legacy_bp
 from web.routes.playlists import router as playlists_bp
 from web.routes.plugins import legacy_router as legacy_plugins_bp
@@ -148,7 +147,7 @@ async def lifespan(app: FastAPI):
     # In ASGI, lifespan runs once per worker. If we have multiple workers, they all run it.
     # Uvicorn without workers (reload=False) means 1 worker.
     if not testing and not _backend_started:
-        from core.backend_services import start_services
+        from core.task_manager.backend_services import start_services
         from core.task_manager.models import OwnerType, ProcessCategory, ProcessOwner
         from core.task_manager.supervisor import supervisor
         from core.task_manager.system_jobs import register_all_system_jobs
@@ -328,7 +327,6 @@ def create_app(testing: bool = False) -> FastAPI:
     app.include_router(playlists_bp)
     app.include_router(playlists_v1_bp)
     app.include_router(playlists_legacy_bp)
-    app.include_router(playlists_double_v1_bp)
 
     # SPA Support
     custom_ui_path = config_manager.get("custom_ui_path")

@@ -1139,37 +1139,6 @@ def update_review_queue_item(task_id: int, payload: UpdateReviewQueueRequest, _=
         raise HTTPException(status_code=500, detail="Failed to update review task")
 
 
-def _process_approval_background(task_id: int, final_metadata: dict[str, Any]):
-    """Background processor for approval tasks to prevent thread blocking."""
-    db = get_working_database()
-    try:
-        with db.session_scope() as session:
-            task = session.query(ReviewTask).filter(ReviewTask.id == task_id).first()
-            if not task:
-                return
-
-            media_path = task.file_path
-            if not media_path:
-                return
-            file_path = Path(media_path)
-            if not file_path.exists() or not file_path.is_file():
-                return
-
-            enhancer = get_metadata_enhancer()
-
-            # Identify the file first to check AcoustID fingerprint asynchronously if needed
-            # even though we are approving, triggering the metadata enhancer tag_file handles the core logic
-            enhancer.tag_file(file_path, final_metadata)
-
-            task_media_id = getattr(task, "media_id", None)
-            _import_single_file(file_path, final_metadata, media_id=task_media_id)
-
-            task.detected_metadata = final_metadata
-            task.status = "approved"
-    except Exception as e:
-        logger.error(f"Background approval task {task_id} failed: {e}", exc_info=True)
-
-
 @router.post("/{task_id}/approve")
 def approve_review_queue_item(
     task_id: int,
@@ -1200,7 +1169,7 @@ def approve_review_queue_item(
             if not file_path.exists() or not file_path.is_file():
                 raise HTTPException(status_code=404, detail="File does not exist")
 
-            from core.job_queue import job_queue
+            from core.task_manager.task_queue import job_queue
 
             def _background_approval_task():
                 try:

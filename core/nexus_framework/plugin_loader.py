@@ -9,12 +9,7 @@ import os
 import sys
 from typing import Any
 
-from fastapi import APIRouter, Depends, FastAPI, Request
-
-
-async def enforce_plugin_passport(request: Request):
-    """Zero-Trust Passport Enforcer for Plugin Sub-Applications."""
-
+from fastapi import APIRouter, FastAPI
 
 from pathlib import Path
 
@@ -522,7 +517,7 @@ class PluginLoader:
 
         # 2. Kill Workers
         try:
-            from core.job_queue import job_queue
+            from core.task_manager.task_queue import job_queue
             from core.task_manager import (
                 supervisor,
             )
@@ -677,7 +672,7 @@ class PluginLoader:
 
         # 2. Kill Workers
         try:
-            from core.job_queue import job_queue
+            from core.task_manager.task_queue import job_queue
             from core.task_manager import (
                 PluginLifecycleState,
                 plugin_state_manager,
@@ -1702,7 +1697,6 @@ class PluginLoader:
                     if plugin_routers:
                         plugin_app = FastAPI(
                             title=f"Plugin: {provider_id}",
-                            dependencies=[Depends(enforce_plugin_passport)],
                         )
                         for router in plugin_routers:
                             plugin_app.include_router(router)
