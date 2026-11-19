@@ -7,11 +7,14 @@ selecting highest quality media file, without gating by target_quality)
 and persistent match trace caching for 100% diagnostic parity.
 """
 
+from collections import OrderedDict
+from collections.abc import Callable, Iterator, MutableMapping
 from dataclasses import replace
 import logging
 import re
+import threading
 import time
-from typing import Any
+from typing import Any, Generic, TypeVar
 
 from sqlalchemy import or_, text
 from sqlalchemy.orm import Session, joinedload
@@ -39,8 +42,151 @@ logger = get_logger("playlist_sync")
 
 LOSSLESS_FORMATS = {"flac", "wav", "alac", "aiff", "dsd", "dff"}
 
-# In-memory match trace cache for diagnostic parity
-MATCH_TRACE_CACHE: dict[tuple, dict] = {}
+_K = TypeVar("_K")
+_V = TypeVar("_V")
+
+DEFAULT_MATCH_TRACE_MAX_SIZE = 1024
+DEFAULT_MATCH_TRACE_TTL_SECONDS = 1800.0
+DEFAULT_ANALYSIS_JOBS_MAX_SIZE = 256
+DEFAULT_ANALYSIS_JOBS_TTL_SECONDS = 3600.0
+
+
+class BoundedTTLCache(MutableMapping[_K, _V], Generic[_K, _V]):
+    """Thread-safe bounded LRU + TTL cache protected by a threading.Lock."""
+
+    def __init__(
+        self,
+        max_size: int = 1024,
+        ttl_seconds: float = 1800.0,
+        clock: Callable[[], float] | None = None,
+    ) -> None:
+        if max_size < 1:
+            raise ValueError("max_size must be at least 1")
+        if ttl_seconds <= 0:
+            raise ValueError("ttl_seconds must be positive")
+        self.max_size = int(max_size)
+        self.ttl_seconds = float(ttl_seconds)
+        self._clock = clock
+        self._lock = threading.Lock()
+        self._entries: OrderedDict[_K, tuple[float, _V]] = OrderedDict()
+
+    def _now(self) -> float:
+        return self._clock() if self._clock is not None else time.monotonic()
+
+    def _evict_expired_locked(self, now: float) -> None:
+        expired_keys = [k for k, (expires_at, _) in self._entries.items() if expires_at <= now]
+        for k in expired_keys:
+            del self._entries[k]
+
+    def __getitem__(self, key: _K) -> _V:
+        with self._lock:
+            now = self._now()
+            entry = self._entries.get(key)
+            if entry is None:
+                raise KeyError(key)
+            expires_at, value = entry
+            if expires_at <= now:
+                del self._entries[key]
+                raise KeyError(key)
+            self._entries.move_to_end(key)
+            return value
+
+    def __setitem__(self, key: _K, value: _V) -> None:
+        with self._lock:
+            now = self._now()
+            self._evict_expired_locked(now)
+            if key in self._entries:
+                self._entries.move_to_end(key)
+            self._entries[key] = (now + self.ttl_seconds, value)
+            while len(self._entries) > self.max_size:
+                self._entries.popitem(last=False)
+
+    def __delitem__(self, key: _K) -> None:
+        with self._lock:
+            if key not in self._entries:
+                raise KeyError(key)
+            del self._entries[key]
+
+    def __contains__(self, key: object) -> bool:
+        with self._lock:
+            now = self._now()
+            entry = self._entries.get(key)  # type: ignore[arg-type]
+            if entry is None:
+                return False
+            expires_at, _ = entry
+            if expires_at <= now:
+                del self._entries[key]  # type: ignore[arg-type]
+                return False
+            return True
+
+    def __iter__(self) -> Iterator[_K]:
+        with self._lock:
+            self._evict_expired_locked(self._now())
+            return iter(list(self._entries.keys()))
+
+    def __len__(self) -> int:
+        with self._lock:
+            self._evict_expired_locked(self._now())
+            return len(self._entries)
+
+    def get(self, key: _K, default: Any = None) -> Any:
+        with self._lock:
+            now = self._now()
+            entry = self._entries.get(key)
+            if entry is None:
+                return default
+            expires_at, value = entry
+            if expires_at <= now:
+                del self._entries[key]
+                return default
+            self._entries.move_to_end(key)
+            return value
+
+    def items(self):  # type: ignore[override]
+        with self._lock:
+            self._evict_expired_locked(self._now())
+            return [(k, v) for k, (_, v) in self._entries.items()]
+
+    def keys(self):  # type: ignore[override]
+        with self._lock:
+            self._evict_expired_locked(self._now())
+            return list(self._entries.keys())
+
+    def values(self):  # type: ignore[override]
+        with self._lock:
+            self._evict_expired_locked(self._now())
+            return [v for _, v in self._entries.values()]
+
+    def clear(self) -> None:
+        with self._lock:
+            self._entries.clear()
+
+    def update_item(self, key: _K, updates: dict[str, Any]) -> bool:
+        """Atomically update a cached mapping entry and refresh its TTL/recency."""
+        with self._lock:
+            now = self._now()
+            entry = self._entries.get(key)
+            if entry is None:
+                return False
+            expires_at, value = entry
+            if expires_at <= now:
+                del self._entries[key]
+                return False
+            new_value: Any = {**value, **updates} if isinstance(value, dict) else updates
+            self._entries[key] = (now + self.ttl_seconds, new_value)
+            self._entries.move_to_end(key)
+            return True
+
+
+# Thread-safe bounded TTL + LRU caches
+MATCH_TRACE_CACHE: BoundedTTLCache[tuple, dict] = BoundedTTLCache(
+    max_size=DEFAULT_MATCH_TRACE_MAX_SIZE,
+    ttl_seconds=DEFAULT_MATCH_TRACE_TTL_SECONDS,
+)
+ANALYSIS_JOBS: BoundedTTLCache[str, dict[str, Any]] = BoundedTTLCache(
+    max_size=DEFAULT_ANALYSIS_JOBS_MAX_SIZE,
+    ttl_seconds=DEFAULT_ANALYSIS_JOBS_TTL_SECONDS,
+)
 
 
 def get_cache_key(
@@ -70,8 +216,9 @@ def get_cached_match_trace(
 ) -> dict | None:
     """Retrieve cached match trace if available."""
     key = get_cache_key(title, artist, duration_ms, album)
-    if key in MATCH_TRACE_CACHE:
-        return MATCH_TRACE_CACHE[key]
+    cached = MATCH_TRACE_CACHE.get(key)
+    if cached is not None:
+        return cached
 
     # Flexible fallback: match title + artist with duration tolerance ±5000ms
     t_clean = key[0]

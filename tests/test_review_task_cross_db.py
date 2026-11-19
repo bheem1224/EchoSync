@@ -174,15 +174,18 @@ def test_approve_review_queue_item(monkeypatch, mock_db, mock_work_db, tmp_path)
 
 
 def test_get_media_file_path_raw_path(monkeypatch, mock_db):
+    """Under NanoID enforcement, _get_media_file_path rejects raw paths, URIs, and integer PKs."""
     from web.routes import metadata_review
 
     monkeypatch.setattr(metadata_review, "get_database", lambda: mock_db)
 
     p = "/data/downloads/Alan Walker - Paradise/PARADISE FX.wav"
-    assert metadata_review._get_media_file_path(p) == p
+    assert metadata_review._get_media_file_path(p) is None
 
     p2 = "C:\\data\\downloads\\song.mp3"
-    assert metadata_review._get_media_file_path(p2) == p2
+    assert metadata_review._get_media_file_path(p2) is None
 
     p3 = "virtual://placeholder"
-    assert metadata_review._get_media_file_path(p3) == p3
+    assert metadata_review._get_media_file_path(p3) is None
+
+    assert metadata_review._get_media_file_path("123") is None

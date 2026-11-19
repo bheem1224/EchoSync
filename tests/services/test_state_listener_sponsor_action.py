@@ -1,5 +1,7 @@
+import zlib
 from pathlib import Path
 
+from database.config_database import ConfigDatabase
 from database.working_database import (
     Account,
     UserRating,
@@ -30,6 +32,7 @@ def _build_working_db(tmp_path: Path) -> WorkingDatabase:
 
 def test_sponsor_rating_removes_from_suggestions_playlist(tmp_path, monkeypatch):
     db = _build_working_db(tmp_path)
+    cfg_db = ConfigDatabase(str(tmp_path / "config_state_listener.db"))
     bus = _Bus()
 
     # Patch lifecycle modules to use this isolated DB.
@@ -41,10 +44,11 @@ def test_sponsor_rating_removes_from_suggestions_playlist(tmp_path, monkeypatch)
     monkeypatch.setattr(deletion_mod, "event_bus", bus)
 
     base_sync_id = "ss:track:meta:sponsor-track"
+    expected_plugin_id = zlib.crc32(b"echosync.plex") & 0xFFFFFFFF
 
     with db.session_scope() as session:
-        # Create a Account to satisfy Foreign Key
-        account = Account(plugin_id=1, remote_account_id="42")
+        # Create an Account using deterministic CRC32 plugin_id
+        account = Account(plugin_id=expected_plugin_id, remote_account_id="42")
         session.add(account)
         session.flush()
         account_id = account.id
@@ -57,7 +61,7 @@ def test_sponsor_rating_removes_from_suggestions_playlist(tmp_path, monkeypatch)
             )
         )
 
-    listener = StateListenerService(event_bus=bus, session_factory=db.SessionLocal)
+    listener = StateListenerService(event_bus=bus, session_factory=db.SessionLocal, config_db=cfg_db)
 
     listener.handle_track_rated(
         {

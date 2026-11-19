@@ -52,20 +52,88 @@ class ISRCLookupRequest(BaseModel):
     metadata: dict[str, Any] | None = None
 
 
+_MEDIA_NANOID_RE = re.compile(r"^[A-Za-z0-9_-]{3,64}$")
+
+
+def _is_integer_like_id(value: str) -> bool:
+    if not value:
+        return True
+    if value.isdigit():
+        return True
+    if value[0] in ("+", "-") and value[1:].isdigit():
+        return True
+    return False
+
+
+def _is_valid_nanoid_media_id(raw_media_id: Any) -> bool:
+    if raw_media_id is None or isinstance(raw_media_id, (bool, int, float)):
+        return False
+    cleaned = str(raw_media_id).strip().split("?")[0].strip()
+    if not cleaned or _is_integer_like_id(cleaned):
+        return False
+    if "/" in cleaned or "\\" in cleaned or ":" in cleaned or ".." in cleaned:
+        return False
+    return bool(_MEDIA_NANOID_RE.fullmatch(cleaned))
+
+
+def _validate_media_id(raw_media_id: Any) -> str:
+    """Validate that a supplied media_id is a NanoID string (not an int PK or path string)."""
+    if isinstance(raw_media_id, (bool, int, float)):
+        raise HTTPException(
+            status_code=400,
+            detail="Integer primary keys are not allowed. Provide a valid string NanoID media_id.",
+        )
+    cleaned = str(raw_media_id or "").strip().split("?")[0].strip()
+    if not cleaned or _is_integer_like_id(cleaned):
+        raise HTTPException(
+            status_code=400,
+            detail="Integer primary keys are not allowed. Provide a valid string NanoID media_id.",
+        )
+    if (
+        "/" in cleaned
+        or "\\" in cleaned
+        or ":" in cleaned
+        or ".." in cleaned
+        or not _MEDIA_NANOID_RE.fullmatch(cleaned)
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid media_id format. Path strings are not allowed; provide a valid string NanoID media_id.",
+        )
+    return cleaned
+
+
+def _mark_review_task_failed(working_db: Any, task_id: int, error_message: str) -> None:
+    """Persist background approval failure state and error details onto ReviewTask."""
+    try:
+        from sqlalchemy.orm.attributes import flag_modified
+
+        with working_db.session_scope() as w_session:
+            task_row = w_session.query(ReviewTask).filter(ReviewTask.id == task_id).first()
+            if not task_row:
+                return
+            task_row.status = "failed"
+            updated_data = dict(task_row.track_data or {})
+            updated_data["error"] = error_message
+            task_row.track_data = updated_data
+            flag_modified(task_row, "track_data")
+    except Exception as persist_err:
+        logger.error(f"Failed to persist error state for review task {task_id}: {persist_err}", exc_info=True)
+
+
 def _get_media_file_path(media_id: str) -> str | None:
-    if not media_id:
+    if not _is_valid_nanoid_media_id(media_id):
         return None
-    if "/" in media_id or "\\" in media_id or media_id.startswith("virtual://"):
-        return media_id
+    cleaned_media_id = str(media_id).strip().split("?")[0].strip()
     from database.music_database import LocalMedia
 
     db = get_database()
     try:
         with db.session_scope() as session:
-            media = session.query(LocalMedia).filter(LocalMedia.media_id == media_id).first()
+            media = session.query(LocalMedia).filter(LocalMedia.media_id == cleaned_media_id).first()
             return media.file_path if media else None
     except Exception as exc:
-        logger.error(f"Failed to lookup media path for {media_id}: {exc}")
+        logger.error(f"Failed to lookup media path for {cleaned_media_id}: {exc}")
     return None
 
 
@@ -292,10 +360,13 @@ def _serialize_task(
             detected["album"] = album_val
 
     media_id_val = None
-    if getattr(task, "media_id", None) and not ("/" in str(task.media_id) or "\\" in str(task.media_id)):
-        media_id_val = str(task.media_id)
+    raw_task_mid = getattr(task, "media_id", None)
+    if raw_task_mid and _is_valid_nanoid_media_id(raw_task_mid):
+        media_id_val = str(raw_task_mid).strip()
     elif isinstance(task.track_data, dict) and task.track_data.get("media_id"):
-        media_id_val = str(task.track_data.get("media_id"))
+        td_mid = task.track_data.get("media_id")
+        if _is_valid_nanoid_media_id(td_mid):
+            media_id_val = str(td_mid).strip()
 
     if not media_id_val and task.file_path:
         db = get_database()
@@ -313,6 +384,8 @@ def _serialize_task(
         "id": task.id,
         "file_path": task.file_path,
         "media_id": media_id_val,
+        "status": getattr(task, "status", None),
+        "error": track_data.get("error") if isinstance(track_data, dict) else None,
         "detected_metadata": detected,
         "proposed_metadata": detected,
         "current_metadata": current_metadata if current_metadata is not None else _read_current_metadata(task),
@@ -1019,16 +1092,17 @@ def create_review_task(
         if payload.confidence_score is not None:
             conf_score = payload.confidence_score
 
-    if not req_media_id and media_id:
+    if not req_media_id and media_id is not None:
         req_media_id = media_id
 
+    if isinstance(track_dict, dict) and "media_id" in track_dict and track_dict["media_id"] is not None:
+        validated_dict_mid = _validate_media_id(track_dict["media_id"])
+        track_dict["media_id"] = validated_dict_mid
+        if req_media_id is None:
+            req_media_id = validated_dict_mid
+
     if req_media_id is not None:
-        req_media_id = str(req_media_id).strip().split("?")[0]
-        if not req_media_id or req_media_id.isdigit():
-            raise HTTPException(
-                status_code=400,
-                detail="Integer primary keys are not allowed. Provide a valid string NanoID media_id.",
-            )
+        req_media_id = _validate_media_id(req_media_id)
 
     db = get_database()
     if req_media_id:
@@ -1092,6 +1166,16 @@ def update_review_queue_item(task_id: int, payload: UpdateReviewQueueRequest, _=
     if not isinstance(metadata, dict):
         raise HTTPException(status_code=400, detail="Invalid metadata payload")
 
+    validated_payload_media_id: str | None = None
+    if payload.media_id is not None:
+        validated_payload_media_id = _validate_media_id(payload.media_id)
+    if "media_id" in metadata and metadata["media_id"] is not None:
+        validated_meta_mid = _validate_media_id(metadata["media_id"])
+        metadata = dict(metadata)
+        metadata["media_id"] = validated_meta_mid
+        if validated_payload_media_id is None:
+            validated_payload_media_id = validated_meta_mid
+
     db = get_working_database()
     try:
         with db.session_scope() as session:
@@ -1099,14 +1183,8 @@ def update_review_queue_item(task_id: int, payload: UpdateReviewQueueRequest, _=
             if not task:
                 raise HTTPException(status_code=404, detail="Task not found")
 
-            if payload.media_id is not None:
-                cleaned_media_id = str(payload.media_id).strip().split("?")[0]
-                if not cleaned_media_id or cleaned_media_id.isdigit():
-                    raise HTTPException(
-                        status_code=400,
-                        detail="Integer primary keys are not allowed. Provide a valid string NanoID media_id.",
-                    )
-                task.media_id = cleaned_media_id
+            if validated_payload_media_id is not None:
+                task.media_id = validated_payload_media_id
 
             # Update/Merge into track_data blob incrementally
             if not task.track_data:
@@ -1156,6 +1234,10 @@ def approve_review_queue_item(
     if not isinstance(final_metadata, dict):
         raise HTTPException(status_code=400, detail="Invalid metadata payload")
 
+    if "media_id" in final_metadata and final_metadata["media_id"] is not None:
+        final_metadata = dict(final_metadata)
+        final_metadata["media_id"] = _validate_media_id(final_metadata["media_id"])
+
     db = get_working_database()
     try:
         with db.session_scope() as session:
@@ -1173,11 +1255,11 @@ def approve_review_queue_item(
             from core.task_manager.task_queue import job_queue
 
             def _background_approval_task():
+                working_db = get_working_database()
                 try:
                     from core.db.echo_sync_track import EchosyncTrack
 
                     # 1. Resolve task details in fresh working DB session
-                    working_db = get_working_database()
                     file_path_str = None
                     task_media_id = None
                     track_dict = None
@@ -1193,12 +1275,16 @@ def approve_review_queue_item(
                             track_dict = task_row.detected_metadata
 
                     if not file_path_str:
-                        logger.error(f"Task {task_id} has no file_path")
+                        msg = f"Task {task_id} has no file_path"
+                        logger.error(msg)
+                        _mark_review_task_failed(working_db, task_id, msg)
                         return
 
                     file_path_obj = Path(file_path_str)
                     if not file_path_obj.exists() or not file_path_obj.is_file():
-                        logger.error(f"Physical file does not exist: {file_path_str}")
+                        msg = f"Physical file does not exist: {file_path_str}"
+                        logger.error(msg)
+                        _mark_review_task_failed(working_db, task_id, msg)
                         return
 
                     # Construct EchosyncTrack object from staging track_data
@@ -1299,16 +1385,10 @@ def approve_review_queue_item(
                         enhancer.tag_file_verified(file_path_obj, metadata_to_tag)
                     except MetadataWriteVerificationError as e:
                         logger.error(f"Tag verification failed for {file_path_obj}; aborting library import: {e}")
-                        raise HTTPException(
-                            status_code=500,
-                            detail="Failed to verify written tags on disk",
-                        )
+                        raise RuntimeError(f"Failed to verify written tags on disk: {e}") from e
                     except Exception as e:
                         logger.error(f"Unexpected error during tag verification for {file_path_obj}: {e}")
-                        raise HTTPException(
-                            status_code=500,
-                            detail="Failed to verify written tags on disk",
-                        )
+                        raise RuntimeError(f"Failed to verify written tags on disk: {e}") from e
 
                     # 3. Calculate target relocation path using build_destination_path
                     from core.path_formatter import build_disambiguated_destination_path
@@ -1396,7 +1476,12 @@ def approve_review_queue_item(
                             logger.info(f"Successfully deleted review task {task_id}")
 
                 except Exception as e:
-                    logger.error(f"Background approval failed: {e}", exc_info=True)
+                    logger.error(f"Background approval failed for task {task_id}: {e}", exc_info=True)
+                    _mark_review_task_failed(
+                        working_db,
+                        task_id,
+                        str(e) or type(e).__name__,
+                    )
 
             # Register and run the task as a one-off background job
             job_name = f"approve_metadata_{task_id}"
@@ -1460,12 +1545,32 @@ def reject_and_delete_review_queue_item(task_id: int, _=Depends(require_auth)):
                 # Delete the physical file if it exists and is within allowed directory
                 if resolved_file and resolved_file.exists() and resolved_file.is_file():
                     try:
-                        import os
+                        from core.io_gatekeeper import Gatekeeper
 
-                        os.unlink(str(resolved_file))
+                        dl_dir = config_manager.get("storage.download_dir") or config_manager.get("download_dir")
+                        lib_dir = config_manager.get("storage.library_dir") or config_manager.get("library_dir")
+                        poor_dir = config_manager.get("storage.poor_metadata_dir")
+
+                        in_default_roots = any(
+                            d and resolved_file.is_relative_to(Path(d).resolve())
+                            for d in (dl_dir, lib_dir)
+                        )
+                        if not in_default_roots and poor_dir and resolved_file.is_relative_to(Path(poor_dir).resolve()):
+                            allowed_roots = [
+                                Path(d).resolve() for d in (dl_dir, lib_dir, poor_dir) if d
+                            ]
+                            Gatekeeper(allowed_roots=allowed_roots).authorize_and_execute(
+                                operation="delete_file",
+                                target_uri=str(resolved_file),
+                            )
+                        else:
+                            Gatekeeper.authorize_and_execute(
+                                operation="delete_file",
+                                target_uri=str(resolved_file),
+                            )
                         logger.info(f"Deleted physical file for rejected task {task_id}: {resolved_file}")
                     except Exception as del_err:
-                        logger.warning(f"Failed to unlink file {resolved_file} for task {task_id}: {del_err}")
+                        logger.warning(f"Failed to delete file {resolved_file} for task {task_id}: {del_err}")
 
             # Update status to rejected
             task.status = "rejected"

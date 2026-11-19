@@ -80,8 +80,8 @@ class MatchDiagnosticRequest(BaseModel):
     album: str | None = None
 
 
-# In-memory store for ad-hoc analysis jobs started via API
-ANALYSIS_JOBS = {}
+# Bounded thread-safe TTL + max-size cache imported from services.playlist_sync
+from services.playlist_sync import ANALYSIS_JOBS
 
 logger = get_logger("playlists_api")
 router = APIRouter(prefix="/api/v1/core/playlists", tags=["Playlists"])
@@ -714,18 +714,26 @@ def start_analyze_job(payload_obj: PlaylistAnalyzeSchema | None = None):
     }
 
     def _job_func():
-        ANALYSIS_JOBS[job_id]["status"] = "running"
-        ANALYSIS_JOBS[job_id]["started_at"] = time.time()
+        ANALYSIS_JOBS.update_item(
+            job_id,
+            {"status": "running", "started_at": time.time()},
+        )
         try:
             res = _analyze_playlists_internal(source, target_source, playlists, quality_profile)
-            ANALYSIS_JOBS[job_id]["result"] = res
-            ANALYSIS_JOBS[job_id]["status"] = "finished"
+            ANALYSIS_JOBS.update_item(
+                job_id,
+                {"result": res, "status": "finished", "finished_at": time.time()},
+            )
         except Exception as e:
             logger.error(f"Background analysis job {job_id} failed: {e}", exc_info=True)
-            ANALYSIS_JOBS[job_id]["error"] = "Playlist analysis failed"
-            ANALYSIS_JOBS[job_id]["status"] = "failed"
-        finally:
-            ANALYSIS_JOBS[job_id]["finished_at"] = time.time()
+            ANALYSIS_JOBS.update_item(
+                job_id,
+                {
+                    "error": "Playlist analysis failed",
+                    "status": "failed",
+                    "finished_at": time.time(),
+                },
+            )
 
     # Register a one-off job and execute it immediately
     from core.nexus_framework.plugin_loader import get_plugin_capabilities
