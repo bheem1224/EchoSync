@@ -928,12 +928,12 @@ class SpotifyClient(SyncServiceProvider):
             items = ((results or {}).get("tracks") or {}).get("items") or []
             if not items:
                 return None
+            from dataclasses import replace
+
             track = self._convert_track(items[0])
             if track:
-                if not isinstance(track.identifiers, dict):
-                    track.identifiers = {}
-                track.identifiers["source"] = "EchoSync.spotify"
-                track.isrc = canonical
+                base_ids = dict(track.identifiers) if isinstance(track.identifiers, dict) else {}
+                track = replace(track, identifiers={**base_ids, "source": "EchoSync.spotify"}, isrc=canonical)
             return track
         except Exception as exc:
             logger.warning("Spotify search_by_isrc(%s) failed: %s", canonical, exc)

@@ -4,7 +4,7 @@ from typing import Any
 from sqlalchemy import func
 from sqlalchemy.orm import joinedload
 
-from core.db.echo_sync_track import EchosyncTrack
+from core.db.echo_sync_track import EchosyncMedia, EchosyncTrack
 from core.settings import config_manager
 from core.task_manager import db_write_lease
 from core.tiered_logger import get_logger
@@ -38,6 +38,7 @@ class DuplicateHygieneService:
                 return fam
         et = EchosyncTrack(
             raw_title=track.title or "",
+            title=track.title or "",
             artist_name=track.artist.name if track.artist else "",
             album_title=track.album.title if track.album else "",
         )
@@ -397,9 +398,10 @@ class DuplicateHygieneService:
 
         source_et = EchosyncTrack(
             raw_title=winner.title or "",
+            title=winner.title or "",
             artist_name=winner.artist.name if winner.artist else "",
             album_title=winner.album.title if winner.album else "",
-            duration=winner.duration,
+            duration_ms=winner.duration,
             fingerprint=chromaprint,
         )
 
@@ -409,9 +411,10 @@ class DuplicateHygieneService:
         for loser in losers:
             candidate_et = EchosyncTrack(
                 raw_title=loser.title or "",
+                title=loser.title or "",
                 artist_name=loser.artist.name if loser.artist else "",
                 album_title=loser.album.title if loser.album else "",
-                duration=loser.duration,
+                duration_ms=loser.duration,
                 fingerprint=chromaprint,
             )
             match_res = engine.calculate_match(source_et, candidate_et)
@@ -495,9 +498,10 @@ class DuplicateHygieneService:
         engine = WeightedMatchingEngine(PROFILE_DUPLICATE_DETECTION)
         source_et = EchosyncTrack(
             raw_title=winner.title or "",
+            title=winner.title or "",
             artist_name=winner.artist.name if winner.artist else "",
             album_title=winner.album.title if winner.album else "",
-            duration=winner.duration,
+            duration_ms=winner.duration,
             isrc=winner.isrc,
             edition=getattr(winner, "edition", None),
         )
@@ -521,9 +525,10 @@ class DuplicateHygieneService:
 
             candidate_et = EchosyncTrack(
                 raw_title=loser.title or "",
+                title=loser.title or "",
                 artist_name=loser.artist.name if loser.artist else "",
                 album_title=loser.album.title if loser.album else "",
-                duration=loser.duration,
+                duration_ms=loser.duration,
                 isrc=loser.isrc,
                 edition=getattr(loser, "edition", None),
             )
@@ -691,16 +696,22 @@ class DuplicateHygieneService:
 
         echo_track = EchosyncTrack(
             raw_title=track.title,
+            title=track.title,
             artist_name=track.artist.name,
             album_title=track.album.title if track.album else "",
-            duration=track.duration,
-            bitrate=track.bitrate,
-            file_format=track.file_format,
-            sample_rate=track.sample_rate,
-            bit_depth=track.bit_depth,
-            file_size_bytes=track.file_size_bytes,
+            duration_ms=track.duration,
             musicbrainz_id=track.musicbrainz_id,
             identifiers={},
+            media=[
+                EchosyncMedia(
+                    file_format=track.file_format,
+                    bitrate=track.bitrate,
+                    sample_rate=track.sample_rate,
+                    bit_depth=track.bit_depth,
+                    duration_ms=track.duration,
+                    file_size_bytes=track.file_size_bytes,
+                )
+            ],
         )
 
         dm = get_download_manager()

@@ -112,7 +112,7 @@ def test_echosync_track_from_orm_and_media_properties(tmp_path):
         assert echo_track.artist == "Daft Punk"
         assert echo_track.musicbrainz_id == "mbid-12345"
         assert echo_track.isrc == "US1234567890"
-        assert echo_track.duration == 248000
+        assert echo_track.duration_ms == 248000
         assert len(echo_track.media) == 2
         assert echo_track.media[0].media_id == "media001"
         assert echo_track.media[0].file_path == "/music/Daft Punk/Get Lucky.flac"
@@ -314,7 +314,7 @@ def test_retroactive_enhancer_falls_back_to_text_on_acoustid_miss(
         album_title="Brandenburg Concertos",
         musicbrainz_id="mbid-bach-brandenburg-3",
         isrc="DE1234567890",
-        duration=340000,
+        duration_ms=340000,
     )
     mock_mb.search_metadata.return_value = [classical_mb_track]
     mock_mb.get_metadata.return_value = classical_mb_track
@@ -603,7 +603,7 @@ def test_enhance_library_metadata_recovers_artist_and_album_from_path(
         album_title="Ain't Your Mama",
         musicbrainz_id="mbid-jlo-aint-your-mama",
         isrc="USJLO1234567",
-        duration=218000,
+        duration_ms=218000,
     )
     mock_mb.search_metadata.return_value = [jlo_track]
     mock_mb.get_metadata.return_value = jlo_track

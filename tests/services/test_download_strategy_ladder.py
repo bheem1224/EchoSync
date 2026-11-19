@@ -68,7 +68,7 @@ class TestSearchStrategyLadder:
             raw_title="Rave Love (Extended Mix)",
             artist_name="W&W x AXMO feat. Sonja",
             album_title="Rave Love EP",
-            duration=180000,
+            duration_ms=180000,
             isrc="USUM71703881",
         )
 
@@ -301,13 +301,13 @@ class TestRawScorePreservation:
             raw_title="One More Time",
             artist_name="Daft Punk",
             album_title="Discovery",
-            duration=320000,
+            duration_ms=320000,
         )
         candidate = EchosyncTrack(
             raw_title="One More Time",
             artist_name="Daft Punk",
             album_title="Discovery",
-            duration=320000,
+            duration_ms=320000,
         )
 
         engine = WeightedMatchingEngine(PROFILE_DOWNLOAD_SEARCH)

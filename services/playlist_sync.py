@@ -7,6 +7,7 @@ selecting highest quality media file, without gating by target_quality)
 and persistent match trace caching for 100% diagnostic parity.
 """
 
+from dataclasses import replace
 import logging
 import re
 import time
@@ -332,7 +333,7 @@ def evaluate_single_track_diagnostics(
         raw_title=title,
         artist_name=artist,
         album_title=album or "",
-        duration=duration_ms,
+        duration_ms=duration_ms,
     )
     hook_manager.apply_filters(
         "pre_normalize_title",
@@ -344,7 +345,7 @@ def evaluate_single_track_diagnostics(
         plugin_context=source_track.plugin_context,
     )
     if clean_src:
-        source_track.title = clean_src
+        source_track = replace(source_track, title=clean_src)
 
     candidate_rows = []
     seen_ids = set()
@@ -427,7 +428,7 @@ def evaluate_single_track_diagnostics(
             raw_title=raw_t,
             artist_name=cand_artist,
             album_title=cand_album or "",
-            duration=cand_dur,
+            duration_ms=cand_dur,
             edition=cand_ed,
             sync_id=sync_id,
         )
@@ -446,14 +447,14 @@ def evaluate_single_track_diagnostics(
             if al and _cmp_titles(source_track.title, al) > _cmp_titles(source_track.title, best_cand_t):
                 best_cand_t = al
         if best_cand_t:
-            cand_track.title = best_cand_t
+            cand_track = replace(cand_track, title=best_cand_t)
 
         best_art = cand_track.artist_name or ""
         for art_al in artist_alias_map.get(cand_artist_id, []):
             if art_al and _cmp_artists(source_track.artist_name, art_al) > _cmp_artists(source_track.artist_name, best_art):
                 best_art = art_al
         if best_art:
-            cand_track.artist_name = best_art
+            cand_track = replace(cand_track, artist_name=best_art)
 
         match_res = matching_engine.calculate_match(source_track, cand_track)
         confidence = min(100.0, max(0.0, match_res.confidence_score))

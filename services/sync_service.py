@@ -507,7 +507,7 @@ class PlaylistSyncService:
                                 "name": source_track.title,
                                 "artists": [{"name": source_track.artist_name}],
                                 "album": {"name": source_track.album_title},
-                                "duration_ms": source_track.duration,
+                                "duration_ms": getattr(source_track, "duration_ms", None) or getattr(source_track, "duration", None),
                                 "popularity": getattr(source_track, "popularity", 0),
                                 "preview_url": getattr(
                                     source_track, "preview_url", None

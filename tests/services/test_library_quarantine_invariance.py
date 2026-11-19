@@ -249,13 +249,16 @@ def test_enhancement_attempts_increment_and_cap_at_five(isolated_dbs, monkeypatc
             assert "last_enhancement_attempt" in t.metadata_status
             assert t.musicbrainz_id is None, f"musicbrainz_id should remain None on attempt {attempt_num}"
 
-    # Attempt 5: Caps attempts, sets musicbrainz_id = "NOT_FOUND", enhanced = False, and creates ReviewTask
+    # Attempt 5: Caps attempts, transitions to verification_tier = "quarantined", enhanced = False, and creates ReviewTask
     enhancer.enhance_track(track_id)
     with music_db.session_scope() as session:
         t = session.get(Track, track_id)
         assert t.metadata_status.get("enhancement_attempts") == 5
+        assert t.enhancement_attempts == 5
         assert t.metadata_status.get("enhanced") is False
-        assert t.musicbrainz_id == "NOT_FOUND"
+        assert t.verification_tier == "quarantined"
+        assert t.musicbrainz_id is None
+        assert not t.is_verified
 
         # Verify TrackRepository.get_tracks_for_enhancement no longer selects this track
         candidates = TrackRepository.get_tracks_for_enhancement(session, batch_size=10, check_all_files=False)

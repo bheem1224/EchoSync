@@ -71,11 +71,16 @@ def _tags_to_echosync_track(
         if isinstance(v, (str, int, float, bool)):
             custom_tags[k] = str(v)
 
+    from core.matching_engine.track_parser import normalize_track_dto
+
+    resolved_duration_ms = duration_ms if duration_ms > 0 else None
     track = EchosyncTrack(
         raw_title=raw_title,
+        title=raw_title,
+        display_title=raw_title,
         artist_name=str(tag_artist).strip() if tag_artist else "",
         album_title=str(tag_album).strip() if tag_album else "",
-        duration=duration_ms if duration_ms > 0 else None,
+        duration_ms=resolved_duration_ms,
         track_number=parsed_track_num,
         disc_number=parsed_disc_num,
         release_year=parsed_year,
@@ -88,10 +93,11 @@ def _tags_to_echosync_track(
         media=[
             EchosyncMedia(
                 file_path=str(file_path),
+                duration_ms=resolved_duration_ms,
             )
         ],
     )
-    return track
+    return normalize_track_dto(track)
 
 
 def extract_physical_tags(file_path: Path) -> EchosyncTrack:
@@ -194,9 +200,12 @@ def probe_physical_audio(
                     )
                     chromaprint = None
 
+    from dataclasses import replace
+
     track = _tags_to_echosync_track(file_path, raw_tags, duration_ms=duration_ms, chromaprint=chromaprint)
     if track.media:
-        track.media[0].channels = channels
+        updated_media = [replace(track.media[0], channels=channels), *track.media[1:]]
+        track = replace(track, media=updated_media)
     else:
-        track.media.append(EchosyncMedia(file_path=str(file_path), channels=channels))
+        track = replace(track, media=[EchosyncMedia(file_path=str(file_path), channels=channels)])
     return track

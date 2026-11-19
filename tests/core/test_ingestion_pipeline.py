@@ -1,22 +1,25 @@
 from core.database.repositories.track_repo import bulk_upsert_tracks
 from core.db.echo_sync_track import EchosyncMedia, EchosyncTrack
+from core.matching_engine.track_parser import normalize_track_dto
 from core.orchestrator.ingestion import IngestionOrchestrator
 from database.music_database import Track, get_database
 
 
 def test_echosync_track_model():
-    track = EchosyncTrack(
-        raw_title="Testing Phase 4",
-        artist_name="Audiophile Engineer",
-        album_title="Rust Ingestion",
-        media=[
-            EchosyncMedia(
-                file_path="/media/library/test.flac",
-                file_format="FLAC",
-                sample_rate=96000,
-                bit_depth=24,
-            )
-        ],
+    track = normalize_track_dto(
+        EchosyncTrack(
+            raw_title="Testing Phase 4",
+            artist_name="Audiophile Engineer",
+            album_title="Rust Ingestion",
+            media=[
+                EchosyncMedia(
+                    file_path="/media/library/test.flac",
+                    file_format="FLAC",
+                    sample_rate=96000,
+                    bit_depth=24,
+                )
+            ],
+        )
     )
     assert track.title == "Testing Phase 4"
     assert track.artist_name == "Audiophile Engineer"
@@ -38,7 +41,7 @@ def test_bulk_upsert_tracks_sqlalchemy2():
             raw_title="Track One",
             artist_name="Artist A",
             album_title="Album A",
-            duration=210000,
+            duration_ms=210000,
             media=[
                 EchosyncMedia(
                     file_path="/media/test1.flac",
@@ -54,7 +57,7 @@ def test_bulk_upsert_tracks_sqlalchemy2():
             raw_title="Track Two",
             artist_name="Artist B",
             album_title="Album B",
-            duration=180000,
+            duration_ms=180000,
             media=[
                 EchosyncMedia(
                     file_path="/media/test2.m4a",
@@ -78,7 +81,7 @@ def test_bulk_upsert_tracks_sqlalchemy2():
             raw_title="Track One (Remastered)",
             artist_name="Artist A",
             album_title="Album A",
-            duration=215000,
+            duration_ms=215000,
             media=[
                 EchosyncMedia(
                     file_path="/media/test1.flac",

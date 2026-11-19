@@ -72,21 +72,21 @@ def test_strict_remaster_rejection_for_original_queries():
         raw_title="Karma Police",
         artist_name="Radiohead",
         album_title="OK Computer",
-        duration=264000,
+        duration_ms=264000,
     )
     candidate_remaster1 = EchosyncTrack(
         raw_title="Karma Police",
         artist_name="Radiohead",
         album_title="OK Computer",
         edition="2013 Remaster",
-        duration=264000,
+        duration_ms=264000,
     )
     candidate_remaster2 = EchosyncTrack(
         raw_title="Karma Police",
         artist_name="Radiohead",
         album_title="OK Computer",
         edition="Remastered",
-        duration=264000,
+        duration_ms=264000,
     )
 
     res1 = engine.calculate_match(source, candidate_remaster1, context="sync")
@@ -106,14 +106,14 @@ def test_deluxe_isolation_to_tier3_fallback():
         raw_title="Viva La Vida",
         artist_name="Coldplay",
         album_title="Viva La Vida",
-        duration=242000,
+        duration_ms=242000,
     )
     candidate_deluxe = EchosyncTrack(
         raw_title="Viva La Vida",
         artist_name="Coldplay",
         album_title="Viva La Vida (Deluxe Edition)",
         edition="Deluxe",
-        duration=242000,
+        duration_ms=242000,
     )
 
     # Standard context ("sync" / "standard"): passes under Deluxe edition container amnesty
@@ -132,7 +132,7 @@ def test_deluxe_isolation_to_tier3_fallback():
         artist_name="Coldplay",
         album_title="Viva La Vida (Deluxe Edition)",
         edition="Deluxe",
-        duration=255000,  # 13000ms delta > 10000ms
+        duration_ms=255000,  # 13000ms delta > 10000ms
     )
     res_t3_long = engine.calculate_match(
         source, candidate_deluxe_long, context="tier3_fallback"
@@ -149,25 +149,25 @@ def test_non_destructive_album_bonus():
         raw_title="Fix You",
         artist_name="Coldplay",
         album_title="X&Y",
-        duration=295000,
+        duration_ms=295000,
     )
     candidate_matching_album = EchosyncTrack(
         raw_title="Fix You",
         artist_name="Coldplay",
         album_title="X&Y",
-        duration=295000,
+        duration_ms=295000,
     )
     candidate_different_album = EchosyncTrack(
         raw_title="Fix You",
         artist_name="Coldplay",
         album_title="Greatest Hits",
-        duration=295000,
+        duration_ms=295000,
     )
     candidate_no_album = EchosyncTrack(
         raw_title="Fix You",
         artist_name="Coldplay",
         album_title="",
-        duration=295000,
+        duration_ms=295000,
     )
 
     res_match = engine.calculate_match(source_base, candidate_matching_album)

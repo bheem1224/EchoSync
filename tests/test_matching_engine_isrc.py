@@ -1,18 +1,17 @@
 from core.db.echo_sync_track import EchosyncTrack
 from core.matching_engine.matching_engine import WeightedMatchingEngine
 from core.matching_engine.scoring_profile import PROFILE_DOWNLOAD_SEARCH
+from core.matching_engine.track_parser import normalize_track_dto
 
 
 def make_track(isrc=None, **kwargs):
-    tr = EchosyncTrack(
+    return EchosyncTrack(
         raw_title=kwargs.get("raw_title", "T"),
         artist_name=kwargs.get("artist_name", "A"),
         album_title=kwargs.get("album_title", "B"),
+        duration_ms=kwargs.get("duration_ms", kwargs.get("duration", 180000)),
+        isrc=isrc,
     )
-    tr.duration = kwargs.get("duration", 180000)
-    if isrc is not None:
-        tr.isrc = isrc
-    return tr
 
 
 def test_isrc_validity():
@@ -50,20 +49,24 @@ def test_missing_isrc_ignored():
 
 
 def test_echosync_track_isrc_validation_valid():
-    track = EchosyncTrack(
-        raw_title="Title",
-        artist_name="Artist",
-        album_title="Album",
-        isrc="US-RC1-76-07839",
+    track = normalize_track_dto(
+        EchosyncTrack(
+            raw_title="Title",
+            artist_name="Artist",
+            album_title="Album",
+            isrc="US-RC1-76-07839",
+        )
     )
     assert track.isrc == "USRC17607839"
 
 
 def test_echosync_track_isrc_validation_invalid():
-    track = EchosyncTrack(
-        raw_title="Title",
-        artist_name="Artist",
-        album_title="Album",
-        isrc="TamilKey.com",
+    track = normalize_track_dto(
+        EchosyncTrack(
+            raw_title="Title",
+            artist_name="Artist",
+            album_title="Album",
+            isrc="TamilKey.com",
+        )
     )
     assert track.isrc is None

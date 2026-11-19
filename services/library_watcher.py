@@ -266,18 +266,22 @@ def _process_new_file(path: Path) -> None:
         # upsert pipeline handles Artist / Album / Track creation.
         # album_title is a required positional field on EchosyncTrack; fall
         # back to empty string when the tag is absent.
+        from core.matching_engine.track_parser import normalize_track_dto
+
         media_obj = EchosyncMedia(
             file_path=str(path),
             file_format=path.suffix.lstrip(".").lower() if path.suffix else None,
+            duration_ms=duration_ms,
         )
-        track_obj = EchosyncTrack(
+        track_obj = normalize_track_dto(EchosyncTrack(
             raw_title=title,
+            title=title,
             artist_name=artist_name,
             album_title=album_title or "",
-            duration=duration_ms,
+            duration_ms=duration_ms,
             isrc=isrc,
             media=[media_obj],
-        )
+        ))
 
         try:
             from core.database.repositories.track_repo import TrackRepository

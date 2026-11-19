@@ -557,15 +557,16 @@ class DownloadManager:
 
         Returns the database ID of the new download record.
         """
-        logger.info(f"Queueing download: {track.artist_name} - {track.title}")
+        track_title = track.title or getattr(track, "raw_title", "") or ""
+        logger.info(f"Queueing download: {track.artist_name} - {track_title}")
 
         intent_val = intent.value if isinstance(intent, DownloadIntent) else str(intent)
 
         # Check if track already exists in library (use album + duration when available)
         album_name = getattr(track, "album_title", None) or getattr(track, "album", None)
-        duration_ms = getattr(track, "duration", None) or getattr(track, "duration_ms", None)
-        if self._track_exists_in_library(track.artist_name, track.title, album=album_name, duration=duration_ms):
-            logger.info(f"Skipping download: Track '{track.title}' by '{track.artist_name}' already exists in library")
+        duration_ms = getattr(track, "duration_ms", None) or getattr(track, "duration", None)
+        if self._track_exists_in_library(track.artist_name, track_title, album=album_name, duration=duration_ms):
+            logger.info(f"Skipping download: Track '{track_title}' by '{track.artist_name}' already exists in library")
             return 0  # 0 indicates no download created
 
         with self.work_db.session_scope() as session:
@@ -853,7 +854,7 @@ class DownloadManager:
         # manual import, or a previous download cycle completing). Catching it here avoids
         # a redundant provider search and a duplicate file on disk.
         album_name = getattr(target_track, "album_title", None) or getattr(target_track, "album", None)
-        duration_ms = getattr(target_track, "duration", None)
+        duration_ms = getattr(target_track, "duration_ms", None) or getattr(target_track, "duration", None)
         if self._track_exists_in_library(
             target_track.artist_name,
             target_track.title,
@@ -867,7 +868,7 @@ class DownloadManager:
             return
 
         # Keep provider query broad; matching engine handles duration scoring/gating.
-        target_duration_ms = target_track.duration if target_track.duration else None
+        target_duration_ms = getattr(target_track, "duration_ms", None) or getattr(target_track, "duration", None) or None
 
         try:
             logger.info(f"Starting waterfall search for: {target_track.artist_name} - {target_track.title}")
@@ -1501,14 +1502,15 @@ class DownloadManager:
 
         # Build a core title for provider search by stripping bracketed/parenthetical
         # qualifiers, then applying standard normalization.
-        search_title = self._build_core_search_title(track.title)
-        if search_title != track.title:
-            logger.info(f"Normalized title for search: '{track.title}' -> '{search_title}'")
+        base_track_title = track.title or getattr(track, "raw_title", "") or ""
+        search_title = self._build_core_search_title(base_track_title)
+        if search_title != base_track_title:
+            logger.info(f"Normalized title for search: '{base_track_title}' -> '{search_title}'")
 
         primary_artist, collaborators = split_artist_collaborators(track.artist_name)
         wire_primary_artist = sanitize_query_for_wire(primary_artist or track.artist_name or "")
         wire_search_title = sanitize_query_for_wire(search_title)
-        target_dur = track.duration if track.duration else None
+        target_dur = getattr(track, "duration_ms", None) or getattr(track, "duration", None) or None
 
         # Strategy 1 (ISRC / Strict GUID if available - requires Capability.FETCH_BY_ISRC)
         if getattr(track, "isrc", None):

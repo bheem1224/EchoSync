@@ -40,21 +40,21 @@ def test_e2e_multi_artist_schema_and_collaborator_resolution(e2e_db):
             raw_title="Rewrite The Stars",
             artist_name="Zac Efron, Zendaya",
             album_title="The Greatest Showman",
-            duration=217000,
+            duration_ms=217000,
             media=[EchosyncMedia(file_path="/music/rewrite_the_stars.flac")],
         ),
         EchosyncTrack(
             raw_title="Mama",
             artist_name="Jonas Blue feat. William Singe",
             album_title="Blue",
-            duration=184000,
+            duration_ms=184000,
             media=[EchosyncMedia(file_path="/music/mama.flac")],
         ),
         EchosyncTrack(
             raw_title="Safe and Sound",
             artist_name="Capital Cities",
             album_title="In a Tidal Wave of Mystery",
-            duration=192000,  # 3:12 original cut
+            duration_ms=192000,  # 3:12 original cut
             media=[EchosyncMedia(file_path="/music/safe_and_sound_original.flac")],
         ),
         EchosyncTrack(
@@ -62,7 +62,7 @@ def test_e2e_multi_artist_schema_and_collaborator_resolution(e2e_db):
             artist_name="Capital Cities",
             album_title="In a Tidal Wave of Mystery",
             edition="Extended Remix",
-            duration=343000,  # 5:43 extended remix
+            duration_ms=343000,  # 5:43 extended remix
             media=[EchosyncMedia(file_path="/music/safe_and_sound_remix.flac")],
         ),
     ]
@@ -128,13 +128,13 @@ def test_e2e_cover_version_and_remix_boundaries():
         raw_title="Rewrite The Stars",
         artist_name="James Arthur & Anne-Marie",
         album_title="The Greatest Showman: Reimagined",
-        duration=217000,
+        duration_ms=217000,
     )
     cand_original = EchosyncTrack(
         raw_title="Rewrite The Stars",
         artist_name="Zac Efron & Zendaya",
         album_title="The Greatest Showman",
-        duration=217000,
+        duration_ms=217000,
     )
     cover_match = engine.calculate_match(source_cover, cand_original)
     assert cover_match.confidence_score == 0.0
@@ -148,20 +148,20 @@ def test_e2e_cover_version_and_remix_boundaries():
         raw_title="Safe and Sound",
         artist_name="Capital Cities",
         album_title="In a Tidal Wave of Mystery",
-        duration=192000,  # 3:12
+        duration_ms=192000,  # 3:12
     )
     cand_orig_cut = EchosyncTrack(
         raw_title="Safe and Sound",
         artist_name="Capital Cities",
         album_title="In a Tidal Wave of Mystery",
-        duration=192000,
+        duration_ms=192000,
     )
     cand_remix_cut = EchosyncTrack(
         raw_title="Safe and Sound",
         artist_name="Capital Cities",
         album_title="In a Tidal Wave of Mystery",
         edition="Extended Remix",
-        duration=343000,  # 5:43
+        duration_ms=343000,  # 5:43
     )
 
     res_orig = engine.calculate_match(source_original_query, cand_orig_cut)
@@ -189,21 +189,21 @@ def test_e2e_playlist_sync_telemetry_and_greedy_winner_take_all(e2e_db):
             raw_title="Rewrite The Stars",
             artist_name="Zac Efron & Zendaya",
             album_title="The Greatest Showman",
-            duration=217000,
+            duration_ms=217000,
             media=[EchosyncMedia(file_path="/music/rewrite_the_stars.flac")],
         ),
         EchosyncTrack(
             raw_title="Safe and Sound",
             artist_name="Capital Cities",
             album_title="In a Tidal Wave of Mystery",
-            duration=192000,
+            duration_ms=192000,
             media=[EchosyncMedia(file_path="/music/safe_and_sound.flac")],
         ),
         EchosyncTrack(
             raw_title="Mama",
             artist_name="Jonas Blue feat. William Singe",
             album_title="Blue",
-            duration=184000,
+            duration_ms=184000,
             media=[EchosyncMedia(file_path="/music/mama.flac")],
         ),
     ]
@@ -239,7 +239,7 @@ def test_e2e_playlist_sync_telemetry_and_greedy_winner_take_all(e2e_db):
             raw_title=item["title"],
             artist_name=item["artist"],
             album_title="",
-            duration=item["duration"],
+            duration_ms=item["duration"],
         )
         candidates = get_library_candidates(session, item["title"], item["artist"])
 
@@ -252,7 +252,7 @@ def test_e2e_playlist_sync_telemetry_and_greedy_winner_take_all(e2e_db):
                 raw_title=cand.title,
                 artist_name=cand.artist.name if cand.artist else "",
                 album_title=cand.album.title if cand.album else "",
-                duration=cand.duration or 0,
+                duration_ms=cand.duration or 0,
                 edition=cand.edition,
             )
             res = engine.calculate_match(src_track, cand_dto)

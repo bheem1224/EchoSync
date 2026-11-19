@@ -152,7 +152,7 @@ def test_reconcile_by_title_artist_edition_and_duration(tmp_path):
             raw_title="One More Time",
             artist_name="Daft Punk",
             edition="Radio Edit",
-            duration=241500,
+            duration_ms=241500,
         )
 
         # Case A: Chromaprint similarity >= 0.90 -> Collapses into canonical_track

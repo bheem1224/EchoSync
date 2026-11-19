@@ -1508,7 +1508,7 @@ async def download_missing_tracks(request: Request):
                         raw_title=track_info.get("title"),
                         artist_name=track_info.get("artist"),
                         album_title=track_info.get("album") or "",
-                        duration=duration_ms,
+                        duration_ms=duration_ms,
                         isrc=track_info.get("isrc"),
                         identifiers=identifiers,
                     )

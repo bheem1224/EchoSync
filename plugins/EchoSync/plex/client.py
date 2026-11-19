@@ -1447,8 +1447,11 @@ class PlexClient(MediaServerProvider):
                     )
                 )
 
-            track = EchosyncTrack(
+            from core.matching_engine.track_parser import normalize_track_dto
+
+            track = normalize_track_dto(EchosyncTrack(
                 raw_title=title,
+                title=title,
                 artist_name=artist,
                 album_artist=album_artist,
                 album_title=album,
@@ -1456,14 +1459,14 @@ class PlexClient(MediaServerProvider):
                 sort_title=_safe_getattr(plex_track, "titleSort", None),
                 artist_sort_name=_safe_getattr(plex_track, "grandparentSortTitle", None),
                 album_sort_title=_safe_getattr(plex_track, "parentSortTitle", None),
-                duration=duration_ms,
+                duration_ms=duration_ms,
                 track_number=track_number,
                 disc_number=disc_number,
                 release_year=year,
                 added_at=added_at,
                 media=media,
                 identifiers=identifiers,
-            )
+            ))
 
             if track:
                 logger.debug(

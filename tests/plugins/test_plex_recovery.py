@@ -37,7 +37,7 @@ def test_verify_plex_candidate_scoring():
         raw_title="Alone",
         artist_name="Alan Walker",
         album_title="Alone",
-        duration=161000,
+        duration_ms=161000,
         media=[EchosyncMedia(file_path="/data/music/Alan Walker/Alone.flac")],
     )
 
@@ -78,7 +78,7 @@ def test_plex_fast_path_returns_cached_item(monkeypatch):
         raw_title="Alone",
         artist_name="Alan Walker",
         album_title="Alone",
-        duration=161000,
+        duration_ms=161000,
     )
     item, is_recovered = client.fetch_or_recover_track("12345", meta)
 
@@ -110,7 +110,7 @@ def test_plex_404_triggers_recovery_matrix(monkeypatch):
         raw_title="Alone",
         artist_name="Alan Walker",
         album_title="Alone",
-        duration=161000,
+        duration_ms=161000,
         media=[EchosyncMedia(file_path="C:/Music/Alan Walker/Alone.flac")],
     )
 
@@ -142,7 +142,7 @@ def test_plex_recovery_rejects_version_mismatch(monkeypatch):
         raw_title="Alone",
         artist_name="Alan Walker",
         album_title="Alone",
-        duration=161000,
+        duration_ms=161000,
         media=[EchosyncMedia(file_path="C:/Music/Alan Walker/Alone.flac")],
     )
 

@@ -70,9 +70,9 @@ def test_matching_engine_honors_duration_tolerance_from_profile():
     """Verify MatchingEngine._calculate_duration_match derives limits from profile duration_tolerance_ms."""
     # LibraryImportProfile sets duration_tolerance_ms = 8000ms
     engine_lib = WeightedMatchingEngine(LibraryImportProfile())
-    source = EchosyncTrack(raw_title="Track A", artist_name="Artist", duration=200000)
+    source = EchosyncTrack(raw_title="Track A", artist_name="Artist", duration_ms=200000)
     # Delta = 7000ms (within 8000ms base tolerance)
-    candidate_within = EchosyncTrack(raw_title="Track A", artist_name="Artist", duration=207000)
+    candidate_within = EchosyncTrack(raw_title="Track A", artist_name="Artist", duration_ms=207000)
 
     score_lib = engine_lib._calculate_duration_match(source, candidate_within)
     assert score_lib == 1.0
@@ -90,12 +90,12 @@ def test_matching_engine_honors_tolerance_override_ms():
     source = EchosyncTrack(
         raw_title="Extended Dance Mix",
         artist_name="Daft Punk",
-        duration=240000,  # 4m 00s
+        duration_ms=240000,  # 4m 00s
     )
     candidate = EchosyncTrack(
         raw_title="Extended Dance Mix",
         artist_name="Daft Punk",
-        duration=300000,  # 5m 00s (delta = 60,000ms = 60s)
+        duration_ms=300000,  # 5m 00s (delta = 60,000ms = 60s)
     )
 
     # Without override: 60s delta fails duration completely
@@ -114,11 +114,11 @@ def test_calculate_title_duration_match_honors_tolerance_override():
 
     source = EchosyncTrack(
         raw_title="One More Time",
-        duration=320000,
+        duration_ms=320000,
     )
     candidate = EchosyncTrack(
         raw_title="One More Time",
-        duration=335000,  # delta = 15,000ms
+        duration_ms=335000,  # delta = 15,000ms
     )
 
     # Without override: strict=True (2000/3000ms) drops 15s delta to 0.0

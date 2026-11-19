@@ -22,8 +22,8 @@ def test_dispatch_isrc_lookup_waterfall_to_spotify():
         album_title="Starboy",
         release_year=2016,
         isrc="USUM71607007",
+        identifiers={"source": "EchoSync.spotify"},
     )
-    spotify_track.identifiers = {"source": "EchoSync.spotify"}
     spotify_provider.search_by_isrc.return_value = spotify_track
 
     with patch(
@@ -50,8 +50,8 @@ def test_metadata_enhancer_identifies_via_isrc_waterfall(tmp_path):
         album_title="After Hours",
         release_year=2020,
         isrc="USUG11904206",
+        identifiers={"source": "EchoSync.spotify"},
     )
-    spotify_track.identifiers = {"source": "EchoSync.spotify"}
 
     with (
         patch("echosync_core.extract_metadata", return_value={"isrc": "USUG11904206"}),
@@ -88,8 +88,8 @@ def test_review_queue_isrc_lookup_uses_waterfall(tmp_path):
         album_title="After Hours",
         release_year=2020,
         isrc="USUG11904206",
+        identifiers={"source": "EchoSync.spotify"},
     )
-    spotify_track.identifiers = {"source": "EchoSync.spotify"}
 
     with patch(
         "services.isrc_lookup_service.dispatch_isrc_lookup", return_value=spotify_track

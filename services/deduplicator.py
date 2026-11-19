@@ -213,9 +213,10 @@ class DeduplicationService:
             engine = WeightedMatchingEngine(PROFILE_DUPLICATE_DETECTION)
             source_et = EchosyncTrack(
                 raw_title=winner.title,
+                title=winner.title,
                 artist_name=winner.artist.name if winner.artist else "",
                 album_title=winner.album.title if winner.album else "",
-                duration=winner.duration,
+                duration_ms=winner.duration,
                 fingerprint=chromaprint,
             )
 
@@ -224,9 +225,10 @@ class DeduplicationService:
             for loser in losers:
                 candidate_et = EchosyncTrack(
                     raw_title=loser.title,
+                    title=loser.title,
                     artist_name=loser.artist.name if loser.artist else "",
                     album_title=loser.album.title if loser.album else "",
-                    duration=loser.duration,
+                    duration_ms=loser.duration,
                     fingerprint=chromaprint,
                 )
                 match_res = engine.calculate_match(source_et, candidate_et)

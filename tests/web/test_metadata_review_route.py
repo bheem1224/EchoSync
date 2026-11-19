@@ -222,20 +222,22 @@ def test_simulate_pipeline_readonly_contract(client, sample_task):
 
 
 def test_echosync_track_resolution_stage_property():
+    from dataclasses import replace
+
     track = EchosyncTrack(resolution_method="acoustid")
     assert track.resolution_stage == "Stage 3: AcoustID"
 
-    track.resolution_method = "text_waterfall"
+    track = replace(track, resolution_method="text_waterfall")
     assert track.resolution_stage == "Stage 5: Text Waterfall"
 
-    track.resolution_method = "isrc"
+    track = replace(track, resolution_method="isrc")
     assert track.resolution_stage == "Stage 4: ISRC"
 
-    track.resolution_method = "local_cache"
+    track = replace(track, resolution_method="local_cache")
     assert track.resolution_stage == "Stage 2: Local Cache"
 
-    track.resolution_method = "embedded_mbid"
+    track = replace(track, resolution_method="embedded_mbid")
     assert track.resolution_stage == "Fast-Path: Embedded MBID"
 
-    track.resolution_method = "signature_verified"
+    track = replace(track, resolution_method="signature_verified")
     assert track.resolution_stage == "Stage 0: Signature Verified"

@@ -1,3 +1,4 @@
+from dataclasses import replace
 import re
 from pathlib import Path
 from typing import Any, cast
@@ -382,8 +383,8 @@ def _musicbrainz_text_search(metadata_provider, track: Any) -> EchosyncTrack | N
                             artist_name=first_match.get("artist") or artist,
                             album_title=first_match.get("album", ""),
                             identifiers={"musicbrainz": mb_id},
+                            musicbrainz_id=mb_id,
                         )
-                        ret_track.musicbrainz_id = mb_id
                         logger.debug(f"[MusicBrainz Search] Converted dict to EchosyncTrack with mb_id: '{mb_id}'")
                         return ret_track
             else:
@@ -460,7 +461,7 @@ def _build_track_from_metadata(file_path: Path, metadata: dict[str, Any]):
         artist_name=artist,
         album_title=album,
         edition=cast(str | None, metadata.get("edition") or metadata.get("version")),
-        duration=_coerce_int(metadata.get("duration_ms") or metadata.get("duration")),
+        duration_ms=_coerce_int(metadata.get("duration_ms") or metadata.get("duration")),
         isrc=cast(str | None, metadata.get("isrc")),
         musicbrainz_id=cast(
             str | None,
@@ -475,11 +476,11 @@ def _build_track_from_metadata(file_path: Path, metadata: dict[str, Any]):
         disc_number=_coerce_int(metadata.get("disc_number")),
         media=[media_item],
         identifiers={source: str(provider_id)} if provider_id else {},
+        fingerprint=(
+            metadata.get("fingerprint") or metadata.get("chromaprint") or metadata.get("acoustid_fingerprint")
+        ),
+        acoustid_id=metadata.get("acoustid_id") or metadata.get("acoustid"),
     )
-    track.fingerprint = (
-        metadata.get("fingerprint") or metadata.get("chromaprint") or metadata.get("acoustid_fingerprint")
-    )
-    track.acoustid_id = metadata.get("acoustid_id") or metadata.get("acoustid")
     return track
 
 
@@ -1214,49 +1215,50 @@ def approve_review_queue_item(
                     }
 
                     # Update staged_track properties with any modifications from final_metadata (stripping physical fields)
+                    staged_updates: dict[str, Any] = {}
                     if final_metadata:
                         if final_metadata.get("title"):
-                            staged_track.raw_title = final_metadata["title"]
-                            staged_track.title = final_metadata["title"]
-                            staged_track.display_title = final_metadata["title"]
+                            staged_updates["raw_title"] = final_metadata["title"]
+                            staged_updates["title"] = final_metadata["title"]
+                            staged_updates["display_title"] = final_metadata["title"]
                         if "edition" in final_metadata:
-                            staged_track.edition = final_metadata["edition"]
+                            staged_updates["edition"] = final_metadata["edition"]
                         elif "version" in final_metadata:
-                            staged_track.edition = final_metadata["version"]
+                            staged_updates["edition"] = final_metadata["version"]
                         if final_metadata.get("artist"):
-                            staged_track.artist_name = final_metadata["artist"]
+                            staged_updates["artist_name"] = final_metadata["artist"]
                         if final_metadata.get("album"):
-                            staged_track.album_title = final_metadata["album"]
+                            staged_updates["album_title"] = final_metadata["album"]
                         if final_metadata.get("year"):
                             try:
-                                staged_track.release_year = int(final_metadata["year"])
+                                staged_updates["release_year"] = int(final_metadata["year"])
                             except Exception:
                                 pass
                         if final_metadata.get("track_number"):
                             try:
-                                staged_track.track_number = int(final_metadata["track_number"])
+                                staged_updates["track_number"] = int(final_metadata["track_number"])
                             except Exception:
                                 pass
                         if final_metadata.get("disc_number"):
                             try:
-                                staged_track.disc_number = int(final_metadata["disc_number"])
+                                staged_updates["disc_number"] = int(final_metadata["disc_number"])
                             except Exception:
                                 pass
                         mbid_val = final_metadata.get("musicbrainz_id") or final_metadata.get("mbid")
                         if mbid_val:
-                            staged_track.musicbrainz_id = str(mbid_val).strip()
+                            staged_updates["musicbrainz_id"] = str(mbid_val).strip()
                         if final_metadata.get("isrc"):
-                            staged_track.isrc = final_metadata["isrc"]
+                            staged_updates["isrc"] = final_metadata["isrc"]
                         acoustid_val = final_metadata.get("acoustid_id") or final_metadata.get("acoustid")
                         if acoustid_val:
-                            staged_track.acoustid_id = str(acoustid_val).strip()
+                            staged_updates["acoustid_id"] = str(acoustid_val).strip()
                         fp_val = (
                             final_metadata.get("fingerprint")
                             or final_metadata.get("chromaprint")
                             or final_metadata.get("acoustid_fingerprint")
                         )
                         if fp_val:
-                            staged_track.fingerprint = str(fp_val).strip()
+                            staged_updates["fingerprint"] = str(fp_val).strip()
 
                     # Derive physical properties purely from DSP inspection of container
                     import echosync_core
@@ -1264,9 +1266,12 @@ def approve_review_queue_item(
                     native_props = echosync_core.extract_metadata(str(file_path_obj)) or {}
                     native_dur = native_props.get("duration_ms")
                     if native_dur is not None:
-                        staged_track.duration = int(native_dur)
+                        staged_updates["duration_ms"] = int(native_dur)
                     elif native_props.get("duration") is not None:
-                        staged_track.duration = int(round(float(native_props["duration"]) * 1000))
+                        staged_updates["duration_ms"] = int(round(float(native_props["duration"]) * 1000))
+
+                    if staged_updates:
+                        staged_track = replace(staged_track, **staged_updates)
 
                     # Merge the finalized metadata back to dict for tagging
                     metadata_to_tag = {
@@ -1660,7 +1665,7 @@ def lookup_review_queue_item_acoustid(task_id: int, _=Depends(require_auth)):
                     if not task.track_data:
                         task.track_data = {}
                     task.track_data["fingerprint"] = clamped_fingerprint
-                    track_obj.fingerprint = clamped_fingerprint
+                    track_obj = replace(track_obj, fingerprint=clamped_fingerprint)
                     flag_modified(task, "track_data")
 
                     # Update database record wrapped inside db_write_lease
@@ -1681,7 +1686,7 @@ def lookup_review_queue_item_acoustid(task_id: int, _=Depends(require_auth)):
                         except Exception as db_err:
                             logger.error(f"Failed to update clamped fingerprint in main db: {db_err}")
 
-            duration_ms = _coerce_int(track_obj.duration)
+            duration_ms = _coerce_int(track_obj.duration_ms)
             duration_sec = duration_ms / 1000.0 if (duration_ms and duration_ms > 0) else None
 
             engine = MetadataResolutionEngine(
@@ -1705,7 +1710,7 @@ def lookup_review_queue_item_acoustid(task_id: int, _=Depends(require_auth)):
             res = engine.resolve_track(req, enabled_stages=["acoustid"])
 
             if res.chromaprint:
-                track_obj.fingerprint = res.chromaprint
+                track_obj = replace(track_obj, fingerprint=res.chromaprint)
 
             if not res or res.confidence_score < 0.60:
                 # Persist fingerprint even on miss so user can submit to AcoustID
@@ -1738,33 +1743,35 @@ def lookup_review_queue_item_acoustid(task_id: int, _=Depends(require_auth)):
                 )
 
             # Match found
+            updates: dict[str, Any] = {
+                "edition": res.edition,
+                "identifiers": {**(track_obj.identifiers or {}), "source": "acoustid_lookup"},
+            }
             if res.acoustid_id:
-                track_obj.acoustid_id = res.acoustid_id
+                updates["acoustid_id"] = res.acoustid_id
             if res.musicbrainz_track_id:
-                track_obj.musicbrainz_id = res.musicbrainz_track_id
+                updates["musicbrainz_id"] = res.musicbrainz_track_id
             if res.musicbrainz_release_id:
-                track_obj.mb_release_id = res.musicbrainz_release_id
+                updates["mb_release_id"] = res.musicbrainz_release_id
             if res.title:
-                track_obj.title = res.title
-                track_obj.raw_title = res.title
-                track_obj.display_title = res.title
-            track_obj.edition = res.edition
+                updates["title"] = res.title
+                updates["raw_title"] = res.title
+                updates["display_title"] = res.title
             if res.artist:
-                track_obj.artist_name = res.artist
+                updates["artist_name"] = res.artist
             if res.album:
-                track_obj.album_title = res.album
+                updates["album_title"] = res.album
             if res.year:
-                track_obj.release_year = res.year
+                updates["release_year"] = res.year
             if res.track_number is not None:
-                track_obj.track_number = res.track_number
+                updates["track_number"] = res.track_number
             if res.disc_number is not None:
-                track_obj.disc_number = res.disc_number
+                updates["disc_number"] = res.disc_number
             if res.isrc:
-                track_obj.isrc = res.isrc
-
-            track_obj.identifiers["source"] = "acoustid_lookup"
+                updates["isrc"] = res.isrc
             if res.chromaprint:
-                track_obj.fingerprint = res.chromaprint
+                updates["fingerprint"] = res.chromaprint
+            track_obj = replace(track_obj, **updates)
             res_dict = res.to_dict()
             res_dict["edition"] = res.edition
             if res.chromaprint:
@@ -1797,7 +1804,7 @@ def lookup_review_queue_item_acoustid(task_id: int, _=Depends(require_auth)):
                     logger.debug(f"Failed to update fingerprint in main db on match: {db_err}")
 
             updated_fields = []
-            if track_obj.title:
+            if track_obj.title or track_obj.raw_title:
                 updated_fields.append("title")
             if track_obj.edition:
                 updated_fields.append("edition")
@@ -1977,11 +1984,16 @@ def lookup_review_queue_item_musicbrainz(task_id: int, payload: MusicBrainzLooku
             track_obj = EchosyncTrack.from_dict(task.track_data or {})
 
             # fallback if artist/title wasn't already in track_data but is passed in payload
+            fallback_updates: dict[str, Any] = {}
             if not track_obj.artist_name or track_obj.artist_name == "Unknown Artist":
-                track_obj.artist_name = artist
-            if not track_obj.title or track_obj.title == "Unknown Title":
-                track_obj.title = title
-            track_obj.raw_title = track_obj.title
+                fallback_updates["artist_name"] = artist
+            target_title_val = title if (not track_obj.title or track_obj.title == "Unknown Title") else track_obj.title
+            if target_title_val != track_obj.title:
+                fallback_updates["title"] = target_title_val
+            if target_title_val != track_obj.raw_title:
+                fallback_updates["raw_title"] = target_title_val
+            if fallback_updates:
+                track_obj = replace(track_obj, **fallback_updates)
 
             logger.debug(f"[MusicBrainz Route] Prepared EchosyncTrack for text search: {track_obj.to_dict()}")
 
@@ -1999,13 +2011,16 @@ def lookup_review_queue_item_musicbrainz(task_id: int, payload: MusicBrainzLooku
                 }
 
             logger.debug(f"[MusicBrainz Route] MusicBrainz match found: {found_track.to_dict()}")
-            found_track.identifiers["source"] = "musicbrainz_text_lookup"
+            found_track = replace(
+                found_track,
+                identifiers={**(found_track.identifiers or {}), "source": "musicbrainz_text_lookup"},
+            )
             task.track_data = found_track.to_dict()
             flag_modified(task, "track_data")
             task.confidence_score = max(float(task.confidence_score or 0.0), 0.85)
 
             updated_fields = []
-            if found_track.title:
+            if found_track.title or found_track.raw_title:
                 updated_fields.append("title")
             if found_track.edition:
                 updated_fields.append("edition")
@@ -2084,31 +2099,33 @@ def lookup_review_queue_item_isrc(task_id: int, payload: ISRCLookupRequest | Non
                 }
 
             track_obj = EchosyncTrack.from_dict(task.track_data or {})
-            if hasattr(track, "title") and track.title:
-                track_obj.title = track.title
-                track_obj.raw_title = track.title
+            isrc_updates: dict[str, Any] = {"isrc": canonical}
+            found_title = getattr(track, "title", None) or getattr(track, "raw_title", None)
+            if found_title:
+                isrc_updates["title"] = found_title
+                isrc_updates["raw_title"] = found_title
             if hasattr(track, "edition") and track.edition:
-                track_obj.edition = track.edition
+                isrc_updates["edition"] = track.edition
             elif hasattr(track, "version") and track.version:
-                track_obj.edition = track.version
+                isrc_updates["edition"] = track.version
             if hasattr(track, "artist_name") and track.artist_name:
-                track_obj.artist_name = track.artist_name
+                isrc_updates["artist_name"] = track.artist_name
             elif hasattr(track, "artist") and track.artist:
-                track_obj.artist_name = track.artist
+                isrc_updates["artist_name"] = track.artist
             if hasattr(track, "album_title") and track.album_title:
-                track_obj.album_title = track.album_title
+                isrc_updates["album_title"] = track.album_title
             elif hasattr(track, "album") and track.album:
-                track_obj.album_title = track.album
+                isrc_updates["album_title"] = track.album
             if hasattr(track, "release_year") and track.release_year:
-                track_obj.release_year = track.release_year
+                isrc_updates["release_year"] = track.release_year
             if hasattr(track, "musicbrainz_id") and track.musicbrainz_id:
-                track_obj.musicbrainz_id = track.musicbrainz_id
-            if hasattr(track, "duration") and track.duration:
-                track_obj.duration = track.duration
-            track_obj.isrc = canonical
+                isrc_updates["musicbrainz_id"] = track.musicbrainz_id
+            found_dur = getattr(track, "duration_ms", None) or getattr(track, "duration", None)
+            if found_dur:
+                isrc_updates["duration_ms"] = found_dur
             if hasattr(track, "identifiers") and isinstance(track.identifiers, dict):
-                for k, v in track.identifiers.items():
-                    track_obj.identifiers[k] = v
+                isrc_updates["identifiers"] = {**(track_obj.identifiers or {}), **track.identifiers}
+            track_obj = replace(track_obj, **isrc_updates)
 
             from sqlalchemy.orm.attributes import flag_modified
 
@@ -2117,7 +2134,7 @@ def lookup_review_queue_item_isrc(task_id: int, payload: ISRCLookupRequest | Non
             task.confidence_score = max(float(task.confidence_score or 0.0), 0.90)
 
             updated_fields = []
-            if track_obj.title:
+            if track_obj.title or track_obj.raw_title:
                 updated_fields.append("title")
             if track_obj.edition:
                 updated_fields.append("edition")
@@ -2131,7 +2148,7 @@ def lookup_review_queue_item_isrc(task_id: int, payload: ISRCLookupRequest | Non
                 updated_fields.append("musicbrainz_id")
             if track_obj.isrc:
                 updated_fields.append("isrc")
-            if track_obj.duration:
+            if track_obj.duration_ms:
                 updated_fields.append("duration")
 
             serialized = _serialize_task(task)

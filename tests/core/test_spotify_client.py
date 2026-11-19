@@ -371,7 +371,7 @@ def test_spotify_liked_songs_get_playlist_tracks(spotify_client):
     assert len(tracks) == 1
     assert tracks[0].title == "Liked Track 1"
     assert tracks[0].artist_name == "Cool Artist"
-    assert tracks[0].duration == 180000
+    assert tracks[0].duration_ms == 180000
     mock_sp.current_user_saved_tracks.assert_called_once_with(limit=50)
 
 

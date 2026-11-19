@@ -7,7 +7,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
-from core.db.echo_sync_track import EchosyncTrack, EchosyncMedia
+from core.db.echo_sync_track import EchosyncTrack, EchosyncMedia, classify_version_type
+from core.models.entities import _coerce_duration_ms
 
 ResolutionMethod = Literal["local_cache", "acoustid", "isrc", "text_waterfall", "embedded_mbid"]
 
@@ -103,12 +104,23 @@ class ResolutionResult(EchosyncTrack):
             DeprecationWarning,
             stacklevel=2,
         )
+        resolved_title = title or kwargs.get("raw_title", "")
+        resolved_edition = kwargs.get("edition")
+        resolved_version = kwargs.get("version")
+        resolved_duration_ms = _coerce_duration_ms(duration_ms, kwargs.get("duration"))
+        if resolved_duration_ms == 0 and duration_ms == 0 and kwargs.get("duration") is None:
+            resolved_duration_ms = 0
         super().__init__(
-            raw_title=title or kwargs.get("raw_title", ""),
+            raw_title=resolved_title,
+            title=resolved_title,
+            display_title=resolved_title,
             artist_name=artist or kwargs.get("artist_name", ""),
             album_title=album or kwargs.get("album_title", "") or "",
+            edition=resolved_edition,
+            version=resolved_version,
+            version_type=kwargs.get("version_type") or classify_version_type(resolved_version, resolved_edition),
             sync_id=sync_id,
-            duration=duration_ms or kwargs.get("duration", 0),
+            duration_ms=resolved_duration_ms,
             track_number=track_number,
             disc_number=disc_number,
             release_year=year,

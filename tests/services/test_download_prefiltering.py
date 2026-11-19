@@ -94,7 +94,7 @@ class TestDownloadManagerMatchingAndFallback:
             raw_title="Song",
             artist_name="Artist",
             album_title="Album",
-            duration=180000,
+            duration_ms=180000,
         )
         queued_download = SimpleNamespace(echo_sync_track=target_track.to_dict())
 
@@ -218,7 +218,7 @@ class TestDownloadManagerMatchingAndFallback:
             raw_title="Song",
             artist_name="Artist",
             album_title="Album",
-            duration=180000,
+            duration_ms=180000,
         )
         queued_download = SimpleNamespace(echo_sync_track=target_track.to_dict())
 

@@ -15,7 +15,7 @@ def test_matching_engine_from_dict_hydrates_duration_ms_and_isrc_from_identifier
 
     track = EchosyncTrack.from_dict(payload)
 
-    assert track.duration == 201000
+    assert track.duration_ms == 201000
     assert track.isrc == "USRC10000003"
 
 

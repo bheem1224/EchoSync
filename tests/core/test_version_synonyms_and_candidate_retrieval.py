@@ -19,21 +19,21 @@ def test_version_synonyms_piano_acoustic():
         artist_name="Coldplay",
         album_title="A Rush of Blood to the Head",
         edition="Piano Version",
-        duration=300000,
+        duration_ms=300000,
     )
     candidate_piano = EchosyncTrack(
         raw_title="Clocks",
         artist_name="Coldplay",
         album_title="A Rush of Blood to the Head",
         edition="Piano",
-        duration=300000,
+        duration_ms=300000,
     )
     candidate_acoustic = EchosyncTrack(
         raw_title="Clocks",
         artist_name="Coldplay",
         album_title="A Rush of Blood to the Head",
         edition="Acoustic",
-        duration=300000,
+        duration_ms=300000,
     )
 
     res_piano = engine.calculate_match(source, candidate_piano)
@@ -54,21 +54,21 @@ def test_version_synonyms_radio_single_edit():
         artist_name="Swedish House Mafia",
         album_title="Until Now",
         edition="Radio Edit",
-        duration=212000,
+        duration_ms=212000,
     )
     candidate_radio_ver = EchosyncTrack(
         raw_title="Don't You Worry Child",
         artist_name="Swedish House Mafia",
         album_title="Until Now",
         edition="Radio Version",
-        duration=212000,
+        duration_ms=212000,
     )
     candidate_single_ver = EchosyncTrack(
         raw_title="Don't You Worry Child",
         artist_name="Swedish House Mafia",
         album_title="Until Now",
         edition="Single Version",
-        duration=212000,
+        duration_ms=212000,
     )
 
     res_radio = engine.calculate_match(source, candidate_radio_ver)
@@ -90,7 +90,7 @@ def test_remaster_edition_compatibility_with_original():
         artist_name="Radiohead",
         album_title="OK Computer",
         edition="",
-        duration=264000,
+        duration_ms=264000,
     )
     # Candidate is 2013 Remaster -> strictly rejected when original requested
     candidate_remaster = EchosyncTrack(
@@ -98,7 +98,7 @@ def test_remaster_edition_compatibility_with_original():
         artist_name="Radiohead",
         album_title="OK Computer",
         edition="2013 Remaster",
-        duration=264500,
+        duration_ms=264500,
     )
 
     res = engine.calculate_match(source, candidate_remaster)
@@ -111,7 +111,7 @@ def test_remaster_edition_compatibility_with_original():
         artist_name="Radiohead",
         album_title="OK Computer",
         edition="2013 Remaster",
-        duration=264000,
+        duration_ms=264000,
     )
     res_remaster_match = engine.calculate_match(source_remaster, candidate_remaster)
     assert res_remaster_match.passed_version_check is True
@@ -126,13 +126,13 @@ def test_remaster_title_sanitization_tier2():
         raw_title="Karma Police",
         artist_name="Unknown Artist",
         album_title="OK Computer",
-        duration=264000,
+        duration_ms=264000,
     )
     candidate = EchosyncTrack(
         raw_title="Karma Police - 2013 Remaster",
         artist_name="Radiohead",
         album_title="OK Computer",
-        duration=264500,
+        duration_ms=264500,
     )
 
     res = engine.calculate_title_duration_match(source, candidate)
@@ -177,13 +177,13 @@ def test_tier2_title_sanitization_remix_inputs():
         raw_title="In the End (Mellen Gi Remix)",
         artist_name="Unknown Artist",
         album_title="In the End",
-        duration=218000,
+        duration_ms=218000,
     )
     candidate = EchosyncTrack(
         raw_title="In the End",
         artist_name="Linkin Park",
         album_title="Hybrid Theory",
-        duration=218500,
+        duration_ms=218500,
     )
 
     res = engine.calculate_title_duration_match(source, candidate)
@@ -413,21 +413,21 @@ def test_matching_engine_context_scoped_scoring():
         raw_title="Heroes",
         artist_name="David Bowie",
         album_title="Heroes",
-        duration=367000,
+        duration_ms=367000,
     )
     cand_deluxe = EchosyncTrack(
         raw_title="Heroes",
         artist_name="David Bowie",
         album_title="Heroes",
         edition="Deluxe Edition",
-        duration=367500,
+        duration_ms=367500,
     )
     cand_remaster = EchosyncTrack(
         raw_title="Heroes",
         artist_name="David Bowie",
         album_title="Heroes",
         edition="2017 Remaster",
-        duration=367500,
+        duration_ms=367500,
     )
 
     # In primary modes (download / sync): Deluxe is rejected, Remaster is rejected
@@ -468,19 +468,19 @@ def test_tier2_strict_2000ms_duration_gate():
         raw_title="Midnight City",
         artist_name="M83",
         album_title="Hurry Up, We're Dreaming",
-        duration=243000,
+        duration_ms=243000,
     )
     cand_pass = EchosyncTrack(
         raw_title="Midnight City",
         artist_name="Unknown Artist",
         album_title="Hurry Up, We're Dreaming",
-        duration=244500,  # 1500ms diff <= 2000ms
+        duration_ms=244500,  # 1500ms diff <= 2000ms
     )
     cand_fail = EchosyncTrack(
         raw_title="Midnight City",
         artist_name="Unknown Artist",
         album_title="Hurry Up, We're Dreaming",
-        duration=246500,  # 3500ms diff >= 3000ms hard limit
+        duration_ms=246500,  # 3500ms diff >= 3000ms hard limit
     )
 
     res_pass = engine.calculate_title_duration_match(source, cand_pass)

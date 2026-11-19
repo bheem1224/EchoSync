@@ -12,14 +12,180 @@ This service handles:
 
 import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from datetime import date
 from pathlib import Path
 from typing import Any
 
-from ..db.echo_sync_track import EchosyncTrack, QualityTag
+from ..db.echo_sync_track import EchosyncTrack, QualityTag, classify_version_type
 from .fingerprinting import FingerprintCache, FingerprintGenerator
 
 logger = logging.getLogger(__name__)
+
+_PATH_PREFIX_RE = re.compile(
+    r"^(?:[a-zA-Z]:[/\\]|/(?:data|mnt|app|home|var|tmp|music|storage|media|usr|opt|etc)/|\.{1,2}[/\\])"
+)
+_AUDIO_PATH_RE = re.compile(r"[/\\][^/\\]+\.(mp3|flac|m4a|aac|wav|ogg|wma|opus|aiff|alac)$", re.IGNORECASE)
+_AUDIO_EXT_RE = re.compile(r"\.(mp3|flac|m4a|aac|wav|ogg|wma|opus|aiff|alac)$", re.IGNORECASE)
+_ISRC_RE = re.compile(r"^[A-Z]{2}[A-Z0-9]{3}\d{2}\d{5}$")
+
+
+def normalize_track_dto(track: EchosyncTrack, *, generate_sync_id: bool = True) -> EchosyncTrack:
+    """Explicitly normalize a passive EchosyncTrack DTO without mutating the input instance.
+
+    Performs path-leak telemetry warnings, `pre_normalize_title` hook invocation,
+    ISRC/date/identifier normalization, title/album edition cleansing, version_type
+    classification, artist role decomposition, quote stripping, sort_title generation,
+    and optional sync_id NanoID assignment.
+    """
+    for field_name, value in [
+        ("artist", track.artist_name),
+        ("album_artist", track.album_artist),
+        ("title", track.raw_title or track.title),
+        ("album_title", track.album_title),
+    ]:
+        if value:
+            val_str = str(value).strip()
+            is_suspicious = bool(
+                _PATH_PREFIX_RE.match(val_str)
+                or _AUDIO_PATH_RE.search(val_str)
+                or (_AUDIO_EXT_RE.search(val_str) and ("/" in val_str or "\\" in val_str))
+            )
+            if is_suspicious:
+                logger.warning(
+                    "[core.models] - Suspicious metadata detected: Field '%s' contains a file path ('%s').",
+                    field_name,
+                    value,
+                )
+
+    raw_title = track.raw_title or track.title or ""
+    plugin_context = dict(track.plugin_context or {})
+    try:
+        from core.hook_manager import hook_manager as _hm
+
+        _hm.apply_filters("pre_normalize_title", raw_title, plugin_context=plugin_context)
+    except Exception:
+        pass
+
+    identifiers = track.identifiers
+    if isinstance(identifiers, list):
+        new_identifiers: dict[str, Any] = {}
+        for item in identifiers:
+            if isinstance(item, dict):
+                key = item.get("plugin_source")
+                val = item.get("plugin_item_id") or item.get("id")
+                if key and val:
+                    new_identifiers[str(key)] = str(val)
+        identifiers = new_identifiers
+    else:
+        identifiers = dict(identifiers or {})
+
+    orig_rel_date = track.original_release_date
+    if isinstance(orig_rel_date, str):
+        try:
+            orig_rel_date = date.fromisoformat(orig_rel_date)
+        except ValueError:
+            pass
+
+    isrc = track.isrc
+    if isrc:
+        isrc_clean = str(isrc).strip().upper().replace("-", "")
+        isrc = isrc_clean if _ISRC_RE.match(isrc_clean) else None
+
+    mb_release_id = track.mb_release_id
+    if mb_release_id:
+        identifiers["musicbrainz_release_id"] = mb_release_id
+    elif "musicbrainz_release_id" in identifiers:
+        mb_release_id = identifiers["musicbrainz_release_id"]
+
+    acoustid_id = track.acoustid_id
+    if acoustid_id:
+        identifiers["acoustid_id"] = acoustid_id
+    elif "acoustid_id" in identifiers:
+        acoustid_id = identifiers["acoustid_id"]
+
+    clean_title = track.title or raw_title
+    edition = track.edition
+    version = track.version
+    if clean_title:
+        clean_title, ext_version, ext_edition = extract_version_descriptors(clean_title)
+        if ext_edition and not edition:
+            edition = ext_edition
+        if ext_version and not version:
+            version = ext_version
+
+    album_title = track.album_title
+    if album_title:
+        clean_album, alb_version, alb_edition = extract_version_descriptors(album_title)
+        if clean_album:
+            album_title = clean_album
+        if not edition and (alb_edition or alb_version):
+            if clean_title and clean_album and clean_title.strip().lower() == clean_album.strip().lower():
+                edition = alb_edition or alb_version
+                if not version and alb_version:
+                    version = alb_version
+
+    primary_artists = list(track.primary_artists or [])
+    featured_artists = list(track.featured_artists or [])
+    remixers = list(track.remixers or [])
+    if track.artist_name and not primary_artists:
+        roles = decompose_artists(track.artist_name)
+        primary_artists = roles.get("primary") or [track.artist_name]
+        featured_artists = roles.get("featured") or []
+        remixers = roles.get("remixer") or []
+
+    clean_title = clean_title.strip()
+    if len(clean_title) >= 2 and (
+        (clean_title.startswith('"') and clean_title.endswith('"'))
+        or (clean_title.startswith("'") and clean_title.endswith("'"))
+    ):
+        clean_title = clean_title[1:-1]
+
+    sort_title = track.sort_title
+    if sort_title is None:
+        lower_title = clean_title.lower()
+        if lower_title.startswith("the "):
+            sort_title = f"{clean_title[4:]}, The"
+        elif lower_title.startswith("a "):
+            sort_title = f"{clean_title[2:]}, A"
+        elif lower_title.startswith("an "):
+            sort_title = f"{clean_title[3:]}, An"
+        else:
+            sort_title = clean_title
+
+    sync_id = track.sync_id
+    if not sync_id and generate_sync_id:
+        from database.music_database import generate_nanoid
+
+        sync_id = generate_nanoid()
+
+    version_type = (
+        track.version_type
+        if track.version_type and track.version_type != "original"
+        else classify_version_type(version, edition)
+    )
+
+    return replace(
+        track,
+        raw_title=raw_title,
+        title=clean_title,
+        display_title=track.display_title or raw_title or clean_title,
+        album_title=album_title,
+        edition=edition,
+        version=version,
+        version_type=version_type,
+        sort_title=sort_title,
+        primary_artists=primary_artists,
+        featured_artists=featured_artists,
+        remixers=remixers,
+        identifiers=identifiers,
+        plugin_context=plugin_context,
+        original_release_date=orig_rel_date,
+        isrc=isrc,
+        mb_release_id=mb_release_id,
+        acoustid_id=acoustid_id,
+        sync_id=sync_id,
+    )
 
 # Atomic Role Parsing Patterns
 FEATURED_PATTERN = re.compile(r"\s+(?:feat\.?|ft\.?|featuring|with)\s+(.+?)(?=\s*[\(\[]|$)", re.IGNORECASE)
@@ -566,6 +732,7 @@ class TrackParser:
 
             track = EchosyncTrack(
                 raw_title=parsed_title,
+                title=parsed_title,
                 artist_name=parsed_artist,
                 album_title=album_title,
                 release_year=year,
@@ -581,9 +748,9 @@ class TrackParser:
                 remixers=artist_roles["remixer"],
             )
 
-            # Validate the track
+            # Validate and explicitly normalize the track
             if track.raw_title and track.artist_name:
-                return track
+                return normalize_track_dto(track)
             return None
 
         except Exception as e:
@@ -790,7 +957,10 @@ def parse_file(
     if generate_fingerprint and Path(file_path).exists():
         fingerprint = FingerprintGenerator.generate(file_path)
         if fingerprint:
-            track.fingerprint = fingerprint
-            track.fingerprint_confidence = 1.0  # Assume full confidence if generation succeeds
+            track = replace(
+                track,
+                fingerprint=fingerprint,
+                extra_metadata={**track.extra_metadata, "fingerprint_confidence": 1.0},
+            )
 
     return track

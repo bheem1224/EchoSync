@@ -596,7 +596,7 @@ class MusicBrainzClient(PluginBase):
                 raw_title=clean_title or (track.raw_title if isinstance(track, EchosyncTrack) else title),
                 artist_name=clean_primary or clean_artist or source_artist_raw,
                 album_title=clean_album_str or (track.album_title if isinstance(track, EchosyncTrack) else album),
-                duration=(getattr(track, "duration", None) or getattr(track, "duration_ms", None) or duration_ms),
+                duration_ms=(getattr(track, "duration_ms", None) or getattr(track, "duration", None) or duration_ms),
                 isrc=(getattr(track, "isrc", None) if isinstance(track, EchosyncTrack) else None),
             )
 
@@ -636,9 +636,10 @@ class MusicBrainzClient(PluginBase):
 
                     eval_candidate = EchosyncTrack(
                         raw_title=fetched.raw_title,
+                        title=fetched.title,
                         artist_name=clean_cand_primary or fetched.artist_name,
                         album_title=fetched.album_title,
-                        duration=fetched.duration,
+                        duration_ms=fetched.duration_ms,
                         isrc=fetched.isrc,
                         musicbrainz_id=fetched.musicbrainz_id,
                     )
@@ -740,7 +741,7 @@ class MusicBrainzClient(PluginBase):
                 # Convert back to EchosyncTrack objects
                 try:
                     metadata_list = cached.metadata_json
-                    return [EchosyncTrack(**m) for m in metadata_list]
+                    return [EchosyncTrack.from_dict(m) if isinstance(m, dict) else m for m in metadata_list]
                 except Exception as e:
                     logger.warning(f"Failed to parse cached MusicBrainz data: {e}")
 
