@@ -17,6 +17,9 @@
   import { loadPluginViews } from '../stores/pluginViews';
   import { toggleDownloadDrawer } from '../stores/ui';
   import { startDownloadsPolling, stopDownloadsPolling } from '../stores/downloads';
+  import { auth } from '../stores/auth';
+  import FirstBootSetup from '../lib/components/FirstBootSetup.svelte';
+  import LoginView from '../lib/components/LoginView.svelte';
   import apiClient from '../api/client';
   import { theme } from '../stores/theme';
   import '../app.css';
@@ -35,8 +38,7 @@
     }
   }
 
-  onMount(async () => {
-    theme.init();
+  async function initAppAfterAuth() {
     plugins.load();
     loadPluginViews();          // fire-and-forget — populates pluginViews store
     systemStatus.startPolling(5000); // Poll every 5 seconds
@@ -63,8 +65,24 @@
     } catch (error) {
       console.error('Failed to check migration status:', error);
     }
+  }
+
+  onMount(() => {
+    theme.init();
+
+    const handleAuthRequired = () => {
+      auth.refresh();
+    };
+    window.addEventListener('es-auth-required', handleAuthRequired);
+
+    auth.refresh().then((status) => {
+      if (!status || (!status.setup_required && status.authenticated)) {
+        initAppAfterAuth();
+      }
+    });
 
     return () => {
+      window.removeEventListener('es-auth-required', handleAuthRequired);
       systemStatus.stopPolling();
       stopDownloadsPolling();
     };
@@ -82,43 +100,53 @@
 <svelte:window bind:innerWidth on:keydown={handleKeyDown} />
 
 <div class="h-screen w-full flex flex-col overflow-hidden theme-{$theme.current}" style="background-color: var(--bg-canvas); color: var(--text-primary);">
-  <RestartBanner />
-  <div class="flex-1 flex overflow-hidden min-h-0">
-    {#if innerWidth >= 768}
-      <Sidebar />
-      <div class="flex-1 flex flex-col min-h-0 overflow-hidden">
-        <Navigation title="" showSearch={true} />
-        <main class="flex-1 overflow-y-auto p-6">
-          {#key $page.url}
-            <div in:fade={{ duration: 150, delay: 150 }} out:fade={{ duration: 150 }}>
-              <slot />
-            </div>
-          {/key}
-        </main>
-      </div>
-    {:else}
-      <div class="flex-1 flex flex-col min-h-0">
-        <Navigation title="EchoSync" showSearch={true} />
-        <main class="flex-1 overflow-y-auto p-4">
-          {#key $page.url}
-            <div in:fade={{ duration: 150, delay: 150 }} out:fade={{ duration: 150 }}>
-              <slot />
-            </div>
-          {/key}
-        </main>
-        <BottomNav />
-      </div>
-    {/if}
-  </div>
+  {#if $auth.loaded && $auth.setupRequired}
+    <FirstBootSetup onSetupComplete={initAppAfterAuth} />
+  {:else if $auth.loaded && !$auth.authenticated && !$auth.error}
+    <LoginView
+      oidcEnabled={$auth.oidcEnabled}
+      onLoginSuccess={initAppAfterAuth}
+    />
+  {:else}
+    <RestartBanner />
+    <div class="flex-1 flex overflow-hidden min-h-0">
+      {#if innerWidth >= 768}
+        <Sidebar />
+        <div class="flex-1 flex flex-col min-h-0 overflow-hidden">
+          <Navigation title="" showSearch={true} />
+          <main class="flex-1 overflow-y-auto p-6">
+            {#key $page.url}
+              <div in:fade={{ duration: 150, delay: 150 }} out:fade={{ duration: 150 }}>
+                <slot />
+              </div>
+            {/key}
+          </main>
+        </div>
+      {:else}
+        <div class="flex-1 flex flex-col min-h-0">
+          <Navigation title="EchoSync" showSearch={true} />
+          <main class="flex-1 overflow-y-auto p-4">
+            {#key $page.url}
+              <div in:fade={{ duration: 150, delay: 150 }} out:fade={{ duration: 150 }}>
+                <slot />
+              </div>
+            {/key}
+          </main>
+          <BottomNav />
+        </div>
+      {/if}
+    </div>
 
-  <!-- Bottom Player Fixed outside main scroll area -->
-  <div class="flex-none">
-    <BottomPlayer />
-  </div>
+    <!-- Bottom Player Fixed outside main scroll area -->
+    <div class="flex-none">
+      <BottomPlayer />
+    </div>
+
+    <Omnibar mode="modal" />
+    <DownloadDrawer />
+  {/if}
 
   <ToastNotifications />
-  <Omnibar mode="modal" />
-  <DownloadDrawer />
   
   {#if showEncryptionWarning}
     <EncryptionKeyWarning 

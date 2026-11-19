@@ -338,7 +338,7 @@ def test_download_missing_hydrates_from_full_source_track_payload(client, monkey
         raw_title="My Song",
         artist_name="My Artist",
         album_title="My Album",
-        duration=210000,
+        duration_ms=210000,
         isrc="USRC17607839",
         identifiers={"spotify": "spotify-track-id"},
     )
@@ -359,7 +359,7 @@ def test_download_missing_hydrates_from_full_source_track_payload(client, monkey
 
     assert resp.status_code == 200
     assert len(queued) == 1
-    assert queued[0].duration == 210000
+    assert queued[0].duration_ms == 210000
     assert queued[0].isrc == "USRC17607839"
     assert process_calls == [True]
 
@@ -396,7 +396,7 @@ def test_download_missing_preserves_duration_and_isrc_from_fallback_fields(clien
 
     assert resp.status_code == 200
     assert len(queued) == 1
-    assert queued[0].duration == 198000
+    assert queued[0].duration_ms == 198000
     assert queued[0].isrc == "GBUM71029604"
     assert queued[0].identifiers.get("spotify") == "spotify-fallback-id"
     assert process_calls == [True]

@@ -37,23 +37,23 @@ def compute_plugin_crc32(namespace: str) -> int:
     return zlib.crc32(clean_ns.encode("utf-8")) & 0xFFFFFFFF
 
 
-BUNDLED_CORE_PLUGIN_ALLOWLIST: frozenset[str] = frozenset(
+BUNDLED_CORE_PLUGIN_ALLOWLIST: frozenset[int] = frozenset(
     {
-        "echosync.acoustid",
-        "echosync.cjk_language_pack",
-        "echosync.jellyfin",
-        "echosync.listenbrainz",
-        "echosync.local_metadata",
-        "echosync.local_player",
-        "echosync.local_server",
-        "echosync.lrclib",
-        "echosync.musicbrainz",
-        "echosync.navidrome",
-        "echosync.outbound_gateway",
-        "echosync.plex",
-        "echosync.slskd",
-        "echosync.spotify",
-        "echosync.tidal",
+        185735947,
+        450205936,
+        896507943,
+        1132908688,
+        1440284925,
+        1442480363,
+        1476574521,
+        1485063638,
+        2108802618,
+        2113989167,
+        2533522427,
+        2998090963,
+        3106502486,
+        3191146312,
+        4078271625,
     }
 )
 
@@ -72,7 +72,7 @@ def _is_allowlisted_core_plugin(plugin_dir: Path, manifest_data: dict[str, Any])
 
     manifest_id = str(manifest_data.get("id") or "").strip().lower()
     author = str(manifest_data.get("author") or "").strip()
-    if author != "EchoSync" or manifest_id not in BUNDLED_CORE_PLUGIN_ALLOWLIST:
+    if author != "EchoSync" or compute_plugin_crc32(manifest_id) not in BUNDLED_CORE_PLUGIN_ALLOWLIST:
         return False
     return manifest_id == f"echosync.{resolved_dir.name.lower()}"
 
@@ -171,7 +171,7 @@ def resolve_plugin_directory(
 def get_relative_entry_path(url_or_path: str) -> str:
     """
     Extracts the relative path within the plugin's install directory from
-    absolute paths, relative paths, or URL paths (e.g. `/api/v1/system/plugins/spotify/static/bundle.js` -> `static/bundle.js`).
+    absolute paths, relative paths, or URL paths (e.g. `/api/v1/system/plugins/example_plugin/static/bundle.js` -> `static/bundle.js`).
     """
     if not url_or_path:
         return ""
@@ -1197,7 +1197,7 @@ class PluginLoader:
         """Scan and load all plugins based on database definitions."""
         logger.info("Starting plugin discovery from database...")
 
-        safe_mode = os.environ.get("ECHOSYNC_SAFE_MODE") == "1" or config_manager.get("safe_mode") == True
+        safe_mode = os.environ.get("ECHOSYNC_SAFE_MODE") == "1" or bool(config_manager.get("safe_mode"))
         if safe_mode:
             logger.critical("SAFE MODE is active. Skipping community plugin discovery.")
             return
@@ -1385,7 +1385,6 @@ class PluginLoader:
                 """,
                     (version, capabilities_json, plugin_id),
                 )
-                updated = c.rowcount
                 conn.commit()
                 logger.info(f"Stamped version {version} and capabilities for plugin_id {plugin_id}")
             finally:

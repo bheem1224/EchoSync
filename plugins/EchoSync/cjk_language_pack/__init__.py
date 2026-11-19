@@ -429,11 +429,9 @@ def _persist_track_aliases(track_obj: Any, alias_entries: list[dict]) -> None:
     if not alias_entries:
         return
     try:
-        from sqlalchemy.orm import object_session
+        from core.nexus_framework.sdk import sdk
 
-        from core.nexus_framework.plugin_SDK import sdk
-
-        session = object_session(track_obj)
+        session = sdk.db.get_object_session(track_obj)
         if session is None:
             logger.warning(
                 "No ORM session on track_obj (ID %s) — TrackAlias write skipped.",
@@ -485,11 +483,9 @@ def _persist_artist_aliases(track_obj: Any, alias_entries: list[dict]) -> None:
     if not alias_entries:
         return
     try:
-        from sqlalchemy.orm import object_session
+        from core.nexus_framework.sdk import sdk
 
-        from core.nexus_framework.plugin_SDK import sdk
-
-        session = object_session(track_obj)
+        session = sdk.db.get_object_session(track_obj)
         if session is None:
             return
 
@@ -665,7 +661,9 @@ def _on_scoring_modifier(modifier: Any, **kwargs: Any) -> Any:
     # Step 2: strip everything that isn't a letter / Han character / digit so
     # full-width commas, spaces, hyphens, etc. are ignored entirely.
     # '点燃我，温暖你' → '点燃我温暖你'   '点燃我, 温暖你' → '点燃我温暖你'
-    _strip_punct = lambda s: re.sub(r"[^\w]", "", s, flags=re.UNICODE)
+    def _strip_punct(s: str) -> str:
+        return re.sub(r"[^\w]", "", s, flags=re.UNICODE)
+
     local_cmp = _strip_punct(local_drama)
     remote_cmp = _strip_punct(remote_drama)
 
@@ -843,13 +841,41 @@ def _on_post_metadata_enrichment(track_obj: Any) -> Any:
 def initialize_plugin() -> None:
     """Wire all hooks into the system. Called automatically on first import."""
     logger.info("CJK Language Pack: initializing hooks...")
-    hook_manager.add_filter("register_metadata_requirements", _on_register_metadata_requirements)
-    hook_manager.add_filter("pre_provider_search", _on_pre_provider_search)
-    hook_manager.add_filter("pre_normalize_text", _on_pre_normalize_text)
-    hook_manager.add_filter("pre_normalize_title", _on_pre_normalize_title)
-    hook_manager.add_filter("scoring_modifier", _on_scoring_modifier)
-    hook_manager.add_filter("search_expansion", _on_search_expansion)
-    hook_manager.add_filter("post_metadata_enrichment", _on_post_metadata_enrichment)
+    hook_manager.add_filter(
+        "register_metadata_requirements",
+        _on_register_metadata_requirements,
+        capability="pipeline:enrich",
+    )
+    hook_manager.add_filter(
+        "pre_provider_search",
+        _on_pre_provider_search,
+        capability="pipeline:intercept",
+    )
+    hook_manager.add_filter(
+        "pre_normalize_text",
+        _on_pre_normalize_text,
+        capability="pipeline:intercept",
+    )
+    hook_manager.add_filter(
+        "pre_normalize_title",
+        _on_pre_normalize_title,
+        capability="pipeline:intercept",
+    )
+    hook_manager.add_filter(
+        "scoring_modifier",
+        _on_scoring_modifier,
+        capability="pipeline:intercept",
+    )
+    hook_manager.add_filter(
+        "search_expansion",
+        _on_search_expansion,
+        capability="pipeline:intercept",
+    )
+    hook_manager.add_filter(
+        "post_metadata_enrichment",
+        _on_post_metadata_enrichment,
+        capability="pipeline:enrich",
+    )
     logger.info(
         "CJK Language Pack: registered hooks "
         "(register_metadata_requirements / pre_provider_search / "

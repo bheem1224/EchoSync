@@ -1030,7 +1030,7 @@ def test_wavin_flag_double_space_candidate_matching(tmp_path, monkeypatch):
         MusicDatabase,
         Track,
     )
-    from web.routes.playlists import _fetch_tier1_candidates
+    from services.playlist_sync import _fetch_tier1_candidates
 
     db = MusicDatabase(tmp_path / "test.db")
     Base.metadata.create_all(db.engine)
@@ -1088,7 +1088,7 @@ def test_seeb_remix_filepath_edition_detection(tmp_path, monkeypatch):
         MusicDatabase,
         Track,
     )
-    from web.routes.playlists import _fetch_tier1_candidates
+    from services.playlist_sync import _fetch_tier1_candidates
 
     db = MusicDatabase(tmp_path / "test.db")
     Base.metadata.create_all(db.engine)

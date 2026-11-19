@@ -37,10 +37,11 @@ from web.routes.media import router as media_bp
 from web.routes.media_server import router as media_server_bp
 
 # Batch 3A routers
-from web.routes.metadata import router as metadata_bp
 from web.routes.metadata_review import (
+    metadata_router as metadata_bp,
     review_tasks_router as review_tasks_bp,
     router as metadata_review_bp,
+    v1_metadata_router as v1_metadata_bp,
 )
 from web.routes.playlists import api_v1_router as playlists_v1_bp
 from web.routes.playlists import legacy_router as playlists_legacy_bp
@@ -339,6 +340,7 @@ def create_app(testing: bool = False) -> FastAPI:
     app.include_router(search_v1_bp)
     app.include_router(jobs_bp)
     app.include_router(metadata_bp)
+    app.include_router(v1_metadata_bp)
     app.include_router(metadata_review_bp)
     app.include_router(review_tasks_bp)
     app.include_router(local_metadata_bp)

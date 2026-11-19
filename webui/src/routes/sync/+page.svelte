@@ -1845,8 +1845,6 @@
     min-width: 180px;
   }
   .tracks-table-wrapper {
-    max-height: 450px;
-    overflow-y: auto;
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 10px;
     margin-top: 1.5rem;

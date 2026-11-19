@@ -71,9 +71,9 @@ class MatchResult:
     version_penalty_applied: float
     edition_penalty_applied: float
     reasoning: str  # Human-readable explanation
-    target_source: str | None = None  # e.g., plex, jellyfin
+    target_source: str | None = None  # Target provider namespace
     target_identifier: str | None = (
-        None  # Provider-opaque item ID (e.g. provider_item_id; ratingKey for Plex, item Id UUID for Jellyfin)
+        None  # Provider-opaque item ID (e.g. provider_item_id)
     )
     target_exists: bool = False  # True if identifier is present for target
     # Signals that this failed match is a likely alternate edition (Radio Edit vs.
@@ -876,7 +876,6 @@ class WeightedMatchingEngine:
         # Artist score
         artist_fuzzy_score = 0.0
         junction_role = None
-        junction_matched_name = None
         if getattr(source, "artist_name", None):
             j_score, j_role, j_name = self._check_track_artists_junction_match(source.artist_name, candidate)
             if j_score == 0.0 and getattr(candidate, "artist_name", None):
@@ -884,7 +883,6 @@ class WeightedMatchingEngine:
             if j_score > 0.0:
                 artist_fuzzy_score = j_score
                 junction_role = j_role
-                junction_matched_name = j_name
                 reasoning_parts.append(
                     f"Artist matched via track_artists junction: '{j_name}' (role={j_role}) -> artist_score={j_score:.2f}"
                 )
@@ -1025,7 +1023,7 @@ class WeightedMatchingEngine:
             )
 
         # ── Reverse Various Artists Amnesty ───────────────────────────────────
-        # Scenario: Spotify asks for a specific singer (e.g. 'Hu Xia') but the
+        # Scenario: Source provider asks for a specific singer (e.g. 'Hu Xia') but the
         # local file is part of an OST compilation tagged 'Various Artists'.
         # The raw_title of the local track carries a CJK drama-series marker
         # (e.g. '无题 - 网剧《山河令》插曲') that proves the track's provenance
@@ -1795,7 +1793,7 @@ class WeightedMatchingEngine:
 
         Args:
             target_track: The track we want to find
-            candidates: List of raw results from SlskdProvider
+            candidates: List of raw results from a DownloaderProvider
 
         Returns:
             The winning EchosyncTrack or None if no acceptable match found

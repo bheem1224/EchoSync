@@ -3,6 +3,7 @@
   import { feedback } from "../stores/feedback";
   import apiClient from "../api/client";
   import BackupSettings from "./BackupSettings.svelte";
+  import AdminUsersPanel from "../lib/components/AdminUsersPanel.svelte";
 
   let cpuUsage = $state(0);
   let systemCpuUsage = $state(0);
@@ -457,6 +458,12 @@
         Green: Configured • Amber: Available but not yet configured • Red:
         Disabled
       </p>
+    </article>
+
+    <article
+      class="lg:col-span-2 bg-gray-800 border border-gray-700/60 rounded-xl p-5 shadow-sm"
+    >
+      <AdminUsersPanel />
     </article>
 
     <article

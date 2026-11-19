@@ -1,7 +1,7 @@
 <script>
   import { onMount, onDestroy } from "svelte";
   import { goto } from "$app/navigation";
-  import apiClient, { API_BASE_URL } from "../../api/client";
+  import apiClient, { API_BASE_URL, getCookie } from "../../api/client";
   import { plugins } from "../../stores/plugins";
   import { player } from "../../stores/player";
 
@@ -58,14 +58,6 @@
     const m = Math.floor(seconds / 60);
     const s = seconds % 60;
     return `${m}:${s.toString().padStart(2, "0")}`;
-  }
-
-  function getCookie(name) {
-    if (typeof document === "undefined") return null;
-    const value = `; ${document.cookie}`;
-    const parts = value.split(`; ${name}=`);
-    if (parts.length === 2) return parts.pop().split(";").shift();
-    return null;
   }
 
   function appendStreamChunk(chunk) {
@@ -561,9 +553,10 @@
         results.settings = [];
       } else {
         if (term.trim() || pluginFilter) {
-          const csrfToken = getCookie("echo_csrf");
+          const csrfToken = getCookie("csrf_token") || getCookie("echo_csrf");
           const headers = {};
           if (csrfToken) {
+            headers["X-CSRF-Token"] = csrfToken;
             headers["X-Echo-CSRF"] = csrfToken;
           }
 

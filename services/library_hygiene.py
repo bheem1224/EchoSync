@@ -424,34 +424,35 @@ class DuplicateHygieneService:
         final_score = min_confidence
 
         if 80.0 <= final_score < 95.0:
-            from core.nexus_framework.plugin_loader import PluginRegistry
+            from core.enums import Capability
+            from core.nexus_framework.plugin_loader import get_plugin_by_capability
 
             try:
-                mb_plugin = PluginRegistry.create_instance("musicbrainz")
-                if mb_plugin:
+                meta_plugin = get_plugin_by_capability(Capability.FETCH_METADATA)
+                if meta_plugin and hasattr(meta_plugin, "get_metadata_batch"):
                     mbids = [getattr(t, "musicbrainz_id", None) for t in tracks if getattr(t, "musicbrainz_id", None)]
                     if mbids:
-                        mb_data = mb_plugin.get_metadata_batch(mbids)
-                        if mb_data:
+                        meta_data = meta_plugin.get_metadata_batch(mbids)
+                        if meta_data:
                             from rapidfuzz import fuzz
 
                             best_alignment = 0
                             for t in tracks:
-                                mb_record = mb_data.get(getattr(t, "musicbrainz_id", ""))
-                                if mb_record:
-                                    mb_title = mb_record.get("title") or ""
-                                    mb_album = mb_record.get("album") or ""
+                                meta_record = meta_data.get(getattr(t, "musicbrainz_id", ""))
+                                if meta_record:
+                                    rec_title = meta_record.get("title") or ""
+                                    rec_album = meta_record.get("album") or ""
                                     loc_title = t.title or ""
                                     loc_album = t.album.title if t.album else ""
                                     score = (
-                                        fuzz.ratio(mb_title.lower(), loc_title.lower())
-                                        + fuzz.ratio(mb_album.lower(), loc_album.lower())
+                                        fuzz.ratio(rec_title.lower(), loc_title.lower())
+                                        + fuzz.ratio(rec_album.lower(), loc_album.lower())
                                     ) / 2
                                     best_alignment = max(best_alignment, score)
 
                             if best_alignment > 85.0:
                                 final_score += 5.0
-                                reasoning_parts.append("MusicBrainz sanity check added +5.0 confidence.")
+                                reasoning_parts.append("Metadata provider sanity check added +5.0 confidence.")
             except Exception:
                 pass
 
@@ -796,3 +797,6 @@ class DuplicateHygieneService:
 
         logger.info(f"Stale track scan completed. Marked {updated_count} states as STALE.")
         return {"status": "success", "count": updated_count}
+
+
+LibraryHygieneService = DuplicateHygieneService

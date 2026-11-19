@@ -2,6 +2,7 @@
   import { isDownloadDrawerOpen, toggleDownloadDrawer } from '../../stores/ui';
   import { activeDownloadCount } from '../../stores/downloads';
   import { metadataQueue } from '../../stores/metadataQueue';
+  import { auth } from '../../stores/auth';
   import { page } from '$app/stores';
 
   export let title = "EchoSync";
@@ -64,6 +65,28 @@
     >
       <span class="text-base">⚙️</span>
     </a>
+
+    {#if $auth.authenticated && $auth.user}
+      <div class="flex items-center gap-1.5 pl-2 ml-1 border-l border-border-subtle">
+        <a
+          href="/settings/users"
+          class="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold bg-surface-hover text-text-primary hover:opacity-90 transition-all"
+          title="Users & Managed Accounts"
+        >
+          <span>👤</span>
+          <span>{$auth.user.username}</span>
+        </a>
+        <button
+          type="button"
+          class="px-2.5 py-1 rounded-lg text-xs font-semibold hover:bg-surface-hover text-text-muted hover:text-text-primary transition-all active:scale-95"
+          on:click={() => auth.logout()}
+          title="Sign Out"
+          aria-label="Sign Out"
+        >
+          Sign Out
+        </button>
+      </div>
+    {/if}
   </div>
 </header>
 

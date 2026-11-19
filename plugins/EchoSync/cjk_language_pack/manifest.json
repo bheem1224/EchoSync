@@ -11,11 +11,17 @@
       "mutate_aliases": true,
       "mutate_attributes": true
     },
+    "pipeline:enrich": true,
+    "pipeline:intercept": true,
     "network_domains": [
       "vgmdb.info",
       "musicbrainz.org"
     ]
   },
+  "capabilities": [
+    "pipeline:enrich",
+    "pipeline:intercept"
+  ],
   "requirements": [],
   "hooks": [],
   "min_echosync_version": "2.4.0",

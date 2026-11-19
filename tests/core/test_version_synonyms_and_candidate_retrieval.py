@@ -7,7 +7,7 @@ from core.matching_engine.matching_engine import WeightedMatchingEngine
 from core.matching_engine.scoring_profile import ExactSyncProfile
 from database.music_database import Album, Artist, Base, LocalMedia, Track
 from services.playlists_api import get_library_candidates
-from web.routes.playlists import _cmp_titles
+from core.matching_engine.text_utils import _cmp_titles
 
 
 def test_version_synonyms_piano_acoustic():

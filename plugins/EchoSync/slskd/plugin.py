@@ -76,52 +76,8 @@ def _resolve_task_id_from_payload(payload: dict[str, Any]) -> int | None:
     if not filename and not username:
         return None
 
-    norm_filename = filename.replace("\\", "/").split("/")[-1].strip().lower()
-
     try:
-        from core.database.models.working import DownloadQueue, DownloadStatus
-        from database.working_database import get_working_database
-
-        work_db = get_working_database()
-        with work_db.session_scope() as session:
-            # Look for active/downloading or verifying items
-            active_items = (
-                session.query(DownloadQueue)
-                .filter(
-                    DownloadQueue.status.in_(
-                        [
-                            DownloadStatus.DOWNLOADING.value,
-                            DownloadStatus.VERIFYING.value,
-                            DownloadStatus.QUEUED.value,
-                            DownloadStatus.SEARCHING.value,
-                            DownloadStatus.RETRYING.value,
-                            "downloading",
-                            "verifying",
-                            "queued",
-                            "searching",
-                            "retrying",
-                        ]
-                    )
-                )
-                .order_by(DownloadQueue.id.desc())
-                .all()
-            )
-
-            for item in active_items:
-                # Check candidate_id or provider_id (format: username|filename)
-                cand_id = item.active_candidate_id or item.plugin_id or ""
-                if cand_id:
-                    c_lower = cand_id.lower()
-                    if norm_filename and norm_filename in c_lower:
-                        return item.id
-                    if username and username.lower() in c_lower:
-                        return item.id
-
-                # Check echo_sync_track filename
-                track = item.echo_sync_track or {}
-                t_file = track.get("file_path") or track.get("title") or ""
-                if norm_filename and norm_filename in str(t_file).lower():
-                    return item.id
+        return sdk.working.resolve_active_download_task_id(filename=filename, username=username)
     except Exception as e:
         logger.warning("Error resolving task_id from payload: %s", e)
 
@@ -188,26 +144,9 @@ async def on_webhook_received(slug: str, payload: dict[str, Any]) -> None:
         # Transition DownloadQueue state to VERIFYING
         if task_id:
             try:
-                task_id = int(task_id) if str(task_id).isdigit() else task_id
-                import datetime
-
-                from core.database.models.working import DownloadQueue, DownloadStatus
-                from database.working_database import get_working_database
-
-                work_db = get_working_database()
                 with db_write_lease(task_name=f"plugin_{PLUGIN_CRC32}"):
-                    with work_db.session_scope() as session:
-                        task = session.get(DownloadQueue, task_id)
-                        if task:
-                            task.status = DownloadStatus.VERIFYING.value
-                            if file_path and task.echo_sync_track is not None:
-                                track_dict = dict(task.echo_sync_track)
-                                track_dict["downloaded_file_path"] = file_path
-                                task.echo_sync_track = track_dict
-                            task.updated_at = datetime.datetime.now(datetime.UTC)
-                            session.commit()
-                            session.refresh(task)
-                            logger.info("DownloadQueue %s transitioned to VERIFYING", task_id)
+                    if sdk.working.transition_download_to_verifying(task_id, file_path=file_path):
+                        logger.info("DownloadQueue %s transitioned to VERIFYING", task_id)
             except Exception as e:
                 logger.error("Failed to transition DownloadQueue %s to VERIFYING: %s", task_id, e)
 
@@ -284,18 +223,9 @@ async def _on_download_completed_or_failed(event_data: dict[str, Any]) -> None:
 
     if not username and task_id:
         try:
-            from core.database.models.working import DownloadQueue
-            from database.working_database import get_working_database
-
-            work_db = get_working_database()
-            with work_db.session_scope() as session:
-                item = session.get(DownloadQueue, int(task_id))
-                if item:
-                    cand = item.active_candidate_id or item.plugin_id or ""
-                    if "|" in cand:
-                        parts = cand.split("|", 1)
-                        username = parts[0]
-                        transfer_id = parts[1]
+            username, resolved_transfer_id = sdk.working.get_download_candidate_identity(task_id)
+            if resolved_transfer_id:
+                transfer_id = resolved_transfer_id
         except Exception as e:
             logger.debug("Could not lookup transfer identity for task %s: %s", task_id, e)
 

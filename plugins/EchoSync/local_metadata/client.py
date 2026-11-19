@@ -34,53 +34,35 @@ class LocalMetadataProvider(PluginBase):
         limit: int = 10,
         quality_profile: dict[str, Any] | None = None,
     ) -> list[EchosyncTrack]:
-        """Search the local MusicDatabase by title (and optionally artist)."""
-        db = self.sdk.storage.get_music_database()
-        # Support simple "artist - title" compound queries
+        """Search the local MusicDatabase by title (and optionally artist) via sdk.library."""
         artist: str | None = None
         title = query
         if " - " in query:
             parts = query.split(" - ", 1)
             artist, title = parts[0].strip(), parts[1].strip()
 
-        return db.search_canonical_fuzzy(title=title, artist=artist, limit=limit)
+        return self.sdk.library.search_fuzzy(title=title, artist=artist, limit=limit)
 
     def get_track(self, track_id: str) -> EchosyncTrack | None:
-        """Fetch a single track from the local MusicDatabase by its integer ID."""
-        from sqlalchemy.orm import joinedload
-
-        db = self.sdk.storage.get_music_database()
-        Track = self.models.Track
-
-        try:
-            tid = int(track_id)
-        except (TypeError, ValueError):
+        """Fetch a single track from the local MusicDatabase by its integer ID via sdk.library."""
+        record = self.sdk.library.get_track_record_by_id(track_id)
+        if not record:
             return None
-
-        with db.session_scope() as session:
-            t = (
-                session.query(Track)
-                .options(joinedload(Track.artist), joinedload(Track.album))
-                .filter(Track.id == tid)
-                .first()
-            )
-            if not t:
-                return None
-            return self.create_echo_sync_track(
-                title=t.title,
-                artist=t.artist.name if t.artist else "Unknown Artist",
-                album=t.album.title if t.album else "",
-                duration_ms=t.duration,
-                track_number=t.track_number,
-                disc_number=t.disc_number,
-                bitrate=t.bitrate,
-                file_path=t.file_path,
-                file_format=t.file_format,
-                isrc=t.isrc,
-                musicbrainz_id=t.musicbrainz_id,
-                provider_id=str(t.id),
-                source="EchoSync.local_metadata",
-            )
+        return self.create_echo_sync_track(
+            title=record["title"],
+            artist=record["artist"],
+            album=record["album"],
+            duration_ms=record["duration_ms"],
+            track_number=record["track_number"],
+            disc_number=record["disc_number"],
+            bitrate=record["bitrate"],
+            file_path=record["file_path"],
+            file_format=record["file_format"],
+            isrc=record["isrc"],
+            musicbrainz_id=record["musicbrainz_id"],
+            provider_id=str(record["id"]),
+            source="EchoSync.local_metadata",
+        )
 
     def get_album(self, album_id: str) -> dict[str, Any] | None:
         return None
