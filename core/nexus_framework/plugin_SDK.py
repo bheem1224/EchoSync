@@ -211,14 +211,15 @@ class _JobsSDKFacade:
 
 
 class _AccountsSDKFacade:
-    def get_token(self, account_id: int):
+    def get_token(self, account_id: int, *, principal: Any = None):
+        from core.security.rbac import get_current_principal
         from database.config_database import get_config_database
 
-        token = get_config_database().get_account_token(account_id)
-        if not token:
-            return None
+        active_principal = principal if principal is not None else get_current_principal()
+        if active_principal is not None:
+            active_principal.require("contract:accounts:secrets")
 
-        # Find actual calling module from stack frames
+        # Find actual calling module from stack frames to block plugin direct secret reads
         caller_mod = ""
         frame = inspect.currentframe()
         while frame:
@@ -232,6 +233,24 @@ class _AccountsSDKFacade:
                 caller_mod = mod
                 break
             frame = frame.f_back
+
+        is_host_or_bundled_core = (
+            not caller_mod
+            or caller_mod.startswith("core.")
+            or caller_mod.startswith("web.")
+            or caller_mod.startswith("services.")
+            or caller_mod.startswith("tests.")
+            or caller_mod.startswith("plugins.EchoSync.")
+        )
+        if not is_host_or_bundled_core:
+            raise PermissionError(
+                "Missing required capability scope: contract:accounts:secrets "
+                "(plugins must use the centralized OAuth Sidecar)."
+            )
+
+        token = get_config_database().get_account_token(account_id)
+        if not token:
+            return None
 
         # Core system and routes have host access
         if (
@@ -730,6 +749,8 @@ def check_plugin_permission(plugin_id: str, scope: str) -> bool:
     from database.config_database import get_config_database
 
     clean_scope = scope.strip()
+    if clean_scope.startswith("contract:accounts:secrets"):
+        return False
     is_base_scope = clean_scope in SAFE_BASE_SCOPES or clean_scope in (
         "read_library",
         "metadata",
@@ -2010,13 +2031,18 @@ class PluginBase(ABC):
             )
 
         # Create EchosyncTrack
+        from core.matching_engine.track_parser import normalize_track_dto
+        from core.models.entities import _coerce_duration_ms
+
         track_kwargs = dict(
             raw_title=title_str,
+            title=clean_title or title_str,
+            display_title=title_str,
             artist_name=artist_str,
             album_artist=album_artist,
             album_title=album_str,
             edition=edition,
-            duration=parsed_duration,
+            duration_ms=parsed_duration,
             track_number=parsed_track_number,
             disc_number=parsed_disc_number,
             release_year=year,
@@ -2050,6 +2076,7 @@ class PluginBase(ABC):
                 bitrate=bitrate,
                 sample_rate=sample_rate,
                 bit_depth=bit_depth,
+                duration_ms=parsed_duration,
                 file_size_bytes=file_size_bytes,
                 added_at=added_at,
             )
@@ -2061,12 +2088,15 @@ class PluginBase(ABC):
         # Add any valid EchosyncTrack fields from extra_fields
         import dataclasses
 
+        if "duration" in extra_fields and track_kwargs.get("duration_ms") is None:
+            track_kwargs["duration_ms"] = _coerce_duration_ms(None, extra_fields.get("duration"))
+
         valid_fields = {f.name for f in dataclasses.fields(EchosyncTrack)}
         for k, v in extra_fields.items():
             if k in valid_fields:
                 track_kwargs[k] = v
 
-        return EchosyncTrack(**track_kwargs)
+        return normalize_track_dto(EchosyncTrack(**track_kwargs))
 
     @staticmethod
     def extract_guid_identifier(guid_id: str, identifier_type: str) -> str | None:

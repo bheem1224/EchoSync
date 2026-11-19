@@ -178,7 +178,7 @@ class ConfigDatabase:
                         cursor.execute("DROP TABLE account_tokens")
                         cursor.execute("""
                             CREATE TABLE account_tokens (
-                                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                                id INTEGER PRIMARY KEY,
                                 account_id INTEGER NOT NULL UNIQUE,
                                 access_token TEXT NOT NULL,
                                 refresh_token TEXT,
@@ -200,7 +200,7 @@ class ConfigDatabase:
                         cursor.execute("DROP TABLE account_mappings")
                         cursor.execute("""
                             CREATE TABLE account_mappings (
-                                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                                id INTEGER PRIMARY KEY,
                                 source_account_id INTEGER NOT NULL,
                                 mapped_account_id INTEGER NOT NULL,
                                 created_at INTEGER DEFAULT (strftime('%s','now')),
@@ -241,7 +241,7 @@ class ConfigDatabase:
                         cursor.execute("ALTER TABLE services RENAME TO services_old")
                         cursor.execute("""
                             CREATE TABLE services (
-                                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                                id INTEGER PRIMARY KEY,
                                 name TEXT NOT NULL,
                                 plugin_id INTEGER UNIQUE,
                                 absolute_install_path TEXT,
@@ -298,7 +298,7 @@ class ConfigDatabase:
                 # Services
                 cursor.execute("""
                     CREATE TABLE IF NOT EXISTS services (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        id INTEGER PRIMARY KEY,
                         name TEXT NOT NULL,
                         plugin_id INTEGER UNIQUE,
                         absolute_install_path TEXT,
@@ -321,7 +321,7 @@ class ConfigDatabase:
                 # Service config (sensitive values allowed)
                 cursor.execute("""
                     CREATE TABLE IF NOT EXISTS service_config (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        id INTEGER PRIMARY KEY,
                         service_id INTEGER NOT NULL,
                         config_key TEXT NOT NULL,
                         config_value TEXT,
@@ -335,7 +335,7 @@ class ConfigDatabase:
                 # Accounts
                 cursor.execute("""
                     CREATE TABLE IF NOT EXISTS accounts (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        id INTEGER PRIMARY KEY,
                         service_id INTEGER NOT NULL,
                         account_name TEXT,
                         display_name TEXT,
@@ -352,7 +352,7 @@ class ConfigDatabase:
                 # Account tokens
                 cursor.execute("""
                     CREATE TABLE IF NOT EXISTS account_tokens (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        id INTEGER PRIMARY KEY,
                         account_id INTEGER NOT NULL UNIQUE,
                         access_token TEXT NOT NULL,
                         refresh_token TEXT,
@@ -385,7 +385,7 @@ class ConfigDatabase:
                 # Account Mappings (Agnostic Node Mapping)
                 cursor.execute("""
                     CREATE TABLE IF NOT EXISTS account_mappings (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        id INTEGER PRIMARY KEY,
                         source_account_id INTEGER NOT NULL,
                         mapped_account_id INTEGER NOT NULL,
                         created_at INTEGER DEFAULT (strftime('%s','now')),
@@ -404,7 +404,7 @@ class ConfigDatabase:
 
                 cursor.execute("""
                     CREATE TABLE IF NOT EXISTS plugin_snapshots (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        id INTEGER PRIMARY KEY,
                         plugin_id INTEGER NOT NULL UNIQUE,
                         snapshot_data TEXT NOT NULL,
                         expires_at INTEGER NOT NULL,
@@ -415,7 +415,7 @@ class ConfigDatabase:
                 # UI Component Registry (Sprint 6 — replaces live ui_manifest.json disk parsing)
                 cursor.execute("""
                     CREATE TABLE IF NOT EXISTS ui_components (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        id INTEGER PRIMARY KEY,
                         plugin_id INTEGER,
                         tag_name TEXT NOT NULL UNIQUE,
                         component_type TEXT NOT NULL,
@@ -443,13 +443,82 @@ class ConfigDatabase:
 
                 cursor.execute("""
                     CREATE TABLE IF NOT EXISTS quality_profile_steps (
-                        id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+                        id INTEGER NOT NULL PRIMARY KEY,
                         profile_id VARCHAR NOT NULL,
                         priority INTEGER NOT NULL,
                         rules JSON,
                         FOREIGN KEY(profile_id) REFERENCES quality_profiles (id) ON DELETE CASCADE
                     )
                 """)
+
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS users (
+                        id TEXT PRIMARY KEY,
+                        username TEXT UNIQUE NOT NULL,
+                        password_hash TEXT,
+                        auth_provider TEXT NOT NULL DEFAULT 'local',
+                        oidc_subject TEXT UNIQUE,
+                        is_active INTEGER NOT NULL DEFAULT 1,
+                        created_at INTEGER DEFAULT (strftime('%s','now'))
+                    )
+                """)
+
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS roles (
+                        id INTEGER PRIMARY KEY,
+                        name TEXT UNIQUE NOT NULL,
+                        is_system INTEGER NOT NULL DEFAULT 0,
+                        permissions_json TEXT NOT NULL
+                    )
+                """)
+
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS user_role_assignments (
+                        user_id TEXT NOT NULL,
+                        role_id INTEGER NOT NULL,
+                        PRIMARY KEY (user_id, role_id),
+                        FOREIGN KEY(user_id) REFERENCES users (id) ON DELETE CASCADE,
+                        FOREIGN KEY(role_id) REFERENCES roles (id) ON DELETE CASCADE
+                    ) WITHOUT ROWID
+                """)
+
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS user_managed_accounts (
+                        user_id TEXT NOT NULL,
+                        server_plugin_id INTEGER NOT NULL,
+                        managed_account_id TEXT NOT NULL,
+                        PRIMARY KEY (user_id, server_plugin_id, managed_account_id),
+                        FOREIGN KEY(user_id) REFERENCES users (id) ON DELETE CASCADE
+                    ) WITHOUT ROWID
+                """)
+
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS api_keys (
+                        id TEXT PRIMARY KEY,
+                        user_id TEXT NOT NULL,
+                        name TEXT NOT NULL,
+                        key_prefix TEXT NOT NULL,
+                        key_hash TEXT NOT NULL,
+                        scopes_json TEXT NOT NULL,
+                        expires_at INTEGER,
+                        revoked_at INTEGER,
+                        created_at INTEGER DEFAULT (strftime('%s','now')),
+                        FOREIGN KEY(user_id) REFERENCES users (id) ON DELETE CASCADE
+                    )
+                """)
+
+                cursor.execute("CREATE INDEX IF NOT EXISTS ix_api_keys_user_id ON api_keys(user_id)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS ix_api_keys_key_prefix ON api_keys(key_prefix)")
+
+                # Seed built-in system roles
+                import json as _json
+                from core.security.rbac import SYSTEM_ROLE_PERMISSIONS
+
+                for role_name, role_perms in SYSTEM_ROLE_PERMISSIONS.items():
+                    cursor.execute(
+                        "INSERT OR IGNORE INTO roles (name, is_system, permissions_json) VALUES (?, 1, ?)",
+                        (role_name, _json.dumps(list(role_perms))),
+                    )
 
                 # Migration: Add missing columns to services table if they don't exist
                 cursor.execute("PRAGMA table_info(services)")
@@ -466,6 +535,11 @@ class ConfigDatabase:
                     cursor.execute("ALTER TABLE services ADD COLUMN capabilities TEXT DEFAULT '{}'")
                 if "channel_preference" not in columns:
                     cursor.execute("ALTER TABLE services ADD COLUMN channel_preference TEXT DEFAULT 'inherit'")
+                if "granted_scopes" not in columns:
+                    cursor.execute("ALTER TABLE services ADD COLUMN granted_scopes TEXT DEFAULT '[]'")
+                    cursor.execute(
+                        "UPDATE services SET granted_scopes = COALESCE(permissions, '[]') WHERE granted_scopes IS NULL"
+                    )
 
                 # Cleanup: Drop deprecated tables
                 cursor.execute("DROP TABLE IF EXISTS accounts_metadata")
@@ -647,6 +721,7 @@ class ConfigDatabase:
         privileged_mode: int | None = None,
         permissions: str | None = None,
         capabilities: str | None = None,
+        granted_scopes: str | None = None,
     ) -> int:
         import binascii
 
@@ -690,8 +765,8 @@ class ConfigDatabase:
                 execute_write_sql(
                     str(self.database_path),
                     """
-                    INSERT INTO services(name, service_type, description, absolute_install_path, loaded_modules, plugin_id, version, is_active, beta_opt_in, verified_source, privileged_mode, permissions, capabilities)
-                    VALUES(?,?,?,?,?,?,?,1,COALESCE(?, 0),COALESCE(?, 0),COALESCE(?, 0),COALESCE(?, '[]'),COALESCE(?, '{}'))
+                    INSERT INTO services(name, service_type, description, absolute_install_path, loaded_modules, plugin_id, version, is_active, beta_opt_in, verified_source, privileged_mode, permissions, capabilities, granted_scopes)
+                    VALUES(?,?,?,?,?,?,?,1,COALESCE(?, 0),COALESCE(?, 0),COALESCE(?, 0),COALESCE(?, '[]'),COALESCE(?, '{}'),COALESCE(?, ?, '[]'))
                     ON CONFLICT(plugin_id) DO UPDATE SET 
                         name=excluded.name,
                         absolute_install_path=excluded.absolute_install_path,
@@ -703,6 +778,7 @@ class ConfigDatabase:
                         privileged_mode=COALESCE(excluded.privileged_mode, services.privileged_mode, 0),
                         permissions=COALESCE(excluded.permissions, services.permissions, '[]'),
                         capabilities=COALESCE(excluded.capabilities, services.capabilities, '{}'),
+                        granted_scopes=COALESCE(?, services.granted_scopes, '[]'),
                         updated_at=strftime('%s','now')
                     """,
                     (
@@ -718,7 +794,10 @@ class ConfigDatabase:
                         privileged_mode,
                         permissions,
                         capabilities,
+                        granted_scopes,
+                        permissions,
                         beta_opt_in,
+                        granted_scopes,
                     ),
                 )
         except Exception as e:
@@ -1898,6 +1977,536 @@ class ConfigDatabase:
         except Exception as e:
             logger.error(f"Error deleting quality profile '{profile_id}': {e}")
             return False
+
+    # --- Local-First Auth, RBAC, API Keys & Managed Accounts ---
+
+    def _hydrate_user_row(self, conn: sqlite3.Connection, user_row: sqlite3.Row | tuple) -> dict[str, Any]:
+        import json
+
+        row_dict = dict(user_row) if hasattr(user_row, "keys") else {
+            "id": user_row[0],
+            "username": user_row[1],
+            "auth_provider": user_row[2],
+            "oidc_subject": user_row[3],
+            "is_active": user_row[4],
+            "created_at": user_row[5],
+        }
+        c = conn.cursor()
+        c.execute(
+            """
+            SELECT r.name, r.permissions_json
+            FROM roles r
+            JOIN user_role_assignments ura ON ura.role_id = r.id
+            WHERE ura.user_id = ?
+            ORDER BY r.name ASC
+            """,
+            (row_dict["id"],),
+        )
+        roles: list[str] = []
+        scopes: set[str] = set()
+        for r_name, perms_json in c.fetchall():
+            roles.append(r_name)
+            try:
+                perms = json.loads(perms_json or "[]")
+                if isinstance(perms, list):
+                    scopes.update(str(p) for p in perms if p)
+            except Exception:
+                pass
+        return {
+            "id": row_dict["id"],
+            "username": row_dict["username"],
+            "auth_provider": row_dict["auth_provider"],
+            "oidc_subject": row_dict["oidc_subject"],
+            "is_active": bool(row_dict["is_active"]),
+            "created_at": row_dict["created_at"],
+            "roles": roles,
+            "scopes": sorted(scopes),
+        }
+
+    def has_any_users(self) -> bool:
+        try:
+            with self._get_connection() as conn:
+                c = conn.cursor()
+                c.execute("SELECT 1 FROM users LIMIT 1")
+                return c.fetchone() is not None
+        except Exception:
+            return False
+
+    def has_admin_user(self) -> bool:
+        try:
+            with self._get_connection() as conn:
+                c = conn.cursor()
+                c.execute(
+                    """
+                    SELECT 1
+                    FROM users u
+                    JOIN user_role_assignments ura ON ura.user_id = u.id
+                    JOIN roles r ON r.id = ura.role_id
+                    WHERE r.name = 'admin' AND u.is_active = 1
+                    LIMIT 1
+                    """
+                )
+                return c.fetchone() is not None
+        except Exception:
+            return False
+
+    def is_setup_required(self) -> bool:
+        return not self.has_admin_user()
+
+    def seed_system_roles(self) -> None:
+        import json
+        from core.security.rbac import SYSTEM_ROLE_PERMISSIONS
+        from core.task_manager import db_write_lease
+
+        def _seed(cursor):
+            for role_name, role_perms in SYSTEM_ROLE_PERMISSIONS.items():
+                cursor.execute(
+                    "INSERT OR IGNORE INTO roles (name, is_system, permissions_json) VALUES (?, 1, ?)",
+                    (role_name, json.dumps(list(role_perms))),
+                )
+
+        with db_write_lease(task_name="seed_system_roles"):
+            execute_write(str(self.database_path), _seed)
+
+    def create_user(
+        self,
+        username: str,
+        password: str | None = None,
+        *,
+        auth_provider: str = "local",
+        oidc_subject: str | None = None,
+        roles: list[str] | tuple[str, ...] | None = None,
+        is_active: bool = True,
+    ) -> dict[str, Any]:
+        import json
+        import uuid
+        from core.security.passwords import hash_password
+        from core.security.rbac import SYSTEM_ROLE_PERMISSIONS
+        from core.task_manager import db_write_lease
+
+        clean_username = str(username).strip()
+        if not clean_username:
+            raise ValueError("Username cannot be empty.")
+
+        pw_hash = None
+        if password is not None:
+            pw_hash = hash_password(password, validate_policy=True)
+        elif auth_provider == "local":
+            raise ValueError("Password is required for local accounts.")
+
+        target_roles = list(dict.fromkeys(roles or ["member"]))
+        user_id = str(uuid.uuid4())
+
+        def _insert(cursor):
+            for r_name in target_roles:
+                default_perms = list(SYSTEM_ROLE_PERMISSIONS.get(r_name, ()))
+                cursor.execute(
+                    "INSERT OR IGNORE INTO roles (name, is_system, permissions_json) VALUES (?, ?, ?)",
+                    (r_name, 1 if r_name in SYSTEM_ROLE_PERMISSIONS else 0, json.dumps(default_perms)),
+                )
+
+            cursor.execute(
+                """
+                INSERT INTO users (id, username, password_hash, auth_provider, oidc_subject, is_active)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (user_id, clean_username, pw_hash, auth_provider, oidc_subject, 1 if is_active else 0),
+            )
+            for r_name in target_roles:
+                cursor.execute("SELECT id FROM roles WHERE name = ?", (r_name,))
+                role_row = cursor.fetchone()
+                if role_row:
+                    cursor.execute(
+                        "INSERT OR IGNORE INTO user_role_assignments (user_id, role_id) VALUES (?, ?)",
+                        (user_id, role_row[0]),
+                    )
+
+        with db_write_lease(task_name=f"create_user_{clean_username}"):
+            execute_write(str(self.database_path), _insert)
+
+        created = self.get_user_by_id(user_id)
+        if not created:
+            raise RuntimeError("User creation failed unexpectedly.")
+        return created
+
+    def get_user_by_id(self, user_id: str) -> dict[str, Any] | None:
+        try:
+            with self._get_connection() as conn:
+                c = conn.cursor()
+                c.execute(
+                    "SELECT id, username, auth_provider, oidc_subject, is_active, created_at FROM users WHERE id = ?",
+                    (str(user_id),),
+                )
+                row = c.fetchone()
+                if not row:
+                    return None
+                return self._hydrate_user_row(conn, row)
+        except Exception:
+            return None
+
+    def get_user_by_username(self, username: str) -> dict[str, Any] | None:
+        try:
+            with self._get_connection() as conn:
+                c = conn.cursor()
+                c.execute(
+                    "SELECT id, username, auth_provider, oidc_subject, is_active, created_at FROM users WHERE LOWER(username) = LOWER(?)",
+                    (str(username).strip(),),
+                )
+                row = c.fetchone()
+                if not row:
+                    return None
+                return self._hydrate_user_row(conn, row)
+        except Exception:
+            return None
+
+    def get_user_by_oidc_subject(self, oidc_subject: str) -> dict[str, Any] | None:
+        try:
+            with self._get_connection() as conn:
+                c = conn.cursor()
+                c.execute(
+                    "SELECT id, username, auth_provider, oidc_subject, is_active, created_at FROM users WHERE oidc_subject = ?",
+                    (str(oidc_subject),),
+                )
+                row = c.fetchone()
+                if not row:
+                    return None
+                return self._hydrate_user_row(conn, row)
+        except Exception:
+            return None
+
+    def authenticate_local_user(self, username: str, password: str) -> dict[str, Any] | None:
+        from core.security.passwords import verify_password
+
+        if not username or not password:
+            return None
+        try:
+            with self._get_connection() as conn:
+                c = conn.cursor()
+                c.execute(
+                    """
+                    SELECT id, username, password_hash, auth_provider, oidc_subject, is_active, created_at
+                    FROM users
+                    WHERE LOWER(username) = LOWER(?)
+                    """,
+                    (str(username).strip(),),
+                )
+                row = c.fetchone()
+                if not row:
+                    return None
+                is_active = bool(row["is_active"])
+                pw_hash = row["password_hash"]
+                if not is_active or not pw_hash:
+                    return None
+                if not verify_password(password, pw_hash):
+                    return None
+                return self._hydrate_user_row(conn, {
+                    "id": row["id"],
+                    "username": row["username"],
+                    "auth_provider": row["auth_provider"],
+                    "oidc_subject": row["oidc_subject"],
+                    "is_active": row["is_active"],
+                    "created_at": row["created_at"],
+                })
+        except Exception as e:
+            logger.error(f"Error authenticating user '{username}': {e}")
+            return None
+
+    def list_users(self) -> list[dict[str, Any]]:
+        try:
+            with self._get_connection() as conn:
+                c = conn.cursor()
+                c.execute(
+                    "SELECT id, username, auth_provider, oidc_subject, is_active, created_at FROM users ORDER BY created_at ASC, username ASC"
+                )
+                return [self._hydrate_user_row(conn, r) for r in c.fetchall()]
+        except Exception:
+            return []
+
+    def assign_user_roles(self, user_id: str, role_names: list[str]) -> bool:
+        import json
+        from core.security.rbac import SYSTEM_ROLE_PERMISSIONS
+        from core.task_manager import db_write_lease
+
+        if not self.get_user_by_id(user_id):
+            return False
+
+        clean_roles = list(dict.fromkeys(str(r).strip() for r in role_names if str(r).strip()))
+
+        def _assign(cursor):
+            cursor.execute("DELETE FROM user_role_assignments WHERE user_id = ?", (user_id,))
+            for r_name in clean_roles:
+                cursor.execute("SELECT id FROM roles WHERE name = ?", (r_name,))
+                row = cursor.fetchone()
+                if not row and r_name in SYSTEM_ROLE_PERMISSIONS:
+                    cursor.execute(
+                        "INSERT INTO roles (name, is_system, permissions_json) VALUES (?, 1, ?)",
+                        (r_name, json.dumps(list(SYSTEM_ROLE_PERMISSIONS[r_name]))),
+                    )
+                    cursor.execute("SELECT id FROM roles WHERE name = ?", (r_name,))
+                    row = cursor.fetchone()
+                if row:
+                    cursor.execute(
+                        "INSERT OR IGNORE INTO user_role_assignments (user_id, role_id) VALUES (?, ?)",
+                        (user_id, row[0]),
+                    )
+
+        with db_write_lease(task_name=f"assign_roles_{user_id}"):
+            execute_write(str(self.database_path), _assign)
+        return True
+
+    def provision_or_link_oidc_user(
+        self,
+        *,
+        oidc_subject: str,
+        username: str,
+        role_names: list[str] | None = None,
+    ) -> dict[str, Any]:
+        from core.task_manager import db_write_lease
+
+        target_roles = role_names or ["member"]
+        existing = self.get_user_by_oidc_subject(oidc_subject)
+        if existing:
+            if not existing["is_active"]:
+                raise PermissionError("User account is disabled.")
+            self.assign_user_roles(existing["id"], target_roles)
+            return self.get_user_by_id(existing["id"]) or existing
+
+        # Link by username only if account does not already belong to another OIDC subject
+        by_name = self.get_user_by_username(username)
+        if by_name and not by_name.get("oidc_subject"):
+            def _link(cursor):
+                cursor.execute(
+                    "UPDATE users SET oidc_subject = ?, auth_provider = 'oidc' WHERE id = ?",
+                    (oidc_subject, by_name["id"]),
+                )
+
+            with db_write_lease(task_name=f"link_oidc_{by_name['id']}"):
+                execute_write(str(self.database_path), _link)
+            self.assign_user_roles(by_name["id"], target_roles)
+            return self.get_user_by_id(by_name["id"]) or by_name
+
+        candidate_username = username
+        if by_name is not None:
+            candidate_username = f"{username}_{oidc_subject[:8]}"
+
+        return self.create_user(
+            username=candidate_username,
+            password=None,
+            auth_provider="oidc",
+            oidc_subject=oidc_subject,
+            roles=target_roles,
+        )
+
+    def list_roles(self) -> list[dict[str, Any]]:
+        import json
+
+        try:
+            with self._get_connection() as conn:
+                c = conn.cursor()
+                c.execute("SELECT id, name, is_system, permissions_json FROM roles ORDER BY id ASC")
+                out = []
+                for row in c.fetchall():
+                    perms = json.loads(row["permissions_json"] or "[]")
+                    out.append(
+                        {
+                            "id": row["id"],
+                            "name": row["name"],
+                            "is_system": bool(row["is_system"]),
+                            "permissions": perms,
+                        }
+                    )
+                return out
+        except Exception:
+            return []
+
+    def create_api_key(
+        self,
+        *,
+        user_id: str,
+        name: str,
+        scopes: list[str] | tuple[str, ...],
+        expires_at: int | None = None,
+    ) -> dict[str, Any]:
+        import json
+        import uuid
+        from core.security.tokens import generate_api_key
+        from core.task_manager import db_write_lease
+
+        if not self.get_user_by_id(user_id):
+            raise ValueError(f"Unknown user_id: {user_id}")
+
+        key_id = str(uuid.uuid4())
+        raw_key, key_prefix, key_hash = generate_api_key()
+        clean_scopes = sorted(set(str(s).strip() for s in scopes if str(s).strip()))
+
+        with db_write_lease(task_name=f"create_api_key_{user_id}"):
+            execute_write_sql(
+                str(self.database_path),
+                """
+                INSERT INTO api_keys (id, user_id, name, key_prefix, key_hash, scopes_json, expires_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (key_id, user_id, name.strip(), key_prefix, key_hash, json.dumps(clean_scopes), expires_at),
+            )
+
+        return {
+            "id": key_id,
+            "user_id": user_id,
+            "name": name.strip(),
+            "key_prefix": key_prefix,
+            "api_key": raw_key,
+            "scopes": clean_scopes,
+            "expires_at": expires_at,
+        }
+
+    def list_api_keys(self, user_id: str | None = None) -> list[dict[str, Any]]:
+        import json
+
+        try:
+            with self._get_connection() as conn:
+                c = conn.cursor()
+                if user_id:
+                    c.execute(
+                        """
+                        SELECT id, user_id, name, key_prefix, scopes_json, expires_at, revoked_at, created_at
+                        FROM api_keys WHERE user_id = ? ORDER BY created_at DESC
+                        """,
+                        (user_id,),
+                    )
+                else:
+                    c.execute(
+                        """
+                        SELECT id, user_id, name, key_prefix, scopes_json, expires_at, revoked_at, created_at
+                        FROM api_keys ORDER BY created_at DESC
+                        """
+                    )
+                return [
+                    {
+                        "id": r["id"],
+                        "user_id": r["user_id"],
+                        "name": r["name"],
+                        "key_prefix": r["key_prefix"],
+                        "scopes": json.loads(r["scopes_json"] or "[]"),
+                        "expires_at": r["expires_at"],
+                        "revoked_at": r["revoked_at"],
+                        "created_at": r["created_at"],
+                    }
+                    for r in c.fetchall()
+                ]
+        except Exception:
+            return []
+
+    def revoke_api_key(self, key_id: str, *, user_id: str | None = None) -> bool:
+        import time as _time
+        from core.task_manager import db_write_lease
+
+        now = int(_time.time())
+        with db_write_lease(task_name=f"revoke_api_key_{key_id}"):
+            if user_id:
+                execute_write_sql(
+                    str(self.database_path),
+                    "UPDATE api_keys SET revoked_at = ? WHERE id = ? AND user_id = ? AND revoked_at IS NULL",
+                    (now, key_id, user_id),
+                )
+            else:
+                execute_write_sql(
+                    str(self.database_path),
+                    "UPDATE api_keys SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL",
+                    (now, key_id),
+                )
+        keys = self.list_api_keys(user_id=user_id)
+        return any(k["id"] == key_id and k["revoked_at"] is not None for k in keys)
+
+    def verify_api_key(self, raw_key: str) -> tuple[dict[str, Any], list[str]] | None:
+        import hmac as _hmac
+        import json
+        import time as _time
+        from core.security.tokens import hash_api_key
+
+        if not raw_key or not raw_key.startswith("es_"):
+            return None
+        prefix = raw_key[:11]
+        candidate_hash = hash_api_key(raw_key)
+        now = int(_time.time())
+        try:
+            with self._get_connection() as conn:
+                c = conn.cursor()
+                c.execute(
+                    """
+                    SELECT id, user_id, key_hash, scopes_json, expires_at, revoked_at
+                    FROM api_keys
+                    WHERE key_prefix = ?
+                    """,
+                    (prefix,),
+                )
+                for row in c.fetchall():
+                    if row["revoked_at"] is not None:
+                        continue
+                    if row["expires_at"] is not None and int(row["expires_at"]) <= now:
+                        continue
+                    if _hmac.compare_digest(candidate_hash, row["key_hash"]):
+                        user = self.get_user_by_id(row["user_id"])
+                        if not user or not user["is_active"]:
+                            return None
+                        scopes = [str(s) for s in json.loads(row["scopes_json"] or "[]")]
+                        return user, scopes
+        except Exception:
+            return None
+        return None
+
+    def assign_managed_account(self, user_id: str, server_plugin_id: int, managed_account_id: str) -> bool:
+        from core.task_manager import db_write_lease
+
+        if not self.get_user_by_id(user_id):
+            return False
+        with db_write_lease(task_name=f"assign_managed_account_{user_id}"):
+            execute_write_sql(
+                str(self.database_path),
+                """
+                INSERT OR IGNORE INTO user_managed_accounts (user_id, server_plugin_id, managed_account_id)
+                VALUES (?, ?, ?)
+                """,
+                (user_id, int(server_plugin_id), str(managed_account_id)),
+            )
+        return True
+
+    def remove_managed_account(self, user_id: str, server_plugin_id: int, managed_account_id: str) -> bool:
+        from core.task_manager import db_write_lease
+
+        with db_write_lease(task_name=f"remove_managed_account_{user_id}"):
+            execute_write_sql(
+                str(self.database_path),
+                """
+                DELETE FROM user_managed_accounts
+                WHERE user_id = ? AND server_plugin_id = ? AND managed_account_id = ?
+                """,
+                (user_id, int(server_plugin_id), str(managed_account_id)),
+            )
+        return True
+
+    def get_user_managed_accounts(self, user_id: str) -> list[dict[str, Any]]:
+        try:
+            with self._get_connection() as conn:
+                c = conn.cursor()
+                c.execute(
+                    """
+                    SELECT user_id, server_plugin_id, managed_account_id
+                    FROM user_managed_accounts
+                    WHERE user_id = ?
+                    ORDER BY server_plugin_id ASC, managed_account_id ASC
+                    """,
+                    (user_id,),
+                )
+                return [
+                    {
+                        "user_id": r["user_id"],
+                        "server_plugin_id": int(r["server_plugin_id"]),
+                        "managed_account_id": r["managed_account_id"],
+                    }
+                    for r in c.fetchall()
+                ]
+        except Exception:
+            return []
 
 
 _config_db: ConfigDatabase | None = None

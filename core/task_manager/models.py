@@ -16,6 +16,7 @@ class PluginLifecycleState(str, Enum):
     INITIALIZING = "initializing"
     READY = "ready"
     DEGRADED = "degraded"
+    AWAITING_CONSENT = "awaiting_consent"
     ERROR = "error"
 
 

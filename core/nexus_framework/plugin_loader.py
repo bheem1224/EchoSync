@@ -37,6 +37,46 @@ def compute_plugin_crc32(namespace: str) -> int:
     return zlib.crc32(clean_ns.encode("utf-8")) & 0xFFFFFFFF
 
 
+BUNDLED_CORE_PLUGIN_ALLOWLIST: frozenset[str] = frozenset(
+    {
+        "echosync.acoustid",
+        "echosync.cjk_language_pack",
+        "echosync.jellyfin",
+        "echosync.listenbrainz",
+        "echosync.local_metadata",
+        "echosync.local_player",
+        "echosync.local_server",
+        "echosync.lrclib",
+        "echosync.musicbrainz",
+        "echosync.navidrome",
+        "echosync.outbound_gateway",
+        "echosync.plex",
+        "echosync.slskd",
+        "echosync.spotify",
+        "echosync.tidal",
+    }
+)
+
+
+def _is_allowlisted_core_plugin(plugin_dir: Path, manifest_data: dict[str, Any]) -> bool:
+    """Return True only when plugin_dir is a direct, allowlisted bundled EchoSync plugin matching its manifest."""
+    if not isinstance(manifest_data, dict):
+        return False
+    core_plugins_dir = (Path(__file__).resolve().parents[2] / "plugins" / "EchoSync").resolve()
+    try:
+        resolved_dir = plugin_dir.resolve()
+        if resolved_dir.parent != core_plugins_dir:
+            return False
+    except Exception:
+        return False
+
+    manifest_id = str(manifest_data.get("id") or "").strip().lower()
+    author = str(manifest_data.get("author") or "").strip()
+    if author != "EchoSync" or manifest_id not in BUNDLED_CORE_PLUGIN_ALLOWLIST:
+        return False
+    return manifest_id == f"echosync.{resolved_dir.name.lower()}"
+
+
 def _hydrate_manifest_permissions(plugin_id: int, manifest_permissions: Any) -> Any:
     """Restore permissions only when the registry record has been blanked."""
     if not manifest_permissions:
@@ -612,7 +652,7 @@ class PluginLoader:
             c = conn.cursor()
             try:
                 c.execute(
-                    "SELECT absolute_install_path, name, channel_preference, beta_opt_in FROM services WHERE plugin_id=?",
+                    "SELECT absolute_install_path, name, channel_preference, beta_opt_in, granted_scopes, permissions FROM services WHERE plugin_id=?",
                     (plugin_id,),
                 )
             except sqlite3.OperationalError:
@@ -621,10 +661,14 @@ class PluginLoader:
                     (plugin_id,),
                 )
             row = c.fetchone()
+            granted_raw = None
+            fallback_perms_raw = None
             if row and row["name"]:
                 install_path = row["absolute_install_path"]
                 base_ns = row["name"]
                 row_keys = row.keys() if hasattr(row, "keys") else []
+                granted_raw = row["granted_scopes"] if "granted_scopes" in row_keys else None
+                fallback_perms_raw = row["permissions"] if "permissions" in row_keys else None
                 pref = (
                     row["channel_preference"]
                     if "channel_preference" in row_keys and row["channel_preference"]
@@ -699,8 +743,6 @@ class PluginLoader:
                 )
                 row = c.fetchone()
                 if row and row[0]:
-                    import json
-
                     try:
                         modules_to_purge.update(json.loads(row[0]))
                     except Exception:
@@ -743,8 +785,48 @@ class PluginLoader:
         except Exception as e:
             logger.error(f"Failed during memory purge during reload: {e}")
 
-        # 4. Reload Package
+        # 4. Consent Gate & Reload Package
         try:
+            from core.nexus_framework.permissions import evaluate_manifest_consent
+            from core.security import is_privileged_or_verified
+
+            manifest_path = plugin_dir / "manifest.json"
+            manifest_data = {}
+            if manifest_path.exists():
+                try:
+                    manifest_data = json.loads(manifest_path.read_text(encoding="utf-8"))
+                except Exception:
+                    manifest_data = {}
+
+            escalations = evaluate_manifest_consent(manifest_data, granted_raw, fallback_perms_raw)
+            if escalations:
+                from core.task_manager import PluginLifecycleState, plugin_state_manager
+
+                plugin_state_manager.set_state(
+                    clean_ns,
+                    PluginLifecycleState.AWAITING_CONSENT,
+                    f"Reload blocked awaiting consent for scopes: {[e.get('scope') for e in escalations]}",
+                )
+                return False
+
+            wasm_file = plugin_dir / "main.wasm"
+            if manifest_data and not wasm_file.exists() and not is_privileged_or_verified(manifest_data):
+                priv_flag = bool(
+                    manifest_data.get("privileged") is True
+                    or manifest_data.get("privileged_mode") is True
+                    or (
+                        isinstance(manifest_data.get("permissions"), dict)
+                        and manifest_data.get("permissions", {}).get("privileged_mode") is True
+                    )
+                )
+                if not self._security_scan_package(plugin_dir, clean_ns, privileged=priv_flag):
+                    from core.task_manager import PluginLifecycleState, plugin_state_manager
+
+                    plugin_state_manager.set_state(
+                        clean_ns, PluginLifecycleState.ERROR, "Plugin failed security scanner on reload."
+                    )
+                    return False
+
             disabled = config_manager.get_disabled_plugins()
             is_disabled = clean_ns in disabled or str(plugin_id) in disabled
 
@@ -1021,14 +1103,18 @@ class PluginLoader:
                         logger.info(
                             f"Registering missing canonical plugin {m_data.get('id', plugin_item.name)} (CRC32: {c_crc})"
                         )
-                        from core.nexus_framework.permissions import seed_base_permissions
+                        from core.nexus_framework.permissions import build_granted_scopes_payload
+                        from core.security import is_privileged_or_verified
 
-                        seeded_manifest_perms = seed_base_permissions(m_data.get("permissions", {}))
+                        granted_payload = build_granted_scopes_payload(m_data)
+                        serialized_perms = json.dumps(granted_payload)
+                        is_core_allowlisted = _is_allowlisted_core_plugin(plugin_item, m_data)
+                        is_verified = 1 if is_privileged_or_verified(m_data, trusted_core_path=is_core_allowlisted) else 0
                         c.execute(
                             """
                             INSERT INTO services(name, plugin_id, service_type, description, absolute_install_path, version, is_active, 
-                                                 beta_opt_in, verified_source, privileged_mode, permissions, created_at, updated_at)
-                            VALUES(?, ?, ?, ?, ?, ?, 1, 0, ?, ?, ?, strftime('%s','now'), strftime('%s','now'))
+                                                 beta_opt_in, verified_source, privileged_mode, permissions, granted_scopes, created_at, updated_at)
+                            VALUES(?, ?, ?, ?, ?, ?, 1, 0, ?, ?, ?, ?, strftime('%s','now'), strftime('%s','now'))
                         """,
                             (
                                 m_data.get("name", plugin_item.name),
@@ -1037,9 +1123,10 @@ class PluginLoader:
                                 m_data.get("description", ""),
                                 str(plugin_item.resolve()),
                                 m_data.get("version", "1.0.0"),
-                                1 if m_data.get("verified_source") == "official" else 0,
+                                is_verified,
                                 1 if m_data.get("privileged") or m_data.get("privileged_mode") else 0,
-                                json.dumps(seeded_manifest_perms),
+                                serialized_perms,
+                                serialized_perms,
                             ),
                         )
                         active_db_paths.add(str(plugin_item.resolve()))
@@ -1053,8 +1140,8 @@ class PluginLoader:
                         c.execute(
                             """
                             INSERT INTO services(name, plugin_id, service_type, description, absolute_install_path, version, is_active, 
-                                                 beta_opt_in, verified_source, privileged_mode, permissions, created_at, updated_at)
-                            VALUES(?, ?, 'system', ?, ?, '2.5.2', 1, 0, 1, 1, '[]', strftime('%s','now'), strftime('%s','now'))
+                                                 beta_opt_in, verified_source, privileged_mode, permissions, granted_scopes, created_at, updated_at)
+                            VALUES(?, ?, 'system', ?, ?, '2.5.2', 1, 0, 1, 1, '[]', '[]', strftime('%s','now'), strftime('%s','now'))
                         """,
                             (
                                 name,
@@ -1136,7 +1223,7 @@ class PluginLoader:
                 c = conn.cursor()
                 try:
                     c.execute(
-                        "SELECT name, plugin_id, absolute_install_path, loaded_modules, channel_preference, beta_opt_in FROM services WHERE is_active = 1"
+                        "SELECT name, plugin_id, absolute_install_path, loaded_modules, channel_preference, beta_opt_in, granted_scopes, permissions FROM services WHERE is_active = 1"
                     )
                 except sqlite3.OperationalError:
                     c.execute(
@@ -1184,13 +1271,18 @@ class PluginLoader:
                 logger.error(f"No entry point found in {plugin_dir}")
                 continue
 
-            # Security Scan
+            # Security & Consent Gate
+            from core.nexus_framework.permissions import evaluate_manifest_consent
+            from core.security import is_privileged_or_verified
+
             privileged = False
             bypass_security = False
+            manifest_data: dict[str, Any] = {}
             if manifest_file.exists():
                 try:
                     manifest_data = json.loads(manifest_file.read_text(encoding="utf-8"))
-                    if manifest_data.get("verified_source") == "official":
+                    is_core_allowlisted = _is_allowlisted_core_plugin(plugin_dir, manifest_data)
+                    if is_privileged_or_verified(manifest_data, trusted_core_path=is_core_allowlisted):
                         bypass_security = True
                     privileged = (
                         manifest_data.get("privileged") is True
@@ -1201,7 +1293,24 @@ class PluginLoader:
                         )
                     )
                 except Exception:
+                    manifest_data = {}
+
+            granted_raw = row["granted_scopes"] if "granted_scopes" in row_keys else None
+            fallback_raw = row["permissions"] if "permissions" in row_keys else None
+            escalations = evaluate_manifest_consent(manifest_data, granted_raw, fallback_raw)
+            if escalations:
+                try:
+                    from core.task_manager import PluginLifecycleState, plugin_state_manager
+
+                    plugin_state_manager.set_state(
+                        name,
+                        PluginLifecycleState.AWAITING_CONSENT,
+                        f"Awaiting user consent for new permissions: {[e.get('scope') for e in escalations]}",
+                    )
+                except Exception:
                     pass
+                logger.warning(f"Plugin '{name}' frozen in AWAITING_CONSENT due to ungranted scopes: {escalations}")
+                continue
 
             if wasm_file.exists():
                 bypass_security = True
