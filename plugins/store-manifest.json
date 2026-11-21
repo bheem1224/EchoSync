@@ -54,7 +54,7 @@
       "requirements": [],
       "hooks": [],
       "min_echosync_version": "2.4.0",
-      "beta_version": "2.4.3-beta.113",
+      "beta_version": "2.4.3-beta.114",
       "verified_source": "official",
       "permissions": {
         "database": {
@@ -142,7 +142,7 @@
       "hooks": [],
       "min_echosync_version": "2.4.0",
       "ui_manifest": "ui_manifest.json",
-      "beta_version": "2.4.3-beta.105",
+      "beta_version": "2.4.3-beta.106",
       "permissions": {
         "database": {
           "read_library": true
@@ -208,7 +208,7 @@
       "hooks": [],
       "min_echosync_version": "2.4.0",
       "ui_manifest": "ui_manifest.json",
-      "beta_version": "2.4.3-beta.61",
+      "beta_version": "2.4.3-beta.62",
       "permissions": {
         "database": {
           "read_library": true
@@ -439,7 +439,7 @@
       "hooks": [],
       "min_echosync_version": "2.4.0",
       "ui_manifest": "ui_manifest.json",
-      "beta_version": "2.4.3-beta.58",
+      "beta_version": "2.4.3-beta.59",
       "permissions": {
         "database": {
           "read_library": true
