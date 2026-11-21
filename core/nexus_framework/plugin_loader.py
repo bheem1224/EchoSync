@@ -560,7 +560,11 @@ class PluginLoader:
 
     def __init__(self, app_root: Path, main_app=None):
         self.app_root = Path(app_root)
-        self.main_app = main_app
+        if main_app is not None:
+            PluginRegistry._main_app = main_app
+            self.main_app = main_app
+        else:
+            self.main_app = getattr(PluginRegistry, "_main_app", None)
         self.plugins_dir = Path(config_manager.get_plugins_dir())
         self.loaded_blueprints: list[Blueprint] = []
         from core.hook_manager import hook_manager
@@ -2026,6 +2030,7 @@ class PluginRegistry:
     _disabled_plugins: set = set()
     _quality_options: dict[int, list[dict[str, Any]]] = {}
     _mounted_subapps: dict[str, Any] = {}
+    _main_app: Any = None
 
     @classmethod
     def get_all(cls) -> dict[int, dict[str, Any]]:

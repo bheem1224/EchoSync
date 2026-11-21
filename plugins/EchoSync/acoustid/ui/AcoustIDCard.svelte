@@ -27,10 +27,26 @@
     loading = false;
   });
 
+  function getCookie(name) {
+    if (typeof document === 'undefined') return null;
+    const m = document.cookie.match(new RegExp(`(?:^|; )${name}=([^;]*)`));
+    return m ? decodeURIComponent(m[1]) : null;
+  }
+
+  async function apiFetch(url, opts = {}) {
+    const headers = { ...(opts.headers || {}) };
+    const csrf = getCookie('csrf_token') || getCookie('echo_csrf');
+    if (csrf) {
+      headers['X-CSRF-Token'] = csrf;
+      headers['X-Echo-CSRF'] = csrf;
+    }
+    return fetch(url, { credentials: 'include', ...opts, headers });
+  }
+
   async function loadConfig() {
     try {
       const base = apiBase || '';
-      const res = await fetch(`${apiBase}/config`);
+      const res = await apiFetch(`${apiBase}/config`);
       if (res.ok) {
         const data = await res.json();
         keyConfigured = data.api_key_configured ?? false;
@@ -66,7 +82,7 @@
 
     try {
       const base = apiBase || '';
-      const res = await fetch(`${apiBase}/config`, {
+      const res = await apiFetch(`${apiBase}/config`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
@@ -88,7 +104,7 @@
         setTimeout(() => (saved = false), 3000);
       } else {
         const data = await res.json().catch(() => ({}));
-        error = data.error || 'Failed to save configuration.';
+        error = data.detail || data.error || `Failed to save configuration (HTTP ${res.status}).`;
       }
     } catch (err) {
       console.error('[AcoustIDSettingsCard] Save error:', err);

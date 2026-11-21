@@ -251,10 +251,17 @@ def test_plex_managed_user_discovery_includes_empty_username_profiles(isolated_e
     monkeypatch.setattr(PluginRegistry, "get_plugin_class", staticmethod(lambda pid: PlexClient if str(pid) in ("3021005569", "plex", "EchoSync.plex") else None))
     monkeypatch.setattr(PluginRegistry, "is_plugin_disabled", staticmethod(lambda pid: False))
 
+    # Seed duplicate config.db rows under display_name (as import_managed_users does)
+    plex_svc_id = db.get_or_create_service_id("plex")
+    db.ensure_account(service_id=plex_svc_id, account_name="Simi", display_name="Simi")
+    db.ensure_account(service_id=plex_svc_id, account_name="Kids", display_name="Kids")
+
     resp = client.get("/api/v1/auth/external-accounts/available", headers=_auth_headers(admin))
     assert resp.status_code == 200
     media_accounts = resp.json()["media_server"]
-    by_id = {a["external_account_id"]: a for a in media_accounts}
+    plex_accounts = [a for a in media_accounts if a["provider"] == "plex"]
+    assert len(plex_accounts) == 3  # bheem12 + Simi + Kids, zero duplicates!
+    by_id = {a["external_account_id"]: a for a in plex_accounts}
     assert "bheem12" in by_id
     assert by_id["bheem12"]["is_managed"] is False
     assert by_id["12345678"]["display_name"] == "Simi"

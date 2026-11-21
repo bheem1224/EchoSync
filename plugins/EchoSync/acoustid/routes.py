@@ -14,7 +14,7 @@ def _get_acoustid_config(key: str) -> str | None:
     val = sdk.config.get(key) or sdk.secrets.get(key)
     if val:
         return val
-    for svc_key in (2136125342, "EchoSync.Acoustid", "EchoSync.acoustid", "acoustid"):
+    for svc_key in (1910609384, 2136125342, "EchoSync.Acoustid", "EchoSync.acoustid", "acoustid"):
         val = sdk.config.get_for_service(svc_key, key)
         if val:
             return val
@@ -25,7 +25,7 @@ def _get_acoustid_config(key: str) -> str | None:
 
 def _set_acoustid_config(key: str, value: str) -> None:
     sdk.config.set(key, value)
-    for svc_key in (2136125342, "EchoSync.Acoustid", "EchoSync.acoustid", "acoustid"):
+    for svc_key in (1910609384, 2136125342, "EchoSync.Acoustid", "EchoSync.acoustid", "acoustid"):
         if sdk.config.set_for_service(svc_key, key, value, is_sensitive=True):
             break
 

@@ -27,6 +27,16 @@
   let myTargetProfiles = [];
   let familyTargetProfiles = [];
   let overrideTargetUserId = null;
+  let targetProfileMenuOpen = false;
+
+  $: selectedTargetProfileLabel = (() => {
+    const all = [...myTargetProfiles, ...familyTargetProfiles, ...availableTargetAccounts];
+    const match = all.find(
+      (a) => String(a.external_account_id || a.user_id || a.id) === String(overrideTargetUserId)
+    );
+    if (!match) return '-- Select Target Profile --';
+    return match.display_name || match.account_name || match.username || match.name || String(overrideTargetUserId);
+  })();
 
   // Sync config modal state
   let syncConfigModalOpen = false;
@@ -944,17 +954,19 @@
 
 {#if analysisModalOpen}
   <div
-    class="fixed inset-0 z-50 flex items-center justify-center p-6 bg-slate-950/80 backdrop-blur-sm"
+    class="fixed inset-0 z-50 flex items-center justify-center p-6 bg-black/75 backdrop-blur-sm"
     on:click={closeAnalysisModal}
     role="dialog"
     aria-modal="true"
   >
     <div
-      class="bg-slate-900 border border-slate-800 rounded-xl shadow-2xl flex flex-col h-[85vh] max-h-[85vh] overflow-hidden transition-all duration-200 {isDiagnosticsDrawerOpen ? 'w-full max-w-7xl' : 'w-full max-w-5xl'}"
+      class="border rounded-2xl shadow-2xl flex flex-col h-[85vh] max-h-[85vh] overflow-hidden transition-all duration-200 {isDiagnosticsDrawerOpen ? 'w-full max-w-7xl' : 'w-full max-w-5xl'}"
+      style="background-color: var(--bg-surface, #0f172a); border-color: var(--border-subtle);"
       on:click|stopPropagation
     >
       <div
-        class="p-6 border-b border-slate-800 shrink-0 flex items-center justify-between"
+        class="p-6 border-b shrink-0 flex items-center justify-between"
+        style="border-color: var(--border-subtle);"
       >
         <div>
           <p class="eyebrow">Playlist Sync</p>
@@ -967,46 +979,87 @@
               : `Source: ${getPluginName(analysisResult?.source || sourceProvider)} → Target: ${getPluginName(analysisResult?.target || targetProvider)}`}
           </p>
           {#if !syncProgressEvent && availableTargetAccounts.length > 0}
-            <div class="target-account-selector my-2 flex items-center gap-2">
+            <div class="target-account-selector my-2 flex items-center gap-2 relative">
               <span class="text-xs text-muted">Syncing to Profile:</span>
-              <select
-                class="select select-sm select-bordered"
-                bind:value={overrideTargetUserId}
-              >
-                <option value="" disabled selected
-                  >-- Select Target Profile --</option
+              <div class="relative">
+                <button
+                  type="button"
+                  class="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors"
+                  style="background-color: var(--bg-input, #0b0f1a); border-color: var(--border-subtle); color: var(--text-primary);"
+                  on:click={() => (targetProfileMenuOpen = !targetProfileMenuOpen)}
                 >
-                {#if myTargetProfiles.length > 0 || familyTargetProfiles.length > 0}
-                  {#if myTargetProfiles.length > 0}
-                    <optgroup label="My Profiles">
-                      {#each myTargetProfiles as acc}
-                        <option value={acc.external_account_id}>
-                          {acc.display_name || acc.username} ({acc.provider})
-                        </option>
+                  <span>{selectedTargetProfileLabel}</span>
+                  <svg class="w-3.5 h-3.5 opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
+
+                {#if targetProfileMenuOpen}
+                  <div
+                    class="absolute left-0 mt-1.5 w-64 rounded-xl border shadow-2xl z-50 py-1.5 max-h-64 overflow-y-auto"
+                    style="background-color: var(--bg-surface-elevated, #1e293b); border-color: var(--border-subtle);"
+                  >
+                    {#if myTargetProfiles.length > 0 || familyTargetProfiles.length > 0}
+                      {#if myTargetProfiles.length > 0}
+                        <div class="px-3 py-1 text-[10px] font-bold uppercase tracking-wider" style="color: var(--color-primary);">
+                          My Profiles
+                        </div>
+                        {#each myTargetProfiles as acc}
+                          <button
+                            type="button"
+                            class="w-full text-left px-3 py-1.5 text-xs flex items-center justify-between hover:bg-white/10 transition-colors"
+                            style="color: var(--text-primary);"
+                            on:click={() => {
+                              overrideTargetUserId = acc.external_account_id;
+                              targetProfileMenuOpen = false;
+                            }}
+                          >
+                            <span>{acc.display_name || acc.username}</span>
+                            <span class="text-[10px] uppercase opacity-60">{acc.provider}</span>
+                          </button>
+                        {/each}
+                      {/if}
+                      {#if familyTargetProfiles.length > 0}
+                        <div class="px-3 py-1 mt-1 text-[10px] font-bold uppercase tracking-wider border-t" style="color: var(--text-muted); border-color: var(--border-subtle);">
+                          Family Profiles
+                        </div>
+                        {#each familyTargetProfiles as acc}
+                          <button
+                            type="button"
+                            class="w-full text-left px-3 py-1.5 text-xs flex items-center justify-between hover:bg-white/10 transition-colors"
+                            style="color: var(--text-primary);"
+                            on:click={() => {
+                              overrideTargetUserId = acc.external_account_id;
+                              targetProfileMenuOpen = false;
+                            }}
+                          >
+                            <span>{acc.username} — {acc.display_name || acc.external_account_id}</span>
+                            <span class="text-[10px] uppercase opacity-60">{acc.provider}</span>
+                          </button>
+                        {/each}
+                      {/if}
+                    {:else}
+                      {#each availableTargetAccounts as acc}
+                        {@const val = acc.user_id || acc.id}
+                        <button
+                          type="button"
+                          class="w-full text-left px-3 py-1.5 text-xs flex items-center justify-between hover:bg-white/10 transition-colors"
+                          style="color: var(--text-primary);"
+                          on:click={() => {
+                            overrideTargetUserId = val;
+                            targetProfileMenuOpen = false;
+                          }}
+                        >
+                          <span>{acc.display_name || acc.account_name || acc.username || acc.name}</span>
+                          {#if acc.is_admin}
+                            <span class="text-[10px] font-bold uppercase" style="color: var(--color-primary);">Admin</span>
+                          {/if}
+                        </button>
                       {/each}
-                    </optgroup>
-                  {/if}
-                  {#if familyTargetProfiles.length > 0}
-                    <optgroup label="Family Profiles">
-                      {#each familyTargetProfiles as acc}
-                        <option value={acc.external_account_id}>
-                          {acc.username} — {acc.display_name || acc.external_account_id} ({acc.provider})
-                        </option>
-                      {/each}
-                    </optgroup>
-                  {/if}
-                {:else}
-                  {#each availableTargetAccounts as acc}
-                    <option value={acc.user_id || acc.id}>
-                      {acc.display_name ||
-                        acc.account_name ||
-                        acc.username ||
-                        acc.name}
-                      {acc.is_admin ? "(Admin)" : ""}
-                    </option>
-                  {/each}
+                    {/if}
+                  </div>
                 {/if}
-              </select>
+              </div>
             </div>
           {/if}
         </div>

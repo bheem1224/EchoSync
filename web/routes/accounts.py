@@ -246,6 +246,7 @@ def _list_available_external_accounts_handler(principal: Principal = Depends(req
     media_server: list[dict[str, Any]] = []
     seen_streaming: set[tuple[str, str]] = set()
     seen_media: set[tuple[str, str]] = set()
+    seen_media_names: set[tuple[str, str]] = set()
 
     # 1. Query active media server plugins via agnostic SDK facade (discovers live Home / Managed Users)
     try:
@@ -265,6 +266,8 @@ def _list_available_external_accounts_handler(principal: Principal = Depends(req
                 prov = str(mu.get("provider") or svc_name).strip().lower()
                 if ext_id and (prov, ext_id) not in seen_media:
                     seen_media.add((prov, ext_id))
+                    if disp:
+                        seen_media_names.add((prov, disp.casefold()))
                     media_server.append(
                         {
                             "provider": prov,
@@ -305,8 +308,10 @@ def _list_available_external_accounts_handler(principal: Principal = Depends(req
                 }
                 if is_media:
                     key = (svc_raw, ext_id)
-                    if key not in seen_media:
+                    name_key = (svc_raw, disp.strip().casefold())
+                    if key not in seen_media and name_key not in seen_media_names:
                         seen_media.add(key)
+                        seen_media_names.add(name_key)
                         media_server.append(item)
                 else:
                     key = (svc_raw, ext_id)
