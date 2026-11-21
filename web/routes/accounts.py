@@ -252,7 +252,12 @@ def _list_available_external_accounts_handler(principal: Principal = Depends(req
         from core.nexus_framework.plugin_loader import PluginRegistry
         from core.nexus_framework.plugin_SDK import sdk
 
-        for pid in PluginRegistry.get_active_services_by_type("media_server") or []:
+        media_pids = list(PluginRegistry.get_active_services_by_type("media_server") or [])
+        for extra_pid in PluginRegistry.get_plugins_by_type("mediaserver", exclude_disabled=True) or []:
+            if extra_pid not in media_pids:
+                media_pids.append(extra_pid)
+
+        for pid in media_pids:
             svc_name = (db.get_service_name(pid) or str(pid)).lower().replace("echosync.", "")
             for mu in sdk.plugins.list_provider_accounts(pid) or []:
                 ext_id = str(mu.get("external_account_id") or "").strip()

@@ -2126,7 +2126,7 @@ function Zr(e, t, n, r, i, a) {
 // PlexCard.svelte
 var Qr = /* @__PURE__ */ Q("<span class=\"status-badge active svelte-lueg2f\">Active</span>"), $r = /* @__PURE__ */ Q("<span class=\"status-badge success svelte-lueg2f\">Authenticated</span>"), ei = /* @__PURE__ */ Q("<span class=\"status-badge success svelte-lueg2f\">Connected</span>"), ti = /* @__PURE__ */ Q("<span class=\"status-badge warning svelte-lueg2f\">Disconnected</span>"), ni = /* @__PURE__ */ Q("<div class=\"loading-state svelte-lueg2f\"><div class=\"spinner svelte-lueg2f\"></div> <span>Linking with Plex Nexus...</span></div>"), ri = /* @__PURE__ */ Q("<button class=\"btn-ghost svelte-lueg2f\"> </button>"), ii = /* @__PURE__ */ Q("<button class=\"btn-ghost accent svelte-lueg2f\"> </button>"), ai = /* @__PURE__ */ Q("<button class=\"btn-danger-ghost svelte-lueg2f\">Cancel Authorization</button>"), oi = /* @__PURE__ */ Q("<button class=\"btn-ghost svelte-lueg2f\">Switch Account</button>"), si = /* @__PURE__ */ Q("<button class=\"btn-primary plex-btn svelte-lueg2f\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"currentColor\"><path d=\"M12 0L9.33 6.67L2 9.33L7.33 14.67L6 22L12 18.67L18 22L16.67 14.67L22 9.33L14.67 6.67L12 0Z\"></path></svg> Sign in with Plex</button>"), ci = /* @__PURE__ */ Q("<div class=\"settings-section svelte-lueg2f\"><div class=\"form-grid svelte-lueg2f\"><div class=\"form-field svelte-lueg2f\"><span class=\"field-label svelte-lueg2f\">Server Access URL</span> <input type=\"text\" placeholder=\"http://192.168.1.100:32400\" class=\"input-field svelte-lueg2f\"/> <span class=\"helper-text svelte-lueg2f\">Typically http://[IP]:32400. Use localhost if running natively.</span></div> <div class=\"form-field svelte-lueg2f\"><span class=\"field-label svelte-lueg2f\">Friendly Name</span> <input type=\"text\" placeholder=\"e.g. Home Media\" class=\"input-field svelte-lueg2f\"/></div> <div class=\"actions-row svelte-lueg2f\"><button class=\"btn-primary svelte-lueg2f\"> </button> <!> <!> <div class=\"auth-box svelte-lueg2f\"><!></div></div></div></div>"), li = /* @__PURE__ */ Q("<section class=\"plugin-card svelte-lueg2f\"><div class=\"card-header svelte-lueg2f\"><div class=\"header-left svelte-lueg2f\"><h2 class=\"card-title svelte-lueg2f\">Plex Media Server</h2> <div class=\"badges svelte-lueg2f\"><!> <!> <!></div></div> <button class=\"btn-ghost-small svelte-lueg2f\"> </button></div> <!></section>"), ui = {
 	hash: "svelte-lueg2f",
-	code: "\n  /* SHADOW DOM STYLING */.plugin-card.svelte-lueg2f {background:var(--bg-surface);border:1px solid var(--border-subtle);border-radius:var(--radius, 12px);padding:24px;color:var(--text-primary);font-family:inherit;}.card-header.svelte-lueg2f {display:flex;justify-content:space-between;align-items:center;margin-bottom:24px;padding-bottom:16px;border-bottom:1px solid var(--border-subtle);}.header-left.svelte-lueg2f {display:flex;align-items:center;gap:16px;}.card-title.svelte-lueg2f {margin:0;font-size:18px;font-weight:700;letter-spacing:-0.01em;}.badges.svelte-lueg2f {display:flex;gap:8px;}.status-badge.svelte-lueg2f {font-size:9px;padding:2px 8px;border-radius:5px;font-weight:800;text-transform:uppercase;letter-spacing:0.05em;}.status-badge.active.svelte-lueg2f {background:rgba(20, 184, 166, 0.1);color:var(--color-primary);border:1px solid rgba(20, 184, 166, 0.2);}.status-badge.success.svelte-lueg2f {background:rgba(16, 185, 129, 0.1);color:#10b981;border:1px solid rgba(16, 185, 129, 0.2);}.status-badge.warning.svelte-lueg2f {background:rgba(245, 158, 11, 0.1);color:#f59e0b;border:1px solid rgba(245, 158, 11, 0.2);}.btn-ghost.svelte-lueg2f,\n  .btn-ghost-small.svelte-lueg2f,\n  .btn-danger-ghost.svelte-lueg2f {padding:10px 18px;background:rgba(255, 255, 255, 0.04);border:1px solid var(--border-subtle);color:var(--text-primary);border-radius:10px;font-size:13px;font-weight:600;cursor:pointer;transition:all 0.2s;}.btn-ghost-small.svelte-lueg2f {padding:6px 12px;font-size:11px;border-radius:6px;}.btn-ghost.svelte-lueg2f:hover,\n  .btn-ghost-small.svelte-lueg2f:hover {background:rgba(255, 255, 255, 0.08);border-color:rgba(255, 255, 255, 0.2);}.btn-ghost.accent.svelte-lueg2f {color:var(--color-primary);border-color:rgba(20, 184, 166, 0.3);}.btn-danger-ghost.svelte-lueg2f {color:#ef4444;border-color:rgba(239, 68, 68, 0.2);}.btn-primary.svelte-lueg2f {padding:10px 24px;background:var(--color-primary);color:#000;border:none;border-radius:10px;font-weight:700;font-size:14px;cursor:pointer;transition:all 0.2s;}.btn-primary.svelte-lueg2f:hover:not(:disabled) {filter:brightness(1.1);transform:translateY(-1px);}.plex-btn.svelte-lueg2f {display:flex;align-items:center;gap:8px;background:#e5a00d; /* Plex Gold */color:#000;}.loading-state.svelte-lueg2f {display:flex;flex-direction:column;align-items:center;gap:16px;padding:40px;color:var(--text-muted);}.spinner.svelte-lueg2f {width:28px;height:28px;border:3px solid rgba(255, 255, 255, 0.05);border-top-color:var(--color-primary);border-radius:50%;\n    animation: svelte-lueg2f-spin 1s linear infinite;}\n\n  @keyframes svelte-lueg2f-spin {\n    to {\n      transform: rotate(360deg);\n    }\n  }.settings-section.svelte-lueg2f {margin-top:8px;}.form-grid.svelte-lueg2f {display:flex;flex-direction:column;gap:20px;}.form-field.svelte-lueg2f {display:flex;flex-direction:column;gap:8px;}.field-label.svelte-lueg2f {font-size:12px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;}.input-field.svelte-lueg2f {width:100%;padding:12px 16px;background:var(--bg-input, #0b0f1a);border:1px solid var(--border-subtle);border-radius:10px;color:var(--text-primary);font-size:14px;transition:all 0.2s;}.input-field.svelte-lueg2f:focus {outline:none;border-color:var(--color-primary);box-shadow:0 0 0 3px rgba(20, 184, 166, 0.1);}.helper-text.svelte-lueg2f {font-size:11px;color:var(--text-muted);font-style:italic;}.actions-row.svelte-lueg2f {display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-top:8px;}.auth-box.svelte-lueg2f {margin-left:auto;}\n\n  @media (max-width: 600px) {.auth-box.svelte-lueg2f {margin-left:0;width:100%;}.auth-box.svelte-lueg2f button:where(.svelte-lueg2f) {width:100%;}\n  }"
+	code: "\n  /* SHADOW DOM STYLING */.plugin-card.svelte-lueg2f {background:var(--bg-surface);border:1px solid var(--border-subtle);border-radius:var(--radius, 12px);padding:18px 20px;color:var(--text-primary);font-family:inherit;box-sizing:border-box;}.card-header.svelte-lueg2f {display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid var(--border-subtle);}.header-left.svelte-lueg2f {display:flex;align-items:center;gap:12px;flex-wrap:wrap;}.card-title.svelte-lueg2f {margin:0;font-size:17px;font-weight:700;letter-spacing:-0.01em;}.badges.svelte-lueg2f {display:flex;gap:6px;}.status-badge.svelte-lueg2f {font-size:9px;padding:2px 8px;border-radius:5px;font-weight:800;text-transform:uppercase;letter-spacing:0.05em;}.status-badge.active.svelte-lueg2f {background:rgba(20, 184, 166, 0.1);color:var(--color-primary);border:1px solid rgba(20, 184, 166, 0.2);}.status-badge.success.svelte-lueg2f {background:rgba(16, 185, 129, 0.1);color:#10b981;border:1px solid rgba(16, 185, 129, 0.2);}.status-badge.warning.svelte-lueg2f {background:rgba(245, 158, 11, 0.1);color:#f59e0b;border:1px solid rgba(245, 158, 11, 0.2);}.btn-ghost.svelte-lueg2f,\n  .btn-ghost-small.svelte-lueg2f,\n  .btn-danger-ghost.svelte-lueg2f {padding:8px 14px;background:rgba(255, 255, 255, 0.04);border:1px solid var(--border-subtle);color:var(--text-primary);border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;transition:all 0.2s;}.btn-ghost-small.svelte-lueg2f {padding:5px 10px;font-size:11px;border-radius:6px;}.btn-ghost.svelte-lueg2f:hover,\n  .btn-ghost-small.svelte-lueg2f:hover {background:rgba(255, 255, 255, 0.08);border-color:rgba(255, 255, 255, 0.2);}.btn-ghost.accent.svelte-lueg2f {color:var(--color-primary);border-color:rgba(20, 184, 166, 0.3);}.btn-danger-ghost.svelte-lueg2f {color:#ef4444;border-color:rgba(239, 68, 68, 0.2);}.btn-primary.svelte-lueg2f {padding:8px 18px;background:var(--color-primary);color:#000;border:none;border-radius:8px;font-weight:700;font-size:13px;cursor:pointer;transition:all 0.2s;}.btn-primary.svelte-lueg2f:hover:not(:disabled) {filter:brightness(1.1);transform:translateY(-1px);}.plex-btn.svelte-lueg2f {display:flex;align-items:center;gap:8px;background:#e5a00d; /* Plex Gold */color:#000;}.loading-state.svelte-lueg2f {display:flex;flex-direction:column;align-items:center;gap:12px;padding:24px;color:var(--text-muted);}.spinner.svelte-lueg2f {width:24px;height:24px;border:3px solid rgba(255, 255, 255, 0.05);border-top-color:var(--color-primary);border-radius:50%;\n    animation: svelte-lueg2f-spin 1s linear infinite;}\n\n  @keyframes svelte-lueg2f-spin {\n    to {\n      transform: rotate(360deg);\n    }\n  }.settings-section.svelte-lueg2f {margin-top:4px;}.form-grid.svelte-lueg2f {display:grid;grid-template-columns:1fr;gap:12px;}\n  @media (min-width: 640px) {.form-grid.svelte-lueg2f {grid-template-columns:1fr 1fr;}.actions-row.svelte-lueg2f {grid-column:span 2;}}\n  .form-field.svelte-lueg2f {display:flex;flex-direction:column;gap:6px;min-width:0;}.field-label.svelte-lueg2f {font-size:11px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;}.input-field.svelte-lueg2f {width:100%;min-width:0;box-sizing:border-box;padding:9px 12px;background:var(--bg-input, #0b0f1a);border:1px solid var(--border-subtle);border-radius:8px;color:var(--text-primary);font-size:13px;transition:all 0.2s;}.input-field.svelte-lueg2f:focus {outline:none;border-color:var(--color-primary);box-shadow:0 0 0 3px rgba(20, 184, 166, 0.1);}.helper-text.svelte-lueg2f {font-size:11px;color:var(--text-muted);font-style:italic;}.actions-row.svelte-lueg2f {display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:4px;}.auth-box.svelte-lueg2f {margin-left:auto;}\n\n  @media (max-width: 600px) {.auth-box.svelte-lueg2f {margin-left:0;width:100%;}.auth-box.svelte-lueg2f button:where(.svelte-lueg2f) {width:100%;}\n  }"
 };
 function di(e, t) {
 	qe(t, !1), kr(e, ui);
@@ -2134,9 +2134,23 @@ function di(e, t) {
 	Er(async () => {
 		n(n().replace(/\/$/, "")), await g(), P(s, !1);
 	});
+	function _getCookie(name) {
+		if (typeof document === "undefined") return null;
+		let m = document.cookie.match(new RegExp(`(?:^|; )${name}=([^;]*)`));
+		return m ? decodeURIComponent(m[1]) : null;
+	}
+	async function _apiFetch(url, opts = {}) {
+		let headers = { ...(opts.headers || {}) };
+		let csrf = _getCookie("csrf_token") || _getCookie("echo_csrf");
+		if (csrf) {
+			headers["X-CSRF-Token"] = csrf;
+			headers["X-Echo-CSRF"] = csrf;
+		}
+		return fetch(url, { credentials: "include", ...opts, headers });
+	}
 	async function ee() {
 		try {
-			if (P(h, !0), !(await fetch(`${n()}/activate`, { method: "POST" })).ok) throw Error("Activation failed");
+			if (P(h, !0), !(await _apiFetch(`${n()}/activate`, { method: "POST" })).ok) throw Error("Activation failed");
 			await g();
 		} catch (e) {
 			console.error("Failed to activate server:", e), window.dispatchEvent(new CustomEvent("es-toast", { detail: {
@@ -2149,7 +2163,7 @@ function di(e, t) {
 	}
 	async function g() {
 		try {
-			let e = await (await fetch(`${n()}/settings`)).json();
+			let e = await (await _apiFetch(`${n()}/settings`)).json();
 			e?.settings && (P(r, e.settings.base_url || ""), P(i, e.settings.server_name || ""), P(a, e.settings.has_token || !1), P(o, e.settings.connected || !1), P(m, e.settings.is_active || !1));
 		} catch (e) {
 			console.error("Failed to load Plex settings:", e);
@@ -2161,7 +2175,7 @@ function di(e, t) {
 			type: "error"
 		} }));
 		else try {
-			if (P(c, !0), !(await fetch(`${n()}/settings`, {
+			if (P(c, !0), !(await _apiFetch(`${n()}/settings`, {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({
@@ -2185,40 +2199,58 @@ function di(e, t) {
 	async function _() {
 		try {
 			P(u, !0);
-			let e = await (await fetch(`${n()}/auth/start`, { method: "POST" })).json();
-			e?.oauth_url && e?.session_id && (d = e.session_id, window.open(e.oauth_url, "PlexOAuth", "width=600,height=700,menubar=no,status=no"), f = setInterval(async () => {
+			let res = await _apiFetch(`${n()}/auth/start`, { method: "POST" });
+			let e = await res.json().catch(() => ({}));
+			if (!res.ok || !e?.oauth_url || !e?.session_id) {
+				throw Error(e?.error || e?.detail || `Failed to start Plex OAuth (${res.status})`);
+			}
+			d = e.session_id;
+			window.open(e.oauth_url, "PlexOAuth", "width=600,height=700,menubar=no,status=no");
+			if (f) clearInterval(f);
+			f = setInterval(async () => {
 				try {
-					let e = await fetch(`${n()}/auth/poll/${d}`);
-					if (!e.ok) {
-						e.status === 404 && (clearInterval(f), f = null, P(u, !1), d = null);
+					let pollRes = await _apiFetch(`${n()}/auth/poll/${d}`);
+					if (!pollRes.ok) {
+						pollRes.status === 404 && (clearInterval(f), f = null, P(u, !1), d = null);
 						return;
 					}
-					(await e.json())?.completed && (clearInterval(f), f = null, P(u, !1), d = null, await g(), window.dispatchEvent(new CustomEvent("es-toast", { detail: {
+					(await pollRes.json())?.completed && (clearInterval(f), f = null, P(u, !1), d = null, await g(), window.dispatchEvent(new CustomEvent("es-toast", { detail: {
 						message: "Plex authentication successful!",
 						type: "success"
 					} })));
 				} catch (e) {
 					console.error("OAuth poll error:", e);
 				}
-			}, 3e3));
+			}, 3e3);
 		} catch (e) {
-			console.error("Failed to start Plex OAuth:", e), P(u, !1);
+			console.error("Failed to start Plex OAuth:", e);
+			P(u, !1);
+			d = null;
+			window.dispatchEvent(new CustomEvent("es-toast", { detail: {
+				message: e?.message || "Failed to start Plex authentication.",
+				type: "error"
+			} }));
 		}
 	}
 	async function ne() {
-		if (d && f) {
-			clearInterval(f), f = null;
+		if (f) {
+			clearInterval(f);
+			f = null;
+		}
+		let sid = d;
+		d = null;
+		P(u, !1);
+		if (sid) {
 			try {
-				await fetch(`${n()}/auth/cancel/${d}`, { method: "DELETE" });
+				await _apiFetch(`${n()}/auth/cancel/${sid}`, { method: "DELETE" });
 			} catch (e) {
 				console.error("Failed to cancel OAuth:", e);
 			}
-			d = null, P(u, !1);
 		}
 	}
 	async function v() {
 		try {
-			P(l, !0), (await (await fetch(`${n()}/test-connection`, {
+			P(l, !0), (await (await _apiFetch(`${n()}/test-connection`, {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({ base_url: Z(r) })

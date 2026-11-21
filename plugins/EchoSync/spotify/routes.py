@@ -133,7 +133,7 @@ async def save_settings(request: Request):
 
 @router.get("/accounts")
 def list_accounts():
-    """List all Spotify accounts, preserving legacy config.db rows across service aliases."""
+    """List all Spotify accounts, preserving legacy database rows across service aliases."""
     try:
         seen_ids: set[int] = set()
         merged_rows: list[dict] = []

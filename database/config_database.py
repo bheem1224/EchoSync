@@ -214,6 +214,24 @@ class ConfigDatabase:
                         cursor.execute("DROP TABLE account_mappings_backup")
                         logger.info("Successfully healed account_mappings schema.")
 
+                    if "pkce_sessions" in broken_tables:
+                        logger.warning("Healing corrupted pkce_sessions schema...")
+                        cursor.execute("DROP TABLE IF EXISTS pkce_sessions")
+                        cursor.execute("""
+                            CREATE TABLE pkce_sessions (
+                                pkce_id TEXT PRIMARY KEY,
+                                service TEXT NOT NULL,
+                                account_id INTEGER NOT NULL,
+                                code_verifier TEXT NOT NULL,
+                                code_challenge TEXT NOT NULL,
+                                redirect_uri TEXT NOT NULL,
+                                client_id TEXT NOT NULL,
+                                created_at INTEGER NOT NULL,
+                                expires_at INTEGER NOT NULL
+                            )
+                        """)
+                        logger.info("Successfully healed pkce_sessions schema.")
+
                 # 0. Self-healing: Repair any tables whose foreign keys were rewritten to _old or _temp tables
                 heal_table_schemas(cursor)
 

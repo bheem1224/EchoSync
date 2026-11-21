@@ -1568,9 +1568,15 @@ class PlexClient(MediaServerProvider):
         # Fetch Settings from JSON (Hybrid Config approach)
         plex_config = self.config or {}
 
-        base_url = plex_config.get("base_url") or plex_config.get("server_url")
+        base_url = (
+            plex_config.get("base_url")
+            or plex_config.get("plex.base_url")
+            or plex_config.get("server_url")
+        )
         if not base_url:
-            base_url = _safe_getattr(self, "kvs", None) and (self.kvs.get("base_url") or self.kvs.get("server_url"))
+            base_url = _safe_getattr(self, "kvs", None) and (
+                self.kvs.get("base_url") or self.kvs.get("plex.base_url") or self.kvs.get("server_url")
+            )
 
         if not base_url:
             from services.storage_service import get_storage_service
@@ -1661,11 +1667,12 @@ class PlexClient(MediaServerProvider):
             from core.nexus_framework.plugin_SDK import sdk
             from core.security import decrypt_string
 
-            db_accounts = sdk.accounts.get_all()
-            if db_accounts:
-                tok_data = sdk.accounts.get_token(db_accounts[0]["id"])
+            for acc in sdk.accounts.get_all() or []:
+                tok_data = sdk.accounts.get_token(acc["id"])
                 if tok_data and tok_data.get("access_token"):
                     token = decrypt_string(tok_data["access_token"])
+                    if token:
+                        break
         except Exception as tok_err:
             logger.warning(f"Failed to read Plex token for fallback discovery: {tok_err}")
 

@@ -222,7 +222,11 @@ async def start_oauth(request: Request):
     Returns: {session_id, oauth_url, poll_url}
     """
     try:
-        from plexapi.myplex import MyPlexPinLogin
+        try:
+            from plexapi.myplex import MyPlexPinLogin
+        except ImportError:
+            logger.error("plexapi library not installed")
+            return JSONResponse(content={"error": "Plex library not available"}, status_code=500)
 
         pin_login = MyPlexPinLogin(oauth=True)
         session_id = str(uuid.uuid4())
@@ -274,7 +278,7 @@ async def start_oauth(request: Request):
             except Exception:
                 pass
 
-        from core.job_queue import job_queue
+        from core.task_manager.task_queue import job_queue
 
         job_queue.register_job(
             name=f"plex_oauth_cleanup_{session_id}",
@@ -292,12 +296,21 @@ async def start_oauth(request: Request):
                 "poll_url": f"/api/v1/plugins/3021005569/auth/poll/{session_id}",
             }
         )
-    except ImportError:
-        logger.error("plexapi library not installed")
-        return JSONResponse(content={"error": "Plex library not available"}, status_code=500)
     except Exception as e:
         logger.error(f"Error starting Plex OAuth: {e}", exc_info=True)
         return JSONResponse(content={"error": "Failed to start Plex authentication"}, status_code=500)
+
+
+@router.delete("/auth/cancel/{session_id}")
+def cancel_oauth(session_id: str):
+    """Cancel an in-flight Plex OAuth PIN session."""
+    with plex_oauth_lock:
+        plex_oauth_sessions.pop(session_id, None)
+    try:
+        sdk.storage.delete_pkce_session(session_id)
+    except Exception:
+        pass
+    return JSONResponse(content={"success": True})
 
 
 @router.api_route("/auth/callback", methods=["GET", "POST"])
