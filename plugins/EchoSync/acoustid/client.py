@@ -205,16 +205,30 @@ class AcoustIDProvider(PluginBase):
             response = self.http.post(f"{self.api_base}/lookup", data=payload)
 
             if response.status_code != 200:
+                err_body = (getattr(response, "text", "") or "")[:300]
                 if response.status_code == 400:
-                    logger.warning(f"AcoustID lookup rejected (400). Response: {response.text[:200]}")
+                    logger.warning(f"AcoustID lookup rejected (400). Response: {err_body}")
                 else:
-                    logger.error(f"AcoustID API error: {response.status_code} - {response.text[:200]}")
-                return {"acoustid_id": None, "mbids": [], "score": None, "match_status": "UNRESOLVED"}
+                    logger.error(f"AcoustID API error: {response.status_code} - {err_body}")
+                return {
+                    "acoustid_id": None,
+                    "mbids": [],
+                    "score": None,
+                    "match_status": "ERROR",
+                    "error": f"AcoustID HTTP {response.status_code}: {err_body or 'Bad Request'}",
+                }
 
             data = response.json()
             if data.get("status") != "ok":
                 logger.error(f"AcoustID API returned error status: {data}")
-                return {"acoustid_id": None, "mbids": [], "score": None, "match_status": "UNRESOLVED"}
+                err_detail = (data.get("error") or {}).get("message") if isinstance(data.get("error"), dict) else str(data)
+                return {
+                    "acoustid_id": None,
+                    "mbids": [],
+                    "score": None,
+                    "match_status": "ERROR",
+                    "error": f"AcoustID API error: {err_detail}",
+                }
 
             results = data.get("results") or []
             logger.debug(f"[AcoustID] Fingerprint matched {len(results)} candidate recordings")
@@ -298,8 +312,18 @@ class AcoustIDProvider(PluginBase):
 
             return final_res
         except Exception as e:
-            logger.error(f"Failed to resolve fingerprint: {e}")
-            return {"acoustid_id": None, "mbids": [], "score": None, "match_status": "UNRESOLVED"}
+            resp = getattr(e, "response", None)
+            resp_body = (getattr(resp, "text", "") or "")[:300]
+            status_code = getattr(e, "status", None) or getattr(resp, "status_code", None)
+            detail = f"{e} | body={resp_body}" if resp_body else str(e)
+            logger.error(f"Failed to resolve fingerprint: {detail}")
+            return {
+                "acoustid_id": None,
+                "mbids": [],
+                "score": None,
+                "match_status": "ERROR",
+                "error": f"AcoustID HTTP {status_code}: {resp_body}" if status_code and resp_body else str(e),
+            }
 
     def resolve_fingerprint(self, fingerprint: str, duration: int) -> list[str]:
         """

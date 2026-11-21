@@ -1811,22 +1811,16 @@ class MetadataResolutionEngine:
             acoustid_id = details.get("acoustid_id")
             recordings = details.get("recordings") or []
             candidate_mbids = details.get("mbids") or []
-            if (
-                not recordings
-                and not candidate_mbids
-                and deferred_embedded_mbid
-                and str(deferred_embedded_mbid).strip()
-            ):
-                d_mbid = str(deferred_embedded_mbid).strip()
-                if d_mbid not in candidate_mbids:
-                    candidate_mbids.append(d_mbid)
+            api_error = details.get("error")
             if not recordings and not candidate_mbids:
                 _add_diagnostic(
                     request,
                     "Stage 3: AcoustID",
-                    "miss",
-                    f"No AcoustID recording candidates returned for duration={duration_sec}s.",
-                    {"duration_sec": duration_sec},
+                    "error" if api_error else "miss",
+                    str(api_error)
+                    if api_error
+                    else f"No AcoustID recording candidates returned for duration={duration_sec}s.",
+                    {"duration_sec": duration_sec, **({"error": api_error} if api_error else {})},
                 )
                 return None
 
