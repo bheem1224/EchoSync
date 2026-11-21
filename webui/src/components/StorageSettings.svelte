@@ -127,8 +127,8 @@
   .storage .form { display:flex; flex-direction:column; gap:12px; padding-left:4px; min-width: 0; }
   .field { display:flex; flex-wrap:wrap; gap:6px 8px; align-items:center; min-width: 0; }
   .field-label { flex: 0 0 100%; font-size: 0.85rem; color:var(--muted); padding-left:2px; }
-  .dark-input { flex:1 1 0%; min-width: 0; box-sizing: border-box; padding:8px 10px; border-radius:12px; background: rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); color:var(--text); }
-  .dark-btn { flex-shrink: 0; padding:8px 12px; border-radius:12px; background: rgba(0,0,0,0.6); color:#fff; border:1px solid rgba(255,255,255,0.08); cursor:pointer; }
+  .dark-input { flex:1 1 0%; min-width: 0; box-sizing: border-box; padding:8px 10px; border-radius:12px; background: var(--bg-input); border:1px solid var(--border-subtle); color:var(--text-primary); }
+  .dark-btn { flex-shrink: 0; padding:8px 12px; border-radius:12px; background: var(--bg-surface-elevated); color:var(--text-primary); border:1px solid var(--border-subtle); cursor:pointer; }
   .actions { margin-top:8px }
-  .save-btn { background: #0b0b0b; color: #fff; padding:10px 14px; border-radius:14px; border:none }
+  .save-btn { background: var(--color-primary); color: var(--color-on-primary); font-weight: 700; padding:10px 14px; border-radius:14px; border:none; cursor:pointer; }
 </style>

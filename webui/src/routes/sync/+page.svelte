@@ -5,6 +5,7 @@
   import { preferences } from "../../stores/preferences";
   import apiClient from "../../api/client";
   import PlaylistMatchDiagnosticDrawer from "$lib/components/PlaylistMatchDiagnosticDrawer.svelte";
+  import Select from "$lib/components/Select.svelte";
 
   let sourceProvider = "";
   let targetProvider = "";
@@ -771,19 +772,20 @@
         </div>
         <div class="form-group">
           <label for="source">Select where to sync from:</label>
-          <select
+          <Select
             id="source"
+            ariaLabel="Source Service"
+            placeholder="-- Select Source --"
             bind:value={sourceProvider}
-            on:change={() => {
+            onchange={() => {
               console.log("[Debug] Source plugin selected:", sourceProvider);
               loadPlaylists();
             }}
-          >
-            <option value="">-- Select Source --</option>
-            {#each playlistPlugins as p}
-              <option value={p.plugin_id}>{p.name}</option>
-            {/each}
-          </select>
+            options={[
+              { value: "", label: "-- Select Source --" },
+              ...playlistPlugins.map((p) => ({ value: p.plugin_id, label: p.name })),
+            ]}
+          />
         </div>
       </div>
 
@@ -795,14 +797,18 @@
         </div>
         <div class="form-group">
           <label for="target">Select sync target:</label>
-          <select id="target" bind:value={targetProvider}>
-            <option value="">-- Select Target --</option>
-            {#each syncTargets as p}
-              {#if p.plugin_id !== sourceProvider}
-                <option value={p.plugin_id}>{p.name}</option>
-              {/if}
-            {/each}
-          </select>
+          <Select
+            id="target"
+            ariaLabel="Target Service"
+            placeholder="-- Select Target --"
+            bind:value={targetProvider}
+            options={[
+              { value: "", label: "-- Select Target --" },
+              ...syncTargets
+                .filter((p) => p.plugin_id !== sourceProvider)
+                .map((p) => ({ value: p.plugin_id, label: p.name })),
+            ]}
+          />
           {#if syncTargets.length === 0}
             <p class="muted small">No target services available.</p>
           {/if}
@@ -1105,15 +1111,16 @@
             <div class="controls-row">
               <div class="control">
                 <label>Target Quality for Missing Tracks</label>
-                <select bind:value={selectedQuality}>
-                  {#if qualityProfiles.length === 0}
-                    <option value="">No profiles configured</option>
-                  {:else}
-                    {#each qualityProfiles as profile}
-                      <option value={profile.name}>{profile.name}</option>
-                    {/each}
-                  {/if}
-                </select>
+                <Select
+                  ariaLabel="Target Quality for Missing Tracks"
+                  bind:value={selectedQuality}
+                  options={qualityProfiles.length === 0
+                    ? [{ value: "", label: "No profiles configured" }]
+                    : qualityProfiles.map((profile) => ({
+                        value: profile.name,
+                        label: profile.name,
+                      }))}
+                />
                 <p class="muted text-xs mt-1">
                   Applies only to newly downloaded missing tracks — does not
                   change existing files in your library.
@@ -1413,29 +1420,32 @@
     <div class="modal-body">
       <div class="form-group">
         <label for="schedule-source">Source Service:</label>
-        <select id="schedule-source" bind:value={scheduleForm.source}>
-          {#each playlistPlugins as p}
-            <option value={p.plugin_id}>{p.name}</option>
-          {/each}
-        </select>
+        <Select
+          id="schedule-source"
+          ariaLabel="Schedule Source Service"
+          bind:value={scheduleForm.source}
+          options={playlistPlugins.map((p) => ({ value: p.plugin_id, label: p.name }))}
+        />
       </div>
 
       <div class="form-group">
         <label for="schedule-target">Target Service:</label>
-        <select id="schedule-target" bind:value={scheduleForm.target}>
-          {#each syncTargets as p}
-            <option value={p.plugin_id}>{p.name}</option>
-          {/each}
-        </select>
+        <Select
+          id="schedule-target"
+          ariaLabel="Schedule Target Service"
+          bind:value={scheduleForm.target}
+          options={syncTargets.map((p) => ({ value: p.plugin_id, label: p.name }))}
+        />
       </div>
 
       <div class="form-group">
         <label for="schedule-interval">Repeat Interval:</label>
-        <select id="schedule-interval" bind:value={scheduleForm.interval}>
-          {#each scheduleIntervalOptions as opt}
-            <option value={opt.value}>{opt.label}</option>
-          {/each}
-        </select>
+        <Select
+          id="schedule-interval"
+          ariaLabel="Schedule Repeat Interval"
+          bind:value={scheduleForm.interval}
+          options={scheduleIntervalOptions}
+        />
       </div>
 
       <div class="form-group flex items-center gap-3">

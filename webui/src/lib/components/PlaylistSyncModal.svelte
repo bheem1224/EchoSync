@@ -1,5 +1,6 @@
 <script>
   import PlaylistMatchDiagnosticDrawer from './PlaylistMatchDiagnosticDrawer.svelte';
+  import Select from './Select.svelte';
 
   let {
     isOpen = false,
@@ -62,47 +63,42 @@
 
         <div class="flex items-center gap-4">
           {#if myProfiles.length > 0 || familyProfiles.length > 0}
-            <div class="flex items-center gap-2">
-              <label for="target-profile-select" class="text-xs text-slate-400 whitespace-nowrap">Target Profile:</label>
-              <select
+            <div class="flex items-center gap-2 min-w-[220px]">
+              <label for="target-profile-select" class="text-xs whitespace-nowrap" style="color: var(--text-muted);">Target Profile:</label>
+              <Select
                 id="target-profile-select"
+                compact={true}
+                ariaLabel="Target Profile"
                 bind:value={selectedTargetProfile}
-                class="bg-slate-800 border border-slate-700 text-slate-200 text-xs rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-slate-500"
-              >
-                {#if myProfiles.length > 0}
-                  <optgroup label="My Profiles">
-                    {#each myProfiles as p}
-                      <option value={p.external_account_id}>{p.display_name || p.username} ({p.provider})</option>
-                    {/each}
-                  </optgroup>
-                {/if}
-                {#if familyProfiles.length > 0}
-                  <optgroup label="Family Profiles">
-                    {#each familyProfiles as p}
-                      <option value={p.external_account_id}>{p.username} — {p.display_name || p.external_account_id} ({p.provider})</option>
-                    {/each}
-                  </optgroup>
-                {/if}
-              </select>
+                options={[
+                  ...myProfiles.map((p) => ({
+                    value: p.external_account_id,
+                    label: `${p.display_name || p.username} (${p.provider})`,
+                  })),
+                  ...familyProfiles.map((p) => ({
+                    value: p.external_account_id,
+                    label: `${p.username} — ${p.display_name || p.external_account_id} (${p.provider}) [Family]`,
+                  })),
+                ]}
+              />
             </div>
           {/if}
 
           <!-- Target Quality Dropdown -->
-          <div class="flex items-center gap-2">
-            <label for="quality-select" class="text-xs text-slate-400 whitespace-nowrap">Target Quality:</label>
-            <select
+          <div class="flex items-center gap-2 min-w-[180px]">
+            <label for="quality-select" class="text-xs whitespace-nowrap" style="color: var(--text-muted);">Target Quality:</label>
+            <Select
               id="quality-select"
+              compact={true}
+              ariaLabel="Target Quality"
               bind:value={selectedQuality}
-              class="bg-slate-800 border border-slate-700 text-slate-200 text-xs rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-slate-500"
-            >
-              {#if qualityProfiles.length === 0}
-                <option value="">Default (FLAC/Lossless)</option>
-              {:else}
-                {#each qualityProfiles as profile}
-                  <option value={profile.name || profile.id}>{profile.name || profile.id}</option>
-                {/each}
-              {/if}
-            </select>
+              options={qualityProfiles.length === 0
+                ? [{ value: "", label: "Default (FLAC/Lossless)" }]
+                : qualityProfiles.map((profile) => ({
+                    value: profile.name || profile.id,
+                    label: profile.name || profile.id,
+                  }))}
+            />
           </div>
 
           <!-- Action Buttons -->

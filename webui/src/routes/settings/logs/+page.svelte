@@ -2,6 +2,7 @@
   import { onMount, onDestroy } from "svelte";
   import apiClient from "../../../api/client";
   import { feedback } from "../../../stores/feedback";
+  import Select from "$lib/components/Select.svelte";
 
   let logs = $state([]);
   let availableFiles = $state([]);
@@ -32,15 +33,15 @@
     switch (lvl) {
       case "CRITICAL":
       case "ERROR":
-        return "background: rgba(239, 68, 68, 0.16); color: #f87171; border-color: rgba(239, 68, 68, 0.35);";
+        return "background: color-mix(in srgb, var(--color-danger) 16%, transparent); color: var(--color-danger); border-color: color-mix(in srgb, var(--color-danger) 35%, transparent);";
       case "WARNING":
-        return "background: rgba(245, 158, 11, 0.16); color: #fbbf24; border-color: rgba(245, 158, 11, 0.35);";
+        return "background: color-mix(in srgb, var(--color-warning) 16%, transparent); color: var(--color-warning); border-color: color-mix(in srgb, var(--color-warning) 35%, transparent);";
       case "INFO":
-        return "background: rgba(20, 184, 166, 0.16); color: var(--color-primary, #14b8a6); border-color: rgba(20, 184, 166, 0.35);";
+        return "background: color-mix(in srgb, var(--color-primary) 16%, transparent); color: var(--color-primary); border-color: color-mix(in srgb, var(--color-primary) 35%, transparent);";
       case "DEBUG":
-        return "background: rgba(59, 130, 246, 0.16); color: #60a5fa; border-color: rgba(59, 130, 246, 0.35);";
+        return "background: color-mix(in srgb, var(--color-info) 16%, transparent); color: var(--color-info); border-color: color-mix(in srgb, var(--color-info) 35%, transparent);";
       default:
-        return "background: rgba(148, 163, 184, 0.14); color: var(--text-secondary, #94a3b8); border-color: var(--border-subtle);";
+        return "background: var(--bg-surface-elevated); color: var(--text-secondary); border-color: var(--border-subtle);";
     }
   }
 
@@ -222,20 +223,21 @@
     <div class="toolbar-row">
       <label class="control-group">
         <span class="control-label">Log File</span>
-        <select
-          class="control-select"
-          value={selectedSource}
-          onchange={handleSourceChange}
-          aria-label="Select log file"
-        >
-          {#if availableFiles.length === 0}
-            <option value="app.log">app.log</option>
-          {:else}
-            {#each availableFiles as file (file)}
-              <option value={file}>{file}</option>
-            {/each}
-          {/if}
-        </select>
+        <Select
+          ariaLabel="Select log file"
+          compact={true}
+          bind:value={selectedSource}
+          onchange={(val) => {
+            selectedSource = val;
+            if (selectedSource === "debug.log" || selectedSource === "echosync-verbose.log") {
+              selectedLevels = new Set(LEVELS);
+            }
+            fetchLogs();
+          }}
+          options={availableFiles.length === 0
+            ? [{ value: "app.log", label: "app.log" }]
+            : availableFiles.map((f) => ({ value: f, label: f }))}
+        />
       </label>
 
       <label class="control-group flex-1">
@@ -279,18 +281,19 @@
 
       <label class="control-group">
         <span class="control-label">Limit</span>
-        <select
-          class="control-select"
+        <Select
+          ariaLabel="Maximum log lines"
+          compact={true}
           bind:value={limit}
           onchange={() => fetchLogs()}
-          aria-label="Maximum log lines"
-        >
-          <option value={200}>200 lines</option>
-          <option value={300}>300 lines</option>
-          <option value={500}>500 lines</option>
-          <option value={1000}>1000 lines</option>
-          <option value={2000}>2000 lines</option>
-        </select>
+          options={[
+            { value: 200, label: "200 lines" },
+            { value: 300, label: "300 lines" },
+            { value: 500, label: "500 lines" },
+            { value: 1000, label: "1000 lines" },
+            { value: 2000, label: "2000 lines" },
+          ]}
+        />
       </label>
     </div>
 

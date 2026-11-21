@@ -32,6 +32,9 @@
   
   --color-primary: #14b8a6;       /* Subtle Teal */
   --color-danger: #ef4444;        /* Danger/Action (Tailwind red-500) */
+  --color-warning: #eab308;       /* Warning (Tailwind yellow-500) */
+  --color-info: #3b82f6;          /* Info (Tailwind blue-500) */
+  --color-on-primary: #020617;    /* High-contrast text on primary buttons */
   
   --border-subtle: rgba(255, 255, 255, 0.06);
 
@@ -65,6 +68,20 @@
   --accent: var(--color-primary);
   --glass: rgba(15, 23, 42, 0.7);
   --glass-border: var(--border-subtle);
+}
+
+/* Global theme-aware native select fallback */
+select {
+  color-scheme: inherit;
+  background-color: var(--bg-input);
+  color: var(--text-primary);
+  border-color: var(--border-subtle);
+}
+
+select option,
+select optgroup {
+  background-color: var(--bg-surface-elevated);
+  color: var(--text-primary);
 }
 
 /* 

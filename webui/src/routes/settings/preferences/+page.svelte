@@ -9,6 +9,7 @@
   import LibraryImportSettings from '../../../components/LibraryImportSettings.svelte';
   import { preferences, sidebarPrefs, LOCKED_ROUTES } from '../../../stores/preferences';
   import { pluginViews } from '../../../stores/pluginViews';
+  import Select from '$lib/components/Select.svelte';
 
   let loadError = $state('');
   let storageRef = $state();
@@ -180,9 +181,11 @@
             <div class="appearance-content">
               <label>
                 <span class="label-text">Theme</span>
-                <select class="theme-select">
-                  <option value="dark" selected>Dark</option>
-                </select>
+                <Select
+                  ariaLabel="Theme"
+                  value="dark"
+                  options={[{ value: 'dark', label: 'Dark' }]}
+                />
               </label>
             </div>
           </section>
@@ -195,11 +198,16 @@
             <div class="logging-content">
               <label>
                 <span class="label-text">Console level</span>
-                <select class="log-select" bind:value={logLevel} on:change={() => updateSetting('log_level', logLevel)}>
-                  <option value="INFO">Normal</option>
-                  <option value="DEBUG">Debug</option>
-                  <option value="NOTSET">Verbose</option>
-                </select>
+                <Select
+                  ariaLabel="Console level"
+                  bind:value={logLevel}
+                  onchange={(val) => updateSetting('log_level', val)}
+                  options={[
+                    { value: 'INFO', label: 'Normal' },
+                    { value: 'DEBUG', label: 'Debug' },
+                    { value: 'NOTSET', label: 'Verbose' },
+                  ]}
+                />
               </label>
             </div>
           </section>
