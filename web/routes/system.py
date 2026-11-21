@@ -460,34 +460,12 @@ def get_all_system_accounts(config_db: ConfigDatabase = Depends(get_config_db)):
 
 
 @router.post("/accounts/map", dependencies=[Depends(require_auth)])
-async def map_system_accounts(request: Request, config_db: ConfigDatabase = Depends(get_config_db)):
-    """Save the mapping between a media server user and music service accounts.
-
-    Accepts:
-        { "user_id": <int_account_id>, "account_ids": [<int>, ...] }
-    """
-    try:
-        try:
-            payload = await request.json()
-        except Exception:
-            payload = {}
-        # user_id here is the relational Account.id for the media user
-        source_account_id = payload.get("user_id")
-        account_ids = [int(aid) for aid in payload.get("account_ids", [])]
-        if source_account_id is None:
-            return {"error": "user_id (Account ID) is required"}
-
-        # Clear existing mappings for this account
-        config_db.delete_account_mappings_for_account(int(source_account_id))
-
-        # Insert new agnostic mappings
-        for target_id in account_ids:
-            config_db.set_account_mapping(int(source_account_id), target_id)
-
-        return {"success": True}
-    except Exception as e:
-        logger.error(f"Error mapping accounts: {e}", exc_info=True)
-        return {"error": "Failed to map system accounts"}
+async def map_system_accounts():
+    """Retired legacy Music-to-Media-Server mapping endpoint."""
+    raise HTTPException(
+        status_code=410,
+        detail="Retired: use /api/v1/auth/users/{user_id}/external-accounts to bind external accounts to EchoSync users.",
+    )
 
 
 @router.post("/settings", dependencies=[Depends(require_scope("service:system:edit"))])

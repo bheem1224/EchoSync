@@ -55,6 +55,35 @@ export interface ManagedAccountBinding {
   created_at?: number;
 }
 
+export interface ExternalAccountBinding {
+  id?: number;
+  user_id: string;
+  provider: string;
+  category: 'streaming' | 'media_server';
+  external_account_id: string;
+  display_name: string;
+  plugin_id?: number | null;
+  created_at?: number;
+}
+
+export interface AvailableExternalAccount {
+  provider: string;
+  external_account_id: string;
+  display_name: string;
+  account_db_id?: number;
+  plugin_id?: number | null;
+  is_authenticated?: boolean;
+}
+
+export interface FamilyProfile {
+  user_id: string;
+  username: string;
+  provider: string;
+  external_account_id: string;
+  display_name: string;
+  is_self: boolean;
+}
+
 export interface ApiKeyRecord {
   id: string;
   user_id: string;
@@ -274,6 +303,80 @@ export async function deleteApiKey(keyId: string): Promise<{ success: boolean }>
   return response.data;
 }
 
+export async function listExternalAccounts(userId: string): Promise<{
+  user_id: string;
+  external_accounts: ExternalAccountBinding[];
+  total: number;
+}> {
+  const response = await apiClient.get(
+    `/auth/users/${encodeURIComponent(userId)}/external-accounts`
+  );
+  return response.data;
+}
+
+export async function bindExternalAccount(
+  userId: string,
+  payload: {
+    provider: string;
+    external_account_id: string;
+    display_name?: string;
+    category?: 'streaming' | 'media_server';
+    plugin_id?: number | null;
+  }
+): Promise<{ success: boolean; external_accounts: ExternalAccountBinding[] }> {
+  const response = await apiClient.post(
+    `/auth/users/${encodeURIComponent(userId)}/external-accounts`,
+    payload
+  );
+  return response.data;
+}
+
+export async function unbindExternalAccount(
+  userId: string,
+  provider: string,
+  externalAccountId: string
+): Promise<{ success: boolean; external_accounts: ExternalAccountBinding[] }> {
+  const response = await apiClient.delete(
+    `/auth/users/${encodeURIComponent(userId)}/external-accounts/${encodeURIComponent(
+      provider
+    )}/${encodeURIComponent(externalAccountId)}`
+  );
+  return response.data;
+}
+
+export async function listAvailableExternalAccounts(): Promise<{
+  streaming: AvailableExternalAccount[];
+  media_server: AvailableExternalAccount[];
+}> {
+  const response = await apiClient.get('/auth/external-accounts/available');
+  return response.data;
+}
+
+export async function listFamilyProfiles(provider?: string): Promise<{
+  my_profiles: FamilyProfile[];
+  family_profiles: FamilyProfile[];
+  default_target_user_id: string | null;
+}> {
+  const params = provider ? { provider } : undefined;
+  const response = await apiClient.get('/auth/family-profiles', { params });
+  return response.data;
+}
+
+export async function resetUserPassword(
+  userId: string,
+  password: string
+): Promise<{ success: boolean }> {
+  const response = await apiClient.put(`/auth/users/${encodeURIComponent(userId)}/password`, {
+    password,
+  });
+  return response.data;
+}
+
+export async function deleteUser(userId: string): Promise<{ success: boolean }> {
+  const response = await apiClient.delete(`/auth/users/${encodeURIComponent(userId)}`);
+  return response.data;
+}
+
 // Attach helpers directly onto apiClient for convenience across components
 Object.assign(apiClient, {
   getCookie,
@@ -290,6 +393,13 @@ Object.assign(apiClient, {
   listManagedAccounts,
   assignManagedAccount,
   removeManagedAccount,
+  listExternalAccounts,
+  bindExternalAccount,
+  unbindExternalAccount,
+  listAvailableExternalAccounts,
+  listFamilyProfiles,
+  resetUserPassword,
+  deleteUser,
   listApiKeys,
   createApiKey,
   deleteApiKey,

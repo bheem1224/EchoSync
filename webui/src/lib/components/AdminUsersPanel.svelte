@@ -1,45 +1,39 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { fade, slide } from 'svelte/transition';
-  import apiClient, {
-    listUsers,
-    createUser,
-    listRoles,
-    assignUserRoles,
-    listManagedAccounts,
-    assignManagedAccount,
-    removeManagedAccount,
-    listApiKeys,
+  import {
     createApiKey,
+    createUser,
     deleteApiKey,
-    type AuthUser,
-    type ManagedAccountBinding,
+    listApiKeys,
+    listExternalAccounts,
+    listUsers,
+    unbindExternalAccount,
     type ApiKeyRecord,
+    type AuthUser,
+    type ExternalAccountBinding,
   } from '../../api/client';
-  import { plugins } from '../../stores/plugins';
   import { feedback } from '../../stores/feedback';
+  import LinkAccountModal from './LinkAccountModal.svelte';
 
   let users = $state<AuthUser[]>([]);
-  let availableRoles = $state<string[]>(['admin', 'member']);
-  let managedBindingsByUser = $state<Record<string, ManagedAccountBinding[]>>({});
+  let externalBindingsByUser = $state<Record<string, ExternalAccountBinding[]>>({});
   let apiKeys = $state<ApiKeyRecord[]>([]);
   let newlyCreatedRawKey = $state<string | null>(null);
   let loading = $state(true);
   let errorMsg = $state('');
 
-  // Create user form state
+  // Create User Modal state
+  let showCreateUserModal = $state(false);
   let newUsername = $state('');
   let newPassword = $state('');
   let newRole = $state<'admin' | 'member'>('member');
   let showNewPassword = $state(false);
   let creatingUser = $state(false);
 
-  // Managed account assignment state
-  let selectedUserForBinding = $state<string>('');
-  let selectedServerPluginId = $state<number>(3021005569); // deterministic CRC32 default (EchoSync.plex)
-  let managedAccountInput = $state('');
-  let discoverableManagedAccounts = $state<Array<{ id: string; name: string; server_plugin_id?: number }>>([]);
-  let assigningBinding = $state(false);
+  // Edit / Link External Accounts Modal state
+  let editingUser = $state<AuthUser | null>(null);
+  let showLinkModal = $state(false);
 
   // API key form state
   let newApiKeyName = $state('');
@@ -52,81 +46,30 @@
   const newPwRecommended = $derived(newPwLen >= 15);
   const newPwPassphrase = $derived(newPwLen >= 64);
 
-  const serverPluginOptions = $derived.by(() => {
-    const items = Object.values(($plugins as any)?.items ?? {}) as any[];
-    const servers = items.filter(
-      (p) => p && (p.capabilities?.server || p.service_type === 'media_server' || p.category === 'media_server')
-    );
-    if (servers.length > 0) {
-      return servers.map((p) => ({
-        plugin_id: Number(p.plugin_id) || 3021005569,
-        name: p.display_name || p.name || String(p.id),
-      }));
-    }
-    return [
-      { plugin_id: 3021005569, name: 'Plex Media Server' },
-      { plugin_id: 2305548545, name: 'Jellyfin' },
-      { plugin_id: 4010168341, name: 'Navidrome' },
-    ];
-  });
-
-  function getServerLabel(pluginId: number): string {
-    const match = serverPluginOptions.find((s) => Number(s.plugin_id) === Number(pluginId));
-    if (match) return match.name;
-    const known: Record<number, string> = {
-      3021005569: 'Plex',
-      2305548545: 'Jellyfin',
-      4010168341: 'Navidrome',
-    };
-    return known[Number(pluginId)] || `Plugin #${pluginId}`;
-  }
-
   async function loadAll() {
     loading = true;
     errorMsg = '';
     try {
-      const [usersData, rolesData, keysData] = await Promise.all([
+      const [usersData, keysData] = await Promise.all([
         listUsers().catch(() => ({ users: [], total: 0 })),
-        listRoles().catch(() => ({ roles: [{ name: 'admin' }, { name: 'member' }], total: 2 })),
         listApiKeys().catch(() => ({ api_keys: [], total: 0 })),
       ]);
 
       users = usersData.users || [];
-      if (rolesData.roles && rolesData.roles.length > 0) {
-        availableRoles = rolesData.roles.map((r) => r.name);
-      }
       apiKeys = keysData.api_keys || [];
 
-      if (!selectedUserForBinding && users.length > 0) {
-        selectedUserForBinding = users[0].id;
-      }
-
-      // Load managed account bindings for each user
-      const bindingsMap: Record<string, ManagedAccountBinding[]> = {};
+      const bindingsMap: Record<string, ExternalAccountBinding[]> = {};
       await Promise.all(
         users.map(async (u) => {
           try {
-            const b = await listManagedAccounts(u.id);
-            bindingsMap[u.id] = b.managed_accounts || [];
+            const b = await listExternalAccounts(u.id);
+            bindingsMap[u.id] = b.external_accounts || [];
           } catch {
             bindingsMap[u.id] = [];
           }
         })
       );
-      managedBindingsByUser = bindingsMap;
-
-      // Also attempt to discover media server accounts if available
-      try {
-        const acctRes = await apiClient.get('/system/accounts');
-        if (Array.isArray(acctRes.data?.media_users)) {
-          discoverableManagedAccounts = acctRes.data.media_users.map((mu: any) => ({
-            id: String(mu.id || mu.user_id || mu.name),
-            name: String(mu.name || mu.display_name || mu.username || mu.id),
-          }));
-        }
-      } catch {
-        // Optional discovery endpoint
-      }
+      externalBindingsByUser = bindingsMap;
     } catch (err: any) {
       errorMsg = err?.response?.data?.detail || err?.message || 'Failed to load user management data.';
     } finally {
@@ -152,6 +95,7 @@
         newUsername = '';
         newPassword = '';
         newRole = 'member';
+        showCreateUserModal = false;
         await loadAll();
       }
     } catch (err: any) {
@@ -163,63 +107,22 @@
     }
   }
 
-  async function handleToggleUserRole(user: AuthUser, targetRole: 'admin' | 'member') {
+  async function handleQuickUnbind(userId: string, b: ExternalAccountBinding) {
     try {
-      const res = await assignUserRoles(user.id, [targetRole]);
-      if (res.user) {
-        users = users.map((u) => (u.id === user.id ? res.user : u));
-        feedback.addToast(`Updated role for ${user.username} to ${targetRole}`, 'success');
-      }
+      const res = await unbindExternalAccount(userId, b.provider, b.external_account_id);
+      externalBindingsByUser = {
+        ...externalBindingsByUser,
+        [userId]: res.external_accounts || [],
+      };
+      feedback.addToast(`Unbound ${b.provider}: ${b.display_name || b.external_account_id}`, 'success');
     } catch (err: any) {
-      const msg = err?.response?.data?.detail || err?.message || 'Failed to update role';
-      feedback.addToast(msg, 'error');
+      feedback.addToast(err?.response?.data?.detail || 'Failed to unbind account', 'error');
     }
   }
 
-  async function handleAssignManagedAccount(e: Event) {
-    e.preventDefault();
-    if (!selectedUserForBinding || !managedAccountInput.trim() || assigningBinding) return;
-
-    assigningBinding = true;
-    try {
-      const res = await assignManagedAccount(
-        selectedUserForBinding,
-        Number(selectedServerPluginId),
-        managedAccountInput.trim()
-      );
-      managedBindingsByUser = {
-        ...managedBindingsByUser,
-        [selectedUserForBinding]: res.managed_accounts || [],
-      };
-      managedAccountInput = '';
-      feedback.addToast('Managed server account bound to user', 'success');
-    } catch (err: any) {
-      const msg = err?.response?.data?.detail || err?.message || 'Failed to bind managed account';
-      feedback.addToast(msg, 'error');
-    } finally {
-      assigningBinding = false;
-    }
-  }
-
-  async function handleRemoveManagedAccount(userId: string, binding: ManagedAccountBinding) {
-    try {
-      await removeManagedAccount(userId, binding.server_plugin_id, binding.managed_account_id);
-      const current = managedBindingsByUser[userId] || [];
-      managedBindingsByUser = {
-        ...managedBindingsByUser,
-        [userId]: current.filter(
-          (b) =>
-            !(
-              Number(b.server_plugin_id) === Number(binding.server_plugin_id) &&
-              b.managed_account_id === binding.managed_account_id
-            )
-        ),
-      };
-      feedback.addToast('Removed managed account binding', 'success');
-    } catch (err: any) {
-      const msg = err?.response?.data?.detail || err?.message || 'Failed to remove binding';
-      feedback.addToast(msg, 'error');
-    }
+  function openManageModal(u: AuthUser) {
+    editingUser = u;
+    showLinkModal = true;
   }
 
   async function handleCreateApiKey(e: Event) {
@@ -257,7 +160,6 @@
   }
 
   onMount(() => {
-    plugins.load().catch(() => {});
     loadAll();
   });
 </script>
@@ -269,21 +171,31 @@
         Identity &amp; Access Control
       </span>
       <h2 class="text-xl font-bold mt-0.5" style="color: var(--text-primary);">
-        Users, Roles &amp; Media Server Managed Accounts
+        Users &amp; External Accounts
       </h2>
       <p class="text-xs mt-1" style="color: var(--text-muted);">
-        Manage local accounts, assign RBAC roles (<code>admin</code> / <code>member</code>), and bind users to managed media server accounts.
+        Manage EchoSync users, RBAC roles, and bound external accounts (Spotify, Tidal, ListenBrainz, Plex, Jellyfin, Navidrome).
       </p>
     </div>
 
-    <button
-      type="button"
-      onclick={loadAll}
-      class="px-3.5 py-2 rounded-xl text-xs font-semibold border transition-all active:scale-95 self-start"
-      style="background-color: var(--bg-surface-elevated); border-color: var(--border-subtle); color: var(--text-primary);"
-    >
-      {loading ? 'Refreshing…' : '↻ Refresh'}
-    </button>
+    <div class="flex items-center gap-2.5 self-start sm:self-auto">
+      <button
+        type="button"
+        onclick={loadAll}
+        class="px-3.5 py-2 rounded-xl text-xs font-semibold border transition-all active:scale-95"
+        style="background-color: var(--bg-surface-elevated); border-color: var(--border-subtle); color: var(--text-primary);"
+      >
+        {loading ? 'Refreshing…' : '↻ Refresh'}
+      </button>
+      <button
+        type="button"
+        onclick={() => (showCreateUserModal = true)}
+        class="px-4 py-2 rounded-xl text-xs font-bold transition-all active:scale-95"
+        style="background-color: var(--color-primary); color: #020617;"
+      >
+        + Create User
+      </button>
+    </div>
   </div>
 
   {#if errorMsg}
@@ -296,199 +208,7 @@
     </div>
   {/if}
 
-  <div class="grid grid-cols-1 xl:grid-cols-2 gap-6">
-    <!-- Left Card: Create Local User -->
-    <div
-      class="rounded-2xl border p-5 space-y-4"
-      style="background-color: var(--bg-surface); border-color: var(--border-subtle);"
-    >
-      <div>
-        <h3 class="text-sm font-bold" style="color: var(--text-primary);">
-          Create Local User
-        </h3>
-        <p class="text-xs mt-0.5" style="color: var(--text-muted);">
-          NIST SP 800-63B-4 policy: 8+ chars minimum, 15+ recommended, 64+ passphrases with spaces/Unicode supported.
-        </p>
-      </div>
-
-      <form onsubmit={handleCreateUser} class="space-y-3.5">
-        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <div class="sm:col-span-2">
-            <label for="new-user-username" class="block text-xs font-semibold mb-1" style="color: var(--text-secondary);">
-              Username
-            </label>
-            <input
-              id="new-user-username"
-              type="text"
-              bind:value={newUsername}
-              required
-              placeholder="e.g. alice"
-              class="input-field"
-            />
-          </div>
-
-          <div>
-            <span class="block text-xs font-semibold mb-1" style="color: var(--text-secondary);">
-              Role
-            </span>
-            <div class="grid grid-cols-2 gap-1.5 p-1 rounded-xl border" style="background-color: var(--bg-input); border-color: var(--border-subtle);" role="group" aria-label="Role">
-              {#each ['member', 'admin'] as r}
-                <button
-                  type="button"
-                  onclick={() => (newRole = r as 'admin' | 'member')}
-                  class="py-1.5 px-2 rounded-lg text-xs font-bold capitalize transition-all"
-                  style={newRole === r
-                    ? 'background-color: var(--color-primary); color: #020617;'
-                    : 'color: var(--text-muted);'}
-                >
-                  {r}
-                </button>
-              {/each}
-            </div>
-          </div>
-        </div>
-
-        <div>
-          <div class="flex items-center justify-between mb-1">
-            <label for="new-user-password" class="block text-xs font-semibold" style="color: var(--text-secondary);">
-              Password / Passphrase
-            </label>
-            <span class="text-[11px] font-mono" style="color: {newPwLen === 0 ? 'var(--text-muted)' : !newPwValid ? '#fca5a5' : newPwRecommended ? 'var(--color-primary)' : '#fde047'};">
-              {newPwLen} chars {newPwPassphrase ? '• 64+ Passphrase' : newPwRecommended ? '• 15+ Recommended' : newPwValid ? '• Min 8 met' : ''}
-            </span>
-          </div>
-          <div class="password-wrapper">
-            <input
-              id="new-user-password"
-              type={showNewPassword ? 'text' : 'password'}
-              bind:value={newPassword}
-              required
-              minlength="8"
-              maxlength="512"
-              placeholder="Minimum 8 chars (15+ passphrase recommended)"
-              class="input-field pr-16"
-            />
-            <button
-              type="button"
-              class="toggle-visibility text-xs font-semibold"
-              onclick={() => (showNewPassword = !showNewPassword)}
-            >
-              {showNewPassword ? 'Hide' : 'Show'}
-            </button>
-          </div>
-        </div>
-
-        <button
-          type="submit"
-          disabled={!newUsername.trim() || !newPwValid || creatingUser}
-          class="px-4 py-2.5 rounded-xl text-xs font-bold transition-all active:scale-95 disabled:opacity-40"
-          style="background-color: var(--color-primary); color: #020617;"
-        >
-          {creatingUser ? 'Creating User…' : '+ Create User Account'}
-        </button>
-      </form>
-    </div>
-
-    <!-- Right Card: Bind User to Media Server Managed Account -->
-    <div
-      class="rounded-2xl border p-5 space-y-4"
-      style="background-color: var(--bg-surface); border-color: var(--border-subtle);"
-    >
-      <div>
-        <h3 class="text-sm font-bold" style="color: var(--text-primary);">
-          Bind Media Server Managed Account
-        </h3>
-        <p class="text-xs mt-0.5" style="color: var(--text-muted);">
-          Associate an EchoSync user with a managed user/profile on your media server (Plex, Jellyfin, Navidrome).
-        </p>
-      </div>
-
-      <form onsubmit={handleAssignManagedAccount} class="space-y-3.5">
-        <div>
-          <span class="block text-xs font-semibold mb-1.5" style="color: var(--text-secondary);">
-            1. Select EchoSync User
-          </span>
-          <div class="flex flex-wrap gap-1.5" role="group" aria-label="Select EchoSync User">
-            {#each users as u (u.id)}
-              <button
-                type="button"
-                onclick={() => (selectedUserForBinding = u.id)}
-                class="px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all"
-                style={selectedUserForBinding === u.id
-                  ? 'background: rgba(20, 184, 166, 0.16); border-color: var(--color-primary); color: var(--color-primary);'
-                  : 'background-color: var(--bg-input); border-color: var(--border-subtle); color: var(--text-secondary);'}
-              >
-                {u.username}
-              </button>
-            {/each}
-            {#if users.length === 0}
-              <span class="text-xs italic" style="color: var(--text-muted);">No users found</span>
-            {/if}
-          </div>
-        </div>
-
-        <div>
-          <span class="block text-xs font-semibold mb-1.5" style="color: var(--text-secondary);">
-            2. Media Server Provider
-          </span>
-          <div class="flex flex-wrap gap-1.5" role="group" aria-label="Media Server Provider">
-            {#each serverPluginOptions as srv (srv.plugin_id)}
-              <button
-                type="button"
-                onclick={() => (selectedServerPluginId = srv.plugin_id)}
-                class="px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all"
-                style={Number(selectedServerPluginId) === Number(srv.plugin_id)
-                  ? 'background: rgba(20, 184, 166, 0.16); border-color: var(--color-primary); color: var(--color-primary);'
-                  : 'background-color: var(--bg-input); border-color: var(--border-subtle); color: var(--text-secondary);'}
-              >
-                {srv.name}
-              </button>
-            {/each}
-          </div>
-        </div>
-
-        <div>
-          <label for="managed-account-id-input" class="block text-xs font-semibold mb-1" style="color: var(--text-secondary);">
-            3. Managed Server Account ID / Username
-          </label>
-          <input
-            id="managed-account-id-input"
-            type="text"
-            bind:value={managedAccountInput}
-            required
-            placeholder="e.g. plex-managed-user-id or username"
-            class="input-field"
-          />
-          {#if discoverableManagedAccounts.length > 0}
-            <div class="flex flex-wrap items-center gap-1.5 mt-2">
-              <span class="text-[11px]" style="color: var(--text-muted);">Discovered:</span>
-              {#each discoverableManagedAccounts as da (da.id)}
-                <button
-                  type="button"
-                  onclick={() => (managedAccountInput = da.id)}
-                  class="px-2 py-0.5 rounded text-[11px] font-medium border transition-colors"
-                  style="background-color: var(--bg-surface-elevated); border-color: var(--border-subtle); color: var(--text-secondary);"
-                >
-                  {da.name} ({da.id})
-                </button>
-              {/each}
-            </div>
-          {/if}
-        </div>
-
-        <button
-          type="submit"
-          disabled={!selectedUserForBinding || !managedAccountInput.trim() || assigningBinding}
-          class="px-4 py-2.5 rounded-xl text-xs font-bold transition-all active:scale-95 disabled:opacity-40"
-          style="background-color: var(--color-primary); color: #020617;"
-        >
-          {assigningBinding ? 'Binding Account…' : '🔗 Bind Managed Account'}
-        </button>
-      </form>
-    </div>
-  </div>
-
-  <!-- Users Directory & Managed Account Bindings Table -->
+  <!-- Registered Users Full-Width Directory -->
   <div
     class="rounded-2xl border overflow-hidden"
     style="background-color: var(--bg-surface); border-color: var(--border-subtle);"
@@ -501,7 +221,7 @@
 
     {#if loading && users.length === 0}
       <div class="p-8 text-center text-xs" style="color: var(--text-muted);">
-        Loading users and managed account assignments…
+        Loading users and external account bindings…
       </div>
     {:else if users.length === 0}
       <div class="p-8 text-center text-xs" style="color: var(--text-muted);">
@@ -510,10 +230,10 @@
     {:else}
       <div class="divide-y" style="border-color: var(--border-subtle);">
         {#each users as user (user.id)}
-          {@const bindings = managedBindingsByUser[user.id] || []}
+          {@const bindings = externalBindingsByUser[user.id] || []}
           {@const isAdmin = (user.roles || []).includes('admin')}
           <div class="p-4 sm:px-5 flex flex-col lg:flex-row lg:items-center justify-between gap-4" transition:fade={{ duration: 150 }}>
-            <div class="space-y-1">
+            <div class="space-y-1.5 min-w-0 flex-1">
               <div class="flex items-center gap-2.5 flex-wrap">
                 <span class="font-bold text-sm" style="color: var(--text-primary);">
                   {user.username}
@@ -524,39 +244,39 @@
                     ? 'background: rgba(20, 184, 166, 0.16); color: var(--color-primary); border: 1px solid rgba(20, 184, 166, 0.35);'
                     : 'background: rgba(148, 163, 184, 0.12); color: var(--text-secondary); border: 1px solid var(--border-subtle);'}
                 >
-                  {isAdmin ? 'Admin' : 'Member'}
+                  {isAdmin ? 'ADMIN' : 'MEMBER'}
                 </span>
                 <span
                   class="px-2 py-0.5 rounded text-[10px] font-mono uppercase"
                   style="background-color: var(--bg-surface-elevated); color: var(--text-muted);"
                 >
-                  {user.auth_provider || 'local'}
+                  {(user.auth_provider || 'local').toUpperCase()}
                 </span>
               </div>
 
-              <!-- Managed Accounts Pills -->
-              <div class="flex flex-wrap items-center gap-1.5 pt-1">
-                <span class="text-[11px]" style="color: var(--text-muted);">Managed Accounts:</span>
+              <!-- Unified Bound External Accounts Pills -->
+              <div class="flex flex-wrap items-center gap-1.5 pt-0.5">
+                <span class="text-[11px]" style="color: var(--text-muted);">External Accounts:</span>
                 {#if bindings.length === 0}
                   <span class="text-[11px] italic" style="color: var(--text-muted);">None bound</span>
                 {:else}
-                  {#each bindings as b (`${b.server_plugin_id}:${b.managed_account_id}`)}
+                  {#each bindings as b (`${b.provider}:${b.external_account_id}`)}
                     <span
                       class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium border"
                       style="background-color: var(--bg-surface-elevated); border-color: rgba(20, 184, 166, 0.3); color: var(--text-primary);"
                       transition:slide={{ duration: 150 }}
                     >
                       <span class="text-[10px] font-bold uppercase" style="color: var(--color-primary);">
-                        {getServerLabel(b.server_plugin_id)}:
+                        {b.provider}:
                       </span>
-                      <span>{b.managed_account_id}</span>
+                      <span>{b.display_name || b.external_account_id}</span>
                       <button
                         type="button"
-                        onclick={() => handleRemoveManagedAccount(user.id, b)}
-                        class="ml-1 hover:opacity-100 opacity-60 text-xs"
-                        style="color: var(--color-danger);"
-                        title="Unbind managed account"
-                        aria-label="Unbind managed account"
+                        onclick={() => handleQuickUnbind(user.id, b)}
+                        class="ml-0.5 hover:opacity-100 opacity-60 text-xs"
+                        style="color: var(--color-danger, #f87171);"
+                        title="Unbind external account"
+                        aria-label="Unbind external account"
                       >
                         ✕
                       </button>
@@ -566,31 +286,15 @@
               </div>
             </div>
 
-            <!-- Role Switcher Controls -->
             <div class="flex items-center gap-2 shrink-0">
-              <span class="text-xs" style="color: var(--text-muted);">Role:</span>
-              <div class="inline-flex p-1 rounded-xl border" style="background-color: var(--bg-input); border-color: var(--border-subtle);">
-                <button
-                  type="button"
-                  onclick={() => handleToggleUserRole(user, 'member')}
-                  class="px-2.5 py-1 rounded-lg text-xs font-semibold transition-all"
-                  style={!isAdmin
-                    ? 'background-color: var(--color-primary); color: #020617;'
-                    : 'color: var(--text-muted);'}
-                >
-                  Member
-                </button>
-                <button
-                  type="button"
-                  onclick={() => handleToggleUserRole(user, 'admin')}
-                  class="px-2.5 py-1 rounded-lg text-xs font-semibold transition-all"
-                  style={isAdmin
-                    ? 'background-color: var(--color-primary); color: #020617;'
-                    : 'color: var(--text-muted);'}
-                >
-                  Admin
-                </button>
-              </div>
+              <button
+                type="button"
+                onclick={() => openManageModal(user)}
+                class="px-3.5 py-2 rounded-xl text-xs font-semibold border transition-all hover:border-teal-400 active:scale-95"
+                style="background-color: var(--bg-surface-elevated); border-color: var(--border-subtle); color: var(--text-primary);"
+              >
+                Manage Accounts / Edit
+              </button>
             </div>
           </div>
         {/each}
@@ -603,7 +307,7 @@
     class="rounded-2xl border p-5 space-y-4"
     style="background-color: var(--bg-surface); border-color: var(--border-subtle);"
   >
-    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+    <div class="flex flex-col md:flex-row md:items-center justify-between gap-3">
       <div>
         <h3 class="text-sm font-bold" style="color: var(--text-primary);">
           API Keys ({apiKeys.length})
@@ -613,18 +317,17 @@
         </p>
       </div>
 
-      <form onsubmit={handleCreateApiKey} class="flex items-center gap-2">
+      <form onsubmit={handleCreateApiKey} class="flex items-center gap-2 w-full md:w-auto md:min-w-[380px]">
         <input
           type="text"
           bind:value={newApiKeyName}
           placeholder="Key label (e.g. CLI Automation)"
-          class="input-field text-xs py-2"
-          style="min-width: 200px;"
+          class="input-field text-xs py-2 min-w-[240px] flex-1"
         />
         <button
           type="submit"
           disabled={!newApiKeyName.trim() || creatingApiKey}
-          class="px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all active:scale-95 disabled:opacity-40"
+          class="px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all active:scale-95 disabled:opacity-40 shrink-0"
           style="background-color: var(--color-primary); color: #020617;"
         >
           {creatingApiKey ? 'Generating…' : '+ New API Key'}
@@ -670,3 +373,141 @@
     {/if}
   </div>
 </section>
+
+<!-- Create User Pop-Up Modal -->
+{#if showCreateUserModal}
+  <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+  <div
+    class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm"
+    onclick={(e) => { if (e.target === e.currentTarget) showCreateUserModal = false; }}
+    transition:fade={{ duration: 150 }}
+    role="dialog"
+    aria-modal="true"
+  >
+    <div
+      class="w-full max-w-md rounded-2xl border shadow-2xl overflow-hidden"
+      style="background-color: var(--bg-surface, #0f172a); border-color: var(--border-subtle);"
+    >
+      <div class="px-6 py-4 border-b flex items-center justify-between" style="border-color: var(--border-subtle);">
+        <div>
+          <span class="text-[10px] font-bold uppercase tracking-widest" style="color: var(--color-primary);">
+            New Account
+          </span>
+          <h3 class="text-base font-bold mt-0.5" style="color: var(--text-primary);">
+            Create Local User
+          </h3>
+        </div>
+        <button
+          type="button"
+          onclick={() => (showCreateUserModal = false)}
+          class="w-8 h-8 rounded-lg flex items-center justify-center border hover:bg-white/10"
+          style="border-color: var(--border-subtle); color: var(--text-muted);"
+          aria-label="Close modal"
+        >
+          ✕
+        </button>
+      </div>
+
+      <form onsubmit={handleCreateUser} class="p-6 space-y-4">
+        <p class="text-xs" style="color: var(--text-muted);">
+          NIST SP 800-63B-4 policy: 8+ chars minimum, 15+ recommended, 64+ passphrases with spaces/Unicode supported.
+        </p>
+
+        <div>
+          <label for="new-user-username" class="block text-xs font-semibold mb-1" style="color: var(--text-secondary);">
+            Username
+          </label>
+          <input
+            id="new-user-username"
+            type="text"
+            bind:value={newUsername}
+            required
+            placeholder="e.g. alice"
+            class="input-field w-full"
+          />
+        </div>
+
+        <div>
+          <span class="block text-xs font-semibold mb-1" style="color: var(--text-secondary);">
+            Role
+          </span>
+          <div class="grid grid-cols-2 gap-1.5 p-1 rounded-xl border" style="background-color: var(--bg-input); border-color: var(--border-subtle);" role="group" aria-label="Role">
+            {#each ['member', 'admin'] as r}
+              <button
+                type="button"
+                onclick={() => (newRole = r as 'admin' | 'member')}
+                class="py-1.5 px-2 rounded-lg text-xs font-bold capitalize transition-all"
+                style={newRole === r
+                  ? 'background-color: var(--color-primary); color: #020617;'
+                  : 'color: var(--text-muted);'}
+              >
+                {r}
+              </button>
+            {/each}
+          </div>
+        </div>
+
+        <div>
+          <div class="flex items-center justify-between mb-1">
+            <label for="new-user-password" class="block text-xs font-semibold" style="color: var(--text-secondary);">
+              Password / Passphrase
+            </label>
+            <span class="text-[11px] font-mono" style="color: {newPwLen === 0 ? 'var(--text-muted)' : !newPwValid ? '#fca5a5' : newPwRecommended ? 'var(--color-primary)' : '#fde047'};">
+              {newPwLen} chars {newPwPassphrase ? '• 64+ Passphrase' : newPwRecommended ? '• 15+ Recommended' : newPwValid ? '• Min 8 met' : ''}
+            </span>
+          </div>
+          <div class="password-wrapper flex items-center gap-2">
+            <input
+              id="new-user-password"
+              type={showNewPassword ? 'text' : 'password'}
+              bind:value={newPassword}
+              required
+              minlength="8"
+              maxlength="512"
+              placeholder="Minimum 8 chars (15+ passphrase recommended)"
+              class="input-field w-full"
+            />
+            <button
+              type="button"
+              class="px-2.5 py-2 rounded-lg text-xs font-semibold border shrink-0"
+              style="border-color: var(--border-subtle); color: var(--text-secondary);"
+              onclick={() => (showNewPassword = !showNewPassword)}
+            >
+              {showNewPassword ? 'Hide' : 'Show'}
+            </button>
+          </div>
+        </div>
+
+        <div class="flex items-center justify-end gap-2 pt-2">
+          <button
+            type="button"
+            onclick={() => (showCreateUserModal = false)}
+            class="px-4 py-2 rounded-xl text-xs font-semibold border"
+            style="border-color: var(--border-subtle); color: var(--text-secondary);"
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            disabled={!newUsername.trim() || !newPwValid || creatingUser}
+            class="px-4 py-2 rounded-xl text-xs font-bold transition-all active:scale-95 disabled:opacity-40"
+            style="background-color: var(--color-primary); color: #020617;"
+          >
+            {creatingUser ? 'Creating…' : 'Create User'}
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+{/if}
+
+<LinkAccountModal
+  isOpen={showLinkModal}
+  user={editingUser}
+  allUsers={users}
+  onClose={() => {
+    showLinkModal = false;
+    editingUser = null;
+  }}
+  onUpdated={loadAll}
+/>

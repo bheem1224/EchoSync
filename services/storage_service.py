@@ -50,12 +50,42 @@ class StorageService:
     def list_accounts(
         self, service_name: str | None = None, is_active: bool | None = None
     ) -> list[dict[str, Any]]:
-        """Return account lists for a given service."""
+        """Return account lists for a given service, merging legacy service-name aliases."""
         from database.config_database import get_config_database
 
         db = get_config_database()
-        service_id = db.get_or_create_service_id(service_name) if service_name else None
-        return db.get_accounts(service_id=service_id, is_active=is_active)
+        if not service_name:
+            return db.get_accounts(service_id=None, is_active=is_active)
+
+        clean = str(service_name).strip().lower().replace("echosync.", "").replace("echosync/", "")
+        aliases = {str(service_name).strip().lower(), clean, f"echosync.{clean}", f"echosync/{clean}"}
+        service_ids: list[int] = []
+        primary_id = db.get_or_create_service_id(service_name)
+        if primary_id:
+            service_ids.append(int(primary_id))
+        try:
+            with db._get_connection() as conn:
+                placeholders = ",".join("?" * len(aliases))
+                for (sid,) in conn.execute(
+                    f"SELECT id FROM services WHERE LOWER(name) IN ({placeholders})",
+                    tuple(aliases),
+                ).fetchall():
+                    if int(sid) not in service_ids:
+                        service_ids.append(int(sid))
+        except Exception:
+            pass
+
+        seen_ids: set[int] = set()
+        merged: list[dict[str, Any]] = []
+        for sid in service_ids:
+            for acc in db.get_accounts(service_id=sid, is_active=is_active):
+                aid = acc.get("id")
+                if aid is not None and int(aid) in seen_ids:
+                    continue
+                if aid is not None:
+                    seen_ids.add(int(aid))
+                merged.append(acc)
+        return merged
 
     def get_service_id(self, service_name: str) -> int | None:
         """Return or create the service_id for a service name."""

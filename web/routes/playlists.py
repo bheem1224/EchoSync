@@ -3,15 +3,17 @@ from typing import Any
 from urllib.parse import quote
 import uuid
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict
 
 from core.event_bus import event_bus
 from core.personalized_playlists import get_personalized_playlists_service
+from core.security.rbac import Principal
 from core.sync_history import sync_history
 from core.task_manager.task_queue import job_queue
 from core.tiered_logger import get_logger
 from database.music_database import MusicDatabase
+from web.auth import require_auth
 
 
 class PlaylistAnalyzeSchema(BaseModel):
@@ -335,8 +337,18 @@ def get_analyze_job(job_id, request: Request):
     return payload
 
 
+@router.get("/target-profiles")
+@api_v1_router.get("/target-profiles")
+@legacy_router.get("/target-profiles")
+def get_target_profiles(provider: str | None = None, principal: Principal = Depends(require_auth)):
+    """List caller's own target profiles and family members' target media profiles."""
+    from web.routes.accounts import _list_family_profiles_handler
+
+    return _list_family_profiles_handler(provider=provider, principal=principal)
+
+
 @router.post("/sync")
-def trigger_sync(payload_obj: PlaylistSyncSchema):
+def trigger_sync(payload_obj: PlaylistSyncSchema, principal: Principal = Depends(require_auth)):
     payload = payload_obj.model_dump(exclude_unset=True) if hasattr(payload_obj, "model_dump") else (payload_obj or {})
     target = payload.get("target_source") or payload.get("target")
     playlist_name = payload.get("playlist_name")
@@ -400,6 +412,35 @@ def trigger_sync(payload_obj: PlaylistSyncSchema):
         # Local-server sync: add tracks to managed playlist with overwrite
         source_account_name = payload.get("source_account_name")
         target_user_id = payload.get("target_user_id")
+
+        if isinstance(principal, Principal) and principal.user_id:
+            from database.config_database import get_config_database
+
+            cfg_db = get_config_database()
+            own_profiles = [
+                p
+                for p in cfg_db.get_user_external_accounts(principal.user_id)
+                if p.get("category") == "media_server" and p.get("provider") == canonical_target
+            ]
+            if not target_user_id and own_profiles:
+                target_user_id = own_profiles[0]["external_account_id"]
+            elif target_user_id:
+                own_ids = {str(p["external_account_id"]) for p in own_profiles}
+                if str(target_user_id) not in own_ids and str(target_user_id) != str(principal.user_id):
+                    all_media = cfg_db.list_all_external_accounts(category="media_server")
+                    belongs_to_other = any(
+                        str(b["external_account_id"]) == str(target_user_id) and b["user_id"] != principal.user_id
+                        for b in all_media
+                    )
+                    if belongs_to_other and not (
+                        principal.has_scope("service:playlist_sync:share")
+                        or principal.has_scope("contract:accounts:read:any")
+                    ):
+                        raise HTTPException(
+                            status_code=403,
+                            detail="Missing required capability scope: service:playlist_sync:share",
+                        )
+
         return _sync_to_plex(
             payload,
             source,

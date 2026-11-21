@@ -9,6 +9,9 @@
     analysisResult = null,
     qualityProfiles = [],
     selectedQuality = $bindable(''),
+    myProfiles = [],
+    familyProfiles = [],
+    selectedTargetProfile = $bindable(''),
     loading = false,
     downloading = false,
     onClose = () => {},
@@ -58,6 +61,32 @@
         </div>
 
         <div class="flex items-center gap-4">
+          {#if myProfiles.length > 0 || familyProfiles.length > 0}
+            <div class="flex items-center gap-2">
+              <label for="target-profile-select" class="text-xs text-slate-400 whitespace-nowrap">Target Profile:</label>
+              <select
+                id="target-profile-select"
+                bind:value={selectedTargetProfile}
+                class="bg-slate-800 border border-slate-700 text-slate-200 text-xs rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-slate-500"
+              >
+                {#if myProfiles.length > 0}
+                  <optgroup label="My Profiles">
+                    {#each myProfiles as p}
+                      <option value={p.external_account_id}>{p.display_name || p.username} ({p.provider})</option>
+                    {/each}
+                  </optgroup>
+                {/if}
+                {#if familyProfiles.length > 0}
+                  <optgroup label="Family Profiles">
+                    {#each familyProfiles as p}
+                      <option value={p.external_account_id}>{p.username} — {p.display_name || p.external_account_id} ({p.provider})</option>
+                    {/each}
+                  </optgroup>
+                {/if}
+              </select>
+            </div>
+          {/if}
+
           <!-- Target Quality Dropdown -->
           <div class="flex items-center gap-2">
             <label for="quality-select" class="text-xs text-slate-400 whitespace-nowrap">Target Quality:</label>

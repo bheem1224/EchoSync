@@ -75,6 +75,18 @@ class AssignManagedAccountRequest(BaseModel):
     managed_account_id: str = Field(..., min_length=1)
 
 
+class BindExternalAccountRequest(BaseModel):
+    provider: str = Field(..., min_length=1, max_length=64)
+    external_account_id: str = Field(..., min_length=1, max_length=256)
+    display_name: str | None = Field(default=None, max_length=256)
+    category: str | None = Field(default=None, max_length=32)
+    plugin_id: int | None = None
+
+
+class ResetPasswordRequest(BaseModel):
+    password: str = Field(..., min_length=8, max_length=512)
+
+
 def _list_users_handler(_=Depends(require_scope("service:accounts:read"))):
     users = get_config_database().list_users()
     return {"users": users, "total": len(users)}
@@ -155,9 +167,236 @@ def _remove_managed_account_handler(
     return {"success": True}
 
 
+_STREAMING_PROVIDERS: frozenset[str] = frozenset({"spotify", "tidal", "listenbrainz", "apple_music", "deezer", "qobuz"})
+
+
+def _list_external_accounts_handler(
+    user_id: str,
+    principal: Principal = Depends(require_auth),
+):
+    if principal.user_id == user_id:
+        if not (principal.has_scope("contract:accounts:read:own") or principal.has_scope("service:accounts:read")):
+            raise HTTPException(status_code=403, detail="Missing required capability scope: contract:accounts:read:own")
+    elif not (principal.has_scope("contract:accounts:read:any") or principal.has_scope("service:accounts:read")):
+        raise HTTPException(status_code=403, detail="Missing required capability scope: contract:accounts:read:any")
+
+    accounts = get_config_database().get_user_external_accounts(user_id)
+    return {"user_id": user_id, "external_accounts": accounts, "total": len(accounts)}
+
+
+def _bind_external_account_handler(
+    user_id: str,
+    payload: BindExternalAccountRequest,
+    principal: Principal = Depends(require_auth),
+):
+    db = get_config_database()
+    clean_provider, resolved_cat, _ = db._resolve_provider_metadata(
+        payload.provider, payload.category, payload.plugin_id
+    )
+    is_admin_edit = principal.has_scope("service:accounts:edit") or principal.has_scope("contract:accounts:edit:any")
+    if not is_admin_edit:
+        if principal.user_id != user_id or not principal.has_scope("contract:accounts:edit:own"):
+            raise HTTPException(status_code=403, detail="Missing required capability scope: service:accounts:edit")
+        if resolved_cat != "streaming" or clean_provider not in _STREAMING_PROVIDERS:
+            raise HTTPException(
+                status_code=403,
+                detail="Members may only bind their own personal streaming accounts.",
+            )
+
+    if not db.bind_external_account(
+        user_id=user_id,
+        provider=clean_provider,
+        external_account_id=payload.external_account_id,
+        display_name=payload.display_name,
+        category=resolved_cat,
+        plugin_id=payload.plugin_id,
+    ):
+        raise HTTPException(status_code=404, detail="User not found or invalid external account.")
+    accounts = db.get_user_external_accounts(user_id)
+    return {"success": True, "external_accounts": accounts}
+
+
+def _unbind_external_account_handler(
+    user_id: str,
+    provider: str,
+    external_account_id: str,
+    principal: Principal = Depends(require_auth),
+):
+    db = get_config_database()
+    clean_provider, resolved_cat, _ = db._resolve_provider_metadata(provider)
+    is_admin_edit = principal.has_scope("service:accounts:edit") or principal.has_scope("contract:accounts:edit:any")
+    if not is_admin_edit:
+        if principal.user_id != user_id or not principal.has_scope("contract:accounts:edit:own"):
+            raise HTTPException(status_code=403, detail="Missing required capability scope: service:accounts:edit")
+        if resolved_cat != "streaming":
+            raise HTTPException(
+                status_code=403,
+                detail="Members may only unbind their own personal streaming accounts.",
+            )
+
+    db.unbind_external_account(user_id, clean_provider, external_account_id)
+    accounts = db.get_user_external_accounts(user_id)
+    return {"success": True, "external_accounts": accounts}
+
+
+def _list_available_external_accounts_handler(principal: Principal = Depends(require_auth)):
+    """Discover available streaming and media server accounts via SDK/storage without exposing secrets."""
+    db = get_config_database()
+    streaming: list[dict[str, Any]] = []
+    media_server: list[dict[str, Any]] = []
+    seen_streaming: set[tuple[str, str]] = set()
+    seen_media: set[tuple[str, str]] = set()
+
+    # 1. Scan service accounts from config.db (preserves legacy Spotify/Tidal/Plex accounts)
+    try:
+        with db._get_connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT a.id, a.account_name, a.display_name, a.user_id, a.is_active, a.is_authenticated,
+                       s.name AS service_name, s.plugin_id, s.service_type
+                FROM accounts a
+                JOIN services s ON s.id = a.service_id
+                ORDER BY s.name ASC, a.display_name ASC, a.account_name ASC
+                """
+            ).fetchall()
+            for r in rows:
+                svc_raw = str(r["service_name"] or "").lower().replace("echosync.", "").replace("echosync/", "")
+                ext_id = str(r["account_name"] or r["user_id"] or r["id"])
+                disp = str(r["display_name"] or r["account_name"] or ext_id)
+                is_media = svc_raw in db._MEDIA_SERVER_PROVIDERS or r["service_type"] == "media_server"
+                item = {
+                    "provider": svc_raw,
+                    "external_account_id": ext_id,
+                    "display_name": disp,
+                    "account_db_id": r["id"],
+                    "plugin_id": r["plugin_id"],
+                    "is_authenticated": bool(r["is_authenticated"]),
+                }
+                if is_media:
+                    key = (svc_raw, ext_id)
+                    if key not in seen_media:
+                        seen_media.add(key)
+                        media_server.append(item)
+                else:
+                    key = (svc_raw, ext_id)
+                    if key not in seen_streaming:
+                        seen_streaming.add(key)
+                        streaming.append(item)
+    except Exception as exc:
+        logger.debug(f"Available accounts DB scan fallback: {exc}")
+
+    # 2. Query active media server plugins via PluginRegistry facade when connected
+    try:
+        from core.nexus_framework.plugin_loader import PluginRegistry
+
+        for pid in PluginRegistry.get_active_services_by_type("media_server") or []:
+            svc_name = (db.get_service_name(pid) or str(pid)).lower().replace("echosync.", "")
+            cls = PluginRegistry.get_plugin_class(pid)
+            if not cls:
+                continue
+            try:
+                client = cls()
+                if hasattr(client, "get_managed_users"):
+                    for mu in client.get_managed_users() or []:
+                        ext_id = str(mu.get("id") or mu.get("user_id") or mu.get("username") or mu.get("name") or "")
+                        disp = str(mu.get("display_name") or mu.get("name") or mu.get("username") or ext_id)
+                        if ext_id and (svc_name, ext_id) not in seen_media:
+                            seen_media.add((svc_name, ext_id))
+                            media_server.append(
+                                {
+                                    "provider": svc_name,
+                                    "external_account_id": ext_id,
+                                    "display_name": disp,
+                                    "plugin_id": pid if isinstance(pid, int) else None,
+                                }
+                            )
+            except Exception:
+                continue
+    except Exception:
+        pass
+
+    return {"streaming": streaming, "media_server": media_server}
+
+
+def _list_family_profiles_handler(
+    provider: str | None = None,
+    principal: Principal = Depends(require_auth),
+):
+    """Return caller's own media profiles and family members' target media profiles (no secrets)."""
+    can_family = (
+        principal.has_scope("contract:media_profiles:read:family")
+        or principal.has_scope("service:playlist_sync:share")
+        or principal.has_scope("contract:accounts:read:any")
+    )
+    if not can_family and not principal.has_scope("contract:accounts:read:own"):
+        raise HTTPException(
+            status_code=403,
+            detail="Missing required capability scope: contract:media_profiles:read:family",
+        )
+
+    db = get_config_database()
+    all_bindings = db.list_all_external_accounts(category="media_server")
+    clean_filter = provider.strip().lower().replace("echosync.", "") if provider else None
+
+    my_profiles: list[dict[str, Any]] = []
+    family_profiles: list[dict[str, Any]] = []
+    for b in all_bindings:
+        if clean_filter and b["provider"] != clean_filter:
+            continue
+        is_self = principal.user_id is not None and b["user_id"] == principal.user_id
+        entry = {
+            "user_id": b["user_id"],
+            "username": b["username"],
+            "provider": b["provider"],
+            "external_account_id": b["external_account_id"],
+            "display_name": b["display_name"],
+            "is_self": is_self,
+        }
+        if is_self:
+            my_profiles.append(entry)
+        elif can_family:
+            family_profiles.append(entry)
+
+    return {
+        "my_profiles": my_profiles,
+        "family_profiles": family_profiles,
+        "default_target_user_id": my_profiles[0]["external_account_id"] if my_profiles else None,
+    }
+
+
+def _reset_user_password_handler(
+    user_id: str,
+    payload: ResetPasswordRequest,
+    _=Depends(require_scope("service:accounts:edit")),
+):
+    try:
+        validate_password_policy(payload.password)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    if not get_config_database().reset_user_password(user_id, payload.password):
+        raise HTTPException(status_code=404, detail="User not found.")
+    return {"success": True}
+
+
+def _delete_user_handler(
+    user_id: str,
+    principal: Principal = Depends(require_scope("service:accounts:edit")),
+):
+    if principal.user_id == user_id:
+        raise HTTPException(status_code=400, detail="Cannot delete your own currently active account.")
+    try:
+        if not get_config_database().delete_user(user_id):
+            raise HTTPException(status_code=404, detail="User not found.")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"success": True}
+
+
 for _acct_rtr in (router, users_auth_router):
     _acct_rtr.add_api_route("/users", _list_users_handler, methods=["GET"])
     _acct_rtr.add_api_route("/users", _create_user_handler, methods=["POST"], status_code=201)
+    _acct_rtr.add_api_route("/users/{user_id}", _delete_user_handler, methods=["DELETE"])
+    _acct_rtr.add_api_route("/users/{user_id}/password", _reset_user_password_handler, methods=["PUT", "POST"])
     _acct_rtr.add_api_route("/roles", _list_roles_handler, methods=["GET"])
     _acct_rtr.add_api_route("/users/{user_id}/roles", _assign_user_roles_handler, methods=["PUT", "POST"])
     _acct_rtr.add_api_route("/users/{user_id}/managed-accounts", _list_managed_accounts_handler, methods=["GET"])
@@ -166,6 +405,26 @@ for _acct_rtr in (router, users_auth_router):
         "/users/{user_id}/managed-accounts/{server_plugin_id}/{managed_account_id}",
         _remove_managed_account_handler,
         methods=["DELETE"],
+    )
+    _acct_rtr.add_api_route("/users/{user_id}/external-accounts", _list_external_accounts_handler, methods=["GET"])
+    _acct_rtr.add_api_route(
+        "/users/{user_id}/external-accounts", _bind_external_account_handler, methods=["POST"], status_code=201
+    )
+    _acct_rtr.add_api_route(
+        "/users/{user_id}/external-accounts/{provider}/{external_account_id:path}",
+        _unbind_external_account_handler,
+        methods=["DELETE"],
+    )
+    _acct_rtr.add_api_route("/external-accounts/available", _list_available_external_accounts_handler, methods=["GET"])
+    _acct_rtr.add_api_route("/family-profiles", _list_family_profiles_handler, methods=["GET"])
+
+
+@router.post("/map", dependencies=[Depends(require_auth)])
+def retired_map_accounts():
+    """Retired legacy Music-to-Media-Server mapping endpoint."""
+    raise HTTPException(
+        status_code=410,
+        detail="Retired: use /api/v1/auth/users/{user_id}/external-accounts to bind external accounts to EchoSync users.",
     )
 
 

@@ -493,6 +493,49 @@ class ConfigDatabase:
                 """)
 
                 cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS user_external_accounts (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        user_id TEXT NOT NULL,
+                        provider TEXT NOT NULL,
+                        category TEXT NOT NULL DEFAULT 'streaming',
+                        external_account_id TEXT NOT NULL,
+                        display_name TEXT,
+                        plugin_id INTEGER,
+                        created_at INTEGER DEFAULT (strftime('%s','now')),
+                        UNIQUE(user_id, provider, external_account_id),
+                        FOREIGN KEY(user_id) REFERENCES users (id) ON DELETE CASCADE
+                    )
+                """)
+                cursor.execute(
+                    "CREATE INDEX IF NOT EXISTS ix_user_external_accounts_user ON user_external_accounts(user_id)"
+                )
+                cursor.execute(
+                    "CREATE INDEX IF NOT EXISTS ix_user_external_accounts_provider ON user_external_accounts(provider)"
+                )
+
+                # Backfill user_external_accounts from legacy user_managed_accounts without deleting legacy rows
+                cursor.execute(
+                    """
+                    INSERT OR IGNORE INTO user_external_accounts
+                        (user_id, provider, category, external_account_id, display_name, plugin_id)
+                    SELECT
+                        uma.user_id,
+                        CASE uma.server_plugin_id
+                            WHEN 3021005569 THEN 'plex'
+                            WHEN 2305548545 THEN 'jellyfin'
+                            WHEN 4010168341 THEN 'navidrome'
+                            ELSE COALESCE(LOWER(REPLACE(s.name, 'EchoSync.', '')), CAST(uma.server_plugin_id AS TEXT))
+                        END,
+                        'media_server',
+                        uma.managed_account_id,
+                        uma.managed_account_id,
+                        uma.server_plugin_id
+                    FROM user_managed_accounts uma
+                    LEFT JOIN services s ON s.plugin_id = uma.server_plugin_id
+                    """
+                )
+
+                cursor.execute("""
                     CREATE TABLE IF NOT EXISTS api_keys (
                         id TEXT PRIMARY KEY,
                         user_id TEXT NOT NULL,
@@ -516,7 +559,11 @@ class ConfigDatabase:
 
                 for role_name, role_perms in SYSTEM_ROLE_PERMISSIONS.items():
                     cursor.execute(
-                        "INSERT OR IGNORE INTO roles (name, is_system, permissions_json) VALUES (?, 1, ?)",
+                        """
+                        INSERT INTO roles (name, is_system, permissions_json) VALUES (?, 1, ?)
+                        ON CONFLICT(name) DO UPDATE SET permissions_json = excluded.permissions_json
+                        WHERE roles.is_system = 1
+                        """,
                         (role_name, _json.dumps(list(role_perms))),
                     )
 
@@ -2454,11 +2501,199 @@ class ConfigDatabase:
             return None
         return None
 
+    _PROVIDER_DEFAULT_PLUGIN_IDS: dict[str, int] = {
+        "plex": 3021005569,
+        "jellyfin": 2305548545,
+        "navidrome": 4010168341,
+        "spotify": 2391116200,
+        "tidal": 3782485548,
+        "listenbrainz": 3104832291,
+    }
+    _MEDIA_SERVER_PROVIDERS: frozenset[str] = frozenset({"plex", "jellyfin", "navidrome"})
+
+    def _resolve_provider_metadata(
+        self,
+        provider: str,
+        category: str | None = None,
+        plugin_id: int | None = None,
+    ) -> tuple[str, str, int | None]:
+        clean_provider = str(provider or "").strip().lower().replace("echosync.", "")
+        resolved_cat = (category or "").strip().lower()
+        if resolved_cat not in ("streaming", "media_server"):
+            resolved_cat = "media_server" if clean_provider in self._MEDIA_SERVER_PROVIDERS else "streaming"
+        resolved_pid = plugin_id if plugin_id is not None else self._PROVIDER_DEFAULT_PLUGIN_IDS.get(clean_provider)
+        return clean_provider, resolved_cat, resolved_pid
+
+    def bind_external_account(
+        self,
+        user_id: str,
+        provider: str,
+        external_account_id: str,
+        display_name: str | None = None,
+        category: str | None = None,
+        plugin_id: int | None = None,
+    ) -> bool:
+        from core.task_manager import db_write_lease
+
+        if not self.get_user_by_id(user_id):
+            return False
+
+        clean_provider, resolved_cat, resolved_pid = self._resolve_provider_metadata(provider, category, plugin_id)
+        ext_id = str(external_account_id).strip()
+        if not clean_provider or not ext_id:
+            return False
+        disp = (display_name or ext_id).strip()
+
+        with db_write_lease(task_name=f"bind_external_account_{user_id}"):
+            execute_write_sql(
+                str(self.database_path),
+                """
+                INSERT INTO user_external_accounts
+                    (user_id, provider, category, external_account_id, display_name, plugin_id)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(user_id, provider, external_account_id)
+                DO UPDATE SET
+                    display_name = excluded.display_name,
+                    category = excluded.category,
+                    plugin_id = COALESCE(excluded.plugin_id, user_external_accounts.plugin_id)
+                """,
+                (user_id, clean_provider, resolved_cat, ext_id, disp, resolved_pid),
+            )
+            if resolved_cat == "media_server" and resolved_pid is not None:
+                execute_write_sql(
+                    str(self.database_path),
+                    """
+                    INSERT OR IGNORE INTO user_managed_accounts (user_id, server_plugin_id, managed_account_id)
+                    VALUES (?, ?, ?)
+                    """,
+                    (user_id, int(resolved_pid), ext_id),
+                )
+        return True
+
+    def unbind_external_account(self, user_id: str, provider: str, external_account_id: str) -> bool:
+        from core.task_manager import db_write_lease
+
+        clean_provider, resolved_cat, resolved_pid = self._resolve_provider_metadata(provider)
+        ext_id = str(external_account_id).strip()
+        with db_write_lease(task_name=f"unbind_external_account_{user_id}"):
+            execute_write_sql(
+                str(self.database_path),
+                """
+                DELETE FROM user_external_accounts
+                WHERE user_id = ? AND provider = ? AND external_account_id = ?
+                """,
+                (user_id, clean_provider, ext_id),
+            )
+            if resolved_cat == "media_server" and resolved_pid is not None:
+                execute_write_sql(
+                    str(self.database_path),
+                    """
+                    DELETE FROM user_managed_accounts
+                    WHERE user_id = ? AND server_plugin_id = ? AND managed_account_id = ?
+                    """,
+                    (user_id, int(resolved_pid), ext_id),
+                )
+        return True
+
+    def get_user_external_accounts(self, user_id: str) -> list[dict[str, Any]]:
+        try:
+            with self._get_connection() as conn:
+                c = conn.cursor()
+                c.execute(
+                    """
+                    SELECT id, user_id, provider, category, external_account_id, display_name, plugin_id, created_at
+                    FROM user_external_accounts
+                    WHERE user_id = ?
+                    ORDER BY category ASC, provider ASC, display_name ASC
+                    """,
+                    (user_id,),
+                )
+                return [
+                    {
+                        "id": r["id"],
+                        "user_id": r["user_id"],
+                        "provider": r["provider"],
+                        "category": r["category"],
+                        "external_account_id": r["external_account_id"],
+                        "display_name": r["display_name"] or r["external_account_id"],
+                        "plugin_id": int(r["plugin_id"]) if r["plugin_id"] is not None else None,
+                        "created_at": r["created_at"],
+                    }
+                    for r in c.fetchall()
+                ]
+        except Exception:
+            return []
+
+    def list_all_external_accounts(self, category: str | None = None) -> list[dict[str, Any]]:
+        try:
+            with self._get_connection() as conn:
+                c = conn.cursor()
+                sql = """
+                    SELECT uea.id, uea.user_id, u.username, uea.provider, uea.category,
+                           uea.external_account_id, uea.display_name, uea.plugin_id, uea.created_at
+                    FROM user_external_accounts uea
+                    JOIN users u ON u.id = uea.user_id
+                    WHERE u.is_active = 1
+                """
+                params: list[Any] = []
+                if category:
+                    sql += " AND uea.category = ?"
+                    params.append(category)
+                sql += " ORDER BY u.username ASC, uea.provider ASC, uea.display_name ASC"
+                c.execute(sql, params)
+                return [
+                    {
+                        "id": r["id"],
+                        "user_id": r["user_id"],
+                        "username": r["username"],
+                        "provider": r["provider"],
+                        "category": r["category"],
+                        "external_account_id": r["external_account_id"],
+                        "display_name": r["display_name"] or r["external_account_id"],
+                        "plugin_id": int(r["plugin_id"]) if r["plugin_id"] is not None else None,
+                        "created_at": r["created_at"],
+                    }
+                    for r in c.fetchall()
+                ]
+        except Exception:
+            return []
+
+    def reset_user_password(self, user_id: str, new_password: str) -> bool:
+        from core.security.passwords import hash_password
+        from core.task_manager import db_write_lease
+
+        if not self.get_user_by_id(user_id):
+            return False
+        pw_hash = hash_password(new_password)
+        with db_write_lease(task_name=f"reset_user_password_{user_id}"):
+            execute_write_sql(
+                str(self.database_path),
+                "UPDATE users SET password_hash = ? WHERE id = ?",
+                (pw_hash, user_id),
+            )
+        return True
+
+    def delete_user(self, user_id: str) -> bool:
+        from core.task_manager import db_write_lease
+
+        user = self.get_user_by_id(user_id)
+        if not user:
+            return False
+        if "admin" in (user.get("roles") or []):
+            admins = [u for u in self.list_users() if "admin" in (u.get("roles") or []) and u.get("is_active", True)]
+            if len(admins) <= 1:
+                raise ValueError("Cannot delete the last remaining active admin user.")
+        with db_write_lease(task_name=f"delete_user_{user_id}"):
+            execute_write_sql(str(self.database_path), "DELETE FROM users WHERE id = ?", (user_id,))
+        return True
+
     def assign_managed_account(self, user_id: str, server_plugin_id: int, managed_account_id: str) -> bool:
         from core.task_manager import db_write_lease
 
         if not self.get_user_by_id(user_id):
             return False
+        reverse_provider = {v: k for k, v in self._PROVIDER_DEFAULT_PLUGIN_IDS.items()}
+        provider = reverse_provider.get(int(server_plugin_id), str(server_plugin_id))
         with db_write_lease(task_name=f"assign_managed_account_{user_id}"):
             execute_write_sql(
                 str(self.database_path),
@@ -2468,11 +2703,22 @@ class ConfigDatabase:
                 """,
                 (user_id, int(server_plugin_id), str(managed_account_id)),
             )
+            execute_write_sql(
+                str(self.database_path),
+                """
+                INSERT OR IGNORE INTO user_external_accounts
+                    (user_id, provider, category, external_account_id, display_name, plugin_id)
+                VALUES (?, ?, 'media_server', ?, ?, ?)
+                """,
+                (user_id, provider, str(managed_account_id), str(managed_account_id), int(server_plugin_id)),
+            )
         return True
 
     def remove_managed_account(self, user_id: str, server_plugin_id: int, managed_account_id: str) -> bool:
         from core.task_manager import db_write_lease
 
+        reverse_provider = {v: k for k, v in self._PROVIDER_DEFAULT_PLUGIN_IDS.items()}
+        provider = reverse_provider.get(int(server_plugin_id), str(server_plugin_id))
         with db_write_lease(task_name=f"remove_managed_account_{user_id}"):
             execute_write_sql(
                 str(self.database_path),
@@ -2481,6 +2727,14 @@ class ConfigDatabase:
                 WHERE user_id = ? AND server_plugin_id = ? AND managed_account_id = ?
                 """,
                 (user_id, int(server_plugin_id), str(managed_account_id)),
+            )
+            execute_write_sql(
+                str(self.database_path),
+                """
+                DELETE FROM user_external_accounts
+                WHERE user_id = ? AND provider = ? AND external_account_id = ?
+                """,
+                (user_id, provider, str(managed_account_id)),
             )
         return True
 

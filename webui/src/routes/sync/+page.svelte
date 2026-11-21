@@ -24,6 +24,8 @@
   let downloadingMissing = false;
   let selectedQuality = "";
   let availableTargetAccounts = [];
+  let myTargetProfiles = [];
+  let familyTargetProfiles = [];
   let overrideTargetUserId = null;
 
   // Sync config modal state
@@ -100,8 +102,30 @@
 
   async function fetchTargetAccounts() {
     availableTargetAccounts = [];
+    myTargetProfiles = [];
+    familyTargetProfiles = [];
     if (!targetProvider) return;
     try {
+      // 1. Unified family-friendly target profiles endpoint (defaults to caller's own profile)
+      try {
+        const profRes = await apiClient.get("/core/playlists/target-profiles", {
+          params: { provider: targetProvider },
+        });
+        const myProfs = profRes.data?.my_profiles || [];
+        const famProfs = profRes.data?.family_profiles || [];
+        if (myProfs.length > 0 || famProfs.length > 0) {
+          myTargetProfiles = myProfs;
+          familyTargetProfiles = famProfs;
+          availableTargetAccounts = [...myProfs, ...famProfs];
+          if (!overrideTargetUserId && profRes.data?.default_target_user_id) {
+            overrideTargetUserId = profRes.data.default_target_user_id;
+          }
+          return;
+        }
+      } catch (e) {
+        // Fallback to plugin/system accounts
+      }
+
       try {
         const res = await apiClient.get(
           `/system/plugins/${targetProvider}/accounts`,
@@ -952,15 +976,36 @@
                 <option value="" disabled selected
                   >-- Select Target Profile --</option
                 >
-                {#each availableTargetAccounts as acc}
-                  <option value={acc.user_id || acc.id}>
-                    {acc.display_name ||
-                      acc.account_name ||
-                      acc.username ||
-                      acc.name}
-                    {acc.is_admin ? "(Admin)" : ""}
-                  </option>
-                {/each}
+                {#if myTargetProfiles.length > 0 || familyTargetProfiles.length > 0}
+                  {#if myTargetProfiles.length > 0}
+                    <optgroup label="My Profiles">
+                      {#each myTargetProfiles as acc}
+                        <option value={acc.external_account_id}>
+                          {acc.display_name || acc.username} ({acc.provider})
+                        </option>
+                      {/each}
+                    </optgroup>
+                  {/if}
+                  {#if familyTargetProfiles.length > 0}
+                    <optgroup label="Family Profiles">
+                      {#each familyTargetProfiles as acc}
+                        <option value={acc.external_account_id}>
+                          {acc.username} — {acc.display_name || acc.external_account_id} ({acc.provider})
+                        </option>
+                      {/each}
+                    </optgroup>
+                  {/if}
+                {:else}
+                  {#each availableTargetAccounts as acc}
+                    <option value={acc.user_id || acc.id}>
+                      {acc.display_name ||
+                        acc.account_name ||
+                        acc.username ||
+                        acc.name}
+                      {acc.is_admin ? "(Admin)" : ""}
+                    </option>
+                  {/each}
+                {/if}
               </select>
             </div>
           {/if}

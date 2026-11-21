@@ -100,21 +100,9 @@ def test_system_accounts_list(client, monkeypatch):
     assert "spotify" in music_service_names
 
 
-def test_map_system_accounts(client, monkeypatch):
-    """Verifies that account mapping endpoint handles correct parameters safely."""
-
-    mock_db = MagicMock()
-    monkeypatch.setattr("database.config_database.get_config_database", lambda: mock_db)
-
-    # Make request
+def test_map_system_accounts(client):
+    """Verifies that the retired legacy account mapping endpoint returns 410 Gone."""
     payload = {"user_id": 100, "account_ids": [200, 300]}
 
     response = client.post("/api/v1/system/accounts/map", json=payload)
-    assert response.status_code == 200
-    assert response.json()["success"] is True
-
-    # Verify deletions and sets
-    mock_db.delete_account_mappings_for_account.assert_called_once_with(100)
-    assert mock_db.set_account_mapping.call_count == 2
-    mock_db.set_account_mapping.assert_any_call(100, 200)
-    mock_db.set_account_mapping.assert_any_call(100, 300)
+    assert response.status_code == 410

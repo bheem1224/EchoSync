@@ -3,7 +3,10 @@
   import { feedback } from "../stores/feedback";
   import apiClient from "../api/client";
   import BackupSettings from "./BackupSettings.svelte";
-  import AdminUsersPanel from "../lib/components/AdminUsersPanel.svelte";
+
+  let safeModeEnabled = $state(false);
+  let dbHealthStatus = $state("Checking...");
+  let restarting = $state(false);
 
   let cpuUsage = $state(0);
   let systemCpuUsage = $state(0);
@@ -113,23 +116,31 @@
       }
 
       const health = await apiClient.get("/system/health");
-      if (health && health.data && health.data.library) {
-        libraryStats = {
-          totalTracks:
-            health.data.library.total_tracks !== undefined
-              ? String(health.data.library.total_tracks)
-              : libraryStats.totalTracks,
-          totalFiles:
-            health.data.library.total_files !== undefined
-              ? String(health.data.library.total_files)
-              : libraryStats.totalFiles,
-          totalAlbums:
-            health.data.library.total_albums !== undefined
-              ? String(health.data.library.total_albums)
-              : libraryStats.totalAlbums,
-          storageUsed:
-            health.data.library.storage_used || libraryStats.storageUsed,
-        };
+      if (health && health.data) {
+        dbHealthStatus = health.data.status || "ok";
+        if (health.data.library) {
+          libraryStats = {
+            totalTracks:
+              health.data.library.total_tracks !== undefined
+                ? String(health.data.library.total_tracks)
+                : libraryStats.totalTracks,
+            totalFiles:
+              health.data.library.total_files !== undefined
+                ? String(health.data.library.total_files)
+                : libraryStats.totalFiles,
+            totalAlbums:
+              health.data.library.total_albums !== undefined
+                ? String(health.data.library.total_albums)
+                : libraryStats.totalAlbums,
+            storageUsed:
+              health.data.library.storage_used || libraryStats.storageUsed,
+          };
+        }
+      }
+
+      const sysSettings = await apiClient.get("/system/settings").catch(() => null);
+      if (sysSettings?.data?.settings) {
+        safeModeEnabled = Boolean(sysSettings.data.settings.safe_mode);
       }
     } catch (e) {
       console.warn("Failed to refresh stats", e);
@@ -463,7 +474,42 @@
     <article
       class="lg:col-span-2 bg-gray-800 border border-gray-700/60 rounded-xl p-5 shadow-sm"
     >
-      <AdminUsersPanel />
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <h2 class="text-base font-semibold mb-1">System Administration &amp; Diagnostics</h2>
+          <div class="flex flex-wrap items-center gap-3 text-xs text-gray-400">
+            <span>
+              Database / WAL Health:
+              <strong class="text-emerald-400 uppercase">{dbHealthStatus}</strong>
+            </span>
+            <span>•</span>
+            <span>
+              Safe Mode:
+              <strong class={safeModeEnabled ? "text-amber-400" : "text-gray-200"}>
+                {safeModeEnabled ? "Active" : "Disabled"}
+              </strong>
+            </span>
+          </div>
+        </div>
+        <button
+          type="button"
+          disabled={restarting}
+          on:click={async () => {
+            if (!confirm("Restart EchoSync server now?")) return;
+            restarting = true;
+            try {
+              await apiClient.post("/system/restart");
+              feedback.addToast("EchoSync is restarting...", "success");
+            } catch (e) {
+              feedback.addToast("Failed to trigger restart", "error");
+              restarting = false;
+            }
+          }}
+          class="px-4 py-2 rounded-lg text-xs font-semibold bg-gray-900/80 hover:bg-gray-700 border border-gray-600 text-gray-100 transition-colors disabled:opacity-50"
+        >
+          {restarting ? "Restarting..." : "↻ Restart EchoSync"}
+        </button>
+      </div>
     </article>
 
     <article

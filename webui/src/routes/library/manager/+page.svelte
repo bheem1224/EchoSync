@@ -1,7 +1,7 @@
 <script>
   import { onMount } from "svelte";
   import TabbedQueues from "./TabbedQueues.svelte";
-  import AccountBuilder from "./AccountBuilder.svelte";
+  import LinkAccountModal from "$lib/components/LinkAccountModal.svelte";
   import apiClient from "../../../api/client";
   import { feedback } from "../../../stores/feedback";
 
@@ -264,10 +264,11 @@
   </main>
 </div>
 
-<!-- ── Account Builder Modal ──────────────────────────────────────────── -->
-{#if showAccountsModal}
-  <AccountBuilder on:close={() => (showAccountsModal = false)} />
-{/if}
+<!-- ── Unified Link External Account Modal ──────────────────────────── -->
+<LinkAccountModal
+  isOpen={showAccountsModal}
+  onClose={() => (showAccountsModal = false)}
+/>
 
 <style>
   :global(body) {

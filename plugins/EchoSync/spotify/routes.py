@@ -31,31 +31,36 @@ def get_settings():
     try:
         client_id = ""
         client_secret = ""
+        redirect_uri = ""
         try:
             client_id = sdk.config.get("client_id", "") or ""
             client_secret = sdk.secrets.get("client_secret", "") or ""
+            redirect_uri = sdk.config.get("redirect_uri", "") or ""
         except Exception:
             pass
 
-        redirect_uri = _get_redirect_uri()
-
         # Fallback to SDK service_config if not yet in primary plugin sdk namespace
         if not client_id or not client_secret:
-            for lookup_key in (2391116200, "Spotify", "EchoSync.Spotify"):
+            for lookup_key in (2391116200, "Spotify", "EchoSync.Spotify", "spotify"):
                 client_id = client_id or sdk.config.get_for_service(lookup_key, "client_id") or ""
                 client_secret = client_secret or sdk.config.get_for_service(lookup_key, "client_secret") or ""
+                redirect_uri = redirect_uri or sdk.config.get_for_service(lookup_key, "redirect_uri") or ""
                 if client_id and client_secret:
                     break
 
         # Legacy storage fallback
-        if not client_id or not client_secret:
+        if not client_id or not client_secret or not redirect_uri:
             from services.storage_service import get_storage_service
 
             storage = get_storage_service()
             client_id = client_id or storage.get_service_config("spotify", "client_id") or ""
             raw_sec = storage.get_service_config("spotify", "client_secret")
-            if raw_sec:
+            if raw_sec and not client_secret:
                 client_secret = decrypt_string(raw_sec) if raw_sec.startswith("enc:") else raw_sec
+            redirect_uri = redirect_uri or storage.get_service_config("spotify", "redirect_uri") or ""
+
+        if not redirect_uri:
+            redirect_uri = _get_redirect_uri()
 
         return JSONResponse(
             content={
@@ -76,7 +81,10 @@ def get_settings():
 async def save_settings(request: Request):
     """Save Spotify global settings and credentials."""
     try:
-        data = await request.json() or {}
+        try:
+            data = await request.json() or {}
+        except Exception:
+            data = {}
         client_id = (data.get("client_id") or "").strip()
         client_secret = (data.get("client_secret") or "").strip()
         redirect_uri = (data.get("redirect_uri") or "").strip() or _get_redirect_uri()
@@ -117,7 +125,7 @@ async def save_settings(request: Request):
         return JSONResponse(content={"success": True})
     except Exception as e:
         logger.error(f"Error saving Spotify settings: {e}", exc_info=True)
-        return JSONResponse(content={"error": "Failed to save Spotify settings"}, status_code=500)
+        return JSONResponse(content={"error": f"Failed to save Spotify settings: {e}"}, status_code=500)
 
 
 # ── Accounts ──────────────────────────────────────────────────────────────────
@@ -125,11 +133,34 @@ async def save_settings(request: Request):
 
 @router.get("/accounts")
 def list_accounts():
-    """List all Spotify accounts."""
+    """List all Spotify accounts, preserving legacy config.db rows across service aliases."""
     try:
-        db_accounts = sdk.accounts.get_all()
+        seen_ids: set[int] = set()
+        merged_rows: list[dict] = []
+
+        def _collect(rows):
+            for a in rows or []:
+                aid = a.get("id")
+                if aid is not None and aid in seen_ids:
+                    continue
+                if aid is not None:
+                    seen_ids.add(int(aid))
+                merged_rows.append(a)
+
+        try:
+            _collect(sdk.accounts.get_all())
+        except Exception as sdk_err:
+            logger.debug(f"sdk.accounts.get_all() fallback: {sdk_err}")
+
+        try:
+            from services.storage_service import get_storage_service
+
+            _collect(get_storage_service().list_accounts("spotify"))
+        except Exception as st_err:
+            logger.debug(f"storage.list_accounts('spotify') fallback: {st_err}")
+
         accounts = []
-        for a in db_accounts:
+        for a in merged_rows:
             accounts.append(
                 {
                     "id": a.get("id"),
@@ -151,12 +182,21 @@ def list_accounts():
 async def create_account(request: Request):
     """Create a new Spotify account slot."""
     try:
-        data = await request.json() or {}
+        try:
+            data = await request.json() or {}
+        except Exception:
+            data = {}
         account_name = (data.get("account_name") or data.get("display_name") or "").strip()
         if not account_name:
             return JSONResponse(content={"error": "account_name is required"}, status_code=400)
 
         account_id = sdk.accounts.ensure_account(account_name=account_name, display_name=account_name)
+        if not account_id:
+            from services.storage_service import get_storage_service
+
+            account_id = get_storage_service().ensure_account(
+                "spotify", account_name=account_name, display_name=account_name
+            )
         if not account_id:
             return JSONResponse(content={"error": "Failed to create account"}, status_code=500)
 
@@ -174,7 +214,7 @@ async def create_account(request: Request):
         )
     except Exception as e:
         logger.error(f"Error creating Spotify account: {e}", exc_info=True)
-        return JSONResponse(content={"error": "Failed to create Spotify account"}, status_code=500)
+        return JSONResponse(content={"error": f"Failed to create Spotify account: {e}"}, status_code=500)
 
 
 @router.put("/accounts/{account_id}/activate")
