@@ -461,126 +461,31 @@ class MetadataResolutionEngine:
             req = request
         """Resolve track metadata through the authoritative 6-stage resolution waterfall.
 
-        When ``enabled_stages`` is provided, only the listed stages are executed.
-        Currently supports ``["acoustid"]`` for strict manual fingerprint lookups that
-        must not leak into ISRC or text-waterfall fallback stages.
+        When ``enabled_stages`` is provided, only the listed stages are executed
+        (e.g. ``["acoustid"]``, ``["isrc"]``, ``["text_waterfall"]``) using the exact
+        same stage implementations and trust/veto gates as the full pipeline.
         """
-        # ── Acoustid-only isolated path ────────────────────────────────────────
-        if enabled_stages and enabled_stages == ["acoustid"]:
-            return self._resolve_acoustid_isolated(req)
+        stage_filter: set[str] | None = None
+        if enabled_stages:
+            alias = {"musicbrainz": "text_waterfall", "mb": "text_waterfall"}
+            stage_filter = {
+                alias.get(str(s).strip().lower(), str(s).strip().lower())
+                for s in enabled_stages
+                if str(s).strip()
+            } or None
 
-        # ── Standard full waterfall ────────────────────────────────────────────
-        result = self._execute_waterfall(req)
+        # ── Authoritative Waterfall (Full or Stage-Filtered) ───────────────────
+        result = self._execute_waterfall(req, enabled_stages=stage_filter)
 
         # ── Stage 6: Entity Alias Resolution ──────────────────────────────────
-        from dataclasses import replace as _replace
+        if stage_filter is None or (result and result.sync_id):
+            from dataclasses import replace as _replace
 
-        result = _replace(result, alias_proposals=self._resolve_aliases(req, result))
+            result = _replace(result, alias_proposals=self._resolve_aliases(req, result))
         return result
 
     # Alias for uniform resolution engine invocations
     resolve_track_metadata = resolve_track
-
-    def _resolve_acoustid_isolated(self, request: ResolutionRequest) -> EchosyncTrack:
-        """Execute Stage 3 (AcoustID) in strict isolation.
-
-        Performs the minimum physical inspection required to obtain a chromaprint and
-        duration, then calls AcoustID directly.  If no match is found the method returns
-        a zero-confidence stub with the generated fingerprint preserved so the caller
-        can save it and present a 'submit to AcoustID' option without corrupting metadata.
-
-        Stages that are intentionally skipped:
-          Stage 0 — ECHOSYNC_SIGNATURE verification
-          Fast-path — Embedded MBID lookup
-          Stage 2 — Local chromaprint cache
-          Stage 4 — ISRC resolution
-          Stage 5 — Scoped text waterfall
-        """
-        file_path = Path(request.file_path)
-
-        # ── Minimal physical inspection ────────────────────────────────────────
-        baseline_track = probe_physical_audio(
-            file_path=file_path,
-            channels=2,
-            duration_ms=request.duration_ms or (round(float(request.duration) * 1000) if request.duration else 0),
-            existing_chromaprint=request.chromaprint,
-            log_prefix="[resolution_engine] [acoustid-isolated]",
-        )
-        chromaprint = baseline_track.fingerprint
-        duration_ms = baseline_track.duration_ms or 0
-        if chromaprint:
-            request.chromaprint = chromaprint
-        raw_tags = baseline_track
-        # ── Stage 3: AcoustID (isolated) ─────────────────────────────────────
-        acoustid_res: dict[str, Any] | None = None
-        if chromaprint and duration_ms > 0:
-            logger.info(
-                "[resolution_engine] [acoustid-isolated] Running Stage 3 for %s (fingerprint_len=%d, duration_ms=%d)",
-                file_path.name,
-                len(chromaprint),
-                duration_ms,
-            )
-            baseline_title = request.baseline_title or ""
-            baseline_artist = request.baseline_artist or ""
-            baseline_album = request.baseline_album or ""
-            tag_title = raw_tags.get("title")
-            acoustid_res = self._resolve_acoustid(
-                chromaprint=chromaprint,
-                file_duration_ms=duration_ms,
-                baseline_title=baseline_title,
-                filename=file_path.name,
-                tag_title=tag_title,
-                baseline_artist=baseline_artist or None,
-                baseline_album=baseline_album or None,
-                request=request,
-            )
-
-        # ── Result assembly ────────────────────────────────────────────────────
-        if acoustid_res and acoustid_res.get("candidate_score", 0.0) >= 60.0:
-            logger.info(
-                "[resolution_engine] [acoustid-isolated] HIT: %s → MBID %s (score=%.1f)",
-                file_path.name,
-                acoustid_res["musicbrainz_track_id"],
-                acoustid_res["candidate_score"],
-            )
-            tag_isrc = raw_tags.get("isrc") or request.baseline_isrc
-            return _create_resolved_track(
-                media_id=request.media_id,
-                sync_id=request.sync_id,
-                title=acoustid_res["title"],
-                artist=acoustid_res["artist"],
-                album=acoustid_res.get("album") or baseline_album,
-                year=acoustid_res.get("year"),
-                track_number=acoustid_res.get("track_number"),
-                disc_number=acoustid_res.get("disc_number"),
-                musicbrainz_track_id=acoustid_res["musicbrainz_track_id"],
-                musicbrainz_release_id=acoustid_res.get("musicbrainz_release_id"),
-                acoustid_id=acoustid_res.get("acoustid_id"),
-                chromaprint=chromaprint,
-                duration_ms=duration_ms,
-                isrc=acoustid_res.get("isrc") or tag_isrc,
-                confidence_score=0.95,
-                resolution_method="acoustid",
-            )
-
-        # ── Zero-confidence stub: preserve fingerprint, no metadata contamination ─
-        logger.warning(
-            "[resolution_engine] [acoustid-isolated] MISS for %s — no AcoustID match "
-            "(chromaprint_len=%s, duration_ms=%d). Returning stub.",
-            file_path.name,
-            len(chromaprint) if chromaprint else "None",
-            duration_ms,
-        )
-        return _create_resolved_track(
-            media_id=request.media_id,
-            sync_id=request.sync_id,
-            title="",
-            artist="",
-            chromaprint=chromaprint,
-            duration_ms=duration_ms,
-            confidence_score=0.0,
-            resolution_method="acoustid",
-        )
 
     def _resolve_aliases(self, request: ResolutionRequest, result: EchosyncTrack) -> list[EntityAliasProposal]:
         """Stage 6: Query active language packs and plugins for entity alias proposals."""
@@ -636,12 +541,14 @@ class MetadataResolutionEngine:
             logger.warning(f"[metadata_engine] Error resolving entity aliases for sync_id={result.sync_id}: {e}")
             return []
 
-    def _execute_waterfall(self, request: ResolutionRequest) -> EchosyncTrack:
+    def _execute_waterfall(
+        self, request: ResolutionRequest, enabled_stages: set[str] | None = None
+    ) -> EchosyncTrack:
         from dataclasses import replace
 
         if not hasattr(request, "_diagnostics") or request._diagnostics is None:
             request._diagnostics = []
-        result = self._execute_waterfall_inner(request)
+        result = self._execute_waterfall_inner(request, enabled_stages=enabled_stages)
         is_forced = bool(
             getattr(request, "force_mode", False)
             or getattr(request, "force_recheck", False)
@@ -670,14 +577,16 @@ class MetadataResolutionEngine:
             result = replace(result, **updates)
         return result
 
-    def _execute_waterfall_inner(self, request: ResolutionRequest) -> EchosyncTrack:
-        """Execute stages 1-5 of the resolution waterfall."""
+    def _execute_waterfall_inner(
+        self, request: ResolutionRequest, enabled_stages: set[str] | None = None
+    ) -> EchosyncTrack:
+        """Execute stages 1-5 of the resolution waterfall (or only ``enabled_stages``)."""
         file_path = Path(request.file_path)
 
         # ── Stage 1: Physical Inspection ──────────────────────────────────────
         raw_tags = extract_physical_tags(file_path)
 
-        if not file_path.exists() and not raw_tags and not request.baseline_title:
+        if not file_path.exists() and not raw_tags and not request.baseline_title and not request.baseline_isrc:
             logger.warning(
                 "[resolution_engine] File not found on disk and no metadata: %s",
                 request.file_path,
@@ -821,6 +730,7 @@ class MetadataResolutionEngine:
             or getattr(request, "force_recheck", False)
             or getattr(request, "dry_run", False)
             or getattr(request, "ignore_embedded_mbid", False)
+            or enabled_stages is not None
         )
 
         if force_mode:
@@ -972,7 +882,7 @@ class MetadataResolutionEngine:
             and (tag_artist and not str(tag_artist).lower().strip().startswith("unknown"))
         )
         deferred_embedded_mbid: str | None = None
-        if embedded_mbid and not request.ignore_embedded_mbid:
+        if enabled_stages is None and embedded_mbid and not request.ignore_embedded_mbid:
             if not signature_valid:
                 logger.debug(
                     "[resolution_engine] Stage 0 unverified; demoting embedded MBID '%s' and routing directly to AcoustID",
@@ -1138,7 +1048,7 @@ class MetadataResolutionEngine:
             )
 
         # ── Stage 2: Local Chromaprint Cache ──────────────────────────────────
-        if chromaprint and not request.ignore_cache and not force_mode:
+        if enabled_stages is None and chromaprint and not request.ignore_cache and not force_mode:
             cached_meta = self._check_local_chromaprint_cache(
                 chromaprint, sync_id=request.sync_id, duration_ms=duration_ms
             )
@@ -1238,7 +1148,7 @@ class MetadataResolutionEngine:
             )
 
         # ── Stage 3: AcoustID Resolution with Picard Disambiguation ───────────
-        if chromaprint and duration_ms > 0:
+        if (enabled_stages is None or "acoustid" in enabled_stages) and chromaprint and duration_ms > 0:
             acoustid_res = self._resolve_acoustid(
                 chromaprint=chromaprint,
                 file_duration_ms=duration_ms,
@@ -1400,10 +1310,25 @@ class MetadataResolutionEngine:
                     request=request,
                 )
 
+        if enabled_stages is not None and enabled_stages == {"acoustid"}:
+            return _create_resolved_track(
+                media_id=request.media_id,
+                sync_id=request.sync_id,
+                title="",
+                artist="",
+                chromaprint=chromaprint,
+                duration_ms=duration_ms,
+                confidence_score=0.0,
+                resolution_method="acoustid",
+                request=request,
+            )
+
         # ── Stage 4: ISRC Resolution ──────────────────────────────────────────
-        if tag_isrc and not force_mode:
+        isrc_explicit = enabled_stages is not None and "isrc" in enabled_stages
+        effective_isrc = (request.baseline_isrc or tag_isrc) if isrc_explicit else tag_isrc
+        if (enabled_stages is None or isrc_explicit) and effective_isrc and (not force_mode or isrc_explicit):
             isrc_res = self._resolve_isrc(
-                isrc=tag_isrc,
+                isrc=effective_isrc,
                 baseline_title=baseline_title,
                 filename=file_path.name,
                 tag_title=tag_title,
@@ -1413,14 +1338,14 @@ class MetadataResolutionEngine:
                 logger.info(
                     "[resolution_engine] Stage 4 HIT (ISRC): %s → %s",
                     file_path.name,
-                    tag_isrc,
+                    effective_isrc,
                 )
                 _add_diagnostic(
                     request,
                     "Stage 4: ISRC",
                     "hit",
-                    f"Stage 4 HIT (ISRC {tag_isrc}): {isrc_res.get('title')}",
-                    {"isrc": tag_isrc, "title": isrc_res.get("title")},
+                    f"Stage 4 HIT (ISRC {effective_isrc}): {isrc_res.get('title')}",
+                    {"isrc": effective_isrc, "title": isrc_res.get("title")},
                 )
                 return _create_resolved_track(
                     media_id=request.media_id,
@@ -1436,7 +1361,7 @@ class MetadataResolutionEngine:
                     acoustid_id=None,
                     chromaprint=chromaprint,
                     duration_ms=isrc_res.get("duration_ms") or duration_ms,
-                    isrc=tag_isrc,
+                    isrc=effective_isrc,
                     confidence_score=0.92,
                     resolution_method="isrc",
                     request=request,
@@ -1446,8 +1371,8 @@ class MetadataResolutionEngine:
                     request,
                     "Stage 4: ISRC",
                     "miss",
-                    f"ISRC lookup for '{tag_isrc}' returned no matches or failed trust gate.",
-                    {"isrc": tag_isrc},
+                    f"ISRC lookup for '{effective_isrc}' returned no matches or failed trust gate.",
+                    {"isrc": effective_isrc},
                 )
         else:
             _add_diagnostic(
@@ -1458,41 +1383,69 @@ class MetadataResolutionEngine:
                 {},
             )
 
-        # ── Stage 5: Scoped Text Waterfall ────────────────────────────────────
-        text_res = self._resolve_text_waterfall(
-            baseline_title=baseline_title,
-            baseline_artist=baseline_artist,
-            baseline_album=baseline_album,
-            file_duration_ms=duration_ms,
-            filename=file_path.name,
-            tag_title=tag_title,
-            baseline_isrc=tag_isrc or request.baseline_isrc,
-            has_signature=signature_valid,
-            request=request,
-        )
-        if text_res:
-            logger.info(
-                "[resolution_engine] Stage 5 HIT (Scoped Text Waterfall): %s → MBID %s (confidence: %.2f)",
-                file_path.name,
-                text_res.get("musicbrainz_track_id"),
-                text_res["confidence_score"],
-            )
+        if enabled_stages is not None and enabled_stages == {"isrc"}:
             return _create_resolved_track(
                 media_id=request.media_id,
                 sync_id=request.sync_id,
-                title=text_res["title"],
-                artist=text_res["artist"],
-                album=text_res.get("album") or baseline_album,
-                year=text_res.get("year") or parsed_year,
-                track_number=text_res.get("track_number") or parsed_track_num,
-                disc_number=text_res.get("disc_number") or parsed_disc_num,
-                musicbrainz_track_id=text_res.get("musicbrainz_track_id"),
-                musicbrainz_release_id=text_res.get("musicbrainz_release_id"),
-                acoustid_id=None,
+                title="",
+                artist="",
                 chromaprint=chromaprint,
                 duration_ms=duration_ms,
-                isrc=text_res.get("isrc") or tag_isrc,
-                confidence_score=text_res["confidence_score"],
+                isrc=effective_isrc,
+                confidence_score=0.0,
+                resolution_method="isrc",
+                request=request,
+            )
+
+        # ── Stage 5: Scoped Text Waterfall ────────────────────────────────────
+        if enabled_stages is None or "text_waterfall" in enabled_stages:
+            text_res = self._resolve_text_waterfall(
+                baseline_title=baseline_title,
+                baseline_artist=baseline_artist,
+                baseline_album=baseline_album,
+                file_duration_ms=duration_ms,
+                filename=file_path.name,
+                tag_title=tag_title,
+                baseline_isrc=effective_isrc or request.baseline_isrc,
+                has_signature=signature_valid,
+                request=request,
+            )
+            if text_res:
+                logger.info(
+                    "[resolution_engine] Stage 5 HIT (Scoped Text Waterfall): %s → MBID %s (confidence: %.2f)",
+                    file_path.name,
+                    text_res.get("musicbrainz_track_id"),
+                    text_res["confidence_score"],
+                )
+                return _create_resolved_track(
+                    media_id=request.media_id,
+                    sync_id=request.sync_id,
+                    title=text_res["title"],
+                    artist=text_res["artist"],
+                    album=text_res.get("album") or baseline_album,
+                    year=text_res.get("year") or parsed_year,
+                    track_number=text_res.get("track_number") or parsed_track_num,
+                    disc_number=text_res.get("disc_number") or parsed_disc_num,
+                    musicbrainz_track_id=text_res.get("musicbrainz_track_id"),
+                    musicbrainz_release_id=text_res.get("musicbrainz_release_id"),
+                    acoustid_id=None,
+                    chromaprint=chromaprint,
+                    duration_ms=duration_ms,
+                    isrc=text_res.get("isrc") or effective_isrc,
+                    confidence_score=text_res["confidence_score"],
+                    resolution_method="text_waterfall",
+                    request=request,
+                )
+
+        if enabled_stages is not None:
+            return _create_resolved_track(
+                media_id=request.media_id,
+                sync_id=request.sync_id,
+                title="",
+                artist="",
+                chromaprint=chromaprint,
+                duration_ms=duration_ms,
+                confidence_score=0.0,
                 resolution_method="text_waterfall",
                 request=request,
             )

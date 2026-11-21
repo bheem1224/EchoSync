@@ -1831,7 +1831,7 @@ def lookup_review_queue_item_acoustid(task_id: int, _=Depends(require_auth)):
             if res.chromaprint:
                 track_obj = replace(track_obj, fingerprint=res.chromaprint)
 
-            if not res or res.confidence_score < 0.60:
+            if not res or res.confidence_score <= 0.0:
                 # Persist fingerprint even on miss so user can submit to AcoustID
                 if res and res.chromaprint:
                     task.track_data = track_obj.to_dict()
@@ -1968,157 +1968,51 @@ def lookup_review_queue_item_acoustid(task_id: int, _=Depends(require_auth)):
 
 @router.post("/{task_id}/lookup/musicbrainz")
 def lookup_review_queue_item_musicbrainz(task_id: int, payload: MusicBrainzLookupRequest, _=Depends(require_auth)):
-    """Run text-based MusicBrainz lookup and update detected metadata."""
+    """Run MusicBrainz text-waterfall lookup via the unified MetadataResolutionEngine."""
     payload_data = payload.metadata or payload.model_dump(exclude_unset=True)
     logger.debug(f"[MusicBrainz Route] POST request received for task_id={task_id}, payload={payload_data}")
 
     db = get_working_database()
     try:
+        from sqlalchemy.orm.attributes import flag_modified
+
+        from core.metadata.engine import MetadataResolutionEngine
+        from core.metadata.schemas import ResolutionRequest
+
         with db.session_scope() as session:
             task = session.query(ReviewTask).filter(ReviewTask.id == task_id).first()
             if not task:
-                logger.debug(f"[MusicBrainz Route] Task {task_id} not found in database")
                 raise HTTPException(status_code=404, detail="Task not found")
 
             current = _normalize_detected_metadata(task.detected_metadata) or {}
             artist = str(payload_data.get("artist") or current.get("artist") or "").strip()
             title = str(payload_data.get("title") or current.get("title") or "").strip()
-            task_file_path = task.file_path
+            album = str(payload_data.get("album") or current.get("album") or "").strip()
+            file_path = _resolve_task_file(task) or (Path(task.file_path) if task.file_path else Path("unknown.mp3"))
 
-        logger.debug(
-            f"[MusicBrainz Route] Extracted initial search info: artist='{artist}', title='{title}', file_path='{task_file_path}'"
-        )
-
-        if (not artist or not title) and task_file_path:
-            mbid = None
-
-            # Step A: Try AcoustID
-            try:
-                fingerprint, duration = FingerprintGenerator.generate_with_duration(str(task_file_path))
-                if fingerprint and duration:
-                    fingerprint_provider = _get_fingerprint_provider()
-                    if fingerprint_provider:
-                        mbids = fingerprint_provider.resolve_fingerprint(fingerprint, int(duration)) or []
-                        if mbids:
-                            mbid = mbids[0]
-            except Exception as e:
-                logger.debug(f"[MusicBrainz Route] AcoustID pre-lookup check failed: {e}")
-
-            # Step B: If AcoustID fails, invoke the EchoSync.local_metadata plugin
-            track_obj = None
-            if not mbid:
-                local_metadata_plugin = plugin_loader.get_plugin("EchoSync.local_metadata")
-                if local_metadata_plugin:
-                    track_obj = local_metadata_plugin.get_track_from_file(str(task_file_path))
-
-            # Step C: If tags/AcoustID are found, construct/search
-            if mbid:
-                logger.info(f"[MusicBrainz Route] AcoustID pre-lookup succeeded. MBID: {mbid}")
-                metadata_provider = _get_metadata_provider()
-                if metadata_provider:
-                    found_track = metadata_provider.get_track(mbid)
-                    if found_track:
-                        found_track.identifiers["source"] = "acoustid_pre_lookup"
-                        from sqlalchemy.orm.attributes import flag_modified
-
-                        with db.session_scope() as session:
-                            task = session.query(ReviewTask).filter(ReviewTask.id == task_id).first()
-                            task.track_data = found_track.to_dict()
-                            flag_modified(task, "track_data")
-                            task.confidence_score = max(float(task.confidence_score or 0.0), 0.95)
-                            updated_fields = [
-                                k
-                                for k in [
-                                    "title",
-                                    "artist",
-                                    "album",
-                                    "year",
-                                    "musicbrainz_id",
-                                    "isrc",
-                                    "track_number",
-                                    "disc_number",
-                                ]
-                                if getattr(found_track, k, None) or found_track.to_dict().get(k)
-                            ]
-                            serialized = _serialize_task(task)
-                            return {
-                                "success": True,
-                                "match_found": True,
-                                "updated_fields": list(dict.fromkeys(updated_fields)),
-                                "metadata": serialized["detected_metadata"],
-                                "message": "Match found",
-                                "task": serialized,
-                            }
-            elif track_obj and track_obj.title and track_obj.artist_name:
-                artist = track_obj.artist_name
-                title = track_obj.title
-                logger.debug(
-                    f"[MusicBrainz Route] EchoSync.local_metadata read tags: artist='{artist}', title='{title}'"
-                )
-            else:
-                # Step D: If no tags are found, halt execution
-                logger.debug(
-                    "[MusicBrainz Route] No tags found, halting execution. Returning minimal EchoSyncTrack payload."
-                )
-                empty_track = EchosyncTrack(
-                    raw_title="Unknown Title",
-                    artist_name="Unknown Artist",
-                    album_title="",
-                )
-                from sqlalchemy.orm.attributes import flag_modified
-
-                with db.session_scope() as session:
-                    task = session.query(ReviewTask).filter(ReviewTask.id == task_id).first()
-                    task.track_data = empty_track.to_dict()
-                    flag_modified(task, "track_data")
-                    serialized = _serialize_task(task, detected_metadata=empty_track.to_dict())
-                    return {
-                        "success": True,
-                        "match_found": False,
-                        "updated_fields": [],
-                        "metadata": serialized["detected_metadata"],
-                        "message": "No matching record found in database",
-                        "task": serialized,
-                    }
-
-        if not artist or not title:
-            raise HTTPException(status_code=400, detail="artist and title are required")
-
-        metadata_provider = plugin_loader.get_plugin("EchoSync.musicbrainz")
-        logger.debug(
-            f"[MusicBrainz Route] Resolved metadata provider: {getattr(metadata_provider, 'name', type(metadata_provider).__name__) if metadata_provider else None}"
-        )
-        if not metadata_provider:
-            logger.error("[MusicBrainz Route] No metadata provider configured")
-            raise HTTPException(status_code=503, detail="No metadata provider configured")
-
-        from sqlalchemy.orm.attributes import flag_modified
-
-        with db.session_scope() as session:
-            task = session.query(ReviewTask).filter(ReviewTask.id == task_id).first()
-            if not task:
-                logger.debug(f"[MusicBrainz Route] Task {task_id} not found in database in second session check")
-                raise HTTPException(status_code=404, detail="Task not found")
+            if not artist and not title and not file_path.exists():
+                raise HTTPException(status_code=400, detail="artist and title are required")
 
             track_obj = EchosyncTrack.from_dict(task.track_data or {})
+            engine = MetadataResolutionEngine(
+                acoustid_provider=_get_fingerprint_provider(),
+                metadata_provider=_get_metadata_provider(),
+                spotify_provider=_get_spotify_provider(),
+            )
+            req = ResolutionRequest(
+                media_id=str(getattr(task, "media_id", None) or task.id),
+                sync_id=track_obj.sync_id if hasattr(track_obj, "sync_id") else None,
+                file_path=file_path,
+                baseline_title=title or None,
+                baseline_artist=artist or None,
+                baseline_album=album or None,
+                duration_ms=_coerce_int(track_obj.duration_ms),
+                ignore_embedded_mbid=True,
+                ignore_cache=True,
+            )
+            found_track = engine.resolve_track(req, enabled_stages=["text_waterfall"])
 
-            # fallback if artist/title wasn't already in track_data but is passed in payload
-            fallback_updates: dict[str, Any] = {}
-            if not track_obj.artist_name or track_obj.artist_name == "Unknown Artist":
-                fallback_updates["artist_name"] = artist
-            target_title_val = title if (not track_obj.title or track_obj.title == "Unknown Title") else track_obj.title
-            if target_title_val != track_obj.title:
-                fallback_updates["title"] = target_title_val
-            if target_title_val != track_obj.raw_title:
-                fallback_updates["raw_title"] = target_title_val
-            if fallback_updates:
-                track_obj = replace(track_obj, **fallback_updates)
-
-            logger.debug(f"[MusicBrainz Route] Prepared EchosyncTrack for text search: {track_obj.to_dict()}")
-
-            found_track = _musicbrainz_text_search(metadata_provider, track_obj)
-            if not found_track:
-                logger.debug("[MusicBrainz Route] No MusicBrainz match found")
+            if not found_track or found_track.confidence_score <= 0.0 or not (found_track.title or found_track.raw_title):
                 serialized = _serialize_task(task)
                 return {
                     "success": True,
@@ -2129,14 +2023,13 @@ def lookup_review_queue_item_musicbrainz(task_id: int, payload: MusicBrainzLooku
                     "task": serialized,
                 }
 
-            logger.debug(f"[MusicBrainz Route] MusicBrainz match found: {found_track.to_dict()}")
             found_track = replace(
                 found_track,
-                identifiers={**(found_track.identifiers or {}), "source": "musicbrainz_text_lookup"},
+                identifiers={**(track_obj.identifiers or {}), **(found_track.identifiers or {}), "source": "musicbrainz_text_lookup"},
             )
             task.track_data = found_track.to_dict()
             flag_modified(task, "track_data")
-            task.confidence_score = max(float(task.confidence_score or 0.0), 0.85)
+            task.confidence_score = max(float(task.confidence_score or 0.0), float(found_track.confidence_score or 0.85))
 
             updated_fields = []
             if found_track.title or found_track.raw_title:
@@ -2158,7 +2051,6 @@ def lookup_review_queue_item_musicbrainz(task_id: int, payload: MusicBrainzLooku
             if found_track.disc_number:
                 updated_fields.append("disc_number")
 
-            logger.debug(f"[MusicBrainz Route] Successfully updated task {task_id} with MusicBrainz data")
             serialized = _serialize_task(task)
             return {
                 "success": True,
@@ -2177,12 +2069,18 @@ def lookup_review_queue_item_musicbrainz(task_id: int, payload: MusicBrainzLooku
 
 @router.post("/{task_id}/lookup/isrc")
 def lookup_review_queue_item_isrc(task_id: int, payload: ISRCLookupRequest | None = None, _=Depends(require_auth)):
-    """Run ISRC-based lookup and update detected metadata."""
+    """Run ISRC-based lookup via the unified MetadataResolutionEngine Stage 4."""
     payload_data = payload.model_dump(exclude_unset=True) if payload else {}
     isrc_code = str(payload_data.get("isrc") or "").strip()
 
     db = get_working_database()
     try:
+        from sqlalchemy.orm.attributes import flag_modified
+
+        from core.metadata.engine import MetadataResolutionEngine
+        from core.metadata.schemas import ResolutionRequest
+        from services.isrc_lookup_service import _normalise_isrc
+
         with db.session_scope() as session:
             task = session.query(ReviewTask).filter(ReviewTask.id == task_id).first()
             if not task:
@@ -2195,18 +2093,32 @@ def lookup_review_queue_item_isrc(task_id: int, payload: ISRCLookupRequest | Non
             if not isrc_code:
                 raise HTTPException(status_code=400, detail="ISRC code is required")
 
-            from services.isrc_lookup_service import (
-                _normalise_isrc,
-                dispatch_isrc_lookup,
-            )
-
             canonical = _normalise_isrc(isrc_code)
             if canonical is None:
                 raise HTTPException(status_code=400, detail=f"Invalid ISRC format: {isrc_code}")
 
-            # Dispatch ISRC lookup across all capable providers in order (MusicBrainz -> Spotify -> etc.)
-            track = dispatch_isrc_lookup(canonical)
-            if not track:
+            track_obj = EchosyncTrack.from_dict(task.track_data or {})
+            file_path = _resolve_task_file(task) or (Path(task.file_path) if task.file_path else Path("unknown.mp3"))
+
+            engine = MetadataResolutionEngine(
+                acoustid_provider=_get_fingerprint_provider(),
+                metadata_provider=_get_metadata_provider(),
+                spotify_provider=_get_spotify_provider(),
+            )
+            req = ResolutionRequest(
+                media_id=str(getattr(task, "media_id", None) or task.id),
+                sync_id=track_obj.sync_id if hasattr(track_obj, "sync_id") else None,
+                file_path=file_path,
+                baseline_title=track_obj.title or track_obj.raw_title,
+                baseline_artist=track_obj.artist_name,
+                baseline_album=track_obj.album_title,
+                baseline_isrc=canonical,
+                duration_ms=_coerce_int(track_obj.duration_ms),
+                ignore_embedded_mbid=True,
+                ignore_cache=True,
+            )
+            track = engine.resolve_track(req, enabled_stages=["isrc"])
+            if not track or track.confidence_score <= 0.0 or not (track.title or track.raw_title):
                 serialized = _serialize_task(task)
                 return {
                     "success": True,
@@ -2217,63 +2129,37 @@ def lookup_review_queue_item_isrc(task_id: int, payload: ISRCLookupRequest | Non
                     "task": serialized,
                 }
 
-            track_obj = EchosyncTrack.from_dict(task.track_data or {})
-            isrc_updates: dict[str, Any] = {"isrc": canonical}
-            found_title = getattr(track, "title", None) or getattr(track, "raw_title", None)
-            if found_title:
-                isrc_updates["title"] = found_title
-                isrc_updates["raw_title"] = found_title
-            if hasattr(track, "edition") and track.edition:
-                isrc_updates["edition"] = track.edition
-            elif hasattr(track, "version") and track.version:
-                isrc_updates["edition"] = track.version
-            if hasattr(track, "artist_name") and track.artist_name:
-                isrc_updates["artist_name"] = track.artist_name
-            elif hasattr(track, "artist") and track.artist:
-                isrc_updates["artist_name"] = track.artist
-            if hasattr(track, "album_title") and track.album_title:
-                isrc_updates["album_title"] = track.album_title
-            elif hasattr(track, "album") and track.album:
-                isrc_updates["album_title"] = track.album
-            if hasattr(track, "release_year") and track.release_year:
-                isrc_updates["release_year"] = track.release_year
-            if hasattr(track, "musicbrainz_id") and track.musicbrainz_id:
-                isrc_updates["musicbrainz_id"] = track.musicbrainz_id
-            found_dur = getattr(track, "duration_ms", None) or getattr(track, "duration", None)
-            if found_dur:
-                isrc_updates["duration_ms"] = found_dur
-            if hasattr(track, "identifiers") and isinstance(track.identifiers, dict):
-                isrc_updates["identifiers"] = {**(track_obj.identifiers or {}), **track.identifiers}
-            track_obj = replace(track_obj, **isrc_updates)
-
-            from sqlalchemy.orm.attributes import flag_modified
-
-            task.track_data = track_obj.to_dict()
+            merged_track = replace(
+                track,
+                isrc=canonical,
+                identifiers={**(track_obj.identifiers or {}), **(track.identifiers or {}), "source": "isrc_lookup"},
+            )
+            task.track_data = merged_track.to_dict()
             flag_modified(task, "track_data")
-            task.confidence_score = max(float(task.confidence_score or 0.0), 0.90)
+            task.confidence_score = max(float(task.confidence_score or 0.0), float(merged_track.confidence_score or 0.90))
 
             updated_fields = []
-            if track_obj.title or track_obj.raw_title:
+            if merged_track.title or merged_track.raw_title:
                 updated_fields.append("title")
-            if track_obj.edition:
+            if merged_track.edition:
                 updated_fields.append("edition")
-            if track_obj.artist_name:
+            if merged_track.artist_name:
                 updated_fields.append("artist")
-            if track_obj.album_title:
+            if merged_track.album_title:
                 updated_fields.append("album")
-            if track_obj.release_year:
+            if merged_track.release_year:
                 updated_fields.append("year")
-            if track_obj.musicbrainz_id:
+            if merged_track.musicbrainz_id:
                 updated_fields.append("musicbrainz_id")
-            if track_obj.isrc:
+            if merged_track.isrc:
                 updated_fields.append("isrc")
-            if track_obj.duration_ms:
+            if merged_track.duration_ms:
                 updated_fields.append("duration")
 
             serialized = _serialize_task(task)
             src_label = (
-                track.identifiers.get("source")
-                if hasattr(track, "identifiers") and isinstance(track.identifiers, dict)
+                merged_track.identifiers.get("source")
+                if hasattr(merged_track, "identifiers") and isinstance(merged_track.identifiers, dict)
                 else None
             ) or "ISRC lookup"
             return {

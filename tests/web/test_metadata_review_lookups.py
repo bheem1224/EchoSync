@@ -29,12 +29,13 @@ def test_musicbrainz_lookup_response_structure_on_match(tmp_path):
         album_title="25",
         release_year=2015,
         musicbrainz_id="mbid-12345",
+        confidence_score=0.90,
     )
 
     with (
         patch("web.routes.metadata_review.plugin_loader.get_plugin") as mock_get_plugin,
         patch(
-            "web.routes.metadata_review._musicbrainz_text_search",
+            "core.metadata.engine.MetadataResolutionEngine.resolve_track",
             return_value=found_track,
         ),
     ):
@@ -71,7 +72,7 @@ def test_musicbrainz_lookup_response_structure_on_no_match(tmp_path):
 
     with (
         patch("web.routes.metadata_review.plugin_loader.get_plugin") as mock_get_plugin,
-        patch("web.routes.metadata_review._musicbrainz_text_search", return_value=None),
+        patch("core.metadata.engine.MetadataResolutionEngine.resolve_track", return_value=EchosyncTrack(raw_title="", artist_name="", confidence_score=0.0)),
     ):
         mock_provider = MagicMock()
         mock_get_plugin.return_value = mock_provider
