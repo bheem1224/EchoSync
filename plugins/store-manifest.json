@@ -99,7 +99,7 @@
       "hooks": [],
       "min_echosync_version": "2.4.0",
       "ui_manifest": "ui_manifest.json",
-      "beta_version": "2.4.3-beta.118",
+      "beta_version": "2.4.3-beta.119",
       "permissions": {
         "database": {
           "read_library": true,
@@ -208,7 +208,7 @@
       "hooks": [],
       "min_echosync_version": "2.4.0",
       "ui_manifest": "ui_manifest.json",
-      "beta_version": "2.4.3-beta.63",
+      "beta_version": "2.4.3-beta.64",
       "permissions": {
         "database": {
           "read_library": true
@@ -439,7 +439,7 @@
       "hooks": [],
       "min_echosync_version": "2.4.0",
       "ui_manifest": "ui_manifest.json",
-      "beta_version": "2.4.3-beta.60",
+      "beta_version": "2.4.3-beta.61",
       "permissions": {
         "database": {
           "read_library": true
