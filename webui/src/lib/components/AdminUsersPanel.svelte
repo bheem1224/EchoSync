@@ -322,6 +322,7 @@
           type="text"
           bind:value={newApiKeyName}
           placeholder="Key label (e.g. CLI Automation)"
+          aria-label="API Key Label"
           class="input-field text-xs py-2 min-w-[240px] flex-1"
         />
         <button

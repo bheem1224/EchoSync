@@ -503,6 +503,10 @@
   });
 </script>
 
+<svelte:head>
+  <title>Library • EchoSync</title>
+</svelte:head>
+
 {#if loading}
   <div class="empty-state">
     <div class="spinner"></div>
@@ -539,7 +543,7 @@
           </div>
           <div class="card-info">
             <h3>{artist.name}</h3>
-            <span class="sub">{artist.albums.length} Albums</span>
+            <span class="sub">{artist.albums.length} {artist.albums.length === 1 ? 'Album' : 'Albums'}</span>
           </div>
         </div>
       {/each}

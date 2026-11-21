@@ -223,7 +223,8 @@
     display: flex;
     flex-direction: column;
     gap: 8px;
-    align-items: flex-start;
+    align-items: stretch;
+    min-width: 0;
   }
   .field-label {
     color: var(--muted);
@@ -233,12 +234,14 @@
 
   .input-group {
     width: 100%;
+    min-width: 0;
     display: flex;
     flex-direction: column;
     gap: 12px;
   }
   .dark-input {
     width: 100%;
+    min-width: 0;
     padding: 10px;
     border-radius: 8px;
     background: rgba(255, 255, 255, 0.05);

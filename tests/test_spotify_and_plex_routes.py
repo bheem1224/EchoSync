@@ -53,3 +53,30 @@ def test_spotify_settings_and_accounts_routes():
     resp = client.get("/accounts")
     assert resp.status_code == 200
     assert "accounts" in resp.json()
+
+
+def test_acoustid_and_tidal_plugin_routes_and_metadata():
+    from core.nexus_framework.plugin_loader import get_all_plugins
+    from plugins.EchoSync.acoustid.routes import config_router as acoustid_router
+    from plugins.EchoSync.tidal.routes import router as tidal_router
+
+    app = FastAPI()
+    app.include_router(acoustid_router, prefix="/api/v1/plugins/2136125342")
+    app.include_router(tidal_router, prefix="/api/v1/plugins/3106502486")
+    client = TestClient(app)
+
+    acoustid_get = client.get("/api/v1/plugins/2136125342/config")
+    assert acoustid_get.status_code == 200
+
+    tidal_accounts = client.get("/api/v1/plugins/3106502486/accounts")
+    assert tidal_accounts.status_code == 200
+    assert "accounts" in tidal_accounts.json()
+
+    plugins = get_all_plugins()
+    for p in plugins:
+        assert "display_name" in p
+        assert "author" in p
+        assert p["author"] != "Unknown"
+        assert "source_type" in p
+        assert "is_configured" in p
+

@@ -377,6 +377,7 @@
                 <!-- Toggle Switch -->
                 <button
                   on:click={() => handleToggleProvider(provider)}
+                  aria-label={`Toggle ${provider.display_name || provider.name}`}
                   class="relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none active:scale-90"
                   class:bg-emerald-600={!provider.disabled}
                   class:bg-gray-700={provider.disabled}

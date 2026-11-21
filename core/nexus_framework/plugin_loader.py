@@ -1978,6 +1978,28 @@ def get_all_plugins() -> list:
             logging.getLogger("plugin_loader").debug(f"Raw exception data: {e}", exc_info=True)
             return []
 
+        configured_plugin_ids: set[int] = set()
+        configured_service_names: set[str] = set()
+        try:
+            c.execute("SELECT DISTINCT plugin_id FROM accounts WHERE plugin_id IS NOT NULL")
+            configured_plugin_ids.update(int(r[0]) for r in c.fetchall() if r[0] is not None)
+        except Exception:
+            pass
+        try:
+            c.execute(
+                "SELECT DISTINCT LOWER(service_name) FROM service_config WHERE value IS NOT NULL AND TRIM(value) != ''"
+            )
+            configured_service_names.update(str(r[0]) for r in c.fetchall() if r[0])
+        except Exception:
+            pass
+
+        try:
+            from core.task_manager.models import PluginLifecycleState
+            from core.task_manager.plugin_state import plugin_state_manager
+        except Exception:
+            plugin_state_manager = None
+            PluginLifecycleState = None
+
         for row in rows:
             name = row["name"]
             if name.lower() == "system":
@@ -1994,6 +2016,45 @@ def get_all_plugins() -> list:
                 or str(row["absolute_install_path"]).endswith(os.sep + "core")
             )
 
+            p_id = row["plugin_id"]
+            plugin_cls = PluginRegistry._plugins.get(p_id)
+            manifest_data: dict[str, Any] = {}
+            install_path = row["absolute_install_path"]
+            if install_path:
+                manifest_path = os.path.join(str(install_path), "manifest.json")
+                if os.path.isfile(manifest_path):
+                    try:
+                        with open(manifest_path, encoding="utf-8") as mf:
+                            manifest_data = json.load(mf) or {}
+                    except Exception:
+                        manifest_data = {}
+
+            display_name = (
+                getattr(plugin_cls, "display_name", None)
+                or manifest_data.get("display_name")
+                or manifest_data.get("name")
+                or name
+            )
+            author = (
+                getattr(plugin_cls, "author", None)
+                or manifest_data.get("author")
+                or manifest_data.get("publisher")
+                or ("EchoSync" if is_core_service or (install_path and "EchoSync" in str(install_path)) else "Community")
+            )
+            source_type = "core" if is_core_service else PluginRegistry._plugin_sources.get(p_id, "community")
+
+            is_configured = False
+            if plugin_state_manager is not None and PluginLifecycleState is not None:
+                try:
+                    st = plugin_state_manager.get_state(name)
+                    if st.state in (PluginLifecycleState.READY, PluginLifecycleState.DEGRADED):
+                        is_configured = True
+                except Exception:
+                    pass
+            if not is_configured:
+                if p_id in configured_plugin_ids or name.lower() in configured_service_names:
+                    is_configured = True
+
             row_keys = row.keys() if hasattr(row, "keys") else []
             pref = row["channel_preference"] if "channel_preference" in row_keys and row["channel_preference"] else None
             if not pref:
@@ -2002,8 +2063,12 @@ def get_all_plugins() -> list:
             channel_preference = pref
             plugin_info = {
                 "id": name,
-                "plugin_id": row["plugin_id"],
+                "plugin_id": p_id,
                 "name": name,
+                "display_name": display_name,
+                "author": author,
+                "source_type": source_type,
+                "is_configured": is_configured,
                 "description": row["description"] or "Community plugin",
                 "type": "core" if is_core_service else "community",
                 "is_core": is_core_service,

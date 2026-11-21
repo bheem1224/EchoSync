@@ -909,9 +909,11 @@
         {/if}
       </div>
 
-      <p class="shortcut-tip">
-        Press <kbd>Ctrl+K</kbd> anywhere to search globally
-      </p>
+      {#if mode !== "inline" && !inline && !forcedPrefix}
+        <p class="shortcut-tip">
+          Press <kbd>Ctrl+K</kbd> anywhere to search globally
+        </p>
+      {/if}
     </div>
   </div>
 
