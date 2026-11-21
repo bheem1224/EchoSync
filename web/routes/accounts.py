@@ -247,7 +247,32 @@ def _list_available_external_accounts_handler(principal: Principal = Depends(req
     seen_streaming: set[tuple[str, str]] = set()
     seen_media: set[tuple[str, str]] = set()
 
-    # 1. Scan service accounts from config.db (preserves legacy Spotify/Tidal/Plex accounts)
+    # 1. Query active media server plugins via agnostic SDK facade (discovers live Home / Managed Users)
+    try:
+        from core.nexus_framework.plugin_loader import PluginRegistry
+        from core.nexus_framework.plugin_SDK import sdk
+
+        for pid in PluginRegistry.get_active_services_by_type("media_server") or []:
+            svc_name = (db.get_service_name(pid) or str(pid)).lower().replace("echosync.", "")
+            for mu in sdk.plugins.list_provider_accounts(pid) or []:
+                ext_id = str(mu.get("external_account_id") or "").strip()
+                disp = str(mu.get("display_name") or ext_id).strip()
+                prov = str(mu.get("provider") or svc_name).strip().lower()
+                if ext_id and (prov, ext_id) not in seen_media:
+                    seen_media.add((prov, ext_id))
+                    media_server.append(
+                        {
+                            "provider": prov,
+                            "external_account_id": ext_id,
+                            "display_name": disp,
+                            "is_managed": bool(mu.get("is_managed", False)),
+                            "plugin_id": pid if isinstance(pid, int) else None,
+                        }
+                    )
+    except Exception as exc:
+        logger.warning(f"Media server SDK account discovery fallback: {exc}")
+
+    # 2. Scan service accounts from config.db (preserves legacy Spotify/Tidal/Plex accounts)
     try:
         with db._get_connection() as conn:
             rows = conn.execute(
@@ -268,6 +293,7 @@ def _list_available_external_accounts_handler(principal: Principal = Depends(req
                     "provider": svc_raw,
                     "external_account_id": ext_id,
                     "display_name": disp,
+                    "is_managed": False,
                     "account_db_id": r["id"],
                     "plugin_id": r["plugin_id"],
                     "is_authenticated": bool(r["is_authenticated"]),
@@ -284,36 +310,6 @@ def _list_available_external_accounts_handler(principal: Principal = Depends(req
                         streaming.append(item)
     except Exception as exc:
         logger.debug(f"Available accounts DB scan fallback: {exc}")
-
-    # 2. Query active media server plugins via PluginRegistry facade when connected
-    try:
-        from core.nexus_framework.plugin_loader import PluginRegistry
-
-        for pid in PluginRegistry.get_active_services_by_type("media_server") or []:
-            svc_name = (db.get_service_name(pid) or str(pid)).lower().replace("echosync.", "")
-            cls = PluginRegistry.get_plugin_class(pid)
-            if not cls:
-                continue
-            try:
-                client = cls()
-                if hasattr(client, "get_managed_users"):
-                    for mu in client.get_managed_users() or []:
-                        ext_id = str(mu.get("id") or mu.get("user_id") or mu.get("username") or mu.get("name") or "")
-                        disp = str(mu.get("display_name") or mu.get("name") or mu.get("username") or ext_id)
-                        if ext_id and (svc_name, ext_id) not in seen_media:
-                            seen_media.add((svc_name, ext_id))
-                            media_server.append(
-                                {
-                                    "provider": svc_name,
-                                    "external_account_id": ext_id,
-                                    "display_name": disp,
-                                    "plugin_id": pid if isinstance(pid, int) else None,
-                                }
-                            )
-            except Exception:
-                continue
-    except Exception:
-        pass
 
     return {"streaming": streaming, "media_server": media_server}
 

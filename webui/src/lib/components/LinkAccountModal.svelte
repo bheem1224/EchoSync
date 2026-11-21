@@ -329,10 +329,18 @@
                     type="button"
                     onclick={() => handleQuickBind(avail)}
                     disabled={saving}
-                    class="px-2.5 py-1 rounded-lg text-xs font-medium border transition-colors hover:border-teal-400"
+                    class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium border transition-colors hover:border-teal-400"
                     style="background-color: var(--bg-surface-elevated); border-color: var(--border-subtle); color: var(--text-primary);"
                   >
-                    + {avail.display_name}
+                    <span>+ {avail.display_name}</span>
+                    {#if avail.is_managed}
+                      <span
+                        class="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider"
+                        style="background: rgba(20, 184, 166, 0.16); color: var(--color-primary);"
+                      >
+                        MANAGED
+                      </span>
+                    {/if}
                   </button>
                 {/each}
               </div>

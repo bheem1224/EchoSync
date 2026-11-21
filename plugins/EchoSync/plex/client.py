@@ -1597,6 +1597,108 @@ class PlexClient(MediaServerProvider):
             logger.error(f"Failed to connect to Plex: {e}")
             self.server = None
 
+    def list_accounts(self) -> list[dict[str, Any]]:
+        """Discover the primary Plex owner account and all Plex Home / Managed Users."""
+        accounts: list[dict[str, Any]] = []
+        seen_ids: set[str] = set()
+
+        def _append_account(
+            *,
+            raw_id: Any,
+            username: Any,
+            title: Any,
+            is_managed: bool,
+        ) -> None:
+            clean_username = str(username).strip() if username is not None else ""
+            clean_title = str(title).strip() if title is not None else ""
+            str_id = str(raw_id).strip() if raw_id is not None else ""
+            ext_id = clean_username or str_id
+            if not ext_id or ext_id in seen_ids:
+                return
+            seen_ids.add(ext_id)
+            display_name = clean_title or clean_username or f"Managed User {str_id or ext_id}"
+            accounts.append(
+                {
+                    "id": str_id or ext_id,
+                    "external_account_id": ext_id,
+                    "username": clean_username,
+                    "display_name": display_name,
+                    "is_managed": bool(is_managed),
+                    "provider": "plex",
+                }
+            )
+
+        if self.server or self.ensure_connection():
+            try:
+                myplex_account = self.server.myPlexAccount()
+                _append_account(
+                    raw_id=_safe_getattr(myplex_account, "id", None),
+                    username=_safe_getattr(myplex_account, "username", None),
+                    title=_safe_getattr(myplex_account, "title", None),
+                    is_managed=False,
+                )
+                try:
+                    home_users = myplex_account.users() or []
+                except Exception as users_err:
+                    logger.warning(f"Failed to fetch Plex Home / Managed Users via myPlexAccount.users(): {users_err}")
+                    home_users = []
+
+                for user in home_users:
+                    _append_account(
+                        raw_id=_safe_getattr(user, "id", None),
+                        username=_safe_getattr(user, "username", None),
+                        title=_safe_getattr(user, "title", None),
+                        is_managed=bool(_safe_getattr(user, "home", True)),
+                    )
+                if accounts:
+                    return accounts
+            except Exception as exc:
+                logger.warning(f"Failed to query MyPlexAccount for Plex user discovery: {exc}")
+
+        # Fallback: query https://plex.tv/api/home/users directly if a token is stored
+        token = ""
+        try:
+            from core.nexus_framework.plugin_SDK import sdk
+            from core.security import decrypt_string
+
+            db_accounts = sdk.accounts.get_all()
+            if db_accounts:
+                tok_data = sdk.accounts.get_token(db_accounts[0]["id"])
+                if tok_data and tok_data.get("access_token"):
+                    token = decrypt_string(tok_data["access_token"])
+        except Exception as tok_err:
+            logger.warning(f"Failed to read Plex token for fallback discovery: {tok_err}")
+
+        if token:
+            try:
+                import xml.etree.ElementTree as ET
+                import httpx
+
+                resp = httpx.get(
+                    "https://plex.tv/api/home/users",
+                    headers={"X-Plex-Token": token, "Accept": "application/xml"},
+                    timeout=10.0,
+                )
+                if resp.status_code == 200:
+                    root = ET.fromstring(resp.text)
+                    for idx, elem in enumerate(root.findall(".//User")):
+                        _append_account(
+                            raw_id=elem.attrib.get("id"),
+                            username=elem.attrib.get("username", ""),
+                            title=elem.attrib.get("title", ""),
+                            is_managed=(elem.attrib.get("admin", "0") != "1" and idx > 0),
+                        )
+                else:
+                    logger.warning(f"Plex Home Users API returned HTTP {resp.status_code}")
+            except Exception as http_err:
+                logger.warning(f"Plex Home Users HTTP fallback failed: {http_err}")
+
+        return accounts
+
+    def get_managed_users(self) -> list[dict[str, Any]]:
+        """Alias for list_accounts() for media server profile discovery."""
+        return self.list_accounts()
+
     def import_managed_users(self) -> list[dict[str, Any]]:
         """Import the Plex admin account and managed users into settings database account rows."""
         if not self.ensure_connection() or not self.server:

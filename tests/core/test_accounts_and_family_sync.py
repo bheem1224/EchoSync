@@ -200,3 +200,65 @@ def test_family_target_profiles_and_secrets_denied_for_member(isolated_env):
     assert not member_principal.has_scope("contract:accounts:secrets")
     with pytest.raises(PermissionError, match="contract:accounts:secrets"):
         sdk.accounts.get_token(acc_id, principal=member_principal)
+
+
+def test_plex_managed_user_discovery_includes_empty_username_profiles(isolated_env, monkeypatch):
+    client, db = isolated_env
+    admin = db.create_user("abhay", "correct horse battery staple", roles=["admin"])
+
+    class _MockOwner:
+        id = 1001
+        username = "bheem12"
+        title = "bheem12"
+
+    class _MockManagedUser:
+        def __init__(self, uid: int, title: str, username: str = "", home: bool = True):
+            self.id = uid
+            self.title = title
+            self.username = username
+            self.home = home
+
+    class _MockServer:
+        def myPlexAccount(self):
+            acc = _MockOwner()
+            acc.users = lambda: [
+                _MockManagedUser(12345678, "Simi", username="", home=True),
+                _MockManagedUser(87654321, "Kids", username="", home=True),
+            ]
+            return acc
+
+    from plugins.EchoSync.plex.client import PlexClient
+
+    monkeypatch.setattr(PlexClient, "ensure_connection", lambda self: setattr(self, "server", _MockServer()) or True)
+
+    # 1. Direct PlexClient.list_accounts() test
+    discovered = PlexClient().list_accounts()
+    assert [d["external_account_id"] for d in discovered] == ["bheem12", "12345678", "87654321"]
+    assert discovered[0]["is_managed"] is False
+    assert discovered[1] == {
+        "id": "12345678",
+        "external_account_id": "12345678",
+        "username": "",
+        "display_name": "Simi",
+        "is_managed": True,
+        "provider": "plex",
+    }
+
+    # 2. Agnostic SDK + /api/v1/auth/external-accounts/available endpoint test
+    from core.nexus_framework.plugin_loader import PluginRegistry
+
+    monkeypatch.setattr(PluginRegistry, "get_active_services_by_type", staticmethod(lambda stype: [3021005569] if stype == "media_server" else []))
+    monkeypatch.setattr(PluginRegistry, "get_plugin_class", staticmethod(lambda pid: PlexClient if str(pid) in ("3021005569", "plex", "EchoSync.plex") else None))
+    monkeypatch.setattr(PluginRegistry, "is_plugin_disabled", staticmethod(lambda pid: False))
+
+    resp = client.get("/api/v1/auth/external-accounts/available", headers=_auth_headers(admin))
+    assert resp.status_code == 200
+    media_accounts = resp.json()["media_server"]
+    by_id = {a["external_account_id"]: a for a in media_accounts}
+    assert "bheem12" in by_id
+    assert by_id["bheem12"]["is_managed"] is False
+    assert by_id["12345678"]["display_name"] == "Simi"
+    assert by_id["12345678"]["is_managed"] is True
+    assert by_id["12345678"]["provider"] == "plex"
+    assert by_id["87654321"]["display_name"] == "Kids"
+    assert by_id["87654321"]["is_managed"] is True

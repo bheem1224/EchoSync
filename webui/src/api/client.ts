@@ -70,6 +70,7 @@ export interface AvailableExternalAccount {
   provider: string;
   external_account_id: string;
   display_name: string;
+  is_managed?: boolean;
   account_db_id?: number;
   plugin_id?: number | null;
   is_authenticated?: boolean;

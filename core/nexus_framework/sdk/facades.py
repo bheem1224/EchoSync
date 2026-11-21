@@ -766,6 +766,61 @@ class _PluginsSDKFacade:
             return instance.handle_ipc(action, payload)
         return None
 
+    def list_provider_accounts(self, target_plugin_id: str | int) -> list[dict[str, Any]]:
+        """Query a connected provider plugin for its discoverable accounts/profiles."""
+        from core.nexus_framework.plugin_loader import PluginRegistry
+
+        if PluginRegistry.is_plugin_disabled(target_plugin_id):
+            return []
+
+        provider_cls = PluginRegistry.get_plugin_class(target_plugin_id)
+        if not provider_cls and isinstance(target_plugin_id, str) and not target_plugin_id.lower().startswith("echosync."):
+            provider_cls = PluginRegistry.get_plugin_class(f"EchoSync.{target_plugin_id}")
+        if not provider_cls:
+            return []
+
+        try:
+            instance = provider_cls()
+        except Exception as exc:
+            logger.warning(f"Failed to instantiate provider {target_plugin_id} for account discovery: {exc}")
+            return []
+
+        raw_accounts: list[dict[str, Any]] = []
+        if hasattr(instance, "list_accounts"):
+            raw_accounts = instance.list_accounts() or []
+        elif hasattr(instance, "get_managed_users"):
+            raw_accounts = instance.get_managed_users() or []
+
+        normalized: list[dict[str, Any]] = []
+        for item in raw_accounts:
+            if not isinstance(item, dict):
+                continue
+            ext_id = str(
+                item.get("external_account_id")
+                or item.get("username")
+                or item.get("id")
+                or item.get("user_id")
+                or ""
+            ).strip()
+            if not ext_id:
+                continue
+            disp = str(
+                item.get("display_name")
+                or item.get("title")
+                or item.get("name")
+                or item.get("username")
+                or ext_id
+            ).strip()
+            normalized.append(
+                {
+                    "external_account_id": ext_id,
+                    "display_name": disp,
+                    "is_managed": bool(item.get("is_managed", False)),
+                    "provider": str(item.get("provider") or "").strip().lower(),
+                }
+            )
+        return normalized
+
 
 class _FileSDKFacade:
     def delete(self, file_path: str, *, principal: Principal | None = None) -> bool:

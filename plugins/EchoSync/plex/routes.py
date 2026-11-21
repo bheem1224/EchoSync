@@ -127,6 +127,19 @@ async def save_settings(request: Request):
         return JSONResponse(content={"error": "Failed to save Plex settings"}, status_code=500)
 
 
+@router.get("/accounts")
+def list_plex_accounts():
+    """List primary Plex owner and all Plex Home / Managed Users."""
+    try:
+        from .client import PlexClient
+
+        accounts = PlexClient().list_accounts()
+        return JSONResponse(content={"accounts": accounts})
+    except Exception as e:
+        logger.error(f"Error listing Plex accounts: {e}", exc_info=True)
+        return JSONResponse(content={"error": "Failed to list Plex accounts"}, status_code=500)
+
+
 @router.post("/activate")
 def activate_server():
     """Set Plex as the active media server."""
