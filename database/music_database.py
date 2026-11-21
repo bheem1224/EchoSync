@@ -1369,105 +1369,140 @@ class MusicDatabase:
     def get_library_hierarchy(self) -> list[dict]:
         """Fetch the entire library hierarchy (Artist -> Album -> Track)."""
         with self.session_scope() as session:
-            # Use selectinload (separate SELECT per relationship) rather than joinedload
-            # (which emits a single Cartesian-product JOIN). For large libraries the JOIN
-            # inflates row count to artists×albums×tracks, causing an OOM spike.
+            from collections import defaultdict
             from datetime import date
 
-            # Query only artists that have actual local media files attached to their tracks
-            artists_query = (
-                session.query(Artist)
-                .options(
-                    selectinload(Artist.albums).selectinload(Album.tracks).selectinload(Track.media_files),
-                    selectinload(Artist.tracks).selectinload(Track.media_files),
-                )
-                .filter(Artist.tracks.any(Track.media_files.any()))
-                .order_by(Artist.name)
-            )
+            # 1. Fetch only tracks that have physical LocalMedia files
+            media_rows = session.query(LocalMedia.track_id, LocalMedia.media_id).all()
+            if not media_rows:
+                return []
+
+            media_by_track: dict[int, list[str]] = defaultdict(list)
+            for track_id, media_id in media_rows:
+                if track_id is not None and media_id:
+                    media_by_track[track_id].append(media_id)
+
+            if not media_by_track:
+                return []
+
+            # 2. Fetch flat track columns and keep only tracks with local media
+            track_rows = session.query(
+                Track.id,
+                Track.sync_id,
+                Track.artist_id,
+                Track.album_id,
+                Track.title,
+                Track.duration,
+                Track.track_number,
+                Track.disc_number,
+            ).all()
+
+            tracks_by_album: dict[int, list[dict]] = defaultdict(list)
+            loose_tracks_by_artist: dict[int, list[dict]] = defaultdict(list)
+            active_artist_ids: set[int] = set()
+
+            for t_id, sync_id, artist_id, album_id, title, duration, track_num, disc_num in track_rows:
+                media_ids = media_by_track.get(t_id)
+                if not media_ids or artist_id is None:
+                    continue
+                active_artist_ids.add(artist_id)
+                track_payload = {
+                    "id": t_id,
+                    "sync_id": sync_id,
+                    "title": title,
+                    "duration": duration,
+                    "track_number": track_num,
+                    "disc_number": disc_num,
+                    "media_ids": media_ids,
+                }
+                if album_id is not None:
+                    tracks_by_album[album_id].append(track_payload)
+                else:
+                    loose_tracks_by_artist[artist_id].append(track_payload)
+
+            if not active_artist_ids:
+                return []
+
+            # 3. Fetch flat album columns and group by artist_id
+            album_rows = session.query(
+                Album.id,
+                Album.artist_id,
+                Album.title,
+                Album.cover_image_url,
+                Album.release_date,
+            ).all()
+
+            albums_by_artist: dict[int, list[tuple]] = defaultdict(list)
+            for a_id, artist_id, title, cover_url, release_date in album_rows:
+                if artist_id in active_artist_ids and a_id in tracks_by_album:
+                    albums_by_artist[artist_id].append((a_id, title, cover_url, release_date))
+
+            # 4. Fetch flat artist columns ordered by name
+            artist_rows = session.query(
+                Artist.id,
+                Artist.name,
+                Artist.image_url,
+            ).order_by(Artist.name).all()
 
             hierarchy = []
-            for artist in artists_query:
+            for artist_id, artist_name, image_url in artist_rows:
+                if artist_id not in active_artist_ids:
+                    continue
+
                 artist_data = {
-                    "id": artist.id,
-                    "name": artist.name,
-                    "image_url": artist.image_url,
+                    "id": artist_id,
+                    "name": artist_name,
+                    "image_url": image_url,
                     "albums": [],
                 }
 
-                # Sort albums by release date or title using safe date parser
                 sorted_albums = sorted(
-                    artist.albums,
-                    key=lambda a: _safe_parse_date(a.release_date),
+                    albums_by_artist.get(artist_id, []),
+                    key=lambda a: _safe_parse_date(a[3]),
                     reverse=True,
                 )
 
-                for album in sorted_albums:
-                    # Filter tracks that actually have local files attached to them
-                    album_tracks = [t for t in album.tracks if t.media_files]
+                for album_id, album_title, cover_url, release_date in sorted_albums:
+                    album_tracks = tracks_by_album.get(album_id, [])
                     if not album_tracks:
                         continue
 
-                    parsed_date = _safe_parse_date(album.release_date)
-                    album_data = {
-                        "id": album.id,
-                        "title": album.title,
-                        "cover_image_url": album.cover_image_url,
-                        "year": parsed_date.year if parsed_date != date.min else None,
-                        "tracks": [],
-                    }
-
-                    # Sort tracks by disc number and track number safely
+                    parsed_date = _safe_parse_date(release_date)
                     sorted_tracks = sorted(
                         album_tracks,
                         key=lambda t: (
-                            _safe_int(t.disc_number, 1),
-                            _safe_int(t.track_number, 0),
+                            _safe_int(t["disc_number"], 1),
+                            _safe_int(t["track_number"], 0),
                         ),
                     )
+                    artist_data["albums"].append(
+                        {
+                            "id": album_id,
+                            "title": album_title,
+                            "cover_image_url": cover_url,
+                            "year": parsed_date.year if parsed_date != date.min else None,
+                            "tracks": sorted_tracks,
+                        }
+                    )
 
-                    for track in sorted_tracks:
-                        album_data["tracks"].append(
-                            {
-                                "id": track.id,
-                                "sync_id": track.sync_id,
-                                "title": track.title,
-                                "duration": track.duration,
-                                "track_number": track.track_number,
-                                "disc_number": track.disc_number,
-                                "media_ids": [m.media_id for m in track.media_files if getattr(m, "media_id", None)],
-                            }
-                        )
-
-                    artist_data["albums"].append(album_data)
-
-                # Handle loose tracks without an album
-                loose_tracks = [t for t in artist.tracks if t.album_id is None and t.media_files]
+                loose_tracks = loose_tracks_by_artist.get(artist_id, [])
                 if loose_tracks:
-                    album_data = {
-                        "id": "unknown_" + str(artist.id),
-                        "title": "Unknown Album",
-                        "cover_image_url": None,
-                        "year": None,
-                        "tracks": [],
-                    }
-                    sorted_tracks = sorted(
+                    sorted_loose = sorted(
                         loose_tracks,
                         key=lambda t: (
-                            _safe_int(t.disc_number, 1),
-                            _safe_int(t.track_number, 0),
+                            _safe_int(t["disc_number"], 1),
+                            _safe_int(t["track_number"], 0),
                         ),
                     )
-                    for track in sorted_tracks:
-                        album_data["tracks"].append(
-                            {
-                                "id": track.id,
-                                "title": track.title,
-                                "duration": track.duration,
-                                "track_number": track.track_number,
-                                "disc_number": track.disc_number,
-                            }
-                        )
-                    artist_data["albums"].append(album_data)
+                    artist_data["albums"].append(
+                        {
+                            "id": "unknown_" + str(artist_id),
+                            "title": "Unknown Album",
+                            "cover_image_url": None,
+                            "year": None,
+                            "tracks": sorted_loose,
+                        }
+                    )
 
                 hierarchy.append(artist_data)
 

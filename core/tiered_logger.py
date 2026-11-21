@@ -434,6 +434,21 @@ _verbose_file_handler: SafeRotatingFileHandler | None = None
 _current_log_dir: Path | None = None
 
 
+def get_log_dir() -> Path:
+    """Return the currently configured log directory."""
+    if _current_log_dir is not None:
+        return _current_log_dir
+    try:
+        from core.settings import config_manager
+
+        configured = config_manager.get("paths.log_dir") or config_manager.get("logging.log_dir")
+        if configured:
+            return Path(configured)
+    except Exception:
+        pass
+    return Path(os.getenv("ECHOSYNC_LOG_DIR", "data/logs"))
+
+
 def enable_verbose_file_logging(log_dir: Path | str | None = None) -> bool:
     """Dynamically attach on-demand rotating file handler for VERBOSE level (5)."""
     global _verbose_file_handler, _current_log_dir

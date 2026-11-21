@@ -9,7 +9,7 @@
   import MetadataEditorModal from "$lib/components/MetadataEditorModal.svelte";
 
   // Collection Data
-  let libraryIndex = $state([]);
+  let libraryIndex = $state.raw([]);
   let loading = $state(true);
   let error = $state("");
 

@@ -2,15 +2,18 @@
 
 import json
 import os
+import re
 import time
+from collections import deque
 from pathlib import Path
 
 import psutil
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import FileResponse
 
 from core.backup_manager import backup_manager
 from core.settings import config_manager
-from core.tiered_logger import get_logger
+from core.tiered_logger import get_log_dir, get_logger
 from database.config_database import ConfigDatabase
 from web.auth import require_auth, require_scope
 from web.dependencies import get_config_db
@@ -585,15 +588,197 @@ async def update_settings(request: Request):
         raise HTTPException(status_code=500, detail="Failed to update settings")
 
 
-@router.get("/logs")
-def get_logs():
-    """Retrieve recent application logs."""
+_LOG_LINE_WITH_LOC_RE = re.compile(
+    r"^(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}(?:[,.]\d{3,6})?)\s+-\s+([^\s]+)\s+-\s+(VERBOSE|DEBUG|INFO|WARNING|WARN|ERROR|CRITICAL)\s+-\s+([^\s]+)\s+-\s+(.*)$"
+)
+_LOG_LINE_BASIC_RE = re.compile(
+    r"^(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}(?:[,.]\d{3,6})?)\s+-\s+([^\s]+)\s+-\s+(VERBOSE|DEBUG|INFO|WARNING|WARN|ERROR|CRITICAL)\s+-\s+(.*)$"
+)
+_PREFERRED_LOG_ORDER = ("app.log", "debug.log", "echosync-verbose.log", "echosync.log", "Echosync.log")
+_MAX_LOG_READ_BYTES = 2 * 1024 * 1024
+
+
+def _discover_log_files() -> tuple[Path, list[str]]:
+    log_dir = get_log_dir()
+    if not log_dir.exists() or not log_dir.is_dir():
+        return log_dir, []
+    found = {p.name for p in log_dir.iterdir() if p.is_file() and p.suffix.lower() == ".log"}
+    ordered = [name for name in _PREFERRED_LOG_ORDER if name in found]
+    ordered.extend(sorted(found - set(ordered)))
+    return log_dir, ordered
+
+
+def _resolve_log_target(source: str | None) -> tuple[Path, list[str], Path | None]:
+    log_dir, available = _discover_log_files()
+    if not available:
+        return log_dir, [], None
+
+    alias_map = {
+        "app": "app.log",
+        "debug": "debug.log",
+        "verbose": "echosync-verbose.log",
+    }
+    requested = (source or "").strip()
+    candidate = alias_map.get(requested.lower(), Path(requested).name if requested else "")
+    if candidate in available:
+        return log_dir, available, log_dir / candidate
+    return log_dir, available, log_dir / available[0]
+
+
+def _parse_log_tail(file_path: Path) -> list[dict]:
+    file_size = file_path.stat().st_size
+    with open(file_path, "rb") as f:
+        if file_size > _MAX_LOG_READ_BYTES:
+            f.seek(file_size - _MAX_LOG_READ_BYTES)
+            # Discard partial first line when seeking mid-file
+            f.readline()
+        raw_text = f.read().decode("utf-8", errors="replace")
+
+    entries: list[dict] = []
+    for idx, line in enumerate(raw_text.splitlines(), start=1):
+        match = _LOG_LINE_WITH_LOC_RE.match(line)
+        if match:
+            ts, log_name, lvl, loc, msg = match.groups()
+            entries.append(
+                {
+                    "line": idx,
+                    "timestamp": ts,
+                    "logger": log_name,
+                    "level": "WARNING" if lvl == "WARN" else lvl,
+                    "location": loc,
+                    "message": msg,
+                    "details": [],
+                }
+            )
+            continue
+
+        basic_match = _LOG_LINE_BASIC_RE.match(line)
+        if basic_match:
+            ts, log_name, lvl, msg = basic_match.groups()
+            entries.append(
+                {
+                    "line": idx,
+                    "timestamp": ts,
+                    "logger": log_name,
+                    "level": "WARNING" if lvl == "WARN" else lvl,
+                    "location": "",
+                    "message": msg,
+                    "details": [],
+                }
+            )
+            continue
+
+        if entries:
+            entries[-1]["details"].append(line)
+        elif line.strip():
+            entries.append(
+                {
+                    "line": idx,
+                    "timestamp": "",
+                    "logger": "system",
+                    "level": "INFO",
+                    "location": "",
+                    "message": line,
+                    "details": [],
+                }
+            )
+
+    for entry in entries:
+        if entry["details"]:
+            entry["details"] = "\n".join(entry["details"])
+        else:
+            entry["details"] = ""
+    return entries
+
+
+@router.get("/logs", dependencies=[Depends(require_scope("service:system:edit"))])
+def get_logs(
+    source: str | None = Query(default=None, description="Log file name or alias (app, debug, verbose)"),
+    level: str | None = Query(default=None, description="Comma-separated levels (DEBUG,INFO,WARNING,ERROR,CRITICAL)"),
+    logger_name: str | None = Query(default=None, description="Filter by logger name substring"),
+    search: str | None = Query(default=None, description="Filter log message/logger/location"),
+    regex: bool = Query(default=False, description="Interpret search as regular expression"),
+    limit: int = Query(default=300, ge=1, le=2000),
+):
+    """Retrieve structured recent application logs with filtering."""
     try:
-        # TODO: implement log retrieval from logging system
-        return {"logs": []}
+        log_dir, available_files, target_file = _resolve_log_target(source)
+        if target_file is None or not target_file.exists():
+            return {
+                "logs": [],
+                "available_files": available_files,
+                "active_file": None,
+                "level_counts": {"DEBUG": 0, "INFO": 0, "WARNING": 0, "ERROR": 0, "CRITICAL": 0},
+                "total_entries": 0,
+                "filtered_entries": 0,
+                "log_dir": str(log_dir),
+            }
+
+        entries = _parse_log_tail(target_file)
+        level_counts = {"VERBOSE": 0, "DEBUG": 0, "INFO": 0, "WARNING": 0, "ERROR": 0, "CRITICAL": 0}
+        for entry in entries:
+            lvl = entry["level"]
+            level_counts[lvl] = level_counts.get(lvl, 0) + 1
+
+        allowed_levels = None
+        if level and level.strip().upper() != "ALL":
+            allowed_levels = {part.strip().upper() for part in level.split(",") if part.strip()}
+
+        logger_needle = (logger_name or "").strip().lower()
+        search_text = (search or "").strip()
+        compiled_regex = None
+        if search_text and regex:
+            try:
+                compiled_regex = re.compile(search_text, re.IGNORECASE)
+            except re.error as exc:
+                raise HTTPException(status_code=400, detail=f"Invalid search regex: {exc}")
+
+        filtered: deque[dict] = deque(maxlen=limit)
+        filtered_count = 0
+        search_lower = search_text.lower()
+
+        for entry in entries:
+            if allowed_levels and entry["level"] not in allowed_levels:
+                continue
+            if logger_needle and logger_needle not in entry["logger"].lower():
+                continue
+            if search_text:
+                haystack = f"{entry['logger']} {entry['location']} {entry['message']} {entry['details']}"
+                if compiled_regex is not None:
+                    if not compiled_regex.search(haystack):
+                        continue
+                elif search_lower not in haystack.lower():
+                    continue
+            filtered_count += 1
+            filtered.append(entry)
+
+        return {
+            "logs": list(filtered),
+            "available_files": available_files,
+            "active_file": target_file.name,
+            "level_counts": level_counts,
+            "total_entries": len(entries),
+            "filtered_entries": filtered_count,
+            "log_dir": str(log_dir),
+        }
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error getting logs: {e}")
-        return {"error": "Failed to get logs"}
+        logger.error(f"Error getting logs: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to read application logs")
+
+
+@router.get("/logs/download", dependencies=[Depends(require_scope("service:system:edit"))])
+def download_logs(source: str | None = Query(default=None)):
+    """Download the raw selected log file."""
+    _, _, target_file = _resolve_log_target(source)
+    if target_file is None or not target_file.exists():
+        raise HTTPException(status_code=404, detail="No log file found")
+    return FileResponse(
+        path=str(target_file),
+        media_type="text/plain; charset=utf-8",
+        filename=target_file.name,
+    )
 
 
 @router.get("/activity/feed")

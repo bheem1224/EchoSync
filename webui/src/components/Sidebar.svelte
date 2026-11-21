@@ -63,6 +63,7 @@
     { label: 'Search',            href: '/settings/search' },
     { label: 'Misc',              href: '/settings/misc' },
     { label: 'System',            href: '/settings/system' },
+    { label: 'Logs',              href: '/settings/logs' },
   ]);
 
   let settingsOpen = $state(false);
