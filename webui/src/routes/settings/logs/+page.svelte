@@ -7,7 +7,7 @@
   let logs = $state([]);
   let availableFiles = $state([]);
   let activeFile = $state("");
-  let selectedSource = $state("app.log");
+  let selectedSource = $state("");
   let selectedLevels = $state(new Set(["INFO", "WARNING", "ERROR", "CRITICAL"]));
   let levelCounts = $state({ VERBOSE: 0, DEBUG: 0, INFO: 0, WARNING: 0, ERROR: 0, CRITICAL: 0 });
   let totalEntries = $state(0);
@@ -370,6 +370,9 @@
                 {entry.logger}
               </button>
               <span class="log-msg">{entry.message}</span>
+              {#if entry.taint}
+                <span class="log-taint">{entry.taint}</span>
+              {/if}
               {#if entry.location}
                 <span class="log-loc">{entry.location}</span>
               {/if}
@@ -684,6 +687,16 @@
     color: var(--text-muted, #64748b);
     font-size: 11px;
     margin-left: auto;
+  }
+
+  .log-taint {
+    font-size: 10px;
+    font-weight: 700;
+    padding: 1px 6px;
+    border-radius: 4px;
+    background: color-mix(in srgb, var(--color-primary) 12%, transparent);
+    color: var(--color-primary);
+    flex-shrink: 0;
   }
 
   .details-toggle {

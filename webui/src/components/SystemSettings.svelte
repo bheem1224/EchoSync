@@ -25,6 +25,9 @@
   let providerStates = $state([]);
   let loadingProviders = $state(true);
   let isRebuildingDatabase = $state(false);
+  let reloadingAll = $state(false);
+  let reloadingPluginId = $state(null);
+  let openMenuId = $state(null);
 
   let statsPoll = null;
 
@@ -53,6 +56,8 @@
           category: provider.category || "plugin",
           source_type: provider.source_type || "community",
           channel: provider.channel,
+          state: provider.state || "unconfigured",
+          error_message: provider.error_message || null,
           is_core: Boolean(
             provider.is_core ||
               provider.source_type === "core" ||
@@ -68,7 +73,58 @@
     }
   }
 
+  async function handleReloadAllPlugins() {
+    reloadingAll = true;
+    openMenuId = null;
+    try {
+      const response = await apiClient.post("/system/plugins/reload");
+      const data = response.data || {};
+      if (data.success) {
+        feedback.addToast(`Reloaded ${data.reloaded || 0} plugins successfully.`, "success");
+      } else {
+        const firstErr = data.failed?.[0];
+        feedback.addToast(
+          firstErr
+            ? `Reload completed with ${data.failed.length} error(s): ${firstErr.name}: ${firstErr.error}`
+            : "Some plugins failed to reload.",
+          "error",
+        );
+      }
+      await loadProviders();
+    } catch (error) {
+      feedback.addToast(`Failed to reload plugins: ${error?.response?.data?.detail || error.message}`, "error");
+    } finally {
+      reloadingAll = false;
+    }
+  }
+
+  async function handleReloadPlugin(provider) {
+    openMenuId = null;
+    reloadingPluginId = provider.id;
+    try {
+      const response = await apiClient.post(`/system/plugins/${provider.id}/reload`);
+      const data = response.data || {};
+      if (data.success) {
+        feedback.addToast(`${provider.display_name || provider.name} reloaded cleanly.`, "success");
+      } else {
+        feedback.addToast(
+          `Reload failed for ${provider.display_name || provider.name}: ${data.error || "Unknown error"}`,
+          "error",
+        );
+      }
+      await loadProviders();
+    } catch (error) {
+      feedback.addToast(
+        `Failed to reload ${provider.display_name || provider.name}: ${error?.response?.data?.detail || error.message}`,
+        "error",
+      );
+    } finally {
+      reloadingPluginId = null;
+    }
+  }
+
   async function handleUninstallProvider(provider) {
+    openMenuId = null;
     const confirmed = confirm(
       `Are you sure you want to uninstall ${provider.display_name || provider.name}? This will remove its files and configuration.`,
     );
@@ -335,7 +391,18 @@
     <article
       class="lg:col-span-2 bg-gray-800 border border-gray-700/60 rounded-xl p-5 shadow-sm"
     >
-      <h2 class="text-base font-semibold mb-4">Installed Plugins</h2>
+      <div class="flex items-center justify-between gap-3 mb-4">
+        <h2 class="text-base font-semibold">Installed Plugins</h2>
+        <button
+          type="button"
+          class="text-xs font-semibold px-3 py-1.5 rounded-lg border transition-colors disabled:opacity-50"
+          style="background-color: var(--bg-surface-elevated); border-color: var(--border-subtle); color: var(--text-primary);"
+          on:click={handleReloadAllPlugins}
+          disabled={reloadingAll || loadingProviders}
+        >
+          {reloadingAll ? "Reloading..." : "↻ Reload All Plugins"}
+        </button>
+      </div>
 
       {#if loadingProviders}
         <div class="flex items-center justify-center py-8">
@@ -420,6 +487,10 @@
                   <p class="text-xs text-gray-400">
                     {#if provider.disabled}
                       <span class="text-red-400">Disabled</span>
+                    {:else if provider.state === "error"}
+                      <span class="text-red-400" title={provider.error_message || "Initialization error"}>
+                        Error{provider.error_message ? `: ${provider.error_message}` : ""}
+                      </span>
                     {:else if provider.configured}
                       <span class="text-emerald-400">Configured</span>
                     {:else}
@@ -430,34 +501,61 @@
               </div>
 
               <div class="flex items-center gap-3">
-                {#if !provider.is_core}
-                  <button
-                    type="button"
-                    class="text-xs text-red-400 hover:text-red-300 bg-red-950/40 hover:bg-red-900/60 border border-red-800/60 px-2.5 py-1 rounded transition-colors"
-                    on:click={() => handleUninstallProvider(provider)}
-                    title="Uninstall Plugin"
-                  >
-                    Uninstall
-                  </button>
-                {/if}
                 <span
                   class="text-xs text-gray-400 capitalize px-2 py-1 bg-gray-800 rounded"
                 >
                   {provider.category}
                 </span>
                 <div class="relative">
-                  {#if provider.configured && !provider.disabled}
-                    <div
-                      class="w-2.5 h-2.5 bg-emerald-500 rounded-full shadow-[0_0_8px_rgba(16,185,129,0.4)]"
-                    ></div>
-                  {:else if provider.disabled}
+                  {#if provider.state === "error" || provider.disabled}
                     <div
                       class="w-2.5 h-2.5 bg-red-500 rounded-full shadow-[0_0_8px_rgba(239,68,68,0.4)]"
+                    ></div>
+                  {:else if provider.configured}
+                    <div
+                      class="w-2.5 h-2.5 bg-emerald-500 rounded-full shadow-[0_0_8px_rgba(16,185,129,0.4)]"
                     ></div>
                   {:else}
                     <div
                       class="w-2.5 h-2.5 bg-amber-500 rounded-full shadow-[0_0_8px_rgba(245,158,11,0.4)]"
                     ></div>
+                  {/if}
+                </div>
+                <div class="relative">
+                  <button
+                    type="button"
+                    aria-label={`Plugin actions for ${provider.display_name || provider.name}`}
+                    class="px-2 py-1 rounded-md text-xs font-bold border transition-colors"
+                    style="background-color: var(--bg-surface-elevated); border-color: var(--border-subtle); color: var(--text-secondary);"
+                    on:click={() => (openMenuId = openMenuId === provider.id ? null : provider.id)}
+                  >
+                    ⋮
+                  </button>
+                  {#if openMenuId === provider.id}
+                    <div
+                      class="absolute right-0 mt-1 w-40 rounded-lg border shadow-xl z-50 py-1"
+                      style="background-color: var(--bg-surface-elevated); border-color: var(--border-subtle);"
+                    >
+                      <button
+                        type="button"
+                        class="w-full text-left px-3 py-1.5 text-xs hover:opacity-80 disabled:opacity-50"
+                        style="color: var(--text-primary);"
+                        disabled={reloadingPluginId === provider.id}
+                        on:click={() => handleReloadPlugin(provider)}
+                      >
+                        {reloadingPluginId === provider.id ? "Reloading..." : "↻ Reload Plugin"}
+                      </button>
+                      {#if !provider.is_core}
+                        <button
+                          type="button"
+                          class="w-full text-left px-3 py-1.5 text-xs hover:opacity-80"
+                          style="color: var(--color-danger);"
+                          on:click={() => handleUninstallProvider(provider)}
+                        >
+                          Uninstall
+                        </button>
+                      {/if}
+                    </div>
                   {/if}
                 </div>
               </div>

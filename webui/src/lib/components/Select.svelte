@@ -15,6 +15,9 @@
   let open = $state(false);
   let highlightedIndex = $state(-1);
   let containerEl = $state(null);
+  let triggerEl = $state(null);
+  let menuEl = $state(null);
+  let menuStyle = $state("");
 
   const normalizedOptions = $derived(
     (options || []).map((opt) =>
@@ -28,10 +31,37 @@
     normalizedOptions.find((o) => String(o.value) === String(value)) || null,
   );
 
+  function updateMenuPosition() {
+    if (!triggerEl || typeof window === "undefined") return;
+    const rect = triggerEl.getBoundingClientRect();
+    const spaceBelow = window.innerHeight - rect.bottom;
+    const maxMenuHeight = 240;
+    const openUpward = spaceBelow < Math.min(maxMenuHeight, 180) && rect.top > spaceBelow;
+    const top = openUpward
+      ? Math.max(8, rect.top - Math.min(maxMenuHeight, rect.top - 8) - 4)
+      : rect.bottom + 4;
+    const maxHeight = openUpward ? Math.min(maxMenuHeight, rect.top - 12) : Math.min(maxMenuHeight, spaceBelow - 12);
+    menuStyle = `position: fixed; top: ${top}px; left: ${rect.left}px; width: ${rect.width}px; max-height: ${Math.max(100, maxHeight)}px; z-index: 9999;`;
+  }
+
+  function portal(node) {
+    if (typeof document !== "undefined" && node.parentNode !== document.body) {
+      document.body.appendChild(node);
+    }
+    return {
+      destroy() {
+        if (node.parentNode) {
+          node.parentNode.removeChild(node);
+        }
+      },
+    };
+  }
+
   function toggleOpen() {
     if (disabled) return;
     open = !open;
     if (open) {
+      updateMenuPosition();
       const idx = normalizedOptions.findIndex((o) => String(o.value) === String(value));
       highlightedIndex = idx >= 0 ? idx : 0;
     }
@@ -90,20 +120,31 @@
   }
 
   function handleDocClick(e) {
-    if (open && containerEl && !containerEl.contains(e.target)) {
+    if (!open) return;
+    const inTrigger = containerEl && containerEl.contains(e.target);
+    const inMenu = menuEl && menuEl.contains(e.target);
+    if (!inTrigger && !inMenu) {
       close();
     }
+  }
+
+  function handleViewportChange() {
+    if (open) updateMenuPosition();
   }
 
   onMount(() => {
     if (typeof document !== "undefined") {
       document.addEventListener("mousedown", handleDocClick);
+      window.addEventListener("resize", handleViewportChange);
+      window.addEventListener("scroll", handleViewportChange, true);
     }
   });
 
   onDestroy(() => {
     if (typeof document !== "undefined") {
       document.removeEventListener("mousedown", handleDocClick);
+      window.removeEventListener("resize", handleViewportChange);
+      window.removeEventListener("scroll", handleViewportChange, true);
     }
   });
 </script>
@@ -112,6 +153,7 @@
   <button
     type="button"
     {id}
+    bind:this={triggerEl}
     class="es-select-trigger"
     class:open
     {disabled}
@@ -128,7 +170,15 @@
   </button>
 
   {#if open}
-    <ul class="es-select-menu" role="listbox" aria-label={ariaLabel || placeholder}>
+    <ul
+      use:portal
+      bind:this={menuEl}
+      class="es-select-menu"
+      class:compact
+      style={menuStyle}
+      role="listbox"
+      aria-label={ariaLabel || placeholder}
+    >
       {#each normalizedOptions as opt, idx (`${String(opt.value)}-${idx}`)}
         {@const isSelected = String(opt.value) === String(value)}
         <li
@@ -225,16 +275,10 @@
     color: var(--color-primary);
   }
 
-  .es-select-menu {
-    position: absolute;
-    top: calc(100% + 4px);
-    left: 0;
-    right: 0;
-    z-index: 60;
+  :global(.es-select-menu) {
     margin: 0;
     padding: 4px;
     list-style: none;
-    max-height: 240px;
     overflow-y: auto;
     border-radius: 10px;
     background: var(--bg-surface-elevated);
@@ -242,7 +286,7 @@
     box-shadow: var(--shadow, 0 16px 40px rgba(0, 0, 0, 0.45));
   }
 
-  .es-select-option {
+  :global(.es-select-menu .es-select-option) {
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -255,32 +299,32 @@
     transition: background-color 0.12s ease, color 0.12s ease;
   }
 
-  .es-select.compact .es-select-option {
+  :global(.es-select-menu.compact .es-select-option) {
     padding: 6px 8px;
     font-size: 12px;
   }
 
-  .es-select-option.highlighted {
+  :global(.es-select-menu .es-select-option.highlighted) {
     background: color-mix(in srgb, var(--color-primary) 14%, transparent);
   }
 
-  .es-select-option.selected {
+  :global(.es-select-menu .es-select-option.selected) {
     background: color-mix(in srgb, var(--color-primary) 22%, transparent);
     color: var(--color-primary);
     font-weight: 600;
   }
 
-  .es-select-option.disabled {
+  :global(.es-select-menu .es-select-option.disabled) {
     opacity: 0.45;
     cursor: not-allowed;
   }
 
-  .es-select-check {
+  :global(.es-select-menu .es-select-check) {
     font-size: 11px;
     flex-shrink: 0;
   }
 
-  .es-select-empty {
+  :global(.es-select-menu .es-select-empty) {
     padding: 10px;
     text-align: center;
     font-size: 12px;

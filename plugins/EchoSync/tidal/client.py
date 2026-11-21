@@ -153,7 +153,7 @@ class TidalClient(SyncServiceProvider):
         if not self.is_configured():
             return
 
-        from core.health_check import HealthCheckResult
+        from core.task_manager.health import HealthCheckResult
 
         def tidal_health_check() -> HealthCheckResult:
             try:

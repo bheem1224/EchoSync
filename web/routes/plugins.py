@@ -113,6 +113,82 @@ def list_plugins():
     return PluginsListResponse(plugins=plugins)
 
 
+@router.post("/reload", dependencies=[Depends(require_scope("service:system:edit"))])
+def reload_all_plugins(request: Request):
+    """Hot-reload all active plugins without restarting the server."""
+    from pathlib import Path
+
+    from core.nexus_framework.plugin_loader import PluginLoader, get_all_plugins
+
+    app_root = Path(__file__).resolve().parents[2]
+    loader = PluginLoader(str(app_root), main_app=request.app)
+    loader.load_all()
+
+    plugins = get_all_plugins()
+    failed = [
+        {
+            "plugin_id": p.get("plugin_id"),
+            "name": p.get("display_name") or p.get("name"),
+            "error": p.get("error_message") or "Plugin failed initialization",
+        }
+        for p in plugins
+        if p.get("state") == "error"
+    ]
+    return {
+        "success": len(failed) == 0,
+        "reloaded": len(plugins),
+        "failed": failed,
+    }
+
+
+@router.post("/{plugin_id}/reload", dependencies=[Depends(require_scope("service:system:edit"))])
+def reload_single_plugin(plugin_id: str, request: Request):
+    """Hot-reload a single plugin by numeric plugin_id or name."""
+    from pathlib import Path
+
+    from core.nexus_framework.plugin_loader import PluginLoader, get_all_plugins
+
+    plugin_id_str = str(plugin_id).strip()
+    plugin_id_int = int(plugin_id_str) if plugin_id_str.isdigit() else None
+
+    with config_db_connection() as conn:
+        c = conn.cursor()
+        if plugin_id_int is not None:
+            c.execute(
+                "SELECT plugin_id, name, absolute_install_path FROM services WHERE plugin_id=? OR id=?",
+                (plugin_id_int, plugin_id_int),
+            )
+        else:
+            c.execute(
+                "SELECT plugin_id, name, absolute_install_path FROM services WHERE lower(name)=lower(?)",
+                (plugin_id_str,),
+            )
+        row = c.fetchone()
+
+    if not row:
+        raise HTTPException(status_code=404, detail=f"Plugin {plugin_id} not found")
+
+    target_pid = int(row["plugin_id"])
+    target_name = row["name"]
+    install_path = row["absolute_install_path"]
+
+    app_root = Path(__file__).resolve().parents[2]
+    loader = PluginLoader(str(app_root), main_app=request.app)
+    reloaded = loader.reload_plugin(target_pid, absolute_install_path=install_path)
+
+    plugins = get_all_plugins()
+    matched = next((p for p in plugins if p.get("plugin_id") == target_pid), None)
+    error_msg = matched.get("error_message") if matched and matched.get("state") == "error" else None
+
+    return {
+        "success": bool(reloaded) and not error_msg,
+        "plugin_id": target_pid,
+        "name": (matched.get("display_name") if matched else None) or target_name,
+        "state": matched.get("state") if matched else ("error" if not reloaded else "unconfigured"),
+        "error": error_msg or (None if reloaded else "Plugin reload failed"),
+    }
+
+
 class UIPluginComponent(BaseModel):
     element_tag: str
     bundle_url: str

@@ -9,6 +9,7 @@ This module provides a centralized logging utility that integrates:
 - Windows-safe file rotation with deferred rollover
 """
 
+import json
 import logging
 import os
 import re
@@ -189,6 +190,22 @@ class SafeFormatter(logging.Formatter):
             # Strip emojis and try again for Windows compatibility
             record.getMessage = lambda: self.strip_emojis(record.msg % record.args if record.args else record.msg)
             return super().format(record)
+
+
+class JsonLineFormatter(logging.Formatter):
+    """Emit compact structured JSON lines for machine-readable log viewing."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        payload = {
+            "ts": self.formatTime(record, self.datefmt),
+            "logger": record.name,
+            "level": record.levelname,
+            "location": f"{record.funcName}:{record.lineno}",
+            "taint": getattr(record, "taint_id", None) or getattr(record, "plugin_taint", None) or "",
+            "msg": record.getMessage(),
+            "traceback": self.formatException(record.exc_info) if record.exc_info else "",
+        }
+        return json.dumps(payload, ensure_ascii=False)
 
 
 class ColoredFormatter(SafeFormatter):
@@ -375,6 +392,18 @@ def setup_logging(level: str = "INFO", log_dir: str | None = None, log_file: str
         add_file_handler("app.log", logging.INFO)
         # Debug: DEBUG and up
         add_file_handler("debug.log", logging.DEBUG)
+
+        # Structured JSON Lines: DEBUG and up (captures tracebacks + taint cleanly)
+        json_handler = SafeRotatingFileHandler(
+            log_path / "app.jsonl",
+            maxBytes=10 * 1024 * 1024,
+            backupCount=3,
+            encoding="utf-8",
+        )
+        json_handler.setLevel(logging.DEBUG)
+        json_handler.addFilter(redaction_filter)
+        json_handler.setFormatter(JsonLineFormatter())
+        root_logger.addHandler(json_handler)
 
         # Verbose file logging is strictly on-demand.
         # Check if enabled via configuration or environment at startup.

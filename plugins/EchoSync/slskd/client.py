@@ -395,7 +395,7 @@ class SlskdProvider(DownloaderProvider):
             return
 
         from core.event_bus import event_bus
-        from core.health_check import HealthCheckResult
+        from core.task_manager.health import HealthCheckResult
 
         def slskd_health_check() -> HealthCheckResult:
             try:

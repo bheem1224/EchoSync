@@ -331,7 +331,7 @@ class JellyfinClient(MediaServerProvider):
         if not self.is_configured():
             return
 
-        from core.health_check import HealthCheckResult
+        from core.task_manager.health import HealthCheckResult
 
         def jellyfin_health_check() -> HealthCheckResult:
             try:

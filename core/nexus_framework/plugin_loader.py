@@ -1760,8 +1760,19 @@ class PluginLoader:
                         if hasattr(plugin_instance, "on_plugin_startup"):
                             plugin_instance.on_plugin_startup(self.hook_manager, self.config_db)
                 except Exception as init_err:
-                    logger.error("Plugin initialization halted: Startup hook execution failed.")
-                    logger.debug(f"Raw exception data: {init_err}", exc_info=True)
+                    logger.error(
+                        f"Plugin initialization halted for {provider_id}: Startup hook execution failed ({init_err})",
+                        exc_info=True,
+                    )
+                    try:
+                        from core.task_manager.models import PluginLifecycleState
+                        from core.task_manager.plugin_state import plugin_state_manager
+
+                        plugin_state_manager.set_state(
+                            clean_ns.lower(), PluginLifecycleState.ERROR, str(init_err)
+                        )
+                    except Exception:
+                        pass
 
                 # Sprint 6: Sync UI manifest into ui_components table
                 try:
@@ -2044,10 +2055,15 @@ def get_all_plugins() -> list:
             source_type = "core" if is_core_service else PluginRegistry._plugin_sources.get(p_id, "community")
 
             is_configured = False
+            plugin_state = "unconfigured"
+            error_message = None
             if plugin_state_manager is not None and PluginLifecycleState is not None:
                 try:
                     st = plugin_state_manager.get_state(name)
-                    if st.state in (PluginLifecycleState.READY, PluginLifecycleState.DEGRADED):
+                    plugin_state = st.state.value if hasattr(st.state, "value") else str(st.state)
+                    if st.state == PluginLifecycleState.ERROR:
+                        error_message = st.message
+                    elif st.state in (PluginLifecycleState.READY, PluginLifecycleState.DEGRADED):
                         is_configured = True
                 except Exception:
                     pass
@@ -2069,6 +2085,8 @@ def get_all_plugins() -> list:
                 "author": author,
                 "source_type": source_type,
                 "is_configured": is_configured,
+                "state": plugin_state,
+                "error_message": error_message,
                 "description": row["description"] or "Community plugin",
                 "type": "core" if is_core_service else "community",
                 "is_core": is_core_service,

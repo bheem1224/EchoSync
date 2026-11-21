@@ -166,6 +166,18 @@ jobs:
               echo "📦 UI Compiled to bundle.js"
             fi
 
+            echo "🧪 Running pre-release Python syntax & import smoke test for $PLUGIN_NAME..."
+            python3 -m compileall -q "$DIR"
+            PY_RUNNER="python3"
+            if command -v uv >/dev/null 2>&1; then
+              PY_RUNNER="uv run python"
+            fi
+            if $PY_RUNNER -c "import fastapi" >/dev/null 2>&1; then
+              PYTHONPATH=. $PY_RUNNER -c "import importlib; importlib.import_module('plugins.EchoSync.${PLUGIN_NAME}')"
+            else
+              echo "ℹ️ Core runtime deps not installed on runner; syntax check passed."
+            fi
+
             cd "$DIR"
             
             # Strip dev_mode key from manifest before packaging

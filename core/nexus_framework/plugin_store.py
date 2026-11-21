@@ -1147,11 +1147,21 @@ class PluginStore:
                         from core.nexus_framework.plugin_loader import PluginLoader
                         from core.task_manager import PluginLifecycleState, plugin_state_manager
 
+                        from core.nexus_framework.plugin_loader import PluginRegistry
+
                         app_root = Path(__file__).parent.parent
-                        loader = PluginLoader(app_root)
+                        loader = PluginLoader(app_root, main_app=PluginRegistry._main_app)
                         reload_ok = loader.reload_plugin(int_plugin_id)
 
-                        state_candidates = [folder_name, strict_namespace, manifest_name, str(plugin_id)]
+                        state_candidates = [
+                            folder_name,
+                            folder_name.lower() if folder_name else None,
+                            strict_namespace,
+                            strict_namespace.lower() if strict_namespace else None,
+                            manifest_name,
+                            manifest_name.lower() if manifest_name else None,
+                            str(plugin_id),
+                        ]
                         error_status = None
                         for cand in dict.fromkeys(c for c in state_candidates if c):
                             st = plugin_state_manager.get_state(cand)

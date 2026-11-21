@@ -594,7 +594,7 @@ _LOG_LINE_WITH_LOC_RE = re.compile(
 _LOG_LINE_BASIC_RE = re.compile(
     r"^(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}(?:[,.]\d{3,6})?)\s+-\s+([^\s]+)\s+-\s+(VERBOSE|DEBUG|INFO|WARNING|WARN|ERROR|CRITICAL)\s+-\s+(.*)$"
 )
-_PREFERRED_LOG_ORDER = ("app.log", "debug.log", "echosync-verbose.log", "echosync.log", "Echosync.log")
+_PREFERRED_LOG_ORDER = ("app.jsonl", "app.log", "debug.log", "echosync-verbose.log", "echosync.log", "Echosync.log")
 _MAX_LOG_READ_BYTES = 2 * 1024 * 1024
 
 
@@ -602,7 +602,7 @@ def _discover_log_files() -> tuple[Path, list[str]]:
     log_dir = get_log_dir()
     if not log_dir.exists() or not log_dir.is_dir():
         return log_dir, []
-    found = {p.name for p in log_dir.iterdir() if p.is_file() and p.suffix.lower() == ".log"}
+    found = {p.name for p in log_dir.iterdir() if p.is_file() and p.suffix.lower() in (".log", ".jsonl")}
     ordered = [name for name in _PREFERRED_LOG_ORDER if name in found]
     ordered.extend(sorted(found - set(ordered)))
     return log_dir, ordered
@@ -614,6 +614,8 @@ def _resolve_log_target(source: str | None) -> tuple[Path, list[str], Path | Non
         return log_dir, [], None
 
     alias_map = {
+        "jsonl": "app.jsonl",
+        "json": "app.jsonl",
         "app": "app.log",
         "debug": "debug.log",
         "verbose": "echosync-verbose.log",
@@ -634,7 +636,31 @@ def _parse_log_tail(file_path: Path) -> list[dict]:
             f.readline()
         raw_text = f.read().decode("utf-8", errors="replace")
 
-    entries: list[dict] = []
+    if file_path.suffix.lower() == ".jsonl":
+        entries: list[dict] = []
+        for idx, line in enumerate(raw_text.splitlines(), start=1):
+            if not line.strip():
+                continue
+            try:
+                obj = json.loads(line)
+                lvl = str(obj.get("level") or "INFO").upper()
+                entries.append(
+                    {
+                        "line": idx,
+                        "timestamp": str(obj.get("ts") or ""),
+                        "logger": str(obj.get("logger") or "system"),
+                        "level": "WARNING" if lvl == "WARN" else lvl,
+                        "location": str(obj.get("location") or ""),
+                        "taint": str(obj.get("taint") or ""),
+                        "message": str(obj.get("msg") or ""),
+                        "details": str(obj.get("traceback") or ""),
+                    }
+                )
+            except Exception:
+                continue
+        return entries
+
+    entries = []
     for idx, line in enumerate(raw_text.splitlines(), start=1):
         match = _LOG_LINE_WITH_LOC_RE.match(line)
         if match:

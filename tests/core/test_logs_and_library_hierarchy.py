@@ -74,6 +74,31 @@ def test_system_logs_parsing_filtering_and_download(tmp_path: Path):
         assert dl.status_code == 200
         assert "Heartbeat ok" in dl.text
 
+        # Structured JSONL parsing
+        import json
+
+        (tmp_path / "app.jsonl").write_text(
+            json.dumps(
+                {
+                    "ts": "2026-11-21 21:29:26,123",
+                    "logger": "plugin_loader",
+                    "level": "ERROR",
+                    "location": "_load_plugin_package:1763",
+                    "taint": "3106502486",
+                    "msg": "Plugin initialization halted",
+                    "traceback": "Traceback...\nModuleNotFoundError: core.health_check",
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        jsonl_resp = client.get("/api/v1/system/logs?source=app.jsonl")
+        assert jsonl_resp.status_code == 200
+        jsonl_data = jsonl_resp.json()
+        assert jsonl_data["active_file"] == "app.jsonl"
+        assert jsonl_data["logs"][0]["taint"] == "3106502486"
+        assert "ModuleNotFoundError" in jsonl_data["logs"][0]["details"]
+
 
 def test_get_library_hierarchy_flat_query(tmp_path: Path):
     db_path = tmp_path / "music.db"
