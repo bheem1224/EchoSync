@@ -760,6 +760,7 @@ class RetroactiveEnhancer:
                         (AudioFingerprint.id.is_(None))
                         | (AudioFingerprint.chromaprint.is_(None))
                         | (AudioFingerprint.chromaprint == "")
+                        | (LocalMedia.active_duration_ms.is_(None))
                     )
                     .all()
                 ]
@@ -795,23 +796,37 @@ class RetroactiveEnhancer:
                             continue
 
                         fp = None
-                        # Fast-path: native Rust audio fingerprinting (~10ms per track)
+                        active_dur_ms = None
+                        existing_afp = session.query(AudioFingerprint).filter_by(media_id=media.media_id).first() if media.media_id else None
+                        needs_fp = not existing_afp or not existing_afp.chromaprint
+                        needs_active_dur = getattr(media, "active_duration_ms", None) is None
+
+                        # Fast-path: native Rust audio fingerprinting + active duration
                         try:
                             import echosync_core
 
-                            if hasattr(echosync_core, "fingerprint_audio"):
+                            if hasattr(echosync_core, "fingerprint_hash_and_active_duration"):
+                                res = echosync_core.fingerprint_hash_and_active_duration(
+                                    str(local_path), trim_silence=True
+                                )
+                                if isinstance(res, (tuple, list)) and len(res) >= 4:
+                                    fp = res[0]
+                                    active_dur_ms = int(res[3]) if res[3] else None
+                            elif needs_fp and hasattr(echosync_core, "fingerprint_audio"):
                                 res = echosync_core.fingerprint_audio(str(local_path), trim_silence=True)
                                 if res:
                                     fp = res[0] if isinstance(res, (tuple, list)) else res
+                            if active_dur_ms is None and needs_active_dur and hasattr(echosync_core, "measure_active_duration"):
+                                active_dur_ms = int(echosync_core.measure_active_duration(str(local_path)))
                         except Exception as rust_err:
                             logger.debug(
-                                "Native fingerprint_audio failed for %s: %s",
+                                "Native fingerprint/active_duration failed for %s: %s",
                                 local_path,
                                 rust_err,
                             )
 
                         # Fallback to FingerprintGenerator if native Rust extension threw or returned None
-                        if not fp:
+                        if needs_fp and not fp:
                             try:
                                 fp, dur_sec = FingerprintGenerator.generate_with_duration(str(local_path))
                                 if dur_sec and hasattr(media, "duration") and not media.duration:
@@ -823,11 +838,13 @@ class RetroactiveEnhancer:
                                     fp_err,
                                 )
 
-                        if fp:
+                        if active_dur_ms and active_dur_ms > 0 and needs_active_dur:
+                            media.active_duration_ms = active_dur_ms
+
+                        if needs_fp and fp:
                             if not media.media_id:
                                 media.media_id = f"med_{uuid.uuid4().hex[:12]}"
 
-                            existing_afp = session.query(AudioFingerprint).filter_by(media_id=media.media_id).first()
                             if existing_afp:
                                 existing_afp.chromaprint = fp
                             else:

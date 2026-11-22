@@ -356,7 +356,197 @@ fn base64_encode(data: &[u8]) -> String {
     result
 }
 
+pub fn fingerprint_hash_and_active_duration(
+    file_path: &str,
+    trim_silence: bool,
+) -> Result<(String, f64, String, u64), String> {
+    let path = Path::new(file_path);
+    if !path.exists() {
+        return Err(format!("File not found: {}", file_path));
+    }
+
+    let file = File::open(path).map_err(|e| format!("Failed to open file: {}", e))?;
+    let mss = MediaSourceStream::new(Box::new(file), Default::default());
+
+    let mut hint = Hint::new();
+    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+        hint.with_extension(ext);
+    }
+
+    let meta_opts: MetadataOptions = Default::default();
+    let fmt_opts: FormatOptions = Default::default();
+
+    let probed = symphonia::default::get_probe()
+        .format(&hint, mss, &fmt_opts, &meta_opts)
+        .map_err(|e| format!("Unsupported format or probe failure: {}", e))?;
+
+    let mut format = probed.format;
+
+    let track = format
+        .tracks()
+        .iter()
+        .find(|t| t.codec_params.codec != CODEC_TYPE_NULL)
+        .ok_or_else(|| "No supported audio track found".to_string())?;
+
+    let track_id = track.id;
+    let dec_opts: DecoderOptions = Default::default();
+    let mut decoder = symphonia::default::get_codecs()
+        .make(&track.codec_params, &dec_opts)
+        .map_err(|e| format!("Failed to create decoder: {}", e))?;
+
+    let original_sample_rate = track.codec_params.sample_rate.unwrap_or(44100);
+    let max_fingerprint_frames: usize = (original_sample_rate as usize).saturating_mul(120);
+    let silence_threshold = 0.001f32; // -60 dBFS
+
+    let (samples, original_sample_rate, total_decoded_frames, pcm_hash, first_active_frame, last_active_frame) = {
+        let mut samples: Vec<f32> = Vec::new();
+        let mut total_decoded_frames: u64 = 0;
+        let mut found_audio_start = false;
+        let mut hasher = blake3::Hasher::new();
+        let mut hash_sample_count: u64 = 0;
+        let mut first_active_frame: Option<u64> = None;
+        let mut last_active_frame: u64 = 0;
+
+        loop {
+            let packet = match format.next_packet() {
+                Ok(packet) => packet,
+                Err(SymphoniaError::IoError(err))
+                    if err.kind() == std::io::ErrorKind::UnexpectedEof =>
+                {
+                    break;
+                }
+                Err(SymphoniaError::ResetRequired) => {
+                    decoder.reset();
+                    continue;
+                }
+                Err(_) => break,
+            };
+
+            if packet.track_id() != track_id {
+                continue;
+            }
+
+            match decoder.decode(&packet) {
+                Ok(decoded) => {
+                    let frame_base = total_decoded_frames;
+                    let pkt_frames = decoded.frames() as u64;
+                    total_decoded_frames += pkt_frames;
+
+                    append_mono_samples_clamped(
+                        &decoded,
+                        &mut samples,
+                        max_fingerprint_frames,
+                        trim_silence,
+                        &mut found_audio_start,
+                    );
+
+                    let spec = *decoded.spec();
+                    let channels = spec.channels.count().max(1);
+                    let mut sample_buf = symphonia::core::audio::SampleBuffer::<f32>::new(
+                        decoded.capacity() as u64,
+                        spec,
+                    );
+                    sample_buf.copy_interleaved_ref(decoded);
+                    let interleaved = sample_buf.samples();
+                    for (idx, sample) in interleaved.iter().enumerate() {
+                        hasher.update(&sample.to_le_bytes());
+                        hash_sample_count += 1;
+                        if sample.abs() >= silence_threshold {
+                            let frame_idx = frame_base + (idx / channels) as u64;
+                            if first_active_frame.is_none() {
+                                first_active_frame = Some(frame_idx);
+                            }
+                            last_active_frame = frame_idx + 1;
+                        }
+                    }
+                }
+                Err(SymphoniaError::IoError(_)) => break,
+                Err(SymphoniaError::DecodeError(_)) => continue,
+                Err(_) => break,
+            }
+        }
+
+        if total_decoded_frames == 0 || hash_sample_count == 0 {
+            return Err("No audio samples decoded".to_string());
+        }
+
+        let pcm_hash = hasher.finalize().to_hex().to_string();
+        (
+            samples,
+            original_sample_rate,
+            total_decoded_frames,
+            pcm_hash,
+            first_active_frame,
+            last_active_frame,
+        )
+    };
+
+    if samples.is_empty() {
+        return Err("Audio is completely silent".to_string());
+    }
+
+    let processed_samples = if trim_silence {
+        let end = samples
+            .iter()
+            .rposition(|&s| s.abs() >= silence_threshold)
+            .map(|idx| idx + 1)
+            .unwrap_or(samples.len());
+        &samples[..end]
+    } else {
+        &samples[..]
+    };
+
+    if processed_samples.is_empty() {
+        return Err("Audio is completely silent".to_string());
+    }
+
+    let duration_seconds = (total_decoded_frames as f64) / (original_sample_rate as f64);
+    let active_frames = match first_active_frame {
+        Some(start) if last_active_frame > start => last_active_frame - start,
+        _ => total_decoded_frames,
+    };
+    let active_duration_ms = ((active_frames as f64) * 1000.0 / (original_sample_rate as f64)).round() as u64;
+
+    let trimmed_f32: Vec<f32> = processed_samples.to_vec();
+    drop(samples);
+
+    let i16_samples: Vec<i16> = trimmed_f32
+        .iter()
+        .map(|&s| (s.clamp(-1.0, 1.0) * 32767.0) as i16)
+        .collect();
+    drop(trimmed_f32);
+
+    let config = Configuration::preset_test2();
+    let mut printer = Fingerprinter::new(&config);
+    printer
+        .start(original_sample_rate, 1)
+        .map_err(|e| format!("Failed to start fingerprinter: {e:?}"))?;
+    printer.consume(&i16_samples);
+    printer.finish();
+
+    let raw_fp = printer.fingerprint();
+    let compressor = rusty_chromaprint::FingerprintCompressor::from(&config);
+    let compressed = compressor.compress(raw_fp);
+    let encoded_fingerprint = base64_encode(&compressed);
+
+    Ok((encoded_fingerprint, duration_seconds, pcm_hash, active_duration_ms))
+}
+
+pub fn measure_active_duration(file_path: &str) -> Result<u64, String> {
+    let (_, _, _, active_ms) = fingerprint_hash_and_active_duration(file_path, false)?;
+    Ok(active_ms)
+}
+
 pub fn fingerprint_and_hash_audio(
+    file_path: &str,
+    trim_silence: bool,
+) -> Result<(String, f64, String), String> {
+    let (fp, dur, hash, _) = fingerprint_hash_and_active_duration(file_path, trim_silence)?;
+    Ok((fp, dur, hash))
+}
+
+#[allow(dead_code)]
+fn _legacy_fingerprint_and_hash_audio(
     file_path: &str,
     trim_silence: bool,
 ) -> Result<(String, f64, String), String> {

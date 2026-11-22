@@ -443,6 +443,32 @@ pub fn fingerprint_and_hash_audio<'py>(
     }
 }
 
+#[pyfunction]
+#[pyo3(signature = (path, trim_silence = false))]
+pub fn fingerprint_hash_and_active_duration<'py>(
+    py: Python<'py>,
+    path: String,
+    trim_silence: bool,
+) -> PyResult<(String, f64, String, u64)> {
+    let result = py.allow_threads(|| {
+        audio::fingerprint::fingerprint_hash_and_active_duration(&path, trim_silence)
+    });
+    match result {
+        Ok(res) => Ok(res),
+        Err(e) => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(e)),
+    }
+}
+
+/// Measure silence-trimmed active audio duration in milliseconds (-60 dBFS threshold).
+#[pyfunction]
+pub fn measure_active_duration<'py>(py: Python<'py>, path: String) -> PyResult<u64> {
+    let result = py.allow_threads(|| audio::fingerprint::measure_active_duration(&path));
+    match result {
+        Ok(ms) => Ok(ms),
+        Err(e) => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(e)),
+    }
+}
+
 /// Compare two Chromaprint base64 fingerprint strings using native Rust rusty_chromaprint.
 /// Returns a similarity confidence score in [0.0, 1.0].
 #[pyfunction]
@@ -577,6 +603,8 @@ fn echosync_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(delete_file, m)?)?;
     m.add_function(wrap_pyfunction!(fingerprint_audio, m)?)?;
     m.add_function(wrap_pyfunction!(fingerprint_and_hash_audio, m)?)?;
+    m.add_function(wrap_pyfunction!(fingerprint_hash_and_active_duration, m)?)?;
+    m.add_function(wrap_pyfunction!(measure_active_duration, m)?)?;
     m.add_function(wrap_pyfunction!(compare_chromaprints, m)?)?;
     m.add_function(wrap_pyfunction!(batch_compare_chromaprints, m)?)?;
     m.add_function(wrap_pyfunction!(find_best_chromaprint_match, m)?)?;

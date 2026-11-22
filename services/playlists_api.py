@@ -266,13 +266,22 @@ def resolve_duplicate_matches(all_tracks: list[dict]) -> list[dict]:
 
             if not fallback_found:
                 winner_artist = claimed[tid].get("artist", "Unknown")
+                collision_reason = (
+                    f"Collision: local track assigned to higher confidence match ({winner_artist})"
+                )
                 track["matched_track_id"] = None
+                track["status"] = "not_found"
                 track["library_match"] = "Not Found"
                 track["target_identifier"] = None
                 track["target_exists"] = False
-                track["rejection_reason"] = (
-                    f"Collision: local track assigned to higher confidence match ({winner_artist})"
-                )
+                track["rejection_reason"] = collision_reason
+                diag = track.get("match_diagnostics")
+                if isinstance(diag, dict):
+                    diag["best_match"] = None
+                    for cand in diag.get("candidates") or []:
+                        if isinstance(cand, dict) and cand.get("track_id") == tid:
+                            cand["accepted"] = False
+                            cand["rejection_reason"] = collision_reason
 
     return all_tracks
 

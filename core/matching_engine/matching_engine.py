@@ -1701,6 +1701,15 @@ class WeightedMatchingEngine:
 
         diff_ms = abs(src_dur - cand_dur)
         tol_ms = tolerance_override_ms or getattr(self.weights, "duration_tolerance_ms", None) or 5000
+        if diff_ms > tol_ms:
+            extra = getattr(candidate, "extra_metadata", None)
+            cand_active_dur = (
+                extra.get("active_duration_ms") if isinstance(extra, dict) else None
+            ) or getattr(candidate, "active_duration_ms", None)
+            if cand_active_dur and int(cand_active_dur) > 0:
+                active_diff = abs(src_dur - int(cand_active_dur))
+                if active_diff < diff_ms:
+                    diff_ms = active_diff
         base_ms = int(tol_ms)
         limit_ms = max(base_ms + 1000, int(base_ms * 1.25))
         return calculate_duration_score(diff_ms, t_base_ms=base_ms, t_limit_ms=limit_ms)
@@ -1808,6 +1817,13 @@ class WeightedMatchingEngine:
             # --- Duration Gating (if enabled) ---
             if self.weights.enforce_duration_match and target_track.duration_ms and candidate.duration_ms:
                 diff_ms = abs(target_track.duration_ms - candidate.duration_ms)
+                if diff_ms > self.weights.duration_tolerance_ms:
+                    extra = getattr(candidate, "extra_metadata", None)
+                    cand_active_dur = (
+                        extra.get("active_duration_ms") if isinstance(extra, dict) else None
+                    ) or getattr(candidate, "active_duration_ms", None)
+                    if cand_active_dur and int(cand_active_dur) > 0:
+                        diff_ms = min(diff_ms, abs(target_track.duration_ms - int(cand_active_dur)))
                 if diff_ms > self.weights.duration_tolerance_ms:
                     rejected_count += 1
                     logger.debug(

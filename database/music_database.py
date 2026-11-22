@@ -532,6 +532,7 @@ class LocalMedia(Base):
     bit_depth: Mapped[int | None] = mapped_column(Integer)
     channels: Mapped[int | None] = mapped_column(Integer, nullable=True)
     duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    active_duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     file_size_bytes: Mapped[int | None] = mapped_column(BigInteger)
     inode: Mapped[int | None] = mapped_column(BigInteger, index=True)
     mtime: Mapped[float | None] = mapped_column(Float)
@@ -894,6 +895,8 @@ def _ensure_alias_and_attribute_schema(engine) -> None:
                 if media_cols:
                     if "duration_ms" not in media_cols:
                         conn.exec_driver_sql("ALTER TABLE local_media ADD COLUMN duration_ms INTEGER;")
+                    if "active_duration_ms" not in media_cols:
+                        conn.exec_driver_sql("ALTER TABLE local_media ADD COLUMN active_duration_ms INTEGER;")
                     conn.exec_driver_sql(
                         "CREATE INDEX IF NOT EXISTS ix_local_media_duration_ms ON local_media (duration_ms);"
                     )

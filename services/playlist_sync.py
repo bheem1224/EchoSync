@@ -643,6 +643,24 @@ def evaluate_single_track_diagnostics(
         except Exception as ex:
             logger.debug(f"Alias query error: {ex}")
 
+    active_dur_map: dict[int, int] = {}
+    if candidate_ids:
+        try:
+            with db.session_scope() as session:
+                with session.bind.connect() as ac:
+                    for adr in ac.execute(
+                        text(
+                            "SELECT track_id, MAX(active_duration_ms) FROM local_media "
+                            "WHERE track_id IN ("
+                            + ",".join(str(cid) for cid in candidate_ids)
+                            + ") AND active_duration_ms IS NOT NULL GROUP BY track_id"
+                        )
+                    ).fetchall():
+                        if adr[1]:
+                            active_dur_map[int(adr[0])] = int(adr[1])
+        except Exception as ex:
+            logger.debug(f"Active duration query error: {ex}")
+
     for row in candidate_rows:
         cand_id = row[0]
         raw_t = row[1]
@@ -652,6 +670,7 @@ def evaluate_single_track_diagnostics(
         cand_artist_id = row[5]
         cand_album = row[7] if len(row) > 7 else ""
         sync_id = row[9] if len(row) > 9 and row[9] else str(cand_id)
+        cand_active_dur = active_dur_map.get(cand_id)
 
         cand_track = EchosyncTrack(
             raw_title=raw_t,
@@ -660,6 +679,7 @@ def evaluate_single_track_diagnostics(
             duration_ms=cand_dur,
             edition=cand_ed,
             sync_id=sync_id,
+            extra_metadata={"active_duration_ms": cand_active_dur} if cand_active_dur else {},
         )
         hook_manager.apply_filters(
             "pre_normalize_title",
