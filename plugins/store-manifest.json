@@ -11,7 +11,7 @@
       "hooks": [],
       "min_echosync_version": "2.4.0",
       "ui_manifest": "ui_manifest.json",
-      "beta_version": "2.4.3-beta.105",
+      "beta_version": "2.4.3-beta.106",
       "permissions": {
         "database": {
           "read_library": true
@@ -54,7 +54,7 @@
       "requirements": [],
       "hooks": [],
       "min_echosync_version": "2.4.0",
-      "beta_version": "2.4.3-beta.117",
+      "beta_version": "2.4.3-beta.118",
       "verified_source": "official",
       "permissions": {
         "database": {
@@ -99,7 +99,7 @@
       "hooks": [],
       "min_echosync_version": "2.4.0",
       "ui_manifest": "ui_manifest.json",
-      "beta_version": "2.4.3-beta.121",
+      "beta_version": "2.4.3-beta.122",
       "permissions": {
         "database": {
           "read_library": true,
@@ -142,7 +142,7 @@
       "hooks": [],
       "min_echosync_version": "2.4.0",
       "ui_manifest": "ui_manifest.json",
-      "beta_version": "2.4.3-beta.109",
+      "beta_version": "2.4.3-beta.110",
       "permissions": {
         "database": {
           "read_library": true
@@ -179,7 +179,7 @@
       "requirements": [],
       "hooks": [],
       "min_echosync_version": "2.4.0",
-      "beta_version": "2.4.3-beta.32",
+      "beta_version": "2.4.3-beta.33",
       "display_name": "Outbound Gateway",
       "permissions": {
         "database": {
@@ -208,7 +208,7 @@
       "hooks": [],
       "min_echosync_version": "2.4.0",
       "ui_manifest": "ui_manifest.json",
-      "beta_version": "2.4.3-beta.66",
+      "beta_version": "2.4.3-beta.67",
       "permissions": {
         "database": {
           "read_library": true
@@ -249,7 +249,7 @@
           "description": "Base URL for the MusicBrainz API"
         }
       },
-      "beta_version": "2.4.3-beta.91",
+      "beta_version": "2.4.3-beta.92",
       "permissions": {
         "database": {
           "read_library": true
@@ -286,7 +286,7 @@
       "requirements": [],
       "hooks": [],
       "min_echosync_version": "2.4.0",
-      "beta_version": "2.4.3-beta.26",
+      "beta_version": "2.4.3-beta.27",
       "permissions": {
         "database": {
           "read_library": true
@@ -313,7 +313,7 @@
       "requirements": [],
       "hooks": [],
       "min_echosync_version": "2.4.0",
-      "beta_version": "2.4.3-beta.57",
+      "beta_version": "2.4.3-beta.58",
       "display_name": "Local Server",
       "permissions": {
         "database": {
@@ -351,7 +351,7 @@
       "requirements": [],
       "hooks": [],
       "min_echosync_version": "2.4.0",
-      "beta_version": "2.4.3-beta.29",
+      "beta_version": "2.4.3-beta.30",
       "display_name": "Local Player",
       "permissions": {
         "database": {
@@ -381,7 +381,7 @@
       "requirements": [],
       "hooks": [],
       "min_echosync_version": "2.4.0",
-      "beta_version": "2.4.3-beta.36",
+      "beta_version": "2.4.3-beta.37",
       "display_name": "Local Metadata",
       "permissions": {
         "database": {
@@ -409,7 +409,7 @@
       "requirements": [],
       "hooks": [],
       "min_echosync_version": "2.4.0",
-      "beta_version": "2.4.3-beta.42",
+      "beta_version": "2.4.3-beta.43",
       "permissions": {
         "database": {
           "read_library": true
@@ -439,7 +439,7 @@
       "hooks": [],
       "min_echosync_version": "2.4.0",
       "ui_manifest": "ui_manifest.json",
-      "beta_version": "2.4.3-beta.63",
+      "beta_version": "2.4.3-beta.64",
       "permissions": {
         "database": {
           "read_library": true
@@ -495,7 +495,7 @@
       "requirements": [],
       "hooks": [],
       "min_echosync_version": "2.4.0",
-      "beta_version": "2.4.3-beta.37",
+      "beta_version": "2.4.3-beta.38",
       "display_name": "CJK Language Pack",
       "plugin_id": "cjk_language_pack",
       "source_url": "https://github.com/bheem1224/EchoSync/tree/main/plugins/EchoSync/cjk_language_pack",
@@ -513,7 +513,7 @@
       "hooks": [],
       "min_echosync_version": "2.4.0",
       "ui_manifest": "ui_manifest.json",
-      "beta_version": "2.4.3-beta.68",
+      "beta_version": "2.4.3-beta.69",
       "capabilities": [
         "contract:config:read:own",
         "contract:config:edit:own",
