@@ -406,6 +406,7 @@ pub fn fingerprint_hash_and_active_duration(
         let mut hash_sample_count: u64 = 0;
         let mut first_active_frame: Option<u64> = None;
         let mut last_active_frame: u64 = 0;
+        let mut reset_count: u32 = 0;
 
         loop {
             let packet = match format.next_packet() {
@@ -416,6 +417,10 @@ pub fn fingerprint_hash_and_active_duration(
                     break;
                 }
                 Err(SymphoniaError::ResetRequired) => {
+                    reset_count += 1;
+                    if reset_count > 16 {
+                        return Err("Exceeded decoder reset limit (corrupt audio stream)".to_string());
+                    }
                     decoder.reset();
                     continue;
                 }
@@ -533,8 +538,97 @@ pub fn fingerprint_hash_and_active_duration(
 }
 
 pub fn measure_active_duration(file_path: &str) -> Result<u64, String> {
-    let (_, _, _, active_ms) = fingerprint_hash_and_active_duration(file_path, false)?;
-    Ok(active_ms)
+    let path = Path::new(file_path);
+    if !path.exists() {
+        return Err(format!("File not found: {}", file_path));
+    }
+
+    let file = File::open(path).map_err(|e| format!("Failed to open file: {}", e))?;
+    let mss = MediaSourceStream::new(Box::new(file), Default::default());
+
+    let mut hint = Hint::new();
+    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+        hint.with_extension(ext);
+    }
+
+    let probed = symphonia::default::get_probe()
+        .format(&hint, mss, &FormatOptions::default(), &MetadataOptions::default())
+        .map_err(|e| format!("Unsupported format or probe failure: {}", e))?;
+
+    let mut format = probed.format;
+    let track = format
+        .tracks()
+        .iter()
+        .find(|t| t.codec_params.codec != CODEC_TYPE_NULL)
+        .ok_or_else(|| "No supported audio track found".to_string())?;
+
+    let track_id = track.id;
+    let mut decoder = symphonia::default::get_codecs()
+        .make(&track.codec_params, &DecoderOptions::default())
+        .map_err(|e| format!("Failed to create decoder: {}", e))?;
+
+    let original_sample_rate = track.codec_params.sample_rate.unwrap_or(44100);
+    let silence_threshold = 0.001f32;
+    let mut total_decoded_frames: u64 = 0;
+    let mut first_active_frame: Option<u64> = None;
+    let mut last_active_frame: u64 = 0;
+    let mut reset_count: u32 = 0;
+
+    loop {
+        let packet = match format.next_packet() {
+            Ok(packet) => packet,
+            Err(SymphoniaError::IoError(err)) if err.kind() == std::io::ErrorKind::UnexpectedEof => break,
+            Err(SymphoniaError::ResetRequired) => {
+                reset_count += 1;
+                if reset_count > 16 {
+                    return Err("Exceeded decoder reset limit (corrupt audio stream)".to_string());
+                }
+                decoder.reset();
+                continue;
+            }
+            Err(_) => break,
+        };
+
+        if packet.track_id() != track_id {
+            continue;
+        }
+
+        match decoder.decode(&packet) {
+            Ok(decoded) => {
+                let frame_base = total_decoded_frames;
+                total_decoded_frames += decoded.frames() as u64;
+                let spec = *decoded.spec();
+                let channels = spec.channels.count().max(1);
+                let mut sample_buf = symphonia::core::audio::SampleBuffer::<f32>::new(
+                    decoded.capacity() as u64,
+                    spec,
+                );
+                sample_buf.copy_interleaved_ref(decoded);
+                for (idx, sample) in sample_buf.samples().iter().enumerate() {
+                    if sample.abs() >= silence_threshold {
+                        let frame_idx = frame_base + (idx / channels) as u64;
+                        if first_active_frame.is_none() {
+                            first_active_frame = Some(frame_idx);
+                        }
+                        last_active_frame = frame_idx + 1;
+                    }
+                }
+            }
+            Err(SymphoniaError::IoError(_)) => break,
+            Err(SymphoniaError::DecodeError(_)) => continue,
+            Err(_) => break,
+        }
+    }
+
+    if total_decoded_frames == 0 {
+        return Err("No audio samples decoded".to_string());
+    }
+
+    let active_frames = match first_active_frame {
+        Some(start) if last_active_frame > start => last_active_frame - start,
+        _ => total_decoded_frames,
+    };
+    Ok(((active_frames as f64) * 1000.0 / (original_sample_rate as f64)).round() as u64)
 }
 
 pub fn fingerprint_and_hash_audio(

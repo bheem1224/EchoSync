@@ -779,85 +779,122 @@ class RetroactiveEnhancer:
             )
 
             processed = 0
-            for i in range(0, total, batch_size):
+            total_batches = (total + batch_size - 1) // batch_size
+            for batch_idx, i in enumerate(range(0, total, batch_size), start=1):
                 batch_ids = unfingerprinted_ids[i : i + batch_size]
+
+                # 1. Read-only snapshot of batch work (release DB session before audio decoding)
+                work_items: list[tuple[int, str | None, str, bool, bool]] = []
                 with db.session_scope() as session:
                     media_batch = session.query(LocalMedia).filter(LocalMedia.id.in_(batch_ids)).all()
+                    existing_mids = [m.media_id for m in media_batch if m.media_id]
+                    fp_map: dict[str, str] = {}
+                    if existing_mids:
+                        for afp in session.query(AudioFingerprint).filter(AudioFingerprint.media_id.in_(existing_mids)).all():
+                            if afp.chromaprint:
+                                fp_map[afp.media_id] = afp.chromaprint
                     for media in media_batch:
-                        fpath = media.file_path
-                        if not fpath:
+                        if not media.file_path:
                             continue
-                        local_path = (
-                            PathMapper.to_local(fpath) if (os.path.isabs(fpath) or not os.path.exists(fpath)) else fpath
-                        )
-                        if not os.path.exists(local_path):
-                            local_path = PathMapper.to_local(fpath)
-                        if not local_path or not os.path.exists(local_path):
-                            continue
-
-                        fp = None
-                        active_dur_ms = None
-                        existing_afp = session.query(AudioFingerprint).filter_by(media_id=media.media_id).first() if media.media_id else None
-                        needs_fp = not existing_afp or not existing_afp.chromaprint
+                        needs_fp = not (media.media_id and media.media_id in fp_map)
                         needs_active_dur = getattr(media, "active_duration_ms", None) is None
+                        if needs_fp or needs_active_dur:
+                            work_items.append((media.id, media.media_id, media.file_path, needs_fp, needs_active_dur))
 
-                        # Fast-path: native Rust audio fingerprinting + active duration
+                # 2. Decode & fingerprint outside any DB transaction/lock
+                computed_updates: list[tuple[int, str | None, int | None, int | None]] = []
+                for media_id_pk, media_nanoid, fpath, needs_fp, needs_active_dur in work_items:
+                    local_path = (
+                        PathMapper.to_local(fpath) if (os.path.isabs(fpath) or not os.path.exists(fpath)) else fpath
+                    )
+                    if not os.path.exists(local_path):
+                        local_path = PathMapper.to_local(fpath)
+                    if not local_path or not os.path.exists(local_path):
+                        continue
+
+                    fp = None
+                    active_dur_ms = None
+                    dur_ms_fallback = None
+                    try:
+                        import echosync_core
+
+                        if needs_fp and hasattr(echosync_core, "fingerprint_hash_and_active_duration"):
+                            res = echosync_core.fingerprint_hash_and_active_duration(
+                                str(local_path), trim_silence=True
+                            )
+                            if isinstance(res, (tuple, list)) and len(res) >= 4:
+                                fp = res[0]
+                                active_dur_ms = int(res[3]) if res[3] else None
+                        elif needs_fp and hasattr(echosync_core, "fingerprint_audio"):
+                            res = echosync_core.fingerprint_audio(str(local_path), trim_silence=True)
+                            if res:
+                                fp = res[0] if isinstance(res, (tuple, list)) else res
+                        if active_dur_ms is None and needs_active_dur and hasattr(echosync_core, "measure_active_duration"):
+                            active_dur_ms = int(echosync_core.measure_active_duration(str(local_path)))
+                    except Exception as rust_err:
+                        logger.debug(
+                            "Native fingerprint/active_duration failed for %s: %s",
+                            local_path,
+                            rust_err,
+                        )
+
+                    if needs_fp and not fp:
                         try:
-                            import echosync_core
-
-                            if hasattr(echosync_core, "fingerprint_hash_and_active_duration"):
-                                res = echosync_core.fingerprint_hash_and_active_duration(
-                                    str(local_path), trim_silence=True
-                                )
-                                if isinstance(res, (tuple, list)) and len(res) >= 4:
-                                    fp = res[0]
-                                    active_dur_ms = int(res[3]) if res[3] else None
-                            elif needs_fp and hasattr(echosync_core, "fingerprint_audio"):
-                                res = echosync_core.fingerprint_audio(str(local_path), trim_silence=True)
-                                if res:
-                                    fp = res[0] if isinstance(res, (tuple, list)) else res
-                            if active_dur_ms is None and needs_active_dur and hasattr(echosync_core, "measure_active_duration"):
-                                active_dur_ms = int(echosync_core.measure_active_duration(str(local_path)))
-                        except Exception as rust_err:
+                            fp, dur_sec = FingerprintGenerator.generate_with_duration(str(local_path))
+                            if dur_sec:
+                                dur_ms_fallback = round(float(dur_sec) * 1000)
+                        except Exception as fp_err:
                             logger.debug(
-                                "Native fingerprint/active_duration failed for %s: %s",
+                                "Fallback FingerprintGenerator failed for %s: %s",
                                 local_path,
-                                rust_err,
+                                fp_err,
                             )
 
-                        # Fallback to FingerprintGenerator if native Rust extension threw or returned None
-                        if needs_fp and not fp:
-                            try:
-                                fp, dur_sec = FingerprintGenerator.generate_with_duration(str(local_path))
-                                if dur_sec and hasattr(media, "duration") and not media.duration:
-                                    media.duration = round(float(dur_sec) * 1000)
-                            except Exception as fp_err:
-                                logger.debug(
-                                    "Fallback FingerprintGenerator failed for %s: %s",
-                                    local_path,
-                                    fp_err,
+                    if (needs_fp and fp) or (active_dur_ms and active_dur_ms > 0) or dur_ms_fallback:
+                        computed_updates.append((media_id_pk, fp if needs_fp else None, active_dur_ms, dur_ms_fallback))
+
+                # 3. Short write transaction to persist batch results
+                if computed_updates:
+                    with db.session_scope() as session:
+                        upd_ids = [u[0] for u in computed_updates]
+                        media_by_pk = {
+                            m.id: m for m in session.query(LocalMedia).filter(LocalMedia.id.in_(upd_ids)).all()
+                        }
+                        for media_id_pk, fp, active_dur_ms, dur_ms_fallback in computed_updates:
+                            media = media_by_pk.get(media_id_pk)
+                            if not media:
+                                continue
+                            if active_dur_ms and active_dur_ms > 0 and getattr(media, "active_duration_ms", None) is None:
+                                media.active_duration_ms = active_dur_ms
+                            if dur_ms_fallback and hasattr(media, "duration_ms") and not media.duration_ms:
+                                media.duration_ms = dur_ms_fallback
+                            if fp:
+                                if not media.media_id:
+                                    media.media_id = f"med_{uuid.uuid4().hex[:12]}"
+                                existing_afp = (
+                                    session.query(AudioFingerprint).filter_by(media_id=media.media_id).first()
                                 )
-
-                        if active_dur_ms and active_dur_ms > 0 and needs_active_dur:
-                            media.active_duration_ms = active_dur_ms
-
-                        if needs_fp and fp:
-                            if not media.media_id:
-                                media.media_id = f"med_{uuid.uuid4().hex[:12]}"
-
-                            if existing_afp:
-                                existing_afp.chromaprint = fp
-                            else:
-                                session.add(
-                                    AudioFingerprint(
-                                        media_id=media.media_id,
-                                        chromaprint=fp,
+                                if existing_afp:
+                                    existing_afp.chromaprint = fp
+                                else:
+                                    session.add(
+                                        AudioFingerprint(
+                                            media_id=media.media_id,
+                                            chromaprint=fp,
+                                        )
                                     )
-                                )
-                            generated_count += 1
+                                generated_count += 1
 
                 processed += len(batch_ids)
                 status_msg = f"Fingerprinted {processed}/{total} audio files ({round((processed / total) * 100, 1)}%)"
+                logger.info(
+                    "[enhancer] Phase 1 Batch %d/%d complete: %d/%d files processed (%d backfilled)",
+                    batch_idx,
+                    total_batches,
+                    processed,
+                    total,
+                    generated_count,
+                )
                 if progress_callback:
                     try:
                         progress_callback(processed, total, status_msg)
