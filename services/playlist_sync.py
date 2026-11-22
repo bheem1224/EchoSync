@@ -644,20 +644,20 @@ def evaluate_single_track_diagnostics(
             logger.debug(f"Alias query error: {ex}")
 
     active_dur_map: dict[int, int] = {}
-    if candidate_ids:
+    if candidate_rows:
         try:
-            with db.session_scope() as session:
-                with session.bind.connect() as ac:
-                    for adr in ac.execute(
-                        text(
-                            "SELECT track_id, MAX(active_duration_ms) FROM local_media "
-                            "WHERE track_id IN ("
-                            + ",".join(str(cid) for cid in candidate_ids)
-                            + ") AND active_duration_ms IS NOT NULL GROUP BY track_id"
-                        )
-                    ).fetchall():
-                        if adr[1]:
-                            active_dur_map[int(adr[0])] = int(adr[1])
+            cids = [int(r[0]) for r in candidate_rows]
+            with db.engine.connect() as ac:
+                for adr in ac.execute(
+                    text(
+                        "SELECT track_id, MAX(active_duration_ms) FROM local_media "
+                        "WHERE track_id IN ("
+                        + ",".join(str(cid) for cid in cids)
+                        + ") AND active_duration_ms IS NOT NULL GROUP BY track_id"
+                    )
+                ).fetchall():
+                    if adr[1]:
+                        active_dur_map[int(adr[0])] = int(adr[1])
         except Exception as ex:
             logger.debug(f"Active duration query error: {ex}")
 

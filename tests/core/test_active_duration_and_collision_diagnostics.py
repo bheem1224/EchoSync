@@ -118,3 +118,47 @@ def test_resolve_duplicate_matches_updates_status_and_diagnostics():
     assert loser["match_diagnostics"]["best_match"] is None
     assert loser["match_diagnostics"]["candidates"][0]["accepted"] is False
     assert "Collision:" in loser["match_diagnostics"]["candidates"][0]["rejection_reason"]
+
+
+def test_evaluate_single_track_diagnostics_uses_active_duration(tmp_path: Path):
+    from database.music_database import Album, Artist, Base, LocalMedia, MusicDatabase, Track
+    from services.playlist_sync import evaluate_single_track_diagnostics
+
+    db = MusicDatabase(str(tmp_path / "music.db"))
+    Base.metadata.create_all(db.engine)
+    with db.session_scope() as session:
+        artist = Artist(name="Aerosmith")
+        session.add(artist)
+        session.flush()
+        album = Album(artist_id=artist.id, title="Aerosmith")
+        session.add(album)
+        session.flush()
+        track = Track(
+            sync_id="tr_aero",
+            artist_id=artist.id,
+            album_id=album.id,
+            title="Dream On",
+            duration=272470,
+        )
+        session.add(track)
+        session.flush()
+        session.add(
+            LocalMedia(
+                media_id="lm_aero",
+                track_id=track.id,
+                file_path="/music/dream_on.flac",
+                duration_ms=272470,
+                active_duration_ms=267100,
+            )
+        )
+
+    trace = evaluate_single_track_diagnostics(
+        title="Dream On",
+        artist="Aerosmith",
+        duration_ms=267000,
+        album="Aerosmith",
+        db=db,
+    )
+    assert trace["best_match"] is not None
+    assert trace["best_match"]["accepted"] is True
+    assert trace["best_match"]["composite_score"] >= 85.0
