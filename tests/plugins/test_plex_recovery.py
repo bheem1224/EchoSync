@@ -349,3 +349,38 @@ def test_plex_recovery_artist_scoped_search_for_punctuation_titles():
     client.music_library.searchTracks.assert_called_once_with(
         **{"artist.title": "G-Eazy"}, maxresults=100
     )
+
+
+def test_verify_plex_candidate_soundtrack_original_title_and_parenthetical_artist():
+    # Case 1: Soundtrack where grandparentTitle is Album Artist, originalTitle is Track Artist
+    soundtrack_item = DummyPlexTrack(
+        "146082",
+        "This Is Me",
+        "Ziv Zaifman & Hugh Jackman & Michelle Williams",
+        234500,
+        "/plex/Greatest Showman/This Is Me.flac",
+    )
+    soundtrack_item.originalTitle = "Keala Settle"
+    meta_soundtrack = EchosyncTrack(
+        raw_title="This Is Me",
+        artist_name="Keala Settle",
+        album_title="The Greatest Showman",
+        duration_ms=234700,
+    )
+    assert verify_plex_candidate(soundtrack_item, meta_soundtrack) >= 95.0
+
+    # Case 2: Parenthetical member list on Plex artist string
+    kpop_item = DummyPlexTrack(
+        "146069",
+        "Your Idol (a cappella)",
+        "Saja Boys (Andrew Choi & Neckwav & Danny Chung & KEVIN WOO & samUIL Lee) & KPop Demon Hunters Cast",
+        190000,
+        "/plex/Saja Boys/Your Idol.flac",
+    )
+    meta_kpop = EchosyncTrack(
+        raw_title="Your Idol (a cappella)",
+        artist_name="Saja Boys",
+        album_title="KPop Demon Hunters",
+        duration_ms=190200,
+    )
+    assert verify_plex_candidate(kpop_item, meta_kpop) >= 95.0

@@ -104,25 +104,42 @@ def _best_text_similarity(plex_text: str, candidates: list[str], *, strip_suffix
     return best
 
 
-def _best_artist_similarity(plex_artist: str, candidates: list[str]) -> float:
-    """Return best artist similarity, handling multi-artist collaborator strings."""
-    if not plex_artist:
+def _best_artist_similarity(plex_artist: str | list[str], candidates: list[str]) -> float:
+    """Return best artist similarity across Plex track/album artists, handling multi-artist strings and parentheticals."""
+    plex_artists = [plex_artist] if isinstance(plex_artist, str) else list(plex_artist or [])
+    plex_artists = [a for a in plex_artists if a]
+    if not plex_artists or not candidates:
         return 0.0
-    p_norm = plex_artist.lower().strip()
-    p_parts = [p.strip() for p in re.split(r"[,&/;]|\bfeat\.?\b|\bft\.?\b|\bx\b", p_norm) if p.strip()]
-    best = _best_text_similarity(plex_artist, candidates)
-    for cand in candidates:
-        if not cand:
-            continue
-        c_norm = cand.lower().strip()
-        c_parts = [c.strip() for c in re.split(r"[,&/;]|\bfeat\.?\b|\bft\.?\b|\bx\b", c_norm) if c.strip()]
-        for pp in p_parts:
-            for cp in c_parts:
-                if pp == cp:
-                    return 1.0
-                sim = SequenceMatcher(None, pp, cp).ratio()
-                if sim > best:
-                    best = sim
+
+    def _expand_artist_tokens(raw: str) -> list[str]:
+        norm = raw.lower().strip()
+        stripped = re.sub(r"\s*[\(\[].*?[\)\]]", "", norm).strip()
+        tokens = [norm]
+        if stripped and stripped != norm:
+            tokens.append(stripped)
+        for base in (norm, stripped):
+            if not base:
+                continue
+            for part in re.split(r"[,&/;]|\bfeat\.?\b|\bft\.?\b|\bx\b", base):
+                p = part.strip()
+                if p:
+                    tokens.append(p)
+        return tokens
+
+    best = 0.0
+    for pa in plex_artists:
+        p_tokens = _expand_artist_tokens(pa)
+        for cand in candidates:
+            if not cand:
+                continue
+            c_tokens = _expand_artist_tokens(cand)
+            for pt in p_tokens:
+                for ct in c_tokens:
+                    if pt == ct:
+                        return 1.0
+                    sim = SequenceMatcher(None, pt, ct).ratio()
+                    if sim > best:
+                        best = sim
     return best
 
 
@@ -172,18 +189,22 @@ def verify_plex_candidate(
         if plex_variants != expected_variants:
             return 0.0
 
-    # 3. Artist Similarity Check
-    plex_artist = getattr(plex_item, "grandparentTitle", "") or getattr(plex_item, "originalTitle", "") or ""
-    if not plex_artist and hasattr(plex_item, "artist"):
+    # 3. Artist Similarity Check (check BOTH track artist `originalTitle` and album artist `grandparentTitle`)
+    plex_track_artist = getattr(plex_item, "originalTitle", "") or ""
+    plex_album_artist = getattr(plex_item, "grandparentTitle", "") or ""
+    plex_artists = [a for a in (plex_track_artist, plex_album_artist) if a]
+    if not plex_artists and hasattr(plex_item, "artist"):
         try:
             art_obj = plex_item.artist()
-            plex_artist = _safe_getattr(art_obj, "title", "") or ""
+            art_title = _safe_getattr(art_obj, "title", "") or ""
+            if art_title:
+                plex_artists.append(art_title)
         except Exception:
             pass
 
     local_artist = getattr(local_meta, "artist", "") or getattr(local_meta, "artist_name", "") or ""
     artist_candidates = [a for a in (local_artist, alt_artist) if a]
-    artist_sim = _best_artist_similarity(plex_artist, artist_candidates) if (plex_artist and artist_candidates) else 0.0
+    artist_sim = _best_artist_similarity(plex_artists, artist_candidates) if (plex_artists and artist_candidates) else 0.0
 
     # 4. Shared Variable Duration Decay Curve (k=6, aligned with ExactSyncProfile)
     plex_dur = getattr(plex_item, "duration", 0) or 0
