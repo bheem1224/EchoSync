@@ -47,32 +47,28 @@ def _safe_getattr(obj: Any, attr: str, default: Any = None) -> Any:
 def verify_plex_candidate(plex_item: Any, local_meta: EchosyncTrack | None) -> float:
     """Evaluate a Plex search candidate against local track metadata using a disambiguation matrix.
 
+    Uses the shared polynomial duration decay curve (`calculate_duration_score`, k=6) from
+    `core.matching_engine.matching_engine` so Plex recovery aligns with ExactSyncProfile.
     Returns a composite score from 0.0 to 100.0.
     """
     if not plex_item or not local_meta:
         return 0.0
 
-    # 1. Mandatory Duration Gate: Reject candidate if delta exceeds 3000ms
-    plex_dur = getattr(plex_item, "duration", 0) or 0
-    local_dur = getattr(local_meta, "duration_ms", None) or getattr(local_meta, "duration", 0) or 0
-    if local_dur and plex_dur:
-        if abs(plex_dur - local_dur) > 3000:
-            return 0.0
+    from core.matching_engine.matching_engine import calculate_duration_score
 
-    score = 20.0  # Base score for passing duration gate (or neutral duration)
-
-    # 2. File Basename Check: Compare filename of local track with Plex media parts
+    # 1. File Basename Check: Compare filename of local track with Plex media parts
     local_path = getattr(local_meta, "file_path", None) or ""
+    basename_matched = False
     if local_path:
         local_filename = Path(local_path).name.lower()
         for media in getattr(plex_item, "media", []):
             for part in getattr(media, "parts", []):
                 part_file = getattr(part, "file", "") or ""
                 if part_file and Path(part_file).name.lower() == local_filename:
-                    score += 50.0
+                    basename_matched = True
                     break
 
-    # 3. Artist Similarity Check
+    # 2. Artist Similarity Check
     plex_artist = getattr(plex_item, "grandparentTitle", "") or getattr(plex_item, "originalTitle", "") or ""
     if not plex_artist and hasattr(plex_item, "artist"):
         try:
@@ -82,15 +78,38 @@ def verify_plex_candidate(plex_item: Any, local_meta: EchosyncTrack | None) -> f
             pass
 
     local_artist = getattr(local_meta, "artist", "") or getattr(local_meta, "artist_name", "") or ""
+    artist_bonus = 0.0
+    artist_sim = 0.0
     if plex_artist and local_artist:
         artist_sim = SequenceMatcher(None, plex_artist.lower().strip(), local_artist.lower().strip()).ratio()
         if artist_sim >= 0.85:
-            score += 30.0
+            artist_bonus = 30.0
         elif artist_sim >= 0.70:
-            score += 15.0
+            artist_bonus = 15.0
     elif not local_artist:
-        score += 15.0
+        artist_bonus = 15.0
 
+    # 3. Shared Variable Duration Decay Curve (k=6, aligned with ExactSyncProfile)
+    plex_dur = getattr(plex_item, "duration", 0) or 0
+    local_dur = getattr(local_meta, "duration_ms", None) or getattr(local_meta, "duration", 0) or 0
+    if basename_matched:
+        t_base_ms, t_limit_ms = 5500, 8000
+    elif artist_sim >= 0.85:
+        t_base_ms, t_limit_ms = 4500, 6000
+    else:
+        t_base_ms, t_limit_ms = 3000, 4000
+
+    dur_score = 1.0
+    if local_dur and plex_dur:
+        dur_score = calculate_duration_score(
+            abs(int(plex_dur) - int(local_dur)),
+            t_base_ms=t_base_ms,
+            t_limit_ms=t_limit_ms,
+        )
+        if dur_score <= 0.0:
+            return 0.0
+
+    score = (20.0 * dur_score) + (50.0 if basename_matched else 0.0) + artist_bonus
     return score
 
 
@@ -865,6 +884,16 @@ class PlexClient(MediaServerProvider):
                 candidates = self.music_library.search(title, libtype="track", maxresults=50) or []
             except Exception as se:
                 logger.debug(f"Plex search by title '{title}' failed: {se}")
+
+            # Fallback: strip Spotify-style suffixes ('(feat. ...)', '- From "..."', '- 2005')
+            if not candidates:
+                clean_title = re.sub(r"\s*[\(\[].*?[\)\]]", "", str(title))
+                clean_title = re.sub(r"\s+-\s+.*$", "", clean_title).strip()
+                if clean_title and clean_title.lower() != str(title).strip().lower():
+                    try:
+                        candidates = self.music_library.search(clean_title, libtype="track", maxresults=50) or []
+                    except Exception as se:
+                        logger.debug(f"Plex search by cleaned title '{clean_title}' failed: {se}")
 
         if not candidates and artist:
             try:

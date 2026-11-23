@@ -1314,91 +1314,94 @@
           </div>
         {:else}
           <!-- Sync Progress Section -->
-          <div class="flex-1 min-h-0 overflow-y-auto p-6 bg-[#0b0c0f]">
-            <div class="summary-grid">
-              <div class="summary-card">
-                <div class="label">Total Tracks</div>
-                <div class="value">
-                  {syncProgressEvent.data?.total ||
-                    analysisResult?.summary?.found_in_library ||
-                    0}
+          {@const syncedEvents = syncEventStream.filter((e) => e.type === "track_synced")}
+          {@const failedEvents = syncEventStream.filter((e) => e.type === "track_failed")}
+          {@const totalSyncTracks = syncProgressEvent.data?.total || analysisResult?.summary?.found_in_library || 0}
+          {@const pendingSyncTracks = Math.max(0, totalSyncTracks - syncedEvents.length - failedEvents.length)}
+          {@const syncedPct = totalSyncTracks > 0 ? Math.min(100, (syncedEvents.length / totalSyncTracks) * 100) : 0}
+          {@const failedPct = totalSyncTracks > 0 ? Math.min(100 - syncedPct, (failedEvents.length / totalSyncTracks) * 100) : 0}
+          <div class="flex-1 min-h-0 flex flex-col overflow-hidden bg-[#0b0c0f]">
+            <div class="p-6 pb-4 shrink-0 space-y-4">
+              <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div class="bg-[#12141a] border border-white/[0.07] rounded-xl p-3.5">
+                  <div class="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">Total Tracks</div>
+                  <div class="text-xl font-bold font-mono text-zinc-100 mt-1">{totalSyncTracks}</div>
+                </div>
+                <div class="bg-[#12141a] border border-white/[0.07] rounded-xl p-3.5">
+                  <div class="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">Synced</div>
+                  <div class="text-xl font-bold font-mono text-emerald-400 mt-1">{syncedEvents.length}</div>
+                </div>
+                <div class="bg-[#12141a] border {failedEvents.length > 0 ? 'border-rose-500/30' : 'border-white/[0.07]'} rounded-xl p-3.5">
+                  <div class="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">Failed</div>
+                  <div class="text-xl font-bold font-mono text-rose-400 mt-1">{failedEvents.length}</div>
+                </div>
+                <div class="bg-[#12141a] border border-white/[0.07] rounded-xl p-3.5">
+                  <div class="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">Pending</div>
+                  <div class="text-xl font-bold font-mono text-zinc-300 mt-1">{pendingSyncTracks}</div>
                 </div>
               </div>
-              <div class="summary-card">
-                <div class="label">Synced</div>
-                <div class="value" style="color: #22c55e">
-                  {syncEventStream.filter((e) => e.type === "track_synced")
-                    .length || 0}
+
+              <!-- Segmented Progress Bar (Green = Synced, Rose = Failed) -->
+              {#if totalSyncTracks > 0}
+                <div class="bg-[#12141a] border border-white/[0.07] rounded-xl p-3.5 space-y-2">
+                  <div class="flex items-center justify-between text-xs font-medium">
+                    {#if syncProgressEvent.type === "sync_complete"}
+                      {#if failedEvents.length > 0}
+                        <span class="text-amber-400">⚠ Completed with {failedEvents.length} failed track{failedEvents.length === 1 ? '' : 's'}</span>
+                      {:else}
+                        <span class="text-emerald-400">✓ Completed cleanly</span>
+                      {/if}
+                    {:else}
+                      <span class="text-zinc-300">
+                        Syncing… {Math.round(syncedPct + failedPct)}% ({syncedEvents.length + failedEvents.length}/{totalSyncTracks})
+                      </span>
+                    {/if}
+                    <span class="font-mono text-[11px] text-zinc-400">
+                      {syncedEvents.length} synced{failedEvents.length > 0 ? ` · ${failedEvents.length} failed` : ''}
+                    </span>
+                  </div>
+                  <div class="h-2 w-full bg-white/[0.06] rounded-full overflow-hidden flex">
+                    <div class="h-full bg-emerald-500 transition-all duration-300" style="width: {syncedPct}%"></div>
+                    {#if failedPct > 0}
+                      <div class="h-full bg-rose-500 transition-all duration-300" style="width: {failedPct}%"></div>
+                    {/if}
+                  </div>
                 </div>
-              </div>
-              <div class="summary-card">
-                <div class="label">Failed</div>
-                <div class="value highlight" style="color: #ef4444">
-                  {syncEventStream.filter((e) => e.type === "track_failed")
-                    .length || 0}
-                </div>
-              </div>
-              <div class="summary-card">
-                <div class="label">Pending</div>
-                <div class="value">
-                  {Math.max(
-                    0,
-                    (syncProgressEvent.data?.total ||
-                      analysisResult?.summary?.found_in_library ||
-                      0) -
-                      syncEventStream.filter((e) => e.type === "track_synced")
-                        .length -
-                      syncEventStream.filter((e) => e.type === "track_failed")
-                        .length,
-                  ) || 0}
-                </div>
-              </div>
+              {/if}
             </div>
 
-            <!-- Progress Bar - Right after summary cards -->
-            {#if (syncProgressEvent.data?.total || analysisResult?.summary?.found_in_library) > 0}
-              <div class="progress-bar-container">
-                <div class="progress-label">
-                  {#if syncProgressEvent.type === "sync_complete"}
-                    ✓ Completed
-                  {:else}
-                    Progress: {Math.round(
-                      ((syncEventStream.filter((e) => e.type === "track_synced")
-                        .length +
-                        syncEventStream.filter((e) => e.type === "track_failed")
-                          .length) /
-                        (syncProgressEvent.data?.total ||
-                          analysisResult?.summary?.found_in_library ||
-                          1)) *
-                        100,
-                    )}% ({syncEventStream.filter(
-                      (e) => e.type === "track_synced",
-                    ).length +
-                      syncEventStream.filter((e) => e.type === "track_failed")
-                        .length}/{syncProgressEvent.data?.total ||
-                      analysisResult?.summary?.found_in_library})
-                  {/if}
+            <!-- Failed Tracks & Activity Log -->
+            <div class="flex-1 min-h-0 overflow-y-auto px-6 pb-6 space-y-4 scrollbar-thin scrollbar-thumb-zinc-700/80 scrollbar-track-transparent">
+              {#if failedEvents.length > 0}
+                <div class="bg-[#12141a] border border-rose-500/25 rounded-xl overflow-hidden">
+                  <div class="px-4 py-2.5 bg-rose-950/20 border-b border-rose-500/20 flex items-center justify-between">
+                    <span class="text-xs font-semibold text-rose-300">Failed Tracks ({failedEvents.length})</span>
+                    <span class="text-[11px] text-rose-400/80">Could not be added to target playlist</span>
+                  </div>
+                  <div class="divide-y divide-white/[0.04]">
+                    {#each failedEvents as ev, i}
+                      <div class="px-4 py-2.5 flex items-start justify-between gap-4 text-xs">
+                        <div class="min-w-0">
+                          <div class="font-medium text-zinc-100 truncate">
+                            {ev.data?.title || ev.title || `Track #${i + 1}`}
+                          </div>
+                          <div class="text-[11px] text-zinc-400 truncate">
+                            {ev.data?.artist || ev.artist || "Unknown Artist"}
+                          </div>
+                        </div>
+                        <div class="text-[11px] text-rose-400 text-right max-w-md break-words">
+                          {ev.data?.error || ev.error || "Not found on target media server"}
+                        </div>
+                      </div>
+                    {/each}
+                  </div>
                 </div>
-                <div class="progress-bar">
-                  <div
-                    class="progress-fill {syncProgressEvent.type ===
-                    'sync_complete'
-                      ? 'complete'
-                      : ''}"
-                    style="width: {Math.round(
-                      ((syncEventStream.filter((e) => e.type === 'track_synced')
-                        .length +
-                        syncEventStream.filter((e) => e.type === 'track_failed')
-                          .length) /
-                        (syncProgressEvent.data?.total ||
-                          analysisResult?.summary?.found_in_library ||
-                          1)) *
-                        100,
-                    )}%"
-                  ></div>
+              {:else if syncProgressEvent.type === "sync_complete"}
+                <div class="bg-[#12141a] border border-emerald-500/20 rounded-xl p-6 text-center text-xs text-zinc-400">
+                  All {syncedEvents.length} tracks were synced to {getPluginName(targetProvider)} with zero errors.
                 </div>
-              </div>
-            {/if}
+              {/if}
+            </div>
           </div>
         {/if}
 

@@ -1337,54 +1337,60 @@ class TrackRepository:
         updated_count = 0
         now_iso = datetime.now(UTC).isoformat()
 
-        for target_ref, new_item_id in updates:
-            if not target_ref or not new_item_id:
-                continue
+        with session.no_autoflush:
+            for target_ref, new_item_id in updates:
+                if not target_ref or not new_item_id:
+                    continue
 
-            media_id = None
-            if isinstance(target_ref, int) or (isinstance(target_ref, str) and target_ref.isdigit()):
-                track_id = int(target_ref)
-                media_row = session.query(LocalMedia).filter_by(track_id=track_id).first()
-                if media_row:
-                    media_id = media_row.media_id
-            elif isinstance(target_ref, str):
-                media_row = session.query(LocalMedia).filter_by(media_id=target_ref).first()
-                if media_row:
-                    media_id = media_row.media_id
+                media_id = None
+                if isinstance(target_ref, int) or (isinstance(target_ref, str) and target_ref.isdigit()):
+                    track_id = int(target_ref)
+                    media_row = session.query(LocalMedia).filter_by(track_id=track_id).first()
+                    if media_row:
+                        media_id = media_row.media_id
+                elif isinstance(target_ref, str):
+                    media_row = session.query(LocalMedia).filter_by(media_id=target_ref).first()
+                    if media_row:
+                        media_id = media_row.media_id
 
-            if not media_id:
-                continue
+                if not media_id:
+                    continue
 
-            existing_ext = (
-                session.query(ExternalIdentifier).filter_by(media_id=media_id, plugin_source=provider).first()
-            )
-
-            if existing_ext:
-                existing_ext.plugin_item_id = str(new_item_id)
-                raw = dict(existing_ext.raw_data or {})
-                raw["recovered_at"] = now_iso
-                existing_ext.raw_data = raw
-                updated_count += 1
-            else:
+                new_item_id_str = str(new_item_id)
+                existing_ext = (
+                    session.query(ExternalIdentifier).filter_by(media_id=media_id, plugin_source=provider).first()
+                )
                 clashing_ext = (
                     session.query(ExternalIdentifier)
-                    .filter_by(plugin_source=provider, plugin_item_id=str(new_item_id))
+                    .filter_by(plugin_source=provider, plugin_item_id=new_item_id_str)
                     .first()
                 )
-                if clashing_ext:
+
+                if existing_ext:
+                    if clashing_ext and clashing_ext.id != existing_ext.id:
+                        session.delete(clashing_ext)
+                        session.flush()
+                    existing_ext.plugin_item_id = new_item_id_str
+                    raw = dict(existing_ext.raw_data or {})
+                    raw["recovered_at"] = now_iso
+                    existing_ext.raw_data = raw
+                    updated_count += 1
+                elif clashing_ext:
                     clashing_ext.media_id = media_id
                     raw = dict(clashing_ext.raw_data or {})
                     raw["recovered_at"] = now_iso
                     clashing_ext.raw_data = raw
+                    updated_count += 1
                 else:
                     new_ext = ExternalIdentifier(
                         media_id=media_id,
                         plugin_source=provider,
-                        plugin_item_id=str(new_item_id),
+                        plugin_item_id=new_item_id_str,
                         raw_data={"synced_at": now_iso, "recovered_at": now_iso},
                     )
                     session.add(new_ext)
-                updated_count += 1
+                    updated_count += 1
+                session.flush()
 
         if updated_count > 0:
             with db_write_lease(task_name="update_external_identifiers"):
