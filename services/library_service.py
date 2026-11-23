@@ -36,12 +36,16 @@ def _get_database_size_mb() -> float:
 
 
 def invalidate_stats_cache() -> None:
-    """Invalidate the in-memory database library statistics cache."""
+    """Invalidate the in-memory database library statistics cache (no-op if already empty)."""
     global _cached_stats, _cached_stats_timestamp
+    was_cached = False
     with _cache_lock:
-        _cached_stats = None
-        _cached_stats_timestamp = 0.0
-    logger.debug("Library database stats cache invalidated.")
+        if _cached_stats is not None:
+            was_cached = True
+            _cached_stats = None
+            _cached_stats_timestamp = 0.0
+    if was_cached:
+        logger.debug("Library database stats cache invalidated.")
 
 
 def get_database_stats(force_refresh: bool = False) -> dict[str, Any]:
@@ -123,9 +127,27 @@ class LibraryAdapter:
         }
 
 
+_NON_MUTATING_SYNC_EVENTS = frozenset(
+    {
+        "track_started",
+        "track_synced",
+        "track_failed",
+        "sync_started",
+        "sync_progress",
+        "playlist_updated",
+    }
+)
+
+
 def _handle_event_invalidation(payload: dict, **kwargs) -> None:
-    """Reactively invalidate stats cache on library, sync, or media ingestion events."""
+    """Reactively invalidate stats cache on library, sync, or media ingestion events.
+
+    Ignores high-frequency per-track progress events during playlist sync so cache invalidation
+    happens once at completion rather than twice per track.
+    """
     event_name = str(payload.get("event") or "").lower()
+    if not event_name or event_name in _NON_MUTATING_SYNC_EVENTS or event_name.endswith(("_started", "_progress")):
+        return
     mutation_keywords = (
         "library",
         "track",

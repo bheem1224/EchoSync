@@ -555,6 +555,8 @@ def _sync_to_plex(
                 m for m in matches if m.get("target_identifier") or m.get("matched_track_id") or m.get("track_id")
             ]
             valid_keys = []
+            resolved_items = []
+            expected_by_rk = {}
             failed_tracks = []
             recovered_keys = []
 
@@ -606,28 +608,29 @@ def _sync_to_plex(
 
                 db_info = track_info_map.get(matched_t_id) if matched_t_id else {}
 
-                track_title = (
+                source_title = (
                     m.get("source_title")
                     or m.get("title")
                     or (m.get("source_track") or {}).get("title")
                     or (m.get("source_track") or {}).get("name")
-                    or db_info.get("title")
-                    or "Unknown Track"
                 )
-                track_artist = (
+                source_artist = (
                     m.get("source_artist")
                     or m.get("artist")
                     or (m.get("source_track") or {}).get("artist")
-                    or db_info.get("artist")
-                    or "Unknown Artist"
                 )
-                track_album = m.get("album") or (m.get("source_track") or {}).get("album") or db_info.get("album") or ""
-                track_duration = (
-                    m.get("duration_ms")
-                    or (m.get("source_track") or {}).get("duration_ms")
-                    or db_info.get("duration")
-                    or 0
-                )
+                source_album = m.get("album") or (m.get("source_track") or {}).get("album") or ""
+                source_duration = m.get("duration_ms") or (m.get("source_track") or {}).get("duration_ms") or 0
+
+                # Display metadata (for logs/UI) prefers source playlist metadata
+                track_title = source_title or db_info.get("title") or "Unknown Track"
+                track_artist = source_artist or db_info.get("artist") or "Unknown Artist"
+
+                # Recovery/verification metadata prefers the matched local DB Track (what Plex actually indexed)
+                local_title = db_info.get("title") or source_title or "Unknown Track"
+                local_artist = db_info.get("artist") or source_artist or "Unknown Artist"
+                local_album = db_info.get("album") or source_album or ""
+                local_duration = db_info.get("duration") or source_duration or 0
 
                 local_file_path = db_info.get("file_path")
                 local_media_id = db_info.get("media_id")
@@ -636,10 +639,10 @@ def _sync_to_plex(
                     [EchosyncMedia(file_path=local_file_path, media_id=local_media_id)] if local_file_path else []
                 )
                 local_track_meta = EchosyncTrack(
-                    raw_title=track_title,
-                    artist_name=track_artist,
-                    album_title=track_album or "",
-                    duration_ms=track_duration,
+                    raw_title=local_title,
+                    artist_name=local_artist,
+                    album_title=local_album,
+                    duration_ms=local_duration,
                     media=local_media_list,
                 )
 
@@ -662,7 +665,16 @@ def _sync_to_plex(
                     item = None
                     is_recovered = False
                     if hasattr(client, "fetch_or_recover_track"):
-                        item, is_recovered = client.fetch_or_recover_track(rk, local_track_meta)
+                        try:
+                            item, is_recovered = client.fetch_or_recover_track(
+                                rk,
+                                local_track_meta,
+                                alt_title=source_title,
+                                alt_artist=source_artist,
+                            )
+                        except TypeError:
+                            # Backwards-compatibility for older plugin builds / test mocks
+                            item, is_recovered = client.fetch_or_recover_track(rk, local_track_meta)
                     elif client.server:
                         try:
                             rk_int = int(rk) if rk else None
@@ -677,6 +689,15 @@ def _sync_to_plex(
 
                     resolved_rk = str(getattr(item, "ratingKey", rk))
                     valid_keys.append(resolved_rk)
+                    resolved_items.append(item)
+                    if resolved_rk not in expected_by_rk:
+                        expected_by_rk[resolved_rk] = {
+                            "meta": local_track_meta,
+                            "alt_title": source_title,
+                            "alt_artist": source_artist,
+                            "media_id": local_media_id,
+                            "track_id": matched_t_id,
+                        }
 
                     if is_recovered:
                         recovered_keys.append(
@@ -731,14 +752,85 @@ def _sync_to_plex(
 
             # Local-server sync: overwrite managed playlist
             logger.info(f"[{job_name}] Creating/updating managed playlist with {len(valid_keys)} tracks")
-            updated = client.add_tracks_to_managed_playlist(
-                playlist_name,
-                valid_keys,
-                marker=marker,
-                overwrite=True,
-                source_account_name=source_account_name,
-                target_user_id=target_user_id,
-            )
+            try:
+                updated = client.add_tracks_to_managed_playlist(
+                    playlist_name,
+                    valid_keys,
+                    marker=marker,
+                    overwrite=True,
+                    source_account_name=source_account_name,
+                    target_user_id=target_user_id,
+                    prefetched_items=resolved_items,
+                )
+            except TypeError:
+                updated = client.add_tracks_to_managed_playlist(
+                    playlist_name,
+                    valid_keys,
+                    marker=marker,
+                    overwrite=True,
+                    source_account_name=source_account_name,
+                    target_user_id=target_user_id,
+                )
+
+            # Fast O(N) post-sync verification using the single playlist.items() fetch already performed
+            verification_report = None
+            synced_playlist_items = getattr(client, "last_synced_playlist_items", None)
+            if updated and isinstance(synced_playlist_items, list) and synced_playlist_items and expected_by_rk:
+                try:
+                    from plugins.EchoSync.plex.client import verify_playlist_integrity
+
+                    verification_report = verify_playlist_integrity(synced_playlist_items, expected_by_rk)
+                    logger.info(
+                        f"[{job_name}] Post-sync verification: "
+                        f"{verification_report['verified']}/{verification_report['expected']} verified, "
+                        f"{verification_report['mismatch_count']} mismatched, "
+                        f"{verification_report['missing_count']} missing "
+                        f"({verification_report['elapsed_ms']}ms)"
+                    )
+                    if verification_report["mismatches"]:
+                        mismatch_lines = [
+                            f"[{job_name}] Post-sync verification flagged {verification_report['mismatch_count']} mismatched Plex ratingKey(s):"
+                        ]
+                        stale_media_ids = []
+                        for mm in verification_report["mismatches"]:
+                            mismatch_lines.append(
+                                f"  • ratingKey {mm['rating_key']} ({mm['reason']}, score={mm['score']}): "
+                                f"expected '{mm['expected_title']}' by '{mm['expected_artist']}' "
+                                f"-> Plex has '{mm['actual_title']}' by '{mm['actual_artist']}'"
+                            )
+                            if mm.get("media_id"):
+                                stale_media_ids.append((mm["media_id"], mm["rating_key"]))
+                        logger.warning("\n".join(mismatch_lines))
+
+                        # Invalidate stale/mismatched Plex ExternalIdentifier mappings so the next sync re-recovers them
+                        if stale_media_ids:
+                            try:
+                                from database.music_database import ExternalIdentifier, get_database
+
+                                db = get_database()
+                                with db.session_scope() as session:
+                                    cleared = 0
+                                    for mid, bad_rk in stale_media_ids:
+                                        deleted = (
+                                            session.query(ExternalIdentifier)
+                                            .filter(
+                                                ExternalIdentifier.media_id == str(mid),
+                                                ExternalIdentifier.plugin_source == "plex",
+                                                ExternalIdentifier.plugin_item_id == str(bad_rk),
+                                            )
+                                            .delete(synchronize_session=False)
+                                        )
+                                        cleared += deleted
+                                    session.commit()
+                                    if cleared:
+                                        logger.info(
+                                            f"[{job_name}] Cleared {cleared} mismatched Plex ratingKey mapping(s) for automatic re-recovery."
+                                        )
+                            except Exception as clear_err:
+                                logger.debug(f"[{job_name}] Failed to clear mismatched Plex mappings: {clear_err}")
+                except Exception as ver_err:
+                    logger.debug(f"[{job_name}] Post-sync playlist verification skipped: {ver_err}")
+
             event_bus.publish(
                 job_name,
                 "playlist_updated",
@@ -747,6 +839,7 @@ def _sync_to_plex(
                     "synced": len(valid_keys),
                     "failed": len(failed_tracks),
                     "updated": bool(updated),
+                    "verification": verification_report,
                 },
             )
 
@@ -803,6 +896,7 @@ def _sync_to_plex(
                     "synced": len(valid_keys),
                     "failed": len(failed_tracks),
                     "failed_tracks": failed_tracks,
+                    "verification": verification_report,
                     "target": target,
                     "sync_mode": sync_mode,
                 },

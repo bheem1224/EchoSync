@@ -44,7 +44,95 @@ def _safe_getattr(obj: Any, attr: str, default: Any = None) -> Any:
     return default
 
 
-def verify_plex_candidate(plex_item: Any, local_meta: EchosyncTrack | None) -> float:
+_VARIANT_MARKERS = (
+    ("instrumental", ("instrumental", "karaoke", "backing track")),
+    ("acapella", ("acapella", "a cappella", "acappella")),
+    ("live", ("live", "concert", "unplugged", "mtv unplugged")),
+    ("remix", ("remix", "club mix", "dub mix", "vip mix", "bootleg", "rework")),
+    ("extended", ("extended", "extended mix", "extended version")),
+    ("acoustic", ("acoustic", "stripped")),
+    ("demo", ("demo",)),
+    ("sped_up", ("sped up", "speed up", "nightcore", "slowed", "reverb")),
+)
+
+
+def _extract_variant_flags(title: str) -> set[str]:
+    """Extract normalized version/variant flags from a track title."""
+    if not title:
+        return set()
+    low = title.lower()
+    flags: set[str] = set()
+    for canonical, keywords in _VARIANT_MARKERS:
+        for kw in keywords:
+            if re.search(rf"(?<![a-z0-9]){re.escape(kw)}(?![a-z0-9])", low):
+                flags.add(canonical)
+                break
+    return flags
+
+
+def _strip_title_suffixes(title: str) -> str:
+    """Strip common streaming/Spotify suffixes ('(feat. ...)', '- From \"...\"', '- 2005 Remaster')."""
+    if not title:
+        return ""
+    cleaned = re.sub(r"\s*[\(\[].*?[\)\]]", "", str(title))
+    cleaned = re.sub(r"\s+-\s+.*$", "", cleaned)
+    return cleaned.strip()
+
+
+def _best_text_similarity(plex_text: str, candidates: list[str], *, strip_suffixes: bool = False) -> float:
+    """Return highest normalized similarity between plex_text and any candidate string."""
+    if not plex_text:
+        return 0.0
+    p_norm = plex_text.lower().strip()
+    p_clean = _strip_title_suffixes(p_norm) if strip_suffixes else p_norm
+    best = 0.0
+    for cand in candidates:
+        if not cand:
+            continue
+        c_norm = cand.lower().strip()
+        if not c_norm:
+            continue
+        sim = SequenceMatcher(None, p_norm, c_norm).ratio()
+        if sim > best:
+            best = sim
+        if strip_suffixes:
+            c_clean = _strip_title_suffixes(c_norm)
+            if p_clean and c_clean:
+                clean_sim = SequenceMatcher(None, p_clean, c_clean).ratio()
+                if clean_sim > best:
+                    best = clean_sim
+    return best
+
+
+def _best_artist_similarity(plex_artist: str, candidates: list[str]) -> float:
+    """Return best artist similarity, handling multi-artist collaborator strings."""
+    if not plex_artist:
+        return 0.0
+    p_norm = plex_artist.lower().strip()
+    p_parts = [p.strip() for p in re.split(r"[,&/;]|\bfeat\.?\b|\bft\.?\b|\bx\b", p_norm) if p.strip()]
+    best = _best_text_similarity(plex_artist, candidates)
+    for cand in candidates:
+        if not cand:
+            continue
+        c_norm = cand.lower().strip()
+        c_parts = [c.strip() for c in re.split(r"[,&/;]|\bfeat\.?\b|\bft\.?\b|\bx\b", c_norm) if c.strip()]
+        for pp in p_parts:
+            for cp in c_parts:
+                if pp == cp:
+                    return 1.0
+                sim = SequenceMatcher(None, pp, cp).ratio()
+                if sim > best:
+                    best = sim
+    return best
+
+
+def verify_plex_candidate(
+    plex_item: Any,
+    local_meta: EchosyncTrack | None,
+    *,
+    alt_title: str | None = None,
+    alt_artist: str | None = None,
+) -> float:
     """Evaluate a Plex search candidate against local track metadata using a disambiguation matrix.
 
     Uses the shared polynomial duration decay curve (`calculate_duration_score`, k=6) from
@@ -68,7 +156,23 @@ def verify_plex_candidate(plex_item: Any, local_meta: EchosyncTrack | None) -> f
                     basename_matched = True
                     break
 
-    # 2. Artist Similarity Check
+    # 2. Title & Version-Family Check
+    plex_title = getattr(plex_item, "title", "") or ""
+    local_title = getattr(local_meta, "title", "") or getattr(local_meta, "raw_title", "") or ""
+    title_candidates = [t for t in (local_title, alt_title) if t]
+    title_sim = _best_text_similarity(plex_title, title_candidates, strip_suffixes=True) if title_candidates else 0.0
+
+    # Reject variant mismatches (e.g., instrumental / a cappella / extended / remix vs original)
+    # unless the physical file basename matches identically.
+    if not basename_matched and plex_title and title_candidates:
+        plex_variants = _extract_variant_flags(plex_title)
+        expected_variants: set[str] = set()
+        for t in title_candidates:
+            expected_variants |= _extract_variant_flags(t)
+        if plex_variants != expected_variants:
+            return 0.0
+
+    # 3. Artist Similarity Check
     plex_artist = getattr(plex_item, "grandparentTitle", "") or getattr(plex_item, "originalTitle", "") or ""
     if not plex_artist and hasattr(plex_item, "artist"):
         try:
@@ -78,23 +182,15 @@ def verify_plex_candidate(plex_item: Any, local_meta: EchosyncTrack | None) -> f
             pass
 
     local_artist = getattr(local_meta, "artist", "") or getattr(local_meta, "artist_name", "") or ""
-    artist_bonus = 0.0
-    artist_sim = 0.0
-    if plex_artist and local_artist:
-        artist_sim = SequenceMatcher(None, plex_artist.lower().strip(), local_artist.lower().strip()).ratio()
-        if artist_sim >= 0.85:
-            artist_bonus = 30.0
-        elif artist_sim >= 0.70:
-            artist_bonus = 15.0
-    elif not local_artist:
-        artist_bonus = 15.0
+    artist_candidates = [a for a in (local_artist, alt_artist) if a]
+    artist_sim = _best_artist_similarity(plex_artist, artist_candidates) if (plex_artist and artist_candidates) else 0.0
 
-    # 3. Shared Variable Duration Decay Curve (k=6, aligned with ExactSyncProfile)
+    # 4. Shared Variable Duration Decay Curve (k=6, aligned with ExactSyncProfile)
     plex_dur = getattr(plex_item, "duration", 0) or 0
     local_dur = getattr(local_meta, "duration_ms", None) or getattr(local_meta, "duration", 0) or 0
     if basename_matched:
         t_base_ms, t_limit_ms = 5500, 8000
-    elif artist_sim >= 0.85:
+    elif title_sim >= 0.90 and artist_sim >= 0.85:
         t_base_ms, t_limit_ms = 4500, 6000
     else:
         t_base_ms, t_limit_ms = 3000, 4000
@@ -109,8 +205,114 @@ def verify_plex_candidate(plex_item: Any, local_meta: EchosyncTrack | None) -> f
         if dur_score <= 0.0:
             return 0.0
 
-    score = (20.0 * dur_score) + (50.0 if basename_matched else 0.0) + artist_bonus
-    return score
+    # 5. Composite Score (0.0 - 100.0; >= 70.0 required for recovery/verification)
+    if basename_matched:
+        artist_bonus = 30.0 if (artist_sim >= 0.85 or not artist_candidates) else (15.0 if artist_sim >= 0.70 else 0.0)
+        return (20.0 * dur_score) + 50.0 + artist_bonus
+
+    title_pts = (45.0 * title_sim) if title_sim >= 0.70 else 0.0
+    if not artist_candidates:
+        artist_pts = 17.5
+    elif artist_sim >= 0.70:
+        artist_pts = 35.0 * artist_sim
+    else:
+        artist_pts = 0.0
+
+    return title_pts + artist_pts + (20.0 * dur_score)
+
+
+def verify_playlist_integrity(
+    plex_items: list[Any],
+    expected_by_rk: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    """Fast O(N) in-memory post-sync verification of a Plex playlist's fetched items.
+
+    Confirms every expected ratingKey is present AND actually corresponds to the intended track
+    (title, artist, version family, and duration via `verify_plex_candidate`), catching stale or
+    mismatched ratingKeys (e.g., instrumental/a cappella/extended cuts) in a few milliseconds with
+    zero additional HTTP requests.
+    """
+    t0 = time.perf_counter()
+    actual_by_rk: dict[str, Any] = {}
+    for item in plex_items or []:
+        rk = str(_safe_getattr(item, "ratingKey", "") or "")
+        if rk and rk not in actual_by_rk:
+            actual_by_rk[rk] = item
+
+    missing_keys = [rk for rk in expected_by_rk if rk not in actual_by_rk]
+    mismatches: list[dict[str, Any]] = []
+    verified_count = 0
+
+    for rk, spec in expected_by_rk.items():
+        plex_item = actual_by_rk.get(rk)
+        if plex_item is None:
+            continue
+
+        expected_meta = spec.get("meta")
+        alt_title = spec.get("alt_title")
+        alt_artist = spec.get("alt_artist")
+        score = verify_plex_candidate(
+            plex_item,
+            expected_meta,
+            alt_title=alt_title,
+            alt_artist=alt_artist,
+        )
+        if score >= 70.0:
+            verified_count += 1
+            continue
+
+        actual_title = str(_safe_getattr(plex_item, "title", "") or "")
+        actual_artist = str(
+            _safe_getattr(plex_item, "grandparentTitle", "")
+            or _safe_getattr(plex_item, "originalTitle", "")
+            or ""
+        )
+        actual_dur = int(_safe_getattr(plex_item, "duration", 0) or 0)
+        exp_title = str(
+            getattr(expected_meta, "title", "") or getattr(expected_meta, "raw_title", "") or alt_title or ""
+        )
+        exp_artist = str(
+            getattr(expected_meta, "artist", "") or getattr(expected_meta, "artist_name", "") or alt_artist or ""
+        )
+        exp_dur = int(getattr(expected_meta, "duration_ms", 0) or getattr(expected_meta, "duration", 0) or 0)
+
+        # Classify reason for diagnostics
+        plex_variants = _extract_variant_flags(actual_title)
+        exp_variants = _extract_variant_flags(exp_title) | _extract_variant_flags(alt_title or "")
+        if plex_variants != exp_variants:
+            reason = "version_mismatch"
+        elif exp_dur and actual_dur and abs(actual_dur - exp_dur) > 6000:
+            reason = "duration_mismatch"
+        else:
+            reason = "metadata_mismatch"
+
+        mismatches.append(
+            {
+                "rating_key": rk,
+                "media_id": spec.get("media_id"),
+                "track_id": spec.get("track_id"),
+                "expected_title": exp_title,
+                "expected_artist": exp_artist,
+                "actual_title": actual_title,
+                "actual_artist": actual_artist,
+                "expected_duration_ms": exp_dur,
+                "actual_duration_ms": actual_dur,
+                "score": round(score, 1),
+                "reason": reason,
+            }
+        )
+
+    elapsed_ms = round((time.perf_counter() - t0) * 1000.0, 2)
+    return {
+        "verified": verified_count,
+        "expected": len(expected_by_rk),
+        "actual": len(plex_items or []),
+        "missing_count": len(missing_keys),
+        "missing_keys": missing_keys,
+        "mismatch_count": len(mismatches),
+        "mismatches": mismatches,
+        "elapsed_ms": elapsed_ms,
+    }
 
 
 class PlexClient(MediaServerProvider):
@@ -648,12 +850,14 @@ class PlexClient(MediaServerProvider):
         overwrite: bool = True,
         source_account_name: str = None,
         target_user_id: str = None,
+        prefetched_items: list[Any] | None = None,
     ) -> bool:
         """Ensure managed playlist exists and overwrite with provided ratingKeys.
 
         Marker defaults to U+21C4 (⇄). Playlist is considered managed if either name contains marker
         or summary includes "managed by Echosync".
         """
+        self.last_synced_playlist_items: list[Any] = []
         if not self.ensure_connection() or not self.server or not self.music_library:
             return False
 
@@ -713,8 +917,21 @@ class PlexClient(MediaServerProvider):
                 seen_rks.add(rk)
                 deduped_rating_keys.append(rk)
 
+            # Fast path: reuse already-fetched Plex track objects when server context matches
+            prefetched_by_rk: dict[str, Any] = {}
+            if prefetched_items and target_server is original_server:
+                for p_item in prefetched_items:
+                    p_rk = str(_safe_getattr(p_item, "ratingKey", "") or "")
+                    if p_rk:
+                        prefetched_by_rk[p_rk] = p_item
+
             for rk in deduped_rating_keys:
                 try:
+                    cached_obj = prefetched_by_rk.get(str(rk))
+                    if cached_obj is not None:
+                        items.append(cached_obj)
+                        continue
+
                     # Ensure ratingKey is an integer
                     try:
                         rk_int = int(rk) if rk else None
@@ -772,6 +989,7 @@ class PlexClient(MediaServerProvider):
                 # Verify created playlist contents against requested rating keys
                 try:
                     created_items = list(created_playlist.items()) if created_playlist else []
+                    self.last_synced_playlist_items = created_items
                     created_rks = set(str(_safe_getattr(i, "ratingKey", "")) for i in created_items)
                     requested_rks = set(str(rk) for rk in deduped_rating_keys)
                     missing = requested_rks - created_rks
@@ -806,6 +1024,7 @@ class PlexClient(MediaServerProvider):
             try:
                 refreshed = self.server.playlist(playlist.title)
                 refreshed_items = list(refreshed.items()) if refreshed else []
+                self.last_synced_playlist_items = refreshed_items
                 refreshed_rks = set(str(_safe_getattr(i, "ratingKey", "")) for i in refreshed_items)
                 requested_rks = set(str(rk) for rk in deduped_rating_keys)
                 missing = requested_rks - refreshed_rks
@@ -853,9 +1072,14 @@ class PlexClient(MediaServerProvider):
         self,
         cached_rating_key: str,
         track_meta: EchosyncTrack | None = None,
+        *,
+        alt_title: str | None = None,
+        alt_artist: str | None = None,
     ) -> tuple[Any | None, bool]:
         """Fetch track by ratingKey, falling back to a live search and disambiguation matrix on 404/NotFound.
 
+        Tries ordered deduplicated queries (local DB title -> cleaned title -> alt/source title -> artist)
+        and exits immediately once a candidate scores >= 70.0.
         Returns (plex_item, is_recovered).
         """
         if not self.ensure_connection() or not self.server:
@@ -878,48 +1102,59 @@ class PlexClient(MediaServerProvider):
         title = getattr(track_meta, "title", None) or getattr(track_meta, "raw_title", None)
         artist = getattr(track_meta, "artist", None) or getattr(track_meta, "artist_name", None)
 
-        candidates = []
-        if title:
-            try:
-                candidates = self.music_library.search(title, libtype="track", maxresults=50) or []
-            except Exception as se:
-                logger.debug(f"Plex search by title '{title}' failed: {se}")
-
-            # Fallback: strip Spotify-style suffixes ('(feat. ...)', '- From "..."', '- 2005')
-            if not candidates:
-                clean_title = re.sub(r"\s*[\(\[].*?[\)\]]", "", str(title))
-                clean_title = re.sub(r"\s+-\s+.*$", "", clean_title).strip()
-                if clean_title and clean_title.lower() != str(title).strip().lower():
-                    try:
-                        candidates = self.music_library.search(clean_title, libtype="track", maxresults=50) or []
-                    except Exception as se:
-                        logger.debug(f"Plex search by cleaned title '{clean_title}' failed: {se}")
-
-        if not candidates and artist:
-            try:
-                candidates = self.music_library.search(artist, libtype="track", maxresults=50) or []
-            except Exception as se:
-                logger.debug(f"Plex search by artist '{artist}' failed: {se}")
-
-        if not candidates:
-            return None, False
+        # Ordered, deduplicated search queries — stop as soon as a query produces a >= 70.0 match
+        raw_queries = [
+            title,
+            _strip_title_suffixes(title) if title else None,
+            alt_title,
+            _strip_title_suffixes(alt_title) if alt_title else None,
+            artist,
+            alt_artist,
+        ]
+        queries: list[str] = []
+        seen_q: set[str] = set()
+        for q in raw_queries:
+            if not q:
+                continue
+            q_str = str(q).strip()
+            q_key = q_str.lower()
+            if q_str and q_key not in seen_q:
+                seen_q.add(q_key)
+                queries.append(q_str)
 
         best_cand = None
         best_score = 0.0
+        seen_cand_keys: set[str] = set()
 
-        for cand in candidates:
-            cand_score = verify_plex_candidate(cand, track_meta)
-            if cand_score > best_score:
-                best_score = cand_score
-                best_cand = cand
+        for query in queries:
+            try:
+                candidates = self.music_library.search(query, libtype="track", maxresults=50) or []
+            except Exception as se:
+                logger.debug(f"Plex search '{query}' failed: {se}")
+                continue
 
-        if best_cand and best_score >= 70.0:
-            new_rk = str(getattr(best_cand, "ratingKey", ""))
-            logger.info(
-                f"Plex live recovery matched '{title}' by '{artist}' (score: {best_score:.1f}): "
-                f"old ratingKey {cached_rating_key} -> new ratingKey {new_rk}"
-            )
-            return best_cand, True
+            for cand in candidates:
+                cand_rk = str(_safe_getattr(cand, "ratingKey", "") or id(cand))
+                if cand_rk in seen_cand_keys:
+                    continue
+                seen_cand_keys.add(cand_rk)
+                cand_score = verify_plex_candidate(
+                    cand,
+                    track_meta,
+                    alt_title=alt_title,
+                    alt_artist=alt_artist,
+                )
+                if cand_score > best_score:
+                    best_score = cand_score
+                    best_cand = cand
+
+            if best_cand is not None and best_score >= 70.0:
+                new_rk = str(getattr(best_cand, "ratingKey", ""))
+                logger.info(
+                    f"Plex live recovery matched '{title}' by '{artist}' (score: {best_score:.1f}): "
+                    f"old ratingKey {cached_rating_key} -> new ratingKey {new_rk}"
+                )
+                return best_cand, True
 
         return None, False
 

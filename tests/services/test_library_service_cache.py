@@ -110,3 +110,37 @@ def test_library_adapter_overview():
         assert overview["stats"]["total_tracks"] == 40
         assert overview["stats"]["database_size_mb"] == 15.0
 
+
+def test_sync_progress_events_do_not_invalidate_stats_cache():
+    invalidate_stats_cache()
+
+    mock_db = MagicMock()
+    mock_db.count_artists.return_value = 7
+    mock_db.count_albums.return_value = 14
+    mock_db.count_tracks.return_value = 95
+
+    with (
+        patch("services.library_service.get_database", return_value=mock_db),
+        patch("services.library_service._get_database_size_mb", return_value=25.0),
+    ):
+        get_database_stats()
+        assert mock_db.count_tracks.call_count == 1
+
+        # High-frequency playlist sync progress events should NOT invalidate the stats cache
+        event_bus.publish({"event": "track_started"})
+        event_bus.publish({"event": "track_synced"})
+        event_bus.publish({"event": "sync_started"})
+
+        import time
+        time.sleep(0.1)
+
+        get_database_stats()
+        assert mock_db.count_tracks.call_count == 1
+
+        # Completion event DOES invalidate once
+        event_bus.publish({"event": "sync_complete"})
+        time.sleep(0.1)
+
+        get_database_stats()
+        assert mock_db.count_tracks.call_count == 2
+
