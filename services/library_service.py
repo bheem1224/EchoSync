@@ -134,6 +134,7 @@ _NON_MUTATING_SYNC_EVENTS = frozenset(
         "track_failed",
         "sync_started",
         "sync_progress",
+        "playlist_writing",
         "playlist_updated",
     }
 )

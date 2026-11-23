@@ -752,6 +752,16 @@ def _sync_to_plex(
 
             # Local-server sync: overwrite managed playlist
             logger.info(f"[{job_name}] Creating/updating managed playlist with {len(valid_keys)} tracks")
+            event_bus.publish(
+                job_name,
+                "playlist_writing",
+                {
+                    "playlist": playlist_name,
+                    "total": total,
+                    "synced": len(valid_keys),
+                    "failed": len(failed_tracks),
+                },
+            )
             try:
                 updated = client.add_tracks_to_managed_playlist(
                     playlist_name,

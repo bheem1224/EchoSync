@@ -1318,8 +1318,15 @@
           {@const failedEvents = syncEventStream.filter((e) => e.type === "track_failed")}
           {@const totalSyncTracks = syncProgressEvent.data?.total || analysisResult?.summary?.found_in_library || 0}
           {@const pendingSyncTracks = Math.max(0, totalSyncTracks - syncedEvents.length - failedEvents.length)}
-          {@const syncedPct = totalSyncTracks > 0 ? Math.min(100, (syncedEvents.length / totalSyncTracks) * 100) : 0}
-          {@const failedPct = totalSyncTracks > 0 ? Math.min(100 - syncedPct, (failedEvents.length / totalSyncTracks) * 100) : 0}
+          {@const isComplete = syncProgressEvent.type === "sync_complete"}
+          {@const isWritingPlaylist = syncProgressEvent.type === "playlist_writing"}
+          {@const isFinalizing = syncProgressEvent.type === "playlist_updated"}
+          {@const verificationReport = syncProgressEvent.data?.verification || null}
+          {@const trackPhaseScale = isComplete ? 100 : 85}
+          {@const syncedPct = totalSyncTracks > 0 ? Math.min(trackPhaseScale, (syncedEvents.length / totalSyncTracks) * trackPhaseScale) : 0}
+          {@const failedPct = totalSyncTracks > 0 ? Math.min(trackPhaseScale - syncedPct, (failedEvents.length / totalSyncTracks) * trackPhaseScale) : 0}
+          {@const phaseExtraPct = isComplete ? 0 : isFinalizing ? 10 : isWritingPlaylist ? 5 : 0}
+          {@const displayPct = isComplete ? 100 : Math.min(99, Math.round(syncedPct + failedPct + phaseExtraPct))}
           <div class="flex-1 min-h-0 flex flex-col overflow-hidden bg-[#0b0c0f]">
             <div class="p-6 pb-4 shrink-0 space-y-4">
               <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -1341,29 +1348,39 @@
                 </div>
               </div>
 
-              <!-- Segmented Progress Bar (Green = Synced, Rose = Failed) -->
+              <!-- Segmented Progress Bar (Green = Synced, Rose = Failed, Cyan = Writing/Verifying) -->
               {#if totalSyncTracks > 0}
                 <div class="bg-[#12141a] border border-white/[0.07] rounded-xl p-3.5 space-y-2">
                   <div class="flex items-center justify-between text-xs font-medium">
-                    {#if syncProgressEvent.type === "sync_complete"}
+                    {#if isComplete}
                       {#if failedEvents.length > 0}
                         <span class="text-amber-400">⚠ Completed with {failedEvents.length} failed track{failedEvents.length === 1 ? '' : 's'}</span>
                       {:else}
                         <span class="text-emerald-400">✓ Completed cleanly</span>
                       {/if}
+                    {:else if isFinalizing}
+                      <span class="text-cyan-300">Verifying playlist &amp; saving recovered keys… {displayPct}%</span>
+                    {:else if isWritingPlaylist}
+                      <span class="text-cyan-300">Writing playlist to {getPluginName(targetProvider)}… {displayPct}%</span>
                     {:else}
                       <span class="text-zinc-300">
-                        Syncing… {Math.round(syncedPct + failedPct)}% ({syncedEvents.length + failedEvents.length}/{totalSyncTracks})
+                        Resolving tracks… {displayPct}% ({syncedEvents.length + failedEvents.length}/{totalSyncTracks})
                       </span>
                     {/if}
                     <span class="font-mono text-[11px] text-zinc-400">
                       {syncedEvents.length} synced{failedEvents.length > 0 ? ` · ${failedEvents.length} failed` : ''}
+                      {#if verificationReport}
+                        · {verificationReport.verified}/{verificationReport.expected} verified ({verificationReport.elapsed_ms}ms)
+                      {/if}
                     </span>
                   </div>
                   <div class="h-2 w-full bg-white/[0.06] rounded-full overflow-hidden flex">
                     <div class="h-full bg-emerald-500 transition-all duration-300" style="width: {syncedPct}%"></div>
                     {#if failedPct > 0}
                       <div class="h-full bg-rose-500 transition-all duration-300" style="width: {failedPct}%"></div>
+                    {/if}
+                    {#if phaseExtraPct > 0}
+                      <div class="h-full bg-cyan-400 animate-pulse transition-all duration-300" style="width: {phaseExtraPct}%"></div>
                     {/if}
                   </div>
                 </div>
@@ -1399,6 +1416,32 @@
               {:else if syncProgressEvent.type === "sync_complete"}
                 <div class="bg-[#12141a] border border-emerald-500/20 rounded-xl p-6 text-center text-xs text-zinc-400">
                   All {syncedEvents.length} tracks were synced to {getPluginName(targetProvider)} with zero errors.
+                </div>
+              {/if}
+
+              {#if verificationReport && verificationReport.mismatches && verificationReport.mismatches.length > 0}
+                <div class="bg-[#12141a] border border-amber-500/25 rounded-xl overflow-hidden">
+                  <div class="px-4 py-2.5 bg-amber-950/20 border-b border-amber-500/20 flex items-center justify-between">
+                    <span class="text-xs font-semibold text-amber-300">Post-Sync Verification Mismatches ({verificationReport.mismatches.length})</span>
+                    <span class="text-[11px] text-amber-400/80">Stale mappings cleared for next sync</span>
+                  </div>
+                  <div class="divide-y divide-white/[0.04]">
+                    {#each verificationReport.mismatches as mm}
+                      <div class="px-4 py-2.5 flex items-start justify-between gap-4 text-xs">
+                        <div class="min-w-0">
+                          <div class="font-medium text-zinc-100 truncate">
+                            Expected: {mm.expected_title} — <span class="text-zinc-400">{mm.expected_artist}</span>
+                          </div>
+                          <div class="text-[11px] text-amber-300/90 truncate">
+                            Plex had: {mm.actual_title} — {mm.actual_artist} (ratingKey {mm.rating_key})
+                          </div>
+                        </div>
+                        <span class="px-2 py-0.5 rounded bg-amber-500/15 text-amber-300 font-mono text-[10px] shrink-0">
+                          {mm.reason}
+                        </span>
+                      </div>
+                    {/each}
+                  </div>
                 </div>
               {/if}
             </div>

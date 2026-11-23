@@ -917,13 +917,41 @@ class PlexClient(MediaServerProvider):
                 seen_rks.add(rk)
                 deduped_rating_keys.append(rk)
 
-            # Fast path: reuse already-fetched Plex track objects when server context matches
+            # Fast path: reuse already-fetched Plex track objects when server context matches,
+            # or bulk-fetch in chunks of 100 via /library/metadata/{id1},{id2},... (3 HTTP calls vs 234!)
             prefetched_by_rk: dict[str, Any] = {}
             if prefetched_items and target_server is original_server:
                 for p_item in prefetched_items:
                     p_rk = str(_safe_getattr(p_item, "ratingKey", "") or "")
                     if p_rk:
                         prefetched_by_rk[p_rk] = p_item
+
+            missing_to_fetch: list[str] = []
+            for rk in deduped_rating_keys:
+                if str(rk) not in prefetched_by_rk:
+                    missing_to_fetch.append(str(rk))
+
+            if missing_to_fetch and hasattr(self.server, "fetchItems"):
+                chunk_size = 100
+                for start in range(0, len(missing_to_fetch), chunk_size):
+                    chunk = missing_to_fetch[start : start + chunk_size]
+                    rk_ints = []
+                    for rk in chunk:
+                        try:
+                            rk_ints.append(int(rk))
+                        except (ValueError, TypeError):
+                            logger.warning(f"Invalid ratingKey format: {rk}")
+                    if not rk_ints:
+                        continue
+                    try:
+                        bulk_path = f"/library/metadata/{','.join(str(x) for x in rk_ints)}"
+                        fetched_chunk = self.server.fetchItems(bulk_path) or []
+                        for f_item in fetched_chunk:
+                            f_rk = str(_safe_getattr(f_item, "ratingKey", "") or "")
+                            if f_rk:
+                                prefetched_by_rk[f_rk] = f_item
+                    except Exception as bulk_err:
+                        logger.debug(f"Plex bulk fetchItems fallback to per-item fetch: {bulk_err}")
 
             for rk in deduped_rating_keys:
                 try:
@@ -1020,10 +1048,16 @@ class PlexClient(MediaServerProvider):
                     playlist.editSummary(management_tag)
             except Exception:
                 pass
-            # Post-update verification: re-fetch playlist and compare rating keys
+            # Post-update verification: re-fetch playlist items directly (avoiding title-lookup failures on unicode markers)
             try:
-                refreshed = self.server.playlist(playlist.title)
-                refreshed_items = list(refreshed.items()) if refreshed else []
+                refreshed_items = []
+                try:
+                    if hasattr(playlist, "reload"):
+                        playlist.reload()
+                    refreshed_items = list(playlist.items())
+                except Exception:
+                    refreshed = self.server.playlist(playlist.title)
+                    refreshed_items = list(refreshed.items()) if refreshed else []
                 self.last_synced_playlist_items = refreshed_items
                 refreshed_rks = set(str(_safe_getattr(i, "ratingKey", "")) for i in refreshed_items)
                 requested_rks = set(str(rk) for rk in deduped_rating_keys)
@@ -1155,6 +1189,21 @@ class PlexClient(MediaServerProvider):
                     f"old ratingKey {cached_rating_key} -> new ratingKey {new_rk}"
                 )
                 return best_cand, True
+
+        if not seen_cand_keys:
+            logger.info(
+                f"Plex live recovery found 0 Plex candidates for '{title}' by '{artist}' "
+                f"(old ratingKey={cached_rating_key}, queries={queries})"
+            )
+        else:
+            top_title = _safe_getattr(best_cand, "title", "") if best_cand is not None else ""
+            top_artist = _safe_getattr(best_cand, "grandparentTitle", "") if best_cand is not None else ""
+            top_dur = _safe_getattr(best_cand, "duration", 0) if best_cand is not None else 0
+            local_dur = getattr(track_meta, "duration_ms", None) or getattr(track_meta, "duration", 0) or 0
+            logger.info(
+                f"Plex live recovery rejected all {len(seen_cand_keys)} candidate(s) for '{title}' by '{artist}' "
+                f"(local_dur={local_dur}ms; best='{top_title}' by '{top_artist}', dur={top_dur}ms, score={best_score:.1f} < 70.0)"
+            )
 
         return None, False
 
