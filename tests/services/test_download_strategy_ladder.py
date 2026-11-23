@@ -328,3 +328,91 @@ class TestRawScorePreservation:
             # Candidate score evaluated directly from matching engine remains raw
             evaluated_score = engine.calculate_match(target, candidate).confidence_score
             assert evaluated_score == raw_score
+
+
+class TestAcquisitionOverhaul:
+    """Tests for keyboard-preserving wire queries, diacritic folding, edition strategies, and post-download verification."""
+
+    def test_keyboard_symbols_preserved_and_diacritics_folded_only_in_fallback(self):
+        from core.matching_engine.text_utils import (
+            fold_diacritics_for_wire,
+            sanitize_query_preserve_keyboard,
+        )
+
+        assert sanitize_query_preserve_keyboard("P!nk") == "P!nk"
+        assert sanitize_query_preserve_keyboard("A$AP Rocky") == "A$AP Rocky"
+        assert sanitize_query_preserve_keyboard("Beyoncé") == "Beyoncé"
+        assert fold_diacritics_for_wire("Beyoncé") == "Beyonce"
+        assert fold_diacritics_for_wire("Tiësto") == "Tiesto"
+        assert fold_diacritics_for_wire("P!nk") == "P!nk"
+        assert fold_diacritics_for_wire("A$AP") == "A$AP"
+
+        manager = object.__new__(DownloadManager)
+        track = EchosyncTrack(
+            raw_title="I Took A Pill In Ibiza",
+            title="I Took A Pill In Ibiza",
+            artist_name="Tiësto",
+            edition="Seeb Remix",
+            duration_ms=199000,
+        )
+        strategies = manager._generate_search_strategies(track, base_duration_tolerance_ms=5000)
+        names = [s.name for s in strategies]
+        assert names[0] == "artist+title+edition"
+        assert "Seeb Remix" in strategies[0].wire_query
+        assert names[1] == "artist+title"
+        assert "Tiësto" in strategies[1].wire_query
+        assert "artist+title+diacritics_folded" in names
+        folded_strat = next(s for s in strategies if s.name == "artist+title+diacritics_folded")
+        assert "Tiesto" in folded_strat.wire_query
+
+    def test_post_download_verification_rejects_wrong_edition_and_truncated_audio(self, tmp_path):
+        from unittest.mock import patch
+
+        from services.auto_importer import AutoImportService
+
+        svc = object.__new__(AutoImportService)
+        fake_file = tmp_path / "track.flac"
+        fake_file.write_bytes(b"0" * 70000)
+
+        target = EchosyncTrack(
+            raw_title="Hymn for the Weekend",
+            title="Hymn for the Weekend",
+            artist_name="Coldplay",
+            duration_ms=258000,
+        )
+        wrong_remix = EchosyncTrack(
+            raw_title="Hymn for the Weekend (Seeb Remix)",
+            title="Hymn for the Weekend",
+            edition="Seeb Remix",
+            artist_name="Coldplay",
+            duration_ms=258000,
+        )
+        good_match = EchosyncTrack(
+            raw_title="Hymn for the Weekend",
+            title="Hymn for the Weekend",
+            artist_name="Coldplay",
+            duration_ms=258500,
+        )
+
+        with patch("echosync_core.extract_metadata", return_value={"duration_ms": 258000}), patch(
+            "echosync_core.fingerprint_hash_and_active_duration",
+            return_value=("fp", 258.0, "hash", 258000),
+            create=True,
+        ):
+            ok_bad, reason_bad = svc._verify_downloaded_file_against_intent(fake_file, target, wrong_remix)
+            assert ok_bad is False
+            assert "MISMATCH_EDITION" in reason_bad
+
+            ok_good, reason_good = svc._verify_downloaded_file_against_intent(fake_file, target, good_match)
+            assert ok_good is True
+            assert reason_good == "OK"
+
+        # Truncated 30s preview must fail DURATION_MISMATCH
+        with patch("echosync_core.extract_metadata", return_value={"duration_ms": 30000}), patch(
+            "echosync_core.fingerprint_hash_and_active_duration",
+            return_value=("fp", 30.0, "hash", 30000),
+            create=True,
+        ):
+            ok_trunc, reason_trunc = svc._verify_downloaded_file_against_intent(fake_file, target, good_match)
+            assert ok_trunc is False
+            assert "DURATION_MISMATCH" in reason_trunc

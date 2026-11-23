@@ -672,9 +672,9 @@ class AutoImportService:
                         with self._processing_lock:
                             self._processing_files.discard(file_key)
                         continue
-                    if time.time() - f_mtime <= 15:
+                    if time.time() - f_mtime <= 4.0:
                         logger.debug(
-                            "I/O safety guard: skipping file within 15s cool-off: %s",
+                            "I/O safety guard: skipping file within 4s cool-off: %s",
                             file_path,
                         )
                         with self._processing_lock:
@@ -714,6 +714,36 @@ class AutoImportService:
                             res = self.engine.resolve_track(req)
                             metadata = res.to_dict() if (res.success and res.musicbrainz_track_id) else None
                             confidence = res.confidence_score
+
+                            # Post-download verification against active DownloadQueue intent (if tracked)
+                            dl_match = self._find_verifying_download_item(file_path)
+                            if dl_match is not None:
+                                dl_id, target_track = dl_match
+                                verified, fail_reason = self._verify_downloaded_file_against_intent(
+                                    file_path=file_path,
+                                    target_track=target_track,
+                                    resolved_track=res,
+                                )
+                                from services.download_manager import get_download_manager
+
+                                dm = get_download_manager()
+                                if not verified:
+                                    logger.warning(
+                                        "Post-download verification FAILED for DownloadQueue #%s (%s): %s. "
+                                        "Quarantining file and rotating candidate.",
+                                        dl_id,
+                                        file_path.name,
+                                        fail_reason,
+                                    )
+                                    dm.handle_verification_failure(
+                                        dl_id,
+                                        reason=fail_reason,
+                                        file_path=str(file_path),
+                                    )
+                                    batch_stats["failed"] += 1
+                                    continue
+                                else:
+                                    dm.handle_verification_success(dl_id, file_path=str(file_path))
 
                             # Finally Decide
                             if metadata and confidence >= confidence_threshold:
@@ -766,6 +796,100 @@ class AutoImportService:
                 self._cleanup_empty_directories(f.parent)
 
             return batch_stats
+
+    def _find_verifying_download_item(self, file_path: Path):
+        """Find a VERIFYING/DOWNLOADING DownloadQueue entry corresponding to *file_path*."""
+        try:
+            from core.database.models.working import DownloadQueue, DownloadStatus
+            from core.db.echo_sync_track import EchosyncTrack
+
+            target_name = file_path.name.lower()
+            target_str = str(file_path).replace("\\", "/").lower()
+            work_db = get_working_database()
+            with work_db.session_scope() as session:
+                items = (
+                    session.query(DownloadQueue)
+                    .filter(
+                        DownloadQueue.status.in_(
+                            [DownloadStatus.VERIFYING.value, DownloadStatus.DOWNLOADING.value]
+                        )
+                    )
+                    .order_by(DownloadQueue.updated_at.desc())
+                    .all()
+                )
+                for item in items:
+                    payload = item.echo_sync_track if isinstance(item.echo_sync_track, dict) else {}
+                    dl_path = str(payload.get("downloaded_file_path") or "").replace("\\", "/").lower()
+                    active_cand = str(item.active_candidate_id or "").replace("\\", "/").lower()
+                    if (
+                        (dl_path and (dl_path == target_str or Path(dl_path).name == target_name))
+                        or (active_cand and active_cand.endswith(target_name))
+                    ):
+                        return item.id, EchosyncTrack.from_dict(payload)
+        except Exception as exc:
+            logger.debug("DownloadQueue lookup skipped for %s: %s", file_path.name, exc)
+        return None
+
+    def _verify_downloaded_file_against_intent(
+        self,
+        file_path: Path,
+        target_track: Any,
+        resolved_track: Any,
+    ) -> tuple[bool, str]:
+        """Verify audio integrity, duration alignment, and semantic/version match before import."""
+        import echosync_core
+
+        from core.matching_engine.matching_engine import WeightedMatchingEngine
+        from core.matching_engine.scoring_profile import ExactSyncProfile
+
+        # 1. Native Rust audio decode & duration check
+        try:
+            meta = echosync_core.extract_metadata(str(file_path)) or {}
+            raw_dur_ms = meta.get("duration_ms")
+            if raw_dur_ms is None and meta.get("duration") is not None:
+                raw_dur_ms = int(round(float(meta["duration"]) * 1000))
+            if not raw_dur_ms or int(raw_dur_ms) <= 0:
+                return False, "CORRUPT_AUDIO"
+            raw_dur_ms = int(raw_dur_ms)
+        except Exception as exc:
+            logger.warning("Audio integrity probe failed for %s: %s", file_path.name, exc)
+            return False, "CORRUPT_AUDIO"
+
+        active_dur_ms = None
+        try:
+            if hasattr(echosync_core, "fingerprint_hash_and_active_duration"):
+                _, _, _, active_ms = echosync_core.fingerprint_hash_and_active_duration(str(file_path), True)
+                if active_ms and int(active_ms) > 0:
+                    active_dur_ms = int(active_ms)
+            else:
+                _, dur_sec, _ = echosync_core.fingerprint_and_hash_audio(str(file_path), True)
+                if dur_sec and float(dur_sec) > 0:
+                    active_dur_ms = int(round(float(dur_sec) * 1000))
+        except Exception:
+            pass
+
+        target_dur_ms = getattr(target_track, "duration_ms", None) or getattr(target_track, "duration", None)
+        if target_dur_ms and int(target_dur_ms) > 0:
+            target_dur_ms = int(target_dur_ms)
+            best_delta = abs(raw_dur_ms - target_dur_ms)
+            if active_dur_ms:
+                best_delta = min(best_delta, abs(active_dur_ms - target_dur_ms))
+            if best_delta > 10000:
+                return False, f"DURATION_MISMATCH ({best_delta}ms > 10000ms)"
+
+        # 2. Semantic & version cross-check if MetadataResolutionEngine resolved a candidate
+        if resolved_track and getattr(resolved_track, "title", None) and getattr(resolved_track, "artist_name", None):
+            matcher = WeightedMatchingEngine(ExactSyncProfile())
+            cand_for_check = resolved_track
+            if active_dur_ms and isinstance(getattr(cand_for_check, "extra_metadata", None), dict):
+                cand_for_check.extra_metadata["active_duration_ms"] = active_dur_ms
+            match_res = matcher.calculate_match(target_track, cand_for_check, context="sync")
+            if not match_res.passed_version_check:
+                return False, f"MISMATCH_EDITION: {match_res.reasoning}"
+            if match_res.confidence_score < 70.0:
+                return False, f"MISMATCH_TRACK (score={match_res.confidence_score:.1f}%)"
+
+        return True, "OK"
 
     def finalize_import(self, file_path: Path, metadata: dict[str, Any]):
         """

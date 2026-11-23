@@ -854,6 +854,7 @@ class DownloadManager:
 
         # Reload fresh state and reconstruct EchosyncTrack from queue payload
         # This ensures no metadata (ISRC, Album, etc) is lost
+        acq_state: dict[str, Any] = {}
         with self.work_db.session_scope() as session:
             download = session.query(DownloadQueue).get(download_id)
             if not download:
@@ -862,6 +863,7 @@ class DownloadManager:
             # Reconstruct from stored JSON to preserve all metadata
             target_track = EchosyncTrack.from_dict(download.echo_sync_track)
             raw_track_dict = download.echo_sync_track if isinstance(download.echo_sync_track, dict) else {}
+            acq_state = dict(raw_track_dict.get("_acquisition_state") or {})
             blacklisted_candidates = set(raw_track_dict.get("blacklisted_candidates") or [])
             for b in getattr(download, "blacklisted_candidates", None) or []:
                 if isinstance(b, dict) and b.get("candidate_id"):
@@ -938,6 +940,8 @@ class DownloadManager:
             # ============================================================================
             scored_candidates: list[tuple[EchosyncTrack, float, PluginBase]] = []
             perfect_match_threshold = 90  # Score >= 90 triggers immediate break
+            checkpoint_strategy_idx = 0
+            checkpoint_total_strategies = len(strategies)
 
             # Iterate through providers in priority order
             for provider_idx, provider in enumerate(providers, 1):
@@ -964,9 +968,33 @@ class DownloadManager:
 
                 matcher = self._get_matching_engine(quality_profile)
 
-                # Try all supported strategies for this provider
-                sniper_winner: EchosyncTrack | None = None
-                for strategy_idx, strategy in enumerate(provider_strategies, 1):
+                # 10-minute Strategy Checkpoint: resume at last_strategy_idx + 1 when retrying within 600s
+                import time
+
+                start_idx = 0
+                last_ts = acq_state.get("last_search_ts")
+                last_idx = acq_state.get("last_strategy_idx")
+                if (
+                    isinstance(last_idx, int)
+                    and last_idx >= 0
+                    and isinstance(last_ts, (int, float))
+                    and (time.time() - last_ts) < 600.0
+                    and (last_idx + 1) < len(provider_strategies)
+                ):
+                    start_idx = last_idx + 1
+                    logger.info(
+                        f"  Resuming search for download {download_id} at strategy {start_idx + 1}/{len(provider_strategies)} "
+                        f"(within 10m checkpoint window)"
+                    )
+
+                last_executed_strategy_idx = start_idx
+
+                # Try all supported strategies for this provider (starting from checkpoint)
+                for strategy_idx in range(start_idx + 1, len(provider_strategies) + 1):
+                    strategy = provider_strategies[strategy_idx - 1]
+                    last_executed_strategy_idx = strategy_idx - 1
+                    checkpoint_strategy_idx = last_executed_strategy_idx
+                    checkpoint_total_strategies = len(provider_strategies)
                     # Cooperative Cancellation Check: terminate early if requested
                     try:
                         from core.task_manager.supervisor import supervisor as _sup
@@ -1040,24 +1068,6 @@ class DownloadManager:
 
                     logger.info(f"    Strategy {strategy_idx} returned {len(search_results)} candidates")
 
-                    if sniper_hit and search_results:
-                        first_cand = search_results[0]
-                        pid = first_cand.identifiers.get("plugin_item_id") or first_cand.identifiers.get(
-                            "provider_item_id"
-                        )
-                        username = first_cand.identifiers.get("username")
-                        comp_id = f"{username}|{pid}" if username and pid else None
-                        if (pid and pid in blacklisted_candidates) or (comp_id and comp_id in blacklisted_candidates):
-                            logger.info(f"    Sniper hit candidate '{pid}' is blacklisted; ignoring sniper bypass.")
-                            sniper_hit = False
-                        else:
-                            logger.info(
-                                f"  ⚡ SNIPER HIT at strategy {strategy_idx} [{strategy_name}] "
-                                f"— short-circuiting remaining strategies."
-                            )
-                            sniper_winner = self._enrich_candidate_metadata(first_cand)
-                            break
-
                     if search_results:
                         valid_results = []
                         for c in search_results:
@@ -1079,11 +1089,11 @@ class DownloadManager:
                         enriched_results = [self._enrich_candidate_metadata(c) for c in valid_results]
                         provider_candidates.extend(enriched_results)
 
-                        # Check early short-circuit conditions on candidate pool
+                        # Scan ALL results in the current strategy to fill backup candidates,
+                        # then stop advancing to the next strategy once we have a strong match or 3 viable backups.
                         viable_matches = 0
                         has_snipe_match = False
                         for cand in enriched_results:
-                            # Verify candidate passes quality profile formats and constraints
                             try:
                                 viable_cand = self._filter_by_formats([cand], allowed_formats, quality_profile)
                             except TypeError:
@@ -1098,43 +1108,17 @@ class DownloadManager:
                             if raw_score >= 75.0:
                                 viable_matches += 1
 
-                        if has_snipe_match or viable_matches >= 3:
+                        if sniper_hit or has_snipe_match or viable_matches >= 3:
                             logger.info(
-                                f"  ⚡ Early short-circuit: Strategy {strategy_idx} yielded viable candidates "
-                                f"(has_snipe={has_snipe_match}, viable_matches={viable_matches}) "
-                                f"— skipping remaining strategies on {provider.name}."
+                                f"  ⚡ Strategy {strategy_idx} [{strategy_name}] populated candidate pool "
+                                f"(snipe={has_snipe_match or sniper_hit}, viable_matches={viable_matches}) "
+                                f"— holding at strategy {strategy_idx}/{len(provider_strategies)}."
                             )
                             break
 
                 matcher = self._get_matching_engine(quality_profile)
 
-                # ── Fast-path: sniper winner bypasses full dedup + scoring ────────────
-                if sniper_winner is not None:
-                    match_result = matcher.calculate_match(target_track, sniper_winner, context="download")
-                    raw_score = match_result.confidence_score
-                    strat = (
-                        sniper_winner.identifiers.get("discovery_strategy")
-                        or sniper_winner.identifiers.get("strategy_name")
-                        or "strict_metadata"
-                    )
-                    logger.info(
-                        f"  Sniper winner confirmed: raw_score={raw_score:.1f} from {provider.name} (strategy={strat})"
-                    )
-                    if raw_score >= 70.0:
-                        scored_candidates.append((sniper_winner, raw_score, provider))
-                        scored_candidates.sort(
-                            key=lambda x: (
-                                x[1],
-                                x[0].identifiers.get("free_upload_slots", 0),
-                            ),
-                            reverse=True,
-                        )
-                        scored_candidates = scored_candidates[:3]
-                    if raw_score >= perfect_match_threshold:
-                        break  # Exit provider loop — perfect match secured
-                    continue
-
-                # ── Slow-path: deduplicate + full priority-tier scoring ────────────────
+                # ── Deduplicate + full priority-tier scoring with peer-health tie-breaker ──
                 # Deduplicate candidates for this provider
                 provider_candidates = self._deduplicate_candidates(provider_candidates)
                 logger.info(f"  Total candidates from {provider.name}: {len(provider_candidates)}")
@@ -1177,12 +1161,14 @@ class DownloadManager:
                             scored_candidates.append((candidate, raw_score, provider))
                             found_in_tier = True
 
-                    # Keep only Top-3 scoring candidates globally to bound memory utilization
+                    # Keep only Top-3 scoring candidates globally, tie-breaking by peer health
                     if scored_candidates:
                         scored_candidates.sort(
                             key=lambda x: (
-                                x[1],
-                                x[0].identifiers.get("free_upload_slots", 0),
+                                round(float(x[1]), 1),
+                                1 if (x[0].identifiers.get("free_upload_slots") or 0) > 0 else 0,
+                                -(int(x[0].identifiers.get("queue_length") or 0)),
+                                int(x[0].identifiers.get("upload_speed") or 0),
                             ),
                             reverse=True,
                         )
@@ -1260,6 +1246,14 @@ class DownloadManager:
                     item.active_candidate_id = active_candidate["id"]
                     item.candidate_stack = remaining_stack
                     item.plugin_id = str(active_candidate.get("plugin_id") or "")
+                    if isinstance(item.echo_sync_track, dict):
+                        updated_payload = dict(item.echo_sync_track)
+                        updated_payload["_acquisition_state"] = {
+                            "last_strategy_idx": checkpoint_strategy_idx,
+                            "total_strategies": checkpoint_total_strategies,
+                            "last_search_ts": time.time(),
+                        }
+                        item.echo_sync_track = updated_payload
                     if hasattr(session, "commit"):
                         with db_write_lease(task_name="update_candidate_stack"):
                             session.commit()
@@ -1345,6 +1339,26 @@ class DownloadManager:
             )
             self._update_status(download_id, DownloadStatus.FAILED)
 
+    def _can_resume_next_strategy(self, download_id: int) -> bool:
+        """Return True if download has unsearched strategies remaining within the 10-minute checkpoint window."""
+        import time
+
+        with self.work_db.session_scope() as session:
+            item = session.get(DownloadQueue, download_id)
+            if not item or not isinstance(item.echo_sync_track, dict):
+                return False
+            acq = item.echo_sync_track.get("_acquisition_state") or {}
+            last_idx = acq.get("last_strategy_idx")
+            total = acq.get("total_strategies")
+            last_ts = acq.get("last_search_ts")
+            return bool(
+                isinstance(last_idx, int)
+                and isinstance(total, int)
+                and isinstance(last_ts, (int, float))
+                and (time.time() - last_ts) < 600.0
+                and (last_idx + 1) < total
+            )
+
     async def _handle_active_download_failure(
         self,
         db_id: int,
@@ -1353,7 +1367,7 @@ class DownloadManager:
         cancel_providers: list[PluginBase],
         reason: str,
     ) -> None:
-        """Cancel remote transfer, rotate candidate via DownloadRepository, and retry if not exhausted."""
+        """Cancel remote transfer, rotate candidate via DownloadRepository, and dispatch backup or resume strategies."""
         await self._cancel_transfer_async(cancel_providers, failed_candidate_id)
 
         rotated = self.repo.transition_to_retrying_or_failed(
@@ -1362,6 +1376,12 @@ class DownloadManager:
             failed_candidate_id=failed_candidate_id,
         )
         if rotated:
+            asyncio.create_task(self._dispatch_candidate(db_id, providers=all_providers))
+        elif self._can_resume_next_strategy(db_id):
+            logger.info(
+                f"Download {db_id} exhausted Top-3 backups ({reason}); resuming next search strategy within 10m window."
+            )
+            self._update_status(db_id, DownloadStatus.RETRYING.value)
             asyncio.create_task(self._execute_waterfall_search_and_download(db_id, all_providers))
 
     async def _check_active_downloads(self):
@@ -1521,10 +1541,27 @@ class DownloadManager:
         if search_title != base_track_title:
             logger.info(f"Normalized title for search: '{base_track_title}' -> '{search_title}'")
 
+        from core.matching_engine.text_utils import (
+            fold_diacritics_for_wire,
+            sanitize_query_preserve_keyboard,
+        )
+
         primary_artist, collaborators = split_artist_collaborators(track.artist_name)
-        wire_primary_artist = sanitize_query_for_wire(primary_artist or track.artist_name or "")
-        wire_search_title = sanitize_query_for_wire(search_title)
+        wire_primary_artist = sanitize_query_preserve_keyboard(primary_artist or track.artist_name or "")
+        wire_search_title = sanitize_query_preserve_keyboard(search_title)
+        folded_artist = fold_diacritics_for_wire(primary_artist or track.artist_name or "")
+        folded_title = fold_diacritics_for_wire(search_title)
         target_dur = getattr(track, "duration_ms", None) or getattr(track, "duration", None) or None
+
+        # Determine non-original edition / remixer cue if explicitly set on the track
+        raw_edition = (getattr(track, "edition", None) or getattr(track, "version", None) or "").strip()
+        raw_remixers = [str(r).strip() for r in (getattr(track, "remixers", None) or []) if str(r).strip()]
+        _ignorable_editions = {"", "original", "album version", "standard", "deluxe", "deluxe edition", "explicit", "clean"}
+        edition_cue = ""
+        if raw_edition and raw_edition.lower() not in _ignorable_editions:
+            edition_cue = sanitize_query_preserve_keyboard(raw_edition)
+        elif raw_remixers:
+            edition_cue = sanitize_query_preserve_keyboard(raw_remixers[0])
 
         # Strategy 1 (ISRC / Strict GUID if available - requires Capability.FETCH_BY_ISRC)
         if getattr(track, "isrc", None):
@@ -1540,7 +1577,21 @@ class DownloadManager:
                 )
             )
 
-        # Strategy 2: Artist + Title (Strict Metadata - Universal Baseline)
+        # Strategy 2a: Edition / Remixer-qualified Artist + Title (when track explicitly requests a remix/live/acoustic/etc.)
+        if wire_primary_artist and wire_search_title and edition_cue:
+            strategies.append(
+                SearchStrategyIntent(
+                    id="artist+title+edition",
+                    name="artist+title+edition",
+                    strategy_type="strict_metadata",
+                    wire_query=f"{wire_primary_artist} {wire_search_title} {edition_cue}".strip(),
+                    required_capability=None,
+                    target_duration_ms=target_dur,
+                    duration_tolerance_ms=int(base_duration_tolerance_ms),
+                )
+            )
+
+        # Strategy 2: Artist + Title (Strict Metadata - Universal Baseline, preserving keyboard symbols like !, $)
         if wire_primary_artist and wire_search_title:
             strategies.append(
                 SearchStrategyIntent(
@@ -1548,6 +1599,23 @@ class DownloadManager:
                     name="artist+title",
                     strategy_type="strict_metadata",
                     wire_query=f"{wire_primary_artist} {wire_search_title}".strip(),
+                    required_capability=None,
+                    target_duration_ms=target_dur,
+                    duration_tolerance_ms=int(base_duration_tolerance_ms),
+                )
+            )
+
+        # Strategy 2b: Diacritic-folded fallback (e.g., Beyoncé -> Beyonce, Tiësto -> Tiesto) while keeping !, $
+        if folded_artist and folded_title and (
+            folded_artist.lower() != wire_primary_artist.lower()
+            or folded_title.lower() != wire_search_title.lower()
+        ):
+            strategies.append(
+                SearchStrategyIntent(
+                    id="artist+title+diacritics_folded",
+                    name="artist+title+diacritics_folded",
+                    strategy_type="strict_metadata",
+                    wire_query=f"{folded_artist} {folded_title}".strip(),
                     required_capability=None,
                     target_duration_ms=target_dur,
                     duration_tolerance_ms=int(base_duration_tolerance_ms),
@@ -2117,11 +2185,24 @@ class DownloadManager:
 
         if rotated:
             logger.info(
-                f"DownloadQueue {download_id} rotated candidate ({reason}) -> RETRYING. Dispatching next candidate."
+                f"DownloadQueue {download_id} rotated candidate ({reason}) -> RETRYING. Dispatching next backup candidate."
             )
             try:
                 loop = asyncio.get_running_loop()
                 loop.create_task(self._dispatch_candidate(download_id))
+            except RuntimeError:
+                pass
+            return True
+        elif self._can_resume_next_strategy(download_id):
+            logger.info(
+                f"DownloadQueue {download_id} exhausted Top-3 backups ({reason}); resuming next search strategy within 10m window."
+            )
+            self._update_status(download_id, DownloadStatus.RETRYING.value)
+            try:
+                loop = asyncio.get_running_loop()
+                providers = self._get_active_download_providers()
+                if providers:
+                    loop.create_task(self._execute_waterfall_search_and_download(download_id, providers))
             except RuntimeError:
                 pass
             return True
@@ -2149,11 +2230,72 @@ class DownloadManager:
             return None
 
     async def _dispatch_candidate(self, download_id: int, providers: list[Any] | None = None):
-        """Immediately dispatch the current active candidate on a RETRYING download."""
+        """Immediately dispatch the popped active backup candidate on a RETRYING download without re-searching."""
         if not providers:
             providers = self._get_active_download_providers()
         if not providers:
             return
+
+        active_id = None
+        target_plugin_id = None
+        target_track = None
+        with self.work_db.session_scope() as session:
+            item = session.get(DownloadQueue, download_id)
+            if not item:
+                return
+            active_id = item.active_candidate_id
+            target_plugin_id = item.plugin_id
+            if isinstance(item.echo_sync_track, dict):
+                target_track = EchosyncTrack.from_dict(item.echo_sync_track)
+
+        if active_id and "|" in active_id:
+            username, filename = active_id.split("|", 1)
+            provider = next(
+                (
+                    p
+                    for p in providers
+                    if str(getattr(p, "plugin_id", "")) == str(target_plugin_id)
+                    or getattr(p, "name", "") == str(target_plugin_id)
+                ),
+                providers[0],
+            )
+            try:
+                logger.info(
+                    f"Direct backup dispatch for download {download_id}: user='{username}', file='{filename}' via {provider.name}"
+                )
+                download_kwargs = {"username": username, "filename": filename}
+                if hasattr(provider, "_async_download"):
+                    provider_id = await provider._async_download(**download_kwargs)
+                elif hasattr(provider, "download"):
+                    loop = asyncio.get_running_loop()
+                    try:
+                        provider_id = await loop.run_in_executor(
+                            None, lambda: provider.download(filename, username=username)
+                        )
+                    except TypeError:
+                        provider_id = await loop.run_in_executor(
+                            None, lambda: provider.download(filename)
+                        )
+                else:
+                    provider_id = None
+
+                if provider_id:
+                    self._update_status(download_id, DownloadStatus.DOWNLOADING.value, str(provider_id))
+                    return
+                logger.warning(f"Direct backup dispatch failed for download {download_id}; rotating next candidate.")
+            except Exception as exc:
+                logger.warning(f"Direct backup dispatch error for download {download_id}: {exc}")
+
+            # Direct dispatch failed — rotate to next backup or resume search
+            await self._handle_active_download_failure(
+                download_id,
+                active_id,
+                providers,
+                [provider],
+                reason="BACKUP_DISPATCH_FAILED",
+            )
+            return
+
         await self._execute_waterfall_search_and_download(download_id, providers)
 
     def _is_signature_match(

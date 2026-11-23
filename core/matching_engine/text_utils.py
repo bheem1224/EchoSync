@@ -646,6 +646,36 @@ def sanitize_query_for_wire(text: str | None) -> str:
     return cleaned.strip()
 
 
+def sanitize_query_preserve_keyboard(text: str | None) -> str:
+    """Sanitize a P2P wire query while keeping standard keyboard symbols (!, $) and diacritics intact.
+
+    Preserves artist/title tokens like 'P!nk', 'A$AP', 'Ke$ha', and 'Beyoncé' for accurate
+    primary searches while stripping brackets, slashes, quotes, and '&' delimiters.
+    """
+    if not text:
+        return ""
+
+    cleaned = re.sub(r"[\(\)\[\]\{\}\/\\&\"',:;+~`^|<>?*]+", " ", str(text))
+    cleaned = _NORM_COLLAPSE_SPACE_RE.sub(" ", cleaned)
+    return cleaned.strip()
+
+
+def fold_diacritics_for_wire(text: str | None) -> str:
+    """Fold non-ASCII diacritics (e.g. 'Beyoncé' -> 'Beyonce', 'Tiësto' -> 'Tiesto') while
+    preserving standard keyboard symbols (!, $).
+    """
+    if not text:
+        return ""
+
+    import unicodedata
+
+    preserved = sanitize_query_preserve_keyboard(text)
+    decomposed = unicodedata.normalize("NFKD", preserved)
+    folded = "".join(ch for ch in decomposed if not unicodedata.combining(ch))
+    folded = _NORM_COLLAPSE_SPACE_RE.sub(" ", folded)
+    return folded.strip()
+
+
 def normalize_album(album: str | None) -> str:
     """
     Normalize album name for matching.
