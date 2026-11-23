@@ -1120,54 +1120,67 @@ class PlexClient(MediaServerProvider):
         if not self.ensure_connection() or not self.server:
             return None, False
 
-        # Step 1: Standard fetchItem fast-path
+        # Step 1: Standard fetchItem fast-path with inline identity verification
         if cached_rating_key:
             try:
                 rk_int = int(cached_rating_key)
                 item = self.server.fetchItem(rk_int)
                 if item:
-                    return item, False
+                    if track_meta is None:
+                        return item, False
+                    fast_score = verify_plex_candidate(
+                        item,
+                        track_meta,
+                        alt_title=alt_title,
+                        alt_artist=alt_artist,
+                    )
+                    if fast_score >= 70.0:
+                        return item, False
+                    logger.info(
+                        f"Plex cached ratingKey {cached_rating_key} failed inline verification "
+                        f"(score={fast_score:.1f} < 70.0; plex='{_safe_getattr(item, 'title', '')}' "
+                        f"by '{_safe_getattr(item, 'grandparentTitle', '')}'); triggering live recovery."
+                    )
             except Exception as e:
                 logger.debug(f"Plex fetchItem({cached_rating_key}) failed: {e}")
 
-        # Step 2: Live lookup fallback using search and verification matrix
+        # Step 2: Live lookup fallback using title queries then artist-scoped search
         if not track_meta or not self.music_library:
             return None, False
 
         title = getattr(track_meta, "title", None) or getattr(track_meta, "raw_title", None)
         artist = getattr(track_meta, "artist", None) or getattr(track_meta, "artist_name", None)
 
-        # Ordered, deduplicated search queries — stop as soon as a query produces a >= 70.0 match
-        raw_queries = [
-            title,
-            _strip_title_suffixes(title) if title else None,
-            alt_title,
-            _strip_title_suffixes(alt_title) if alt_title else None,
-            artist,
-            alt_artist,
-        ]
-        queries: list[str] = []
-        seen_q: set[str] = set()
-        for q in raw_queries:
-            if not q:
-                continue
-            q_str = str(q).strip()
-            q_key = q_str.lower()
-            if q_str and q_key not in seen_q:
-                seen_q.add(q_key)
-                queries.append(q_str)
+        def _dedupe_queries(raw_list: list[Any]) -> list[str]:
+            out: list[str] = []
+            seen: set[str] = set()
+            for q in raw_list:
+                if not q:
+                    continue
+                q_str = str(q).strip()
+                q_key = q_str.lower()
+                if q_str and q_key not in seen:
+                    seen.add(q_key)
+                    out.append(q_str)
+            return out
+
+        title_queries = _dedupe_queries(
+            [
+                title,
+                _strip_title_suffixes(title) if title else None,
+                alt_title,
+                _strip_title_suffixes(alt_title) if alt_title else None,
+            ]
+        )
+        artist_queries = _dedupe_queries([artist, alt_artist])
+        queries = title_queries + artist_queries
 
         best_cand = None
         best_score = 0.0
         seen_cand_keys: set[str] = set()
 
-        for query in queries:
-            try:
-                candidates = self.music_library.search(query, libtype="track", maxresults=50) or []
-            except Exception as se:
-                logger.debug(f"Plex search '{query}' failed: {se}")
-                continue
-
+        def _evaluate_candidates(candidates: list[Any]) -> tuple[Any | None, bool]:
+            nonlocal best_cand, best_score
             for cand in candidates:
                 cand_rk = str(_safe_getattr(cand, "ratingKey", "") or id(cand))
                 if cand_rk in seen_cand_keys:
@@ -1182,7 +1195,6 @@ class PlexClient(MediaServerProvider):
                 if cand_score > best_score:
                     best_score = cand_score
                     best_cand = cand
-
             if best_cand is not None and best_score >= 70.0:
                 new_rk = str(getattr(best_cand, "ratingKey", ""))
                 logger.info(
@@ -1190,6 +1202,47 @@ class PlexClient(MediaServerProvider):
                     f"old ratingKey {cached_rating_key} -> new ratingKey {new_rk}"
                 )
                 return best_cand, True
+            return None, False
+
+        # Pass 2A: Title-based track search
+        for query in title_queries:
+            try:
+                candidates = self.music_library.search(query, libtype="track", maxresults=50) or []
+            except Exception as se:
+                logger.debug(f"Plex title search '{query}' failed: {se}")
+                continue
+            matched_item, ok = _evaluate_candidates(candidates)
+            if ok:
+                return matched_item, True
+
+        # Pass 2B: Artist-scoped track search (avoids Plex title-tokenization noise on punctuation-heavy titles)
+        for art_q in artist_queries:
+            artist_candidates: list[Any] = []
+            if hasattr(self.music_library, "searchTracks"):
+                try:
+                    artist_candidates = (
+                        self.music_library.searchTracks(**{"artist.title": art_q}, maxresults=100) or []
+                    )
+                except Exception as se:
+                    logger.debug(f"Plex searchTracks(artist.title='{art_q}') failed: {se}")
+            if not artist_candidates and hasattr(self.music_library, "searchArtists"):
+                try:
+                    art_objs = self.music_library.searchArtists(title=art_q, maxresults=3) or []
+                    for art_obj in art_objs:
+                        if hasattr(art_obj, "tracks"):
+                            artist_candidates.extend(art_obj.tracks() or [])
+                except Exception as se:
+                    logger.debug(f"Plex searchArtists(title='{art_q}') failed: {se}")
+            if not artist_candidates:
+                try:
+                    artist_candidates = self.music_library.search(art_q, libtype="track", maxresults=50) or []
+                except Exception as se:
+                    logger.debug(f"Plex fallback search '{art_q}' failed: {se}")
+
+            if artist_candidates:
+                matched_item, ok = _evaluate_candidates(artist_candidates)
+                if ok:
+                    return matched_item, True
 
         if not seen_cand_keys:
             diag = (

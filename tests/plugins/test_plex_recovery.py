@@ -287,3 +287,65 @@ def test_verify_playlist_integrity_detects_mismatches_and_missing():
     assert report["mismatch_count"] == 1
     assert report["mismatches"][0]["rating_key"] == "102"
     assert report["mismatches"][0]["reason"] == "version_mismatch"
+
+
+def test_plex_fast_path_inline_verification_self_heals_wrong_key():
+    client = PlexClient.__new__(PlexClient)
+    client.server = MagicMock()
+    client.music_library = MagicMock()
+    client.ensure_connection = MagicMock(return_value=True)
+
+    # Cached ratingKey returns 200 OK, but points to the wrong song
+    wrong_cached = DummyPlexTrack(
+        "146082", "Rewrite the Stars", "Benj Pasek", 217000, "/plex/Rewrite the Stars.flac"
+    )
+    correct_live = DummyPlexTrack(
+        "146099", "This Is Me", "Keala Settle", 234500, "/plex/This Is Me.flac"
+    )
+    client.server.fetchItem.return_value = wrong_cached
+    client.music_library.search.return_value = [correct_live]
+
+    meta = EchosyncTrack(
+        raw_title="This Is Me",
+        artist_name="Keala Settle",
+        album_title="The Greatest Showman",
+        duration_ms=234700,
+    )
+    item, is_recovered = client.fetch_or_recover_track("146082", meta)
+
+    assert item == correct_live
+    assert is_recovered is True
+    assert item.ratingKey == "146099"
+
+
+def test_plex_recovery_artist_scoped_search_for_punctuation_titles():
+    client = PlexClient.__new__(PlexClient)
+    client.server = MagicMock()
+    client.music_library = MagicMock()
+    client.ensure_connection = MagicMock(return_value=True)
+
+    client.server.fetchItem.side_effect = Exception("(404) not_found")
+
+    # Title search returns noisy "Me" matches that don't include G-Eazy
+    noisy_cand = DummyPlexTrack(
+        "50001", "Take a Chance on Me", "ABBA", 248986, "/plex/ABBA/Take a Chance on Me.flac"
+    )
+    real_cand = DummyPlexTrack(
+        "50002", "Me, Myself & I", "G-Eazy", 251000, "/plex/G-Eazy/Me, Myself & I.flac"
+    )
+    client.music_library.search.return_value = [noisy_cand]
+    client.music_library.searchTracks.return_value = [real_cand]
+
+    meta = EchosyncTrack(
+        raw_title="Me, Myself & I",
+        artist_name="G-Eazy",
+        album_title="When It's Dark Out",
+        duration_ms=251054,
+    )
+    item, is_recovered = client.fetch_or_recover_track("146545", meta)
+
+    assert item == real_cand
+    assert is_recovered is True
+    client.music_library.searchTracks.assert_called_once_with(
+        **{"artist.title": "G-Eazy"}, maxresults=100
+    )
