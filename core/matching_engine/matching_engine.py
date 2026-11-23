@@ -1227,7 +1227,31 @@ class WeightedMatchingEngine:
         max_possible_score += self.weights.text_weight * 100
 
         # ===== STEP 4: DURATION MATCHING =====
-        duration_score = self._calculate_duration_match(source, candidate, tolerance_override_ms=tolerance_override_ms)
+        effective_tol_ms = tolerance_override_ms
+        effective_limit_ms: int | None = None
+        if effective_tol_ms is None and version_match and title_fuzzy_score >= 0.95 and artist_fuzzy_score >= 0.95:
+            profile_tol = getattr(self.weights, "duration_tolerance_ms", None) or 5000
+            has_both_albums = bool(src_album and cand_album)
+            if has_both_albums and album_score >= 0.85:
+                effective_tol_ms = max(profile_tol, 5000)
+                effective_limit_ms = max(int(effective_tol_ms * 1.25), 7000)
+            else:
+                effective_tol_ms = max(profile_tol, 4500)
+                effective_limit_ms = max(int(effective_tol_ms * 1.25), 6000)
+
+            if self._has_studio_master_container_signal(source, candidate):
+                effective_tol_ms = min(effective_tol_ms + 500, 5500)
+                effective_limit_ms = min(effective_limit_ms + 1000, 8000)
+                reasoning_parts.append(
+                    f"Deluxe/compilation master padding bonus applied: T_base={effective_tol_ms}ms, T_limit={effective_limit_ms}ms"
+                )
+
+        duration_score = self._calculate_duration_match(
+            source,
+            candidate,
+            tolerance_override_ms=effective_tol_ms,
+            limit_override_ms=effective_limit_ms,
+        )
         duration_contribution = duration_score * self.weights.duration_weight * 100
 
         reasoning_parts.append(
@@ -1728,11 +1752,41 @@ class WeightedMatchingEngine:
         weighted_score = sum(score * weight for _, score, weight in scores) / total_weight
         return weighted_score
 
+    @staticmethod
+    def _has_studio_master_container_signal(source: EchosyncTrack, candidate: EchosyncTrack) -> bool:
+        """Return True if candidate or source indicates a Deluxe/Anniversary/Compilation CD-rip master."""
+        _edition_markers = ("deluxe", "anniversary", "special edition", "expanded", "collector", "bonus")
+        _album_markers = (
+            "deluxe",
+            "anniversary",
+            "expanded",
+            "greatest hits",
+            "greatest songs",
+            "best of",
+            "anthology",
+            "collection",
+        )
+        for trk in (candidate, source):
+            ed = (getattr(trk, "edition", None) or getattr(trk, "version", None) or "").lower()
+            if ed and any(m in ed for m in _edition_markers):
+                return True
+            rel_type = (getattr(trk, "release_type", None) or getattr(trk, "album_type", None) or "").lower()
+            if rel_type == "compilation":
+                return True
+            custom_tags = getattr(trk, "custom_tags", None)
+            if isinstance(custom_tags, dict) and custom_tags.get("COMPILATION_SOURCE"):
+                return True
+            alb = (getattr(trk, "album_title", None) or getattr(trk, "album_name", None) or "").lower()
+            if alb and any(m in alb for m in _album_markers):
+                return True
+        return False
+
     def _calculate_duration_match(
         self,
         source: EchosyncTrack,
         candidate: EchosyncTrack,
         tolerance_override_ms: int | None = None,
+        limit_override_ms: int | None = None,
     ) -> float:
         """
         Calculate duration match score using continuous polynomial decay curve (k=6).
@@ -1756,7 +1810,7 @@ class WeightedMatchingEngine:
                 if active_diff < diff_ms:
                     diff_ms = active_diff
         base_ms = int(tol_ms)
-        limit_ms = max(base_ms + 1000, int(base_ms * 1.25))
+        limit_ms = int(limit_override_ms) if limit_override_ms is not None else max(base_ms + 1000, int(base_ms * 1.25))
         return calculate_duration_score(diff_ms, t_base_ms=base_ms, t_limit_ms=limit_ms)
 
     def _fuzzy_match(self, a: str, b: str) -> float:

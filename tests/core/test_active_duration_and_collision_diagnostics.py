@@ -52,26 +52,26 @@ def test_matching_engine_accepts_silence_padded_track_and_rejects_true_edit():
         duration_ms=267000,
     )
 
-    # 1. Local track with +5.47s of trailing silence -> active_duration_ms matches Spotify
+    # 1. Local track with +12.0s of trailing silence -> active_duration_ms matches Spotify
     padded_local = EchosyncTrack(
         raw_title="Dream On",
         title="Dream On",
         artist_name="Aerosmith",
         album_title="Aerosmith",
-        duration_ms=272470,
+        duration_ms=279000,
         extra_metadata={"active_duration_ms": 267100},
     )
     padded_res = engine.calculate_match(spotify_track, padded_local)
     assert padded_res.confidence_score >= 85.0
 
-    # 2. Local track with +5.47s of actual music (not silence) -> active_duration_ms is still +5.47s off -> rejected
+    # 2. Local track with +12.0s of actual music (true alternate cut) -> active_duration_ms is still +12s off -> rejected
     true_edit_local = EchosyncTrack(
         raw_title="Dream On",
         title="Dream On",
         artist_name="Aerosmith",
         album_title="Aerosmith",
-        duration_ms=272470,
-        extra_metadata={"active_duration_ms": 272400},
+        duration_ms=279000,
+        extra_metadata={"active_duration_ms": 278900},
     )
     edit_res = engine.calculate_match(spotify_track, true_edit_local)
     assert edit_res.confidence_score < 85.0
@@ -285,3 +285,63 @@ def test_acoustid_penalizes_unrequested_instrumental_candidate():
     assert res.musicbrainz_track_id == "7ba475be-0cdc-4fb2-b508-212d2166e2d0"
     assert res.title == "Hymn for the Weekend"
     assert res.acoustid_id == "c926e139-5fec-45e0-0000-000000000000"
+
+
+def test_text_conditioned_duration_tolerance_and_deluxe_compilation_bonus():
+    """Verify text-conditioned duration bounds and Deluxe/Compilation padding bonus after version check."""
+    engine = WeightedMatchingEngine(ExactSyncProfile())
+
+    # 1. Exact Title + Exact Artist + Compilation ('Greatest Songs') with +4.11s delta -> Hymn for the Weekend
+    src_hymn = EchosyncTrack(
+        raw_title="Hymn for the Weekend",
+        artist_name="Coldplay",
+        album_title="A Head Full of Dreams",
+        duration_ms=258000,
+    )
+    cand_hymn = EchosyncTrack(
+        raw_title="Hymn for the Weekend",
+        artist_name="Coldplay",
+        album_title="Greatest Songs",
+        duration_ms=262110,  # +4.11s
+    )
+    res_hymn = engine.calculate_match(src_hymn, cand_hymn, context="sync")
+    assert res_hymn.confidence_score >= 85.0
+
+    # 2. Exact Title + Exact Artist + Exact Album with +5.47s delta -> Dream On
+    src_dream = EchosyncTrack(
+        raw_title="Dream On",
+        artist_name="Aerosmith",
+        album_title="Aerosmith",
+        duration_ms=267000,
+    )
+    cand_dream = EchosyncTrack(
+        raw_title="Dream On",
+        artist_name="Aerosmith",
+        album_title="Aerosmith",
+        duration_ms=272470,  # +5.47s
+    )
+    res_dream = engine.calculate_match(src_dream, cand_dream, context="sync")
+    assert res_dream.confidence_score >= 85.0
+
+    # 3. True alternate cut (+9.5s) MUST still hard-fail with 0.0%
+    cand_radio = EchosyncTrack(
+        raw_title="Dream On",
+        artist_name="Aerosmith",
+        album_title="Aerosmith",
+        duration_ms=276500,  # +9.5s > 7.0s limit
+    )
+    res_radio = engine.calculate_match(src_dream, cand_radio, context="sync")
+    assert res_radio.confidence_score == 0.0
+
+    # 4. Version mismatch (Remix) MUST still be rejected even with exact title/artist and +4.1s delta
+    cand_remix = EchosyncTrack(
+        raw_title="Hymn for the Weekend (Seeb Remix)",
+        title="Hymn for the Weekend",
+        edition="Seeb Remix",
+        artist_name="Coldplay",
+        album_title="A Head Full of Dreams",
+        duration_ms=262110,
+    )
+    res_remix = engine.calculate_match(src_hymn, cand_remix, context="sync")
+    assert res_remix.passed_version_check is False
+    assert res_remix.confidence_score == 0.0
