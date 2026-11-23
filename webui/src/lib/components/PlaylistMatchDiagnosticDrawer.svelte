@@ -92,29 +92,31 @@
 {#if isOpen}
   <!-- Docked Drawer Panel (fixed width, full height, min-h-0 for proper flex scroll isolation) -->
   <aside
-    class="w-[440px] shrink-0 border-l border-slate-800 bg-slate-900/95 text-slate-100 flex flex-col h-full min-h-0 overflow-hidden shadow-2xl transition-all duration-200"
+    class="w-[420px] shrink-0 border-l border-white/[0.08] bg-[#0d0e12] text-zinc-100 flex flex-col h-full min-h-0 overflow-hidden shadow-2xl transition-all duration-200"
     transition:fly={{ x: 200, duration: 200 }}
     aria-label="Playlist Track Match Diagnostics"
   >
     <!-- Fixed Sidebar Header -->
-    <div class="p-4 border-b border-slate-800 bg-slate-900/95 shrink-0 flex items-start justify-between gap-3 select-none">
+    <div class="px-4 py-3.5 border-b border-white/[0.07] bg-[#0e1014] shrink-0 flex items-start justify-between gap-3 select-none">
       <div class="flex-1 min-w-0">
-        <div class="flex items-center gap-2 mb-1 flex-wrap">
-          <span class="text-xs font-semibold px-2 py-0.5 rounded tracking-wide uppercase bg-slate-800 text-slate-300">
-            MATCH DIAGNOSTICS
+        <div class="flex items-center gap-2 mb-1.5 flex-wrap">
+          <span class="text-[10px] font-semibold tracking-wider uppercase text-zinc-400">
+            Inspector
           </span>
           {#if track}
             {@const libMatchLower = (track.library_match || '').toLowerCase()}
             {@const isFound = track.status === 'found' || (Boolean(track.library_match) && !libMatchLower.includes('not found') && !libMatchLower.includes('missing'))}
-            <span class="text-xs font-bold px-2 py-0.5 rounded border {isFound ? 'text-emerald-400 bg-emerald-950/50 border-emerald-800/50' : 'text-rose-400 bg-rose-950/50 border-rose-800/50'}">
+            <span class="text-zinc-600">•</span>
+            <span class="inline-flex items-center gap-1 text-[11px] font-semibold {isFound ? 'text-emerald-400' : 'text-rose-400'}">
+              <span class="w-1.5 h-1.5 rounded-full {isFound ? 'bg-emerald-400' : 'bg-rose-400'}"></span>
               {isFound ? 'Found' : 'Not Found'}
             </span>
           {/if}
         </div>
-        <h2 class="text-sm font-bold text-white truncate" title={track?.title || 'Unknown Track'}>
+        <h2 class="text-sm font-semibold text-white truncate" title={track?.title || 'Unknown Track'}>
           {track?.title || 'Unknown Track'}
         </h2>
-        <p class="text-xs text-slate-400 truncate" title={track?.artist || 'Unknown Artist'}>
+        <p class="text-xs text-zinc-400 truncate mt-0.5" title={track?.artist || 'Unknown Artist'}>
           {track?.artist || 'Unknown Artist'}
         </p>
       </div>
@@ -122,52 +124,52 @@
       <!-- Close Button -->
       <button
         type="button"
-        class="text-slate-400 hover:text-white p-1.5 rounded-lg hover:bg-slate-800 transition-colors shrink-0"
+        class="text-zinc-400 hover:text-white p-1.5 rounded-lg hover:bg-white/[0.06] transition-colors shrink-0"
         onclick={onClose}
         aria-label="Close Drawer"
       >
-        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
         </svg>
       </button>
     </div>
 
     <!-- Scrollable Candidate Cards Container -->
-    <div class="flex-1 min-h-0 overflow-y-auto p-4 space-y-4 text-xs scrollbar-thin scrollbar-thumb-slate-700">
+    <div class="flex-1 min-h-0 overflow-y-auto p-4 space-y-4 text-xs scrollbar-thin scrollbar-thumb-zinc-700/80 scrollbar-track-transparent">
       <!-- Query Details Card -->
-      <div class="bg-slate-800/50 rounded-xl p-3 border border-slate-700/50 space-y-2">
-        <div class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
+      <div class="bg-[#12141a] rounded-xl p-3.5 border border-white/[0.07] space-y-2.5">
+        <div class="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">
           Query Details
         </div>
-        <div class="grid grid-cols-2 gap-2 text-slate-300">
+        <div class="grid grid-cols-2 gap-2.5 text-zinc-300">
           <div>
-            <span class="text-slate-500 block text-[10px]">Title</span>
-            <span class="font-medium text-white truncate block">{track?.title || '–'}</span>
+            <span class="text-zinc-500 block text-[10px]">Title</span>
+            <span class="font-medium text-zinc-100 truncate block">{track?.title || '–'}</span>
           </div>
           <div>
-            <span class="text-slate-500 block text-[10px]">Artist</span>
-            <span class="font-medium text-white truncate block">{track?.artist || '–'}</span>
+            <span class="text-zinc-500 block text-[10px]">Artist</span>
+            <span class="font-medium text-zinc-100 truncate block">{track?.artist || '–'}</span>
           </div>
           <div>
-            <span class="text-slate-500 block text-[10px]">Expected Duration</span>
-            <span class="font-mono text-white block">
+            <span class="text-zinc-500 block text-[10px]">Expected Duration</span>
+            <span class="font-mono text-zinc-200 block tabular-nums">
               {track?.duration || (track?.duration_ms ? `${(track.duration_ms / 1000).toFixed(1)}s` : '–')}
             </span>
           </div>
           <div>
-            <span class="text-slate-500 block text-[10px]">Album (Source)</span>
-            <span class="font-medium text-white truncate block">{track?.album || '–'}</span>
+            <span class="text-zinc-500 block text-[10px]">Album (Source)</span>
+            <span class="font-medium text-zinc-100 truncate block">{track?.album || '–'}</span>
           </div>
         </div>
       </div>
 
       <!-- Retrieval Status -->
-      <div class="flex items-center justify-between px-1 text-slate-400 text-xs">
-        <span>Database Candidates Located:</span>
+      <div class="flex items-center justify-between px-1 text-zinc-400 text-xs">
+        <span>Database Candidates Located</span>
         {#if loading}
-          <span class="text-slate-400 animate-pulse font-medium">Querying library…</span>
+          <span class="text-cyan-400 animate-pulse font-medium">Querying library…</span>
         {:else if diagnosticData}
-          <span class="font-mono font-bold text-slate-200">
+          <span class="font-mono font-semibold text-zinc-200">
             {diagnosticData.candidates_retrieved_count} candidate{diagnosticData.candidates_retrieved_count === 1 ? '' : 's'}
           </span>
         {:else}
@@ -177,24 +179,24 @@
 
       {#if loading}
         <!-- Loading Skeleton -->
-        <div class="space-y-3 pt-2">
+        <div class="space-y-3 pt-1">
           {#each [1, 2, 3] as _}
-            <div class="bg-slate-800/50 rounded-xl p-3 border border-slate-700/50 animate-pulse space-y-2">
-              <div class="h-4 bg-slate-700/60 rounded w-3/4"></div>
-              <div class="h-3 bg-slate-700/40 rounded w-1/2"></div>
-              <div class="h-8 bg-slate-700/20 rounded"></div>
+            <div class="bg-[#12141a] rounded-xl p-3 border border-white/[0.07] animate-pulse space-y-2">
+              <div class="h-4 bg-white/[0.06] rounded w-3/4"></div>
+              <div class="h-3 bg-white/[0.04] rounded w-1/2"></div>
+              <div class="h-8 bg-white/[0.03] rounded"></div>
             </div>
           {/each}
         </div>
       {:else if error}
-        <div class="p-3 rounded-xl bg-rose-950/50 border border-rose-800/50 text-rose-300">
+        <div class="p-3 rounded-xl bg-rose-950/30 border border-rose-500/30 text-rose-300">
           <div class="font-semibold mb-1">Diagnostic Error</div>
           <div class="text-[11px] text-rose-400">{error}</div>
         </div>
       {:else if diagnosticData}
         {#if diagnosticData.candidates && diagnosticData.candidates.length > 0}
           <div class="space-y-3">
-            <div class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider px-1">
+            <div class="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider px-1">
               Evaluated Candidates ({diagnosticData.candidates.length})
             </div>
 
@@ -202,39 +204,39 @@
               {@const isWinner = diagnosticData.best_match && diagnosticData.best_match.track_sync_id === cand.track_sync_id && cand.accepted}
               {@const isVetoed = !cand.accepted && (cand.duration_delta_sec > 6.0 || (cand.rejection_reason && cand.rejection_reason.includes('Duration Delta > 6.0s')))}
               
-              <div class="bg-slate-800/50 rounded-xl p-3 border transition-all {isWinner ? 'border-emerald-800/50 bg-emerald-950/30' : 'border-slate-700/50'}">
+              <div class="rounded-xl p-3.5 border transition-all {isWinner ? 'border-emerald-500/30 bg-emerald-950/15' : 'bg-[#12141a] border-white/[0.07]'}">
                 <!-- Candidate Header -->
-                <div class="flex items-start justify-between gap-2 mb-2">
+                <div class="flex items-start justify-between gap-2 mb-2.5">
                   <div class="min-w-0 flex-1">
-                    <div class="font-bold text-white text-xs truncate" title={cand.title}>
+                    <div class="font-semibold text-zinc-100 text-xs truncate" title={cand.title}>
                       {cand.title}
                     </div>
-                    <div class="text-slate-400 text-[11px] truncate" title={cand.artist}>
+                    <div class="text-zinc-400 text-[11px] truncate" title={cand.artist}>
                       {cand.artist}
                     </div>
                     {#if cand.album}
-                      <div class="text-slate-500 text-[10px] truncate" title={cand.album}>
-                        💿 {cand.album}
+                      <div class="text-zinc-500 text-[10px] truncate mt-0.5" title={cand.album}>
+                        {cand.album}
                       </div>
                     {/if}
                   </div>
 
                   <!-- Outcome Badge -->
-                  <div>
+                  <div class="shrink-0">
                     {#if isWinner}
-                      <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold text-emerald-400 bg-emerald-950/50 border border-emerald-800/50">
+                      <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold text-emerald-400 bg-emerald-500/10 border border-emerald-500/25">
                         ✓ ACCEPTED
                       </span>
                     {:else if cand.accepted}
-                      <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold text-emerald-400 bg-emerald-950/50 border border-emerald-800/50">
+                      <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold text-emerald-400 bg-emerald-500/10 border border-emerald-500/25">
                         ACCEPTED
                       </span>
                     {:else if isVetoed}
-                      <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold text-amber-400 bg-amber-950/50 border border-amber-800/50">
+                      <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold text-amber-400 bg-amber-500/10 border border-amber-500/25">
                         ⚠ VETOED
                       </span>
                     {:else}
-                      <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold text-rose-400 bg-rose-950/50 border border-rose-800/50">
+                      <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold text-rose-400 bg-rose-500/10 border border-rose-500/25">
                         ✕ REJECTED
                       </span>
                     {/if}
@@ -242,35 +244,35 @@
                 </div>
 
                 <!-- Scores Breakdown Grid -->
-                <div class="grid grid-cols-4 gap-1.5 py-2 px-2 bg-slate-900/60 rounded-lg text-center mb-2 border border-slate-800">
+                <div class="grid grid-cols-4 gap-1.5 py-2 px-2 bg-[#0b0c0f] rounded-lg text-center mb-2.5 border border-white/[0.06]">
                   <div>
-                    <span class="text-[9px] text-slate-500 block uppercase">Title</span>
-                    <span class="font-mono font-semibold text-slate-200">{formatPercent(cand.title_score)}</span>
+                    <span class="text-[9px] text-zinc-500 block uppercase">Title</span>
+                    <span class="font-mono font-semibold text-zinc-200">{formatPercent(cand.title_score)}</span>
                   </div>
                   <div>
-                    <span class="text-[9px] text-slate-500 block uppercase">Artist</span>
-                    <span class="font-mono font-semibold text-slate-200">{formatPercent(cand.artist_score)}</span>
+                    <span class="text-[9px] text-zinc-500 block uppercase">Artist</span>
+                    <span class="font-mono font-semibold text-zinc-200">{formatPercent(cand.artist_score)}</span>
                   </div>
                   <div>
-                    <span class="text-[9px] text-slate-500 block uppercase">Duration</span>
-                    <span class="font-mono font-semibold text-slate-200">{formatPercent(cand.duration_score)}</span>
+                    <span class="text-[9px] text-zinc-500 block uppercase">Duration</span>
+                    <span class="font-mono font-semibold text-zinc-200">{formatPercent(cand.duration_score)}</span>
                   </div>
                   <div>
-                    <span class="text-[9px] text-slate-500 block uppercase">Album</span>
-                    <span class="font-mono font-semibold text-slate-200">{formatPercent(cand.album_score)}</span>
+                    <span class="text-[9px] text-zinc-500 block uppercase">Album</span>
+                    <span class="font-mono font-semibold text-zinc-200">{formatPercent(cand.album_score)}</span>
                   </div>
                 </div>
 
                 <!-- Delta & Penalties Row -->
-                <div class="flex items-center justify-between text-[11px] text-slate-400 mb-2 px-1">
+                <div class="flex items-center justify-between text-[11px] text-zinc-400 mb-2.5 px-0.5">
                   <div>
-                    <span>Δt:</span>
-                    <span class="font-mono {cand.duration_delta_sec > 6.0 ? 'text-amber-400 font-bold' : 'text-slate-300'}">
+                    <span class="text-zinc-500">Δt:</span>
+                    <span class="font-mono {Math.abs(cand.duration_delta_sec) > 3.0 ? 'text-amber-400 font-semibold' : 'text-zinc-300'}">
                       {cand.duration_delta_sec > 0 ? `+${cand.duration_delta_sec}s` : `${cand.duration_delta_sec}s`}
                     </span>
                   </div>
                   <div>
-                    <span>Penalties:</span>
+                    <span class="text-zinc-500">Penalties:</span>
                     {#if cand.penalties && Object.keys(cand.penalties).length > 0}
                       <span class="text-rose-400 font-mono">
                         {Object.entries(cand.penalties).map(([k, v]) => `${k.replace('_penalty', '')}: -${v}`).join(', ')}
@@ -282,16 +284,16 @@
                 </div>
 
                 <!-- Composite Score vs Threshold -->
-                <div class="pt-1 border-t border-slate-700/50">
-                  <div class="flex items-center justify-between text-[11px] mb-1">
-                    <span class="text-slate-400">Composite Score</span>
-                    <span class="font-mono font-bold {cand.accepted ? 'text-emerald-400' : 'text-slate-300'}">
-                      {cand.composite_score.toFixed(1)}% <span class="text-slate-500 font-normal">/ {diagnosticData.winning_threshold}% req</span>
+                <div class="pt-2 border-t border-white/[0.06]">
+                  <div class="flex items-center justify-between text-[11px] mb-1.5">
+                    <span class="text-zinc-400">Composite Score</span>
+                    <span class="font-mono font-semibold {cand.accepted ? 'text-emerald-400' : 'text-zinc-300'}">
+                      {cand.composite_score.toFixed(1)}% <span class="text-zinc-500 font-normal">/ {diagnosticData.winning_threshold}% req</span>
                     </span>
                   </div>
-                  <div class="h-1.5 w-full bg-slate-800 rounded-full overflow-hidden">
+                  <div class="h-1.5 w-full bg-white/[0.06] rounded-full overflow-hidden">
                     <div
-                      class="h-full rounded-full transition-all duration-300 {cand.accepted ? 'bg-emerald-500' : isVetoed ? 'bg-amber-500' : 'bg-slate-600'}"
+                      class="h-full rounded-full transition-all duration-300 {cand.accepted ? 'bg-emerald-400' : isVetoed ? 'bg-amber-400' : 'bg-zinc-600'}"
                       style="width: {Math.min(100, Math.max(0, cand.composite_score))}%"
                     ></div>
                   </div>
@@ -299,7 +301,7 @@
 
                 <!-- Rejection Reason if any -->
                 {#if cand.rejection_reason}
-                  <div class="mt-2 text-[10px] text-rose-400/90 bg-rose-950/40 px-2 py-1 rounded border border-rose-800/50">
+                  <div class="mt-2.5 text-[11px] text-rose-300/90 bg-rose-500/[0.08] px-2.5 py-1.5 rounded-lg border border-rose-500/20">
                     {cand.rejection_reason}
                   </div>
                 {/if}
@@ -308,10 +310,10 @@
           </div>
         {:else}
           <!-- Zero Candidates State -->
-          <div class="bg-slate-800/50 rounded-xl p-4 border border-slate-700/50 text-center space-y-2 py-6">
-            <div class="text-2xl">🔍</div>
-            <div class="font-semibold text-slate-300">No Candidates Located</div>
-            <p class="text-slate-400 text-[11px] max-w-xs mx-auto leading-relaxed">
+          <div class="bg-[#12141a] rounded-xl p-4 border border-white/[0.07] text-center space-y-2 py-6">
+            <div class="text-xl opacity-80">🔍</div>
+            <div class="font-semibold text-zinc-200">No Candidates Located</div>
+            <p class="text-zinc-400 text-[11px] max-w-xs mx-auto leading-relaxed">
               No matching track candidates were found in the library database across Tier 1 (title + artist) and Tier 2 (title + duration) queries.
             </p>
           </div>

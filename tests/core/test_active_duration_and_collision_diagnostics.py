@@ -209,3 +209,79 @@ def test_matching_engine_accepts_remixer_in_source_title_without_remix_word():
     res_orig = engine.calculate_match(source_orig, cand_ibiza, context="sync")
     assert res_orig.passed_version_check is False
     assert res_orig.confidence_score == 0.0
+
+
+def test_acoustid_penalizes_unrequested_instrumental_candidate():
+    """Stage 3 AcoustID must penalize '(instrumental)' when baseline title/filename is the normal vocal track."""
+    from unittest.mock import MagicMock
+
+    from core.metadata.engine import MetadataResolutionEngine
+    from core.metadata.schemas import ResolutionRequest
+
+    acoustid_mock = MagicMock()
+    acoustid_mock.resolve_fingerprint_details.return_value = {
+        "acoustid_id": "c926e139-5fec-45e0-0000-000000000000",
+        "score": 0.99,
+        "recordings": [
+            {
+                "id": "0c1d99da-5311-40b8-9f99-7989859c9650",
+                "title": "Hymn for the Weekend (instrumental)",
+                "artist": "Coldplay",
+                "duration": 262.0,
+                "score": 0.99,
+            },
+            {
+                "id": "7ba475be-0cdc-4fb2-b508-212d2166e2d0",
+                "title": "Hymn for the Weekend",
+                "artist": "Coldplay",
+                "duration": 259.0,
+                "score": 0.98,
+            },
+        ],
+        "mbids": [
+            "0c1d99da-5311-40b8-9f99-7989859c9650",
+            "7ba475be-0cdc-4fb2-b508-212d2166e2d0",
+        ],
+    }
+
+    mb_mock = MagicMock()
+    mb_mock.get_metadata.side_effect = lambda mbid: {
+        "0c1d99da-5311-40b8-9f99-7989859c9650": {
+            "id": "0c1d99da-5311-40b8-9f99-7989859c9650",
+            "title": "Hymn for the Weekend (instrumental)",
+            "artist": "Coldplay",
+            "album": "A Head Full of Dreams (listening instrumental version)",
+            "length": 262000,
+            "release_group": {"primary_type": "Album"},
+            "release_group_count": 10,
+        },
+        "7ba475be-0cdc-4fb2-b508-212d2166e2d0": {
+            "id": "7ba475be-0cdc-4fb2-b508-212d2166e2d0",
+            "title": "Hymn for the Weekend",
+            "artist": "Coldplay",
+            "album": "A Head Full of Dreams",
+            "length": 259000,
+            "release_group": {"primary_type": "Album"},
+            "release_group_count": 10,
+        },
+    }[mbid]
+
+    engine = MetadataResolutionEngine(acoustid_provider=acoustid_mock, metadata_provider=mb_mock)
+    req = ResolutionRequest(
+        media_id="1048",
+        file_path=Path("Hymn for the Weekend.flac"),
+        baseline_title="Hymn for the Weekend",
+        baseline_artist="Coldplay",
+        baseline_album="A Head Full of Dreams",
+        chromaprint="AQADtMmyJJGSJ",
+        duration=262.377,
+        duration_ms=262377,
+        ignore_embedded_mbid=True,
+        ignore_cache=True,
+        force_mode=True,
+    )
+    res = engine.resolve_track(req, enabled_stages=["acoustid"])
+    assert res is not None
+    assert res.musicbrainz_track_id == "7ba475be-0cdc-4fb2-b508-212d2166e2d0"
+    assert res.title == "Hymn for the Weekend"
+    assert res.acoustid_id == "c926e139-5fec-45e0-0000-000000000000"

@@ -1651,10 +1651,28 @@ def stream_review_queue_item(task_id: int):
         logger.error(f"Failed to stream review task {task_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to stream review file")
 
+    import mimetypes
+
+    _audio_mimes = {
+        ".mp3": "audio/mpeg",
+        ".flac": "audio/flac",
+        ".m4a": "audio/mp4",
+        ".mp4": "audio/mp4",
+        ".aac": "audio/aac",
+        ".ogg": "audio/ogg",
+        ".opus": "audio/opus",
+        ".wav": "audio/wav",
+        ".webm": "audio/webm",
+    }
+    ext = file_path.suffix.lower()
+    media_type = _audio_mimes.get(ext) or mimetypes.guess_type(str(file_path))[0] or "audio/flac"
+
     return FileResponse(
         path=str(file_path),
-        media_type="audio/mpeg" if file_path.suffix.lower() == ".mp3" else "audio/flac",
+        media_type=media_type,
         filename=file_path.name,
+        content_disposition_type="inline",
+        headers={"Accept-Ranges": "bytes"},
     )
 
 
@@ -1882,7 +1900,7 @@ def lookup_review_queue_item_acoustid(task_id: int, _=Depends(require_auth)):
 
             # Match found
             updates: dict[str, Any] = {
-                "edition": res.edition,
+                "edition": res.edition or res.version,
                 "identifiers": {**(track_obj.identifiers or {}), "source": "acoustid_lookup"},
             }
             if res.acoustid_id:
@@ -2283,8 +2301,10 @@ def simulate_review_pipeline(task_id: int, _=Depends(require_auth)):
                 baseline_album=baseline_album,
                 baseline_isrc=baseline_isrc,
                 chromaprint=chromaprint,
+                duration=duration_sec,
                 duration_ms=duration_ms,
                 prefer_studio_album=prefer_studio,
+                ignore_embedded_mbid=True,
                 ignore_cache=True,
                 force_mode=True,
                 force_recheck=True,
@@ -2298,9 +2318,14 @@ def simulate_review_pipeline(task_id: int, _=Depends(require_auth)):
                 "title": result.title or result.raw_title,
                 "artist": result.artist_name or result.artist,
                 "album": result.album_title or result.album,
-                "edition": result.edition,
+                "edition": result.edition or result.version,
+                "version": result.version,
                 "year": result.release_year,
+                "track_number": result.track_number,
+                "disc_number": result.disc_number,
                 "musicbrainz_id": result.musicbrainz_id,
+                "acoustid_id": result.acoustid_id,
+                "acoustid": result.acoustid_id,
                 "isrc": result.isrc,
                 "confidence_score": result.confidence_score,
                 "duration_ms": duration_ms or None,

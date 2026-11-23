@@ -2372,6 +2372,11 @@ class MetadataResolutionEngine:
                         duration_ms=file_duration_ms if file_duration_ms > 0 else None,
                     )
                     cand_ver = cand_meta.get("disambiguation") or cand_meta.get("version")
+                    if not cand_ver and c_title:
+                        from core.matching_engine.track_parser import extract_version_descriptors
+
+                        _, _ext_v, _ext_e = extract_version_descriptors(c_title)
+                        cand_ver = _ext_v or _ext_e
                     cand_track = EchosyncTrack(
                         raw_title=c_title,
                         title=c_title,
@@ -2379,6 +2384,7 @@ class MetadataResolutionEngine:
                         album_title=c_album,
                         duration_ms=cand_dur_ms,
                         version=cand_ver,
+                        edition=cand_ver,
                     )
                     dynamic_base, dynamic_limit = compute_dynamic_duration_bounds(cand_acoustid_score or 0.0)
                     match_res = self.matcher.calculate_match(
@@ -2502,13 +2508,26 @@ class MetadataResolutionEngine:
                 else:
                     cover_penalty = 0.0
 
-                # Remix Disambiguation Gate:
-                # If candidate has disambiguation containing version keywords ("mix", "remix", "country mix", "acoustic", "edit")
-                # or release_group secondary type is Remix, while baseline title is clean:
-                # Deduct 25.0 points from cand_score.
+                # Variant / Remix / Instrumental Disambiguation Gate:
+                # If candidate title, disambiguation, or album indicates a non-original variant
+                # (remix, instrumental, karaoke, acapella, acoustic, live, demo, 5.1 mix, etc.)
+                # while baseline title / filename is clean, deduct 25.0 points from cand_score.
                 base_clean_for_remix = (baseline_title or filename_stem or "").lower()
+                _variant_cues = (
+                    "mix",
+                    "remix",
+                    "country mix",
+                    "acoustic",
+                    "edit",
+                    "live",
+                    "instrumental",
+                    "karaoke",
+                    "acapella",
+                    "a cappella",
+                    "demo",
+                )
                 baseline_has_remix_cue = any(
-                    k in base_clean_for_remix for k in ("mix", "remix", "country mix", "acoustic", "edit", "live")
+                    re.search(rf"\b{re.escape(k)}\b", base_clean_for_remix) for k in _variant_cues
                 )
                 c_disambig = str(cand_meta.get("disambiguation") or cand_meta.get("version") or "").lower()
                 rg_sec_types = [
@@ -2519,9 +2538,26 @@ class MetadataResolutionEngine:
                         or ([release_group.get("secondary_type")] if release_group.get("secondary_type") else [])
                     )
                 ]
-                c_is_remix_variant = any(
-                    k in c_disambig for k in ("mix", "remix", "country mix", "acoustic", "edit")
-                ) or any(k in rg_sec_types for k in ("remix", "dj-mix"))
+                _strict_title_variants = (
+                    "instrumental",
+                    "karaoke",
+                    "acapella",
+                    "a cappella",
+                    "remix",
+                    "acoustic",
+                    "live",
+                    "demo",
+                    "5.1 mix",
+                    "club mix",
+                    "radio edit",
+                )
+                _album_only_variants = ("instrumental", "karaoke", "acapella", "a cappella")
+                c_is_remix_variant = (
+                    any(k in c_disambig for k in _variant_cues)
+                    or any(re.search(rf"\b{re.escape(k)}\b", c_title_lower) for k in _strict_title_variants)
+                    or any(re.search(rf"\b{re.escape(k)}\b", album_str) for k in _album_only_variants)
+                    or any(k in rg_sec_types for k in ("remix", "dj-mix", "live"))
+                )
 
                 remix_penalty = -25.0 if (c_is_remix_variant and not baseline_has_remix_cue) else 0.0
 

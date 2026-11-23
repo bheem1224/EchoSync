@@ -1694,7 +1694,7 @@
         >
           Track Preview
         </p>
-        <audio controls src={streamUrl} class="w-full h-8">
+        <audio controls preload="metadata" src={streamUrl} class="w-full h-8">
           Your browser does not support audio playback.
         </audio>
       </div>

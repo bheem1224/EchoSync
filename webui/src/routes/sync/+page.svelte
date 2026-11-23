@@ -52,6 +52,37 @@
   // Matching diagnostics drawer state
   let selectedTrackForDiagnostics = null;
   let isDiagnosticsDrawerOpen = false;
+  let analysisFilter = "all"; // 'all' | 'found' | 'missing'
+  let analysisSearchQuery = "";
+
+  function isTrackFound(track) {
+    if (!track) return false;
+    if (track.status === "found") return true;
+    const lm = (track.library_match || "").toLowerCase();
+    return Boolean(lm) && !lm.includes("not found") && !lm.includes("missing") && !lm.includes("checking");
+  }
+
+  $: analysisAllTracks = analysisResult?.tracks || [];
+  $: analysisFoundCount =
+    analysisResult?.summary?.found_in_library ??
+    analysisAllTracks.filter((t) => isTrackFound(t)).length;
+  $: analysisMissingCount =
+    analysisResult?.summary?.missing_tracks ??
+    analysisAllTracks.filter((t) => !isTrackFound(t)).length;
+  $: filteredAnalysisTracks = analysisAllTracks
+    .map((track, originalIndex) => ({ track, originalIndex }))
+    .filter(({ track }) => {
+      if (analysisFilter === "found" && !isTrackFound(track)) return false;
+      if (analysisFilter === "missing" && isTrackFound(track)) return false;
+      const q = analysisSearchQuery.trim().toLowerCase();
+      if (q) {
+        const title = (track.title || "").toLowerCase();
+        const artist = (track.artist || "").toLowerCase();
+        const album = (track.album || "").toLowerCase();
+        if (!title.includes(q) && !artist.includes(q) && !album.includes(q)) return false;
+      }
+      return true;
+    });
 
   // Scheduled syncs state
   let scheduledSyncs = [];
@@ -960,277 +991,330 @@
 
 {#if analysisModalOpen}
   <div
-    class="fixed inset-0 z-50 flex items-center justify-center p-6 bg-black/75 backdrop-blur-sm"
+    class="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-black/80 backdrop-blur-md"
     on:click={closeAnalysisModal}
     role="dialog"
     aria-modal="true"
   >
     <div
-      class="border rounded-2xl shadow-2xl flex flex-col h-[85vh] max-h-[85vh] overflow-hidden transition-all duration-200 {isDiagnosticsDrawerOpen ? 'w-full max-w-7xl' : 'w-full max-w-5xl'}"
-      style="background-color: var(--bg-surface, #0f172a); border-color: var(--border-subtle);"
+      class="bg-[#0b0c0f] border border-white/[0.08] rounded-2xl shadow-2xl flex flex-col h-[88vh] max-h-[88vh] overflow-hidden transition-all duration-200 {isDiagnosticsDrawerOpen ? 'w-full max-w-[1400px]' : 'w-full max-w-6xl'}"
       on:click|stopPropagation
     >
-      <div
-        class="p-6 border-b shrink-0 flex items-center justify-between"
-        style="border-color: var(--border-subtle);"
-      >
-        <div>
-          <p class="eyebrow">Playlist Sync</p>
-          <h2 class="text-xl font-bold text-white">
-            {syncProgressEvent ? "Sync" : "Analysis"}
-          </h2>
-          <p class="sub">
-            {syncProgressEvent
-              ? `Syncing tracks to ${getPluginName(targetProvider)}...`
-              : `Source: ${getPluginName(analysisResult?.source || sourceProvider)} → Target: ${getPluginName(analysisResult?.target || targetProvider)}`}
-          </p>
-          {#if !syncProgressEvent && availableTargetAccounts.length > 0}
-            <div class="target-account-selector my-2 flex items-center gap-2 relative">
-              <span class="text-xs text-muted">Syncing to Profile:</span>
-              <div class="relative">
-                <button
-                  type="button"
-                  class="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors"
-                  style="background-color: var(--bg-input, #0b0f1a); border-color: var(--border-subtle); color: var(--text-primary);"
-                  on:click={() => (targetProfileMenuOpen = !targetProfileMenuOpen)}
-                >
-                  <span>{selectedTargetProfileLabel}</span>
-                  <svg class="w-3.5 h-3.5 opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
-                  </svg>
-                </button>
+      <!-- Row 1: Pinned Top Header Bar -->
+      <div class="px-5 py-3 bg-[#0e1014] border-b border-white/[0.07] shrink-0 flex items-center justify-between gap-4">
+        <div class="flex items-center gap-2.5 min-w-0">
+          <div class="w-7 h-7 rounded-lg bg-white/[0.05] border border-white/[0.08] flex items-center justify-center text-cyan-400 shrink-0">
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
+            </svg>
+          </div>
+          <span class="text-sm font-semibold text-zinc-100 tracking-tight">Playlist Sync</span>
+          <span class="text-zinc-600 text-sm">/</span>
+          <span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md bg-white/[0.04] border border-white/[0.08] text-xs font-medium text-zinc-300 truncate">
+            {#if syncProgressEvent}
+              Syncing to {getPluginName(targetProvider)}
+            {:else}
+              <span>{getPluginName(analysisResult?.source || sourceProvider)}</span>
+              <span class="text-cyan-400">→</span>
+              <span>{getPluginName(analysisResult?.target || targetProvider)}</span>
+            {/if}
+          </span>
+        </div>
 
-                {#if targetProfileMenuOpen}
-                  <div
-                    class="absolute left-0 mt-1.5 w-64 rounded-xl border shadow-2xl z-50 py-1.5 max-h-64 overflow-y-auto"
-                    style="background-color: var(--bg-surface-elevated, #1e293b); border-color: var(--border-subtle);"
-                  >
-                    {#if myTargetProfiles.length > 0 || familyTargetProfiles.length > 0}
-                      {#if myTargetProfiles.length > 0}
-                        <div class="px-3 py-1 text-[10px] font-bold uppercase tracking-wider" style="color: var(--color-primary);">
-                          My Profiles
-                        </div>
-                        {#each myTargetProfiles as acc}
-                          <button
-                            type="button"
-                            class="w-full text-left px-3 py-1.5 text-xs flex items-center justify-between hover:bg-white/10 transition-colors"
-                            style="color: var(--text-primary);"
-                            on:click={() => {
-                              overrideTargetUserId = acc.external_account_id;
-                              targetProfileMenuOpen = false;
-                            }}
-                          >
-                            <span>{acc.display_name || acc.username}</span>
-                            <span class="text-[10px] uppercase opacity-60">{acc.provider}</span>
-                          </button>
-                        {/each}
-                      {/if}
-                      {#if familyTargetProfiles.length > 0}
-                        <div class="px-3 py-1 mt-1 text-[10px] font-bold uppercase tracking-wider border-t" style="color: var(--text-muted); border-color: var(--border-subtle);">
-                          Family Profiles
-                        </div>
-                        {#each familyTargetProfiles as acc}
-                          <button
-                            type="button"
-                            class="w-full text-left px-3 py-1.5 text-xs flex items-center justify-between hover:bg-white/10 transition-colors"
-                            style="color: var(--text-primary);"
-                            on:click={() => {
-                              overrideTargetUserId = acc.external_account_id;
-                              targetProfileMenuOpen = false;
-                            }}
-                          >
-                            <span>{acc.username} — {acc.display_name || acc.external_account_id}</span>
-                            <span class="text-[10px] uppercase opacity-60">{acc.provider}</span>
-                          </button>
-                        {/each}
-                      {/if}
-                    {:else}
-                      {#each availableTargetAccounts as acc}
-                        {@const val = acc.user_id || acc.id}
+        <div class="flex items-center gap-2.5 shrink-0">
+          {#if !syncProgressEvent && availableTargetAccounts.length > 0}
+            <div class="relative">
+              <button
+                type="button"
+                class="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium bg-[#14161b] hover:bg-[#1a1d24] border border-white/[0.09] text-zinc-200 transition-colors"
+                on:click={() => (targetProfileMenuOpen = !targetProfileMenuOpen)}
+                title="Target profile"
+              >
+                <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                <span>{selectedTargetProfileLabel}</span>
+                <svg class="w-3.5 h-3.5 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
+
+              {#if targetProfileMenuOpen}
+                <div
+                  class="absolute right-0 mt-1.5 w-64 rounded-xl border border-white/[0.1] bg-[#14161c] shadow-2xl z-50 py-1.5 max-h-64 overflow-y-auto"
+                >
+                  {#if myTargetProfiles.length > 0 || familyTargetProfiles.length > 0}
+                    {#if myTargetProfiles.length > 0}
+                      <div class="px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-cyan-400">
+                        My Profiles
+                      </div>
+                      {#each myTargetProfiles as acc}
                         <button
                           type="button"
-                          class="w-full text-left px-3 py-1.5 text-xs flex items-center justify-between hover:bg-white/10 transition-colors"
-                          style="color: var(--text-primary);"
+                          class="w-full text-left px-3 py-1.5 text-xs text-zinc-200 flex items-center justify-between hover:bg-white/[0.06] transition-colors"
                           on:click={() => {
-                            overrideTargetUserId = val;
+                            overrideTargetUserId = acc.external_account_id;
                             targetProfileMenuOpen = false;
                           }}
                         >
-                          <span>{acc.display_name || acc.account_name || acc.username || acc.name}</span>
-                          {#if acc.is_admin}
-                            <span class="text-[10px] font-bold uppercase" style="color: var(--color-primary);">Admin</span>
-                          {/if}
+                          <span>{acc.display_name || acc.username}</span>
+                          <span class="text-[10px] uppercase text-zinc-500">{acc.provider}</span>
                         </button>
                       {/each}
                     {/if}
-                  </div>
-                {/if}
-              </div>
+                    {#if familyTargetProfiles.length > 0}
+                      <div class="px-3 py-1 mt-1 text-[10px] font-bold uppercase tracking-wider border-t border-white/[0.07] text-zinc-400">
+                        Family Profiles
+                      </div>
+                      {#each familyTargetProfiles as acc}
+                        <button
+                          type="button"
+                          class="w-full text-left px-3 py-1.5 text-xs text-zinc-200 flex items-center justify-between hover:bg-white/[0.06] transition-colors"
+                          on:click={() => {
+                            overrideTargetUserId = acc.external_account_id;
+                            targetProfileMenuOpen = false;
+                          }}
+                        >
+                          <span>{acc.username} — {acc.display_name || acc.external_account_id}</span>
+                          <span class="text-[10px] uppercase text-zinc-500">{acc.provider}</span>
+                        </button>
+                      {/each}
+                    {/if}
+                  {:else}
+                    {#each availableTargetAccounts as acc}
+                      {@const val = acc.user_id || acc.id}
+                      <button
+                        type="button"
+                        class="w-full text-left px-3 py-1.5 text-xs text-zinc-200 flex items-center justify-between hover:bg-white/[0.06] transition-colors"
+                        on:click={() => {
+                          overrideTargetUserId = val;
+                          targetProfileMenuOpen = false;
+                        }}
+                      >
+                        <span>{acc.display_name || acc.account_name || acc.username || acc.name}</span>
+                        {#if acc.is_admin}
+                          <span class="text-[10px] font-bold uppercase text-cyan-400">Admin</span>
+                        {/if}
+                      </button>
+                    {/each}
+                  {/if}
+                </div>
+              {/if}
             </div>
           {/if}
+
+          <div class="h-4 w-px bg-white/[0.08]"></div>
+          <button
+            type="button"
+            class="p-1.5 rounded-lg text-zinc-400 hover:text-zinc-100 hover:bg-white/[0.06] transition-colors"
+            on:click={closeAnalysisModal}
+            aria-label="Close Modal"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
         </div>
-        <button
-          class="close-btn active:scale-95 transition-all duration-200"
-          on:click={closeAnalysisModal}>×</button
-        >
       </div>
 
-      <div class="flex-1 min-h-0 flex flex-row overflow-hidden">
-        <div
-          class="flex-1 min-h-0 overflow-y-auto p-6 scrollbar-thin scrollbar-thumb-slate-700"
-        >
-          {#if !syncProgressEvent}
-            <!-- Analysis Section -->
-            <div class="summary-grid">
-              <div class="summary-card">
-                <div class="label">Total Tracks</div>
-                <div class="value">
-                  {analysisResult?.summary?.total_tracks ?? "–"}
-                </div>
-              </div>
-              <div class="summary-card">
-                <div class="label">Found in Library</div>
-                <div class="value">
-                  {analysisResult?.summary?.found_in_library ?? "–"}
-                </div>
-              </div>
-              <div class="summary-card">
-                <div class="label">Missing</div>
-                <div class="value highlight">
-                  {analysisResult?.summary?.missing_tracks ?? "–"}
-                </div>
-              </div>
-              <div class="summary-card">
-                <div class="label">Downloaded</div>
-                <div class="value">
-                  {analysisResult?.summary?.downloaded ?? 0}
-                </div>
-              </div>
+      {#if !syncProgressEvent}
+        <!-- Row 2: Pinned Stats, Quality Profile & Primary Actions Bar (Never Scrolls Away) -->
+        <div class="px-5 py-2.5 bg-[#0d0f13] border-b border-white/[0.07] shrink-0 flex flex-wrap items-center justify-between gap-3">
+          <div class="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs">
+            <div class="flex items-center gap-1.5">
+              <span class="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">Total</span>
+              <span class="font-mono font-semibold text-zinc-100">{analysisResult?.summary?.total_tracks ?? analysisAllTracks.length ?? "–"}</span>
             </div>
+            <span class="text-zinc-700">•</span>
+            <div class="flex items-center gap-1.5">
+              <span class="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">Matched</span>
+              <span class="font-mono font-semibold text-emerald-400">{analysisFoundCount}</span>
+            </div>
+            <span class="text-zinc-700">•</span>
+            <div class="flex items-center gap-1.5">
+              <span class="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">Missing</span>
+              <span class="font-mono font-semibold text-rose-400">{analysisMissingCount}</span>
+            </div>
+            <span class="text-zinc-700 hidden sm:inline">•</span>
+            <div class="flex items-center gap-2 min-w-[180px]">
+              <span class="text-[11px] text-zinc-500 whitespace-nowrap">Profile:</span>
+              <Select
+                compact={true}
+                ariaLabel="Target Quality for Missing Tracks"
+                bind:value={selectedQuality}
+                options={qualityProfiles.length === 0
+                  ? [{ value: "", label: "No profiles configured" }]
+                  : qualityProfiles.map((profile) => ({
+                      value: profile.name,
+                      label: profile.name,
+                    }))}
+              />
+            </div>
+          </div>
 
-            <div class="controls-row">
-              <div class="control">
-                <label>Target Quality for Missing Tracks</label>
-                <Select
-                  ariaLabel="Target Quality for Missing Tracks"
-                  bind:value={selectedQuality}
-                  options={qualityProfiles.length === 0
-                    ? [{ value: "", label: "No profiles configured" }]
-                    : qualityProfiles.map((profile) => ({
-                        value: profile.name,
-                        label: profile.name,
-                      }))}
-                />
-                <p class="muted text-xs mt-1">
-                  Applies only to newly downloaded missing tracks — does not
-                  change existing files in your library.
-                </p>
+          <div class="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-zinc-300 hover:text-white bg-white/[0.03] hover:bg-white/[0.07] border border-white/[0.08] transition-colors disabled:opacity-40"
+              on:click={runAnalysis}
+              disabled={analysisLoading}
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 {analysisLoading ? 'animate-spin' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+              <span>{analysisLoading ? "Analyzing…" : analysisStarted ? "Re-analyze" : "Begin Analysis"}</span>
+            </button>
+
+            <button
+              type="button"
+              class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-zinc-200 hover:text-white bg-[#14161b] hover:bg-[#1c1f26] border border-white/[0.1] transition-colors disabled:opacity-40"
+              on:click={downloadMissingTracks}
+              disabled={!analysisResult || downloadingMissing || analysisMissingCount === 0}
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 text-cyan-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+              </svg>
+              <span>{downloadingMissing ? "Starting…" : `Download Missing (${analysisMissingCount})`}</span>
+            </button>
+
+            <button
+              type="button"
+              class="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-cyan-500 hover:bg-cyan-400 text-zinc-950 transition-colors disabled:opacity-40 shadow-sm"
+              on:click={confirmSync}
+              disabled={!overrideTargetUserId ||
+                !(
+                  (analysisResult?.summary?.matched_pairs?.length ?? 0) > 0 ||
+                  analysisFoundCount > 0 ||
+                  (analysisResult?.tracks?.some((t) => t.matched_track_id) ?? false)
+                )}
+            >
+              <span>Sync to {getPluginName(analysisResult?.target || targetProvider) || "Target"}</span>
+              <span class="px-1.5 py-0.5 rounded bg-zinc-950/20 font-mono text-[11px]">{analysisFoundCount}</span>
+            </button>
+          </div>
+        </div>
+      {/if}
+
+      <!-- Main Dual-Pane Workspace (Independently Scrollable Track Table + Docked Diagnostics Drawer) -->
+      <div class="flex-1 min-h-0 flex flex-row overflow-hidden">
+        {#if !syncProgressEvent}
+          <!-- Left Pane: Filter Bar + Sticky Table Header + Scrollable Rows -->
+          <div class="flex-1 min-h-0 flex flex-col overflow-hidden bg-[#0b0c0f]">
+            <!-- Row 3: Pinned Filter & Search Bar -->
+            <div class="px-5 py-2 bg-[#0c0d11] border-b border-white/[0.06] shrink-0 flex flex-wrap items-center justify-between gap-3">
+              <div class="flex items-center gap-2">
+                <span class="text-[11px] text-zinc-500 font-medium">Filter:</span>
+                <div class="inline-flex items-center p-0.5 rounded-lg bg-[#13151a] border border-white/[0.07]">
+                  <button
+                    type="button"
+                    class="px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors {analysisFilter === 'all' ? 'bg-white/[0.1] text-white' : 'text-zinc-400 hover:text-zinc-200'}"
+                    on:click={() => (analysisFilter = "all")}
+                  >
+                    All ({analysisAllTracks.length})
+                  </button>
+                  <button
+                    type="button"
+                    class="px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors {analysisFilter === 'found' ? 'bg-emerald-500/15 text-emerald-300' : 'text-zinc-400 hover:text-zinc-200'}"
+                    on:click={() => (analysisFilter = "found")}
+                  >
+                    Found ({analysisFoundCount})
+                  </button>
+                  <button
+                    type="button"
+                    class="px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors {analysisFilter === 'missing' ? 'bg-rose-500/15 text-rose-300' : 'text-zinc-400 hover:text-zinc-200'}"
+                    on:click={() => (analysisFilter = "missing")}
+                  >
+                    Missing ({analysisMissingCount})
+                  </button>
+                </div>
               </div>
-              <div class="control buttons">
-                <button
-                  class="btn active:scale-95 transition-all duration-200"
-                  on:click={runAnalysis}
-                  disabled={analysisLoading}
-                >
-                  {analysisLoading
-                    ? "Analyzing…"
-                    : analysisStarted
-                      ? "Re-run Analysis"
-                      : "Begin Analysis"}
-                </button>
-                <button
-                  class="btn btn--accent active:scale-95 transition-all duration-200"
-                  on:click={confirmSync}
-                  disabled={!overrideTargetUserId ||
-                    !(
-                      (analysisResult?.summary?.matched_pairs?.length ?? 0) >
-                        0 ||
-                      (analysisResult?.summary?.found_in_library ?? 0) > 0 ||
-                      (analysisResult?.tracks?.some(
-                        (t) => t.matched_track_id,
-                      ) ??
-                        false)
-                    )}
-                >
-                  ⇄ Sync
-                </button>
-                <button
-                  class="btn btn--primary active:scale-95 transition-all duration-200"
-                  on:click={downloadMissingTracks}
-                  disabled={!analysisResult ||
-                    downloadingMissing ||
-                    (analysisResult?.summary?.missing_tracks ?? 0) === 0}
-                >
-                  {downloadingMissing ? "Starting…" : "Download Missing Tracks"}
-                </button>
+
+              <div class="flex items-center gap-3">
+                <div class="relative">
+                  <input
+                    type="text"
+                    bind:value={analysisSearchQuery}
+                    placeholder="Filter tracks or artists…"
+                    class="w-48 sm:w-56 pl-7 pr-2.5 py-1 rounded-lg text-xs bg-[#13151a] border border-white/[0.08] text-zinc-200 placeholder:text-zinc-500 focus:outline-none focus:border-cyan-500/50 transition-colors"
+                  />
+                  <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 text-zinc-500 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                  </svg>
+                </div>
+                <span class="text-[11px] text-zinc-500 hidden lg:inline">Select row to inspect matching</span>
               </div>
             </div>
 
             {#if analysisError}
-              <p class="error-msg">{analysisError}</p>
+              <div class="mx-5 mt-3 px-3 py-2 rounded-lg bg-rose-950/40 border border-rose-500/30 text-xs text-rose-300 shrink-0">
+                {analysisError}
+              </div>
             {/if}
 
-            <div class="tracks-table-wrapper">
-              <div class="tracks-table">
-                <div class="table-header">
-                  <span>#</span>
-                  <span>Track</span>
-                  <span>Artist</span>
-                  <span>Duration</span>
-                  <span>Match Quality</span>
-                  <span>Download Status</span>
+            <!-- Pinned Table Column Header -->
+            <div class="grid grid-cols-[44px_minmax(0,1.4fr)_minmax(0,1fr)_72px_118px_90px] items-center gap-3 px-5 py-2 bg-[#0c0d11] border-b border-white/[0.06] text-[11px] font-medium text-zinc-500 shrink-0 select-none">
+              <span class="text-right pr-1">#</span>
+              <span>Track</span>
+              <span>Artist</span>
+              <span class="text-right">Duration</span>
+              <span>Status</span>
+              <span class="text-right">Download</span>
+            </div>
+
+            <!-- Independently Scrollable Track Rows -->
+            <div class="flex-1 min-h-0 overflow-y-auto scrollbar-thin scrollbar-thumb-zinc-700/80 scrollbar-track-transparent">
+              {#if analysisLoading}
+                <div class="py-16 text-center text-xs text-zinc-400">
+                  Analyzing playlist tracks against local library…
                 </div>
-                {#if analysisLoading}
-                  <div class="table-row muted">Analyzing tracks…</div>
-                {:else if analysisResult?.tracks?.length}
-                  {#each analysisResult.tracks as track, idx}
-                    <div
-                      class="table-row interactive {selectedTrackForDiagnostics ===
-                        track && isDiagnosticsDrawerOpen
-                        ? 'selected'
-                        : ''}"
+              {:else if filteredAnalysisTracks.length > 0}
+                <div class="divide-y divide-white/[0.04]">
+                  {#each filteredAnalysisTracks as { track, originalIndex }}
+                    {@const found = isTrackFound(track)}
+                    {@const selected = selectedTrackForDiagnostics === track && isDiagnosticsDrawerOpen}
+                    <button
+                      type="button"
+                      class="w-full grid grid-cols-[44px_minmax(0,1.4fr)_minmax(0,1fr)_72px_118px_90px] items-center gap-3 px-5 py-2.5 text-left text-xs transition-colors {selected ? 'bg-white/[0.06] ring-1 ring-inset ring-cyan-500/30' : 'hover:bg-white/[0.025]'}"
                       on:click={() => {
                         selectedTrackForDiagnostics = track;
                         isDiagnosticsDrawerOpen = true;
                       }}
-                      role="button"
-                      tabindex="0"
-                      on:keydown={(e) => {
-                        if (e.key === "Enter" || e.key === " ") {
-                          e.preventDefault();
-                          selectedTrackForDiagnostics = track;
-                          isDiagnosticsDrawerOpen = true;
-                        }
-                      }}
                     >
-                      <span>{idx + 1}</span>
-                      <span title={track.title}>{track.title}</span>
-                      <span title={track.artist}>{track.artist}</span>
-                      <span>{track.duration || "–"}</span>
-                      <span
-                        class="match-badge {track.library_match?.includes(
-                          'score',
-                        )
-                          ? 'partial'
-                          : track.library_match === 'Found'
-                            ? 'found'
-                            : track.library_match?.includes('fuzzy')
-                              ? 'fuzzy'
-                              : 'missing'}"
-                        >{track.library_match ?? "Checking…"}</span
-                      >
-                      <span>{track.download_status ?? "-"}</span>
-                    </div>
+                      <span class="font-mono text-[11px] text-zinc-500 text-right pr-1 tabular-nums">
+                        {String(originalIndex + 1).padStart(2, "0")}
+                      </span>
+                      <div class="min-w-0">
+                        <div class="font-medium text-zinc-100 truncate" title={track.title}>{track.title}</div>
+                        {#if track.album}
+                          <div class="text-[11px] text-zinc-500 truncate" title={track.album}>{track.album}</div>
+                        {/if}
+                      </div>
+                      <span class="text-zinc-400 truncate" title={track.artist}>{track.artist}</span>
+                      <span class="font-mono text-[11px] text-zinc-400 text-right tabular-nums">{track.duration || "–"}</span>
+                      <span class="inline-flex items-center gap-1.5 text-[11px] font-medium truncate {found ? 'text-emerald-400' : 'text-rose-400'}">
+                        <span class="w-1.5 h-1.5 rounded-full shrink-0 {found ? 'bg-emerald-400' : 'bg-rose-400'}"></span>
+                        <span class="truncate">{track.library_match || (found ? "Found" : "Missing")}</span>
+                      </span>
+                      <span class="text-[11px] text-zinc-500 text-right truncate">{track.download_status || "–"}</span>
+                    </button>
                   {/each}
-                {:else}
-                  <div class="table-row muted">
-                    No track details available yet.
-                  </div>
-                {/if}
-              </div>
+                </div>
+              {:else}
+                <div class="py-16 text-center text-xs text-zinc-500">
+                  {analysisAllTracks.length > 0
+                    ? "No tracks match the current filter."
+                    : "No track details available yet."}
+                </div>
+              {/if}
             </div>
-          {:else}
-            <!-- Sync Progress Section -->
+
+            <!-- Pinned Footer Status Strip -->
+            <div class="px-5 py-2 bg-[#0e1014] border-t border-white/[0.06] shrink-0 flex items-center justify-between text-[11px] text-zinc-500">
+              <span>Target quality applies only to newly downloaded missing tracks.</span>
+              <span class="hidden sm:inline">AcoustID &amp; duration validation active</span>
+            </div>
+          </div>
+        {:else}
+          <!-- Sync Progress Section -->
+          <div class="flex-1 min-h-0 overflow-y-auto p-6 bg-[#0b0c0f]">
             <div class="summary-grid">
               <div class="summary-card">
                 <div class="label">Total Tracks</div>
@@ -1315,8 +1399,8 @@
                 </div>
               </div>
             {/if}
-          {/if}
-        </div>
+          </div>
+        {/if}
 
         {#if isDiagnosticsDrawerOpen}
           <PlaylistMatchDiagnosticDrawer
