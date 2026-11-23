@@ -1442,31 +1442,20 @@ class WeightedMatchingEngine:
     @staticmethod
     def _remixer_matches_source(
         source: EchosyncTrack,
+        candidate: EchosyncTrack,
         candidate_edition: str,
         duration_delta_ms: int | None,
     ) -> bool:
-        """Return True if candidate is a named remix whose remixer appears in source title/artist and duration aligns."""
+        """Return True if candidate is a remix whose remixer appears in source title/artist and duration aligns."""
         if duration_delta_ms is not None and duration_delta_ms > 3000:
             return False
         if get_version_family(candidate_edition) != "remix":
             return False
 
         import re
+        from pathlib import Path
 
         from core.matching_engine.text_utils import normalize_text
-
-        remixer_raw = re.sub(
-            r"\b(remixes|remix|rmx|club mix|mix|edit|bootleg|flip|version)\b",
-            "",
-            candidate_edition.lower(),
-        )
-        remixer_tokens = [
-            tok
-            for tok in re.findall(r"[a-z0-9]+", normalize_text(remixer_raw))
-            if len(tok) >= 3 and tok not in {"the", "and", "feat", "with"}
-        ]
-        if not remixer_tokens:
-            return False
 
         src_text = " ".join(
             part
@@ -1478,7 +1467,60 @@ class WeightedMatchingEngine:
             if part
         )
         src_words = set(re.findall(r"[a-z0-9]+", normalize_text(src_text)))
-        return all(tok in src_words for tok in remixer_tokens)
+        if not src_words:
+            return False
+
+        remixer_raw = re.sub(
+            r"\b(remixes|remix|rmx|club mix|mix|edit|bootleg|flip|version)\b",
+            "",
+            candidate_edition.lower(),
+        )
+        remixer_tokens = [
+            tok
+            for tok in re.findall(r"[a-z0-9]+", normalize_text(remixer_raw))
+            if len(tok) >= 3 and tok not in {"the", "and", "feat", "with"}
+        ]
+        if remixer_tokens:
+            return all(tok in src_words for tok in remixer_tokens)
+
+        # Fallback when candidate_edition is generic ('Remix', 'Mix'):
+        # check candidate.remixers / track_artists or local filename stem for a remixer token present in source.
+        cand_remixer_names = list(getattr(candidate, "remixers", None) or [])
+        for r_name in cand_remixer_names:
+            r_toks = [
+                tok
+                for tok in re.findall(r"[a-z0-9]+", normalize_text(str(r_name)))
+                if len(tok) >= 3 and tok not in {"the", "and", "feat", "with"}
+            ]
+            if r_toks and all(tok in src_words for tok in r_toks):
+                # Ensure the remixer token is not just the primary artist name itself
+                cand_primary_words = set(
+                    re.findall(r"[a-z0-9]+", normalize_text(getattr(candidate, "artist_name", None) or ""))
+                )
+                if any(tok not in cand_primary_words for tok in r_toks):
+                    return True
+
+        extra = getattr(candidate, "extra_metadata", None) or {}
+        cand_fp = extra.get("file_path") if isinstance(extra, dict) else None
+        if cand_fp:
+            stem_words = set(re.findall(r"[a-z0-9]+", normalize_text(Path(str(cand_fp)).stem)))
+            cand_base_words = set(
+                re.findall(
+                    r"[a-z0-9]+",
+                    normalize_text(
+                        f"{getattr(candidate, 'title', '')} {getattr(candidate, 'artist_name', '')}"
+                    ),
+                )
+            )
+            extra_stem_tokens = {
+                tok
+                for tok in (stem_words - cand_base_words)
+                if len(tok) >= 3 and tok not in {"the", "and", "feat", "with", "remix", "mix", "rmx", "edit"}
+            }
+            if extra_stem_tokens and (extra_stem_tokens & src_words):
+                return True
+
+        return False
 
     def _check_version_match(
         self,
@@ -1509,7 +1551,7 @@ class WeightedMatchingEngine:
         )
         if not is_compat:
             if not get_version_family(source_edition) and self._remixer_matches_source(
-                source, candidate_edition, duration_delta_ms
+                source, candidate, candidate_edition, duration_delta_ms
             ):
                 return True, f"Remixer '{candidate_edition}' verified in source metadata", 0.0
             return False, reason, 0.0

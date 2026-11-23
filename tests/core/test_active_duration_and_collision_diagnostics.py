@@ -210,6 +210,19 @@ def test_matching_engine_accepts_remixer_in_source_title_without_remix_word():
     assert res_orig.passed_version_check is False
     assert res_orig.confidence_score == 0.0
 
+    # Generic candidate edition='Remix' with remixer in remixers or file_path
+    cand_generic_remix = EchosyncTrack(
+        raw_title="I Took A Pill In Ibiza",
+        title="I Took A Pill In Ibiza",
+        edition="Remix",
+        artist_name="Mike Posner",
+        remixers=["SeeB"],
+        duration_ms=197000,
+    )
+    res_generic = engine.calculate_match(source_ibiza, cand_generic_remix, context="sync")
+    assert res_generic.passed_version_check is True
+    assert res_generic.confidence_score >= 85.0
+
 
 def test_acoustid_penalizes_unrequested_instrumental_candidate():
     """Stage 3 AcoustID must penalize '(instrumental)' when baseline title/filename is the normal vocal track."""

@@ -644,6 +644,7 @@ def evaluate_single_track_diagnostics(
             logger.debug(f"Alias query error: {ex}")
 
     active_dur_map: dict[int, int] = {}
+    remixer_map: dict[int, list[str]] = {}
     if candidate_rows:
         try:
             cids = [int(r[0]) for r in candidate_rows]
@@ -658,8 +659,19 @@ def evaluate_single_track_diagnostics(
                 ).fetchall():
                     if adr[1]:
                         active_dur_map[int(adr[0])] = int(adr[1])
+                for rar in ac.execute(
+                    text(
+                        "SELECT ta.track_id, a.name FROM track_artists ta "
+                        "JOIN artists a ON ta.artist_id = a.id "
+                        "WHERE ta.track_id IN ("
+                        + ",".join(str(cid) for cid in cids)
+                        + ") AND lower(ta.role) IN ('remixer', 'featured', 'primary')"
+                    )
+                ).fetchall():
+                    if rar[1]:
+                        remixer_map.setdefault(int(rar[0]), []).append(str(rar[1]))
         except Exception as ex:
-            logger.debug(f"Active duration query error: {ex}")
+            logger.debug(f"Active duration / remixer query error: {ex}")
 
     for row in candidate_rows:
         cand_id = row[0]
@@ -669,8 +681,16 @@ def evaluate_single_track_diagnostics(
         cand_artist = row[4] or ""
         cand_artist_id = row[5]
         cand_album = row[7] if len(row) > 7 else ""
+        cand_media_path = row[8] if len(row) > 8 else None
         sync_id = row[9] if len(row) > 9 and row[9] else str(cand_id)
         cand_active_dur = active_dur_map.get(cand_id)
+        cand_remixers = remixer_map.get(cand_id, [])
+
+        cand_extra: dict[str, Any] = {}
+        if cand_active_dur:
+            cand_extra["active_duration_ms"] = cand_active_dur
+        if cand_media_path:
+            cand_extra["file_path"] = cand_media_path
 
         cand_track = EchosyncTrack(
             raw_title=raw_t,
@@ -678,8 +698,9 @@ def evaluate_single_track_diagnostics(
             album_title=cand_album or "",
             duration_ms=cand_dur,
             edition=cand_ed,
+            remixers=cand_remixers,
             sync_id=sync_id,
-            extra_metadata={"active_duration_ms": cand_active_dur} if cand_active_dur else {},
+            extra_metadata=cand_extra,
         )
         hook_manager.apply_filters(
             "pre_normalize_title",
