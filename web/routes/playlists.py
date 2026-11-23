@@ -683,8 +683,10 @@ def _sync_to_plex(
                             item = None
 
                     if not item:
+                        diag = getattr(client, "last_recovery_diagnostic", None)
+                        detail = f" — {diag}" if diag else ""
                         raise RuntimeError(
-                            f"Track '{track_title}' with ratingKey {rk} not found on Plex (404/unrecoverable)"
+                            f"Track '{track_title}' with ratingKey {rk} not found on Plex (404/unrecoverable){detail}"
                         )
 
                     resolved_rk = str(getattr(item, "ratingKey", rk))
@@ -787,9 +789,12 @@ def _sync_to_plex(
             synced_playlist_items = getattr(client, "last_synced_playlist_items", None)
             if updated and isinstance(synced_playlist_items, list) and synced_playlist_items and expected_by_rk:
                 try:
-                    from plugins.EchoSync.plex.client import verify_playlist_integrity
+                    if hasattr(client, "verify_playlist_integrity"):
+                        verification_report = client.verify_playlist_integrity(synced_playlist_items, expected_by_rk)
+                    else:
+                        from plugins.EchoSync.plex.client import verify_playlist_integrity
 
-                    verification_report = verify_playlist_integrity(synced_playlist_items, expected_by_rk)
+                        verification_report = verify_playlist_integrity(synced_playlist_items, expected_by_rk)
                     logger.info(
                         f"[{job_name}] Post-sync verification: "
                         f"{verification_report['verified']}/{verification_report['expected']} verified, "

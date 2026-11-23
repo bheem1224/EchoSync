@@ -1116,6 +1116,7 @@ class PlexClient(MediaServerProvider):
         and exits immediately once a candidate scores >= 70.0.
         Returns (plex_item, is_recovered).
         """
+        self.last_recovery_diagnostic: str | None = None
         if not self.ensure_connection() or not self.server:
             return None, False
 
@@ -1191,21 +1192,37 @@ class PlexClient(MediaServerProvider):
                 return best_cand, True
 
         if not seen_cand_keys:
+            diag = (
+                f"0 Plex candidates found for '{title}' by '{artist}' "
+                f"(queries={queries})"
+            )
+            self.last_recovery_diagnostic = diag
             logger.info(
-                f"Plex live recovery found 0 Plex candidates for '{title}' by '{artist}' "
-                f"(old ratingKey={cached_rating_key}, queries={queries})"
+                f"Plex live recovery found {diag} (old ratingKey={cached_rating_key})"
             )
         else:
             top_title = _safe_getattr(best_cand, "title", "") if best_cand is not None else ""
             top_artist = _safe_getattr(best_cand, "grandparentTitle", "") if best_cand is not None else ""
             top_dur = _safe_getattr(best_cand, "duration", 0) if best_cand is not None else 0
             local_dur = getattr(track_meta, "duration_ms", None) or getattr(track_meta, "duration", 0) or 0
+            diag = (
+                f"rejected {len(seen_cand_keys)} candidate(s); best='{top_title}' by '{top_artist}' "
+                f"(plex_dur={top_dur}ms vs local_dur={local_dur}ms, score={best_score:.1f} < 70.0)"
+            )
+            self.last_recovery_diagnostic = diag
             logger.info(
-                f"Plex live recovery rejected all {len(seen_cand_keys)} candidate(s) for '{title}' by '{artist}' "
-                f"(local_dur={local_dur}ms; best='{top_title}' by '{top_artist}', dur={top_dur}ms, score={best_score:.1f} < 70.0)"
+                f"Plex live recovery for '{title}' by '{artist}' {diag}"
             )
 
         return None, False
+
+    def verify_playlist_integrity(
+        self,
+        plex_items: list[Any],
+        expected_by_rk: dict[str, dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Instance wrapper around module-level `verify_playlist_integrity` for PluginRegistry callers."""
+        return verify_playlist_integrity(plex_items, expected_by_rk)
 
     def get_track(self, track_id: str) -> EchosyncTrack | None:
         """Fetch single track by Plex ratingKey.
