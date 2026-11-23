@@ -1547,9 +1547,26 @@ class DownloadManager:
         )
 
         primary_artist, collaborators = split_artist_collaborators(track.artist_name)
-        wire_primary_artist = sanitize_query_preserve_keyboard(primary_artist or track.artist_name or "")
+        raw_artist_str = track.artist_name or ""
+        # Preserve pure duo/group names joined only by '&' or 'and' (e.g. "Pat & Sean", "Hall & Oates")
+        # instead of splitting into single-word noise queries like "Pat" and "Sean".
+        _explicit_collab_marker = re.search(
+            r"(?:[,/+]|\bfeat\.?\b|\bft\.?\b|\bfeaturing\b|\bwith\b|\bx\b|[\u00d7\u0445\u2715\u2716×✕✖])",
+            raw_artist_str,
+            flags=re.IGNORECASE,
+        )
+        is_pure_ampersand_duo = bool(
+            collaborators
+            and not _explicit_collab_marker
+            and re.search(r"\s+(?:&|and)\s+", raw_artist_str, flags=re.IGNORECASE)
+            and len(collaborators) == 1
+        )
+        effective_primary_artist = raw_artist_str if is_pure_ampersand_duo else (primary_artist or raw_artist_str)
+        effective_collaborators = [] if is_pure_ampersand_duo else collaborators
+
+        wire_primary_artist = sanitize_query_preserve_keyboard(effective_primary_artist)
         wire_search_title = sanitize_query_preserve_keyboard(search_title)
-        folded_artist = fold_diacritics_for_wire(primary_artist or track.artist_name or "")
+        folded_artist = fold_diacritics_for_wire(effective_primary_artist)
         folded_title = fold_diacritics_for_wire(search_title)
         target_dur = getattr(track, "duration_ms", None) or getattr(track, "duration", None) or None
 
@@ -1655,7 +1672,7 @@ class DownloadManager:
             )
 
         # Strategy 5: Collaborator + client-side title filter (Requires Capability.CLIENT_PREFILTER)
-        for idx, collab in enumerate(collaborators, 1):
+        for idx, collab in enumerate(effective_collaborators, 1):
             wire_collab = sanitize_query_for_wire(collab)
             if wire_collab and search_title:
                 strategies.append(

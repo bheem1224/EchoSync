@@ -115,6 +115,52 @@ class TestSearchStrategyLadder:
         assert duration_strat.required_capability is None
         assert duration_strat.duration_tolerance_ms == 2500  # 50% of 5000ms
 
+    def test_pure_ampersand_duo_artist_is_not_split_into_noise_queries(self):
+        manager = object.__new__(DownloadManager)
+        track = EchosyncTrack(
+            raw_title="Title Screen",
+            artist_name="Pat & Sean",
+            album_title="Title Screen",
+            duration_ms=180000,
+        )
+
+        strategies = manager._generate_search_strategies(
+            track, base_duration_tolerance_ms=5000
+        )
+
+        artist_title = next(s for s in strategies if s.name == "artist+title")
+        assert artist_title.wire_query == "Pat Sean title screen"
+
+        broad = next(s for s in strategies if s.name == "artist+broad+filter")
+        assert broad.wire_query == "Pat Sean"
+
+        collab_strats = [s for s in strategies if s.name == "collab+filter_title"]
+        assert collab_strats == []
+
+    def test_slskd_convert_to_echosync_track_does_not_mutate_frozen_dataclass(self):
+        from plugins.EchoSync.slskd.client import SlskdProvider, TrackResult
+
+        provider = SlskdProvider.__new__(SlskdProvider)
+        result = TrackResult(
+            username="q89u7yrcl",
+            filename="share\\Vicetone\\Walk Thru Fire\\01 - Walk Thru Fire.flac",
+            size=39760000,
+            bitrate=1000,
+            duration=194000,
+            quality="flac",
+            bit_depth=24,
+            sample_rate=44100,
+            free_upload_slots=1,
+            upload_speed=11080000,
+            queue_length=0,
+        )
+        converted = provider._convert_to_echosync_track(result)
+        assert converted is not None
+        assert converted.raw_title == result.filename
+        assert converted.media[0].file_path == result.filename
+        assert converted.media[0].bit_depth == 24
+        assert converted.identifiers["username"] == "q89u7yrcl"
+
 
 class TestCapabilityDispatching:
     """Test provider capability filtering."""

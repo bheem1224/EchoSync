@@ -1,7 +1,7 @@
 import asyncio
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -652,18 +652,23 @@ class SlskdProvider(DownloaderProvider):
         )
 
         if echo_track:
-            echo_track.raw_title = result.filename
-            if echo_track.media and len(echo_track.media) > 0:
-                echo_track.media[0].file_path = result.filename
-                echo_track.media[0].bit_depth = result.bit_depth
-                echo_track.media[0].sample_rate = result.sample_rate
-                echo_track.media[0].bitrate = result.bitrate
-                echo_track.media[0].file_size_bytes = result.size
-                echo_track.media[0].file_format = file_ext
-            else:
-                from core.db.echo_sync_track import EchosyncMedia
+            from core.db.echo_sync_track import EchosyncMedia
 
-                echo_track.media = [
+            if echo_track.media and len(echo_track.media) > 0:
+                updated_media = [
+                    replace(
+                        echo_track.media[0],
+                        file_path=result.filename,
+                        bit_depth=result.bit_depth,
+                        sample_rate=result.sample_rate,
+                        bitrate=result.bitrate,
+                        file_size_bytes=result.size,
+                        file_format=file_ext,
+                    ),
+                    *echo_track.media[1:],
+                ]
+            else:
+                updated_media = [
                     EchosyncMedia(
                         file_path=result.filename,
                         file_format=file_ext,
@@ -673,6 +678,7 @@ class SlskdProvider(DownloaderProvider):
                         file_size_bytes=result.size,
                     )
                 ]
+            echo_track = replace(echo_track, raw_title=result.filename, media=updated_media)
             echo_track.identifiers["username"] = result.username
             echo_track.identifiers["size"] = result.size
             echo_track.identifiers["free_upload_slots"] = result.free_upload_slots
