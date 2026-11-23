@@ -222,12 +222,30 @@ query_tier1_candidates = get_library_candidates
 _fetch_tier1_candidates = get_library_candidates
 
 
+def _is_same_playlist_song(track_a: dict, track_b: dict) -> bool:
+    """Return True if two playlist entries represent the exact same source song."""
+    for id_key in ("source_id", "spotify_id", "source_identifier"):
+        id_a = track_a.get(id_key)
+        id_b = track_b.get(id_key)
+        if id_a and id_b:
+            return str(id_a).strip() == str(id_b).strip()
+
+    from core.matching_engine.text_utils import normalize_artist, normalize_title
+
+    title_a = normalize_title(track_a.get("title") or "")
+    title_b = normalize_title(track_b.get("title") or "")
+    artist_a = normalize_artist(track_a.get("artist") or "")
+    artist_b = normalize_artist(track_b.get("artist") or "")
+    return bool(title_a and title_a == title_b and artist_a and artist_a == artist_b)
+
+
 def resolve_duplicate_matches(all_tracks: list[dict]) -> list[dict]:
     """
     Greedy 1:1 Winner-Take-All Candidate Assignment.
 
     When multiple playlist source tracks match the same local track ID (e.g., covers or duplicate titles),
     allocates the local track strictly to the source track with the highest match score.
+    Exact duplicate entries of the same source song within a playlist share the claimed local track.
 
     Losers evaluate remaining fallback candidates in their candidate pool (score >= 70)
     or are marked as unmatched with explicit collision rejection reasoning.
@@ -245,6 +263,9 @@ def resolve_duplicate_matches(all_tracks: list[dict]) -> list[dict]:
         tid = track["matched_track_id"]
         if tid not in claimed:
             claimed[tid] = track
+        elif _is_same_playlist_song(track, claimed[tid]):
+            # Same song appearing multiple times in the source playlist: share the owned library match.
+            continue
         else:
             # Demote loser to fallback or unmatched
             fallback_found = False

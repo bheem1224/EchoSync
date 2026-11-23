@@ -222,15 +222,20 @@ def test_system_job_run_metadata_enhancement_kwargs():
 
         func = job.func
 
-        with patch("multiprocessing.Process") as mock_proc:
+        with patch("multiprocessing.get_context") as mock_get_ctx:
+            mock_ctx = MagicMock()
+            mock_proc = mock_ctx.Process
             instance = MagicMock()
             instance.pid = 9999
             instance.exitcode = 0
+            instance.is_alive.return_value = False
             mock_proc.return_value = instance
+            mock_get_ctx.return_value = mock_ctx
 
             # Call with force=True in kwargs
             func(batch_size=50, force=True, check_all_files=True)
 
+            mock_get_ctx.assert_called_once_with("spawn")
             mock_proc.assert_called_once()
             _, kwargs = mock_proc.call_args
             target_args = kwargs["args"]

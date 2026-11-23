@@ -328,6 +328,25 @@ class ProcessSupervisor:
                     os.kill(pid, signal.SIGABRT)
             else:
                 os.kill(pid, signal.SIGTERM)
+                deadline = time.monotonic() + 2.0
+                while time.monotonic() < deadline:
+                    try:
+                        waited_pid, _ = os.waitpid(pid, os.WNOHANG)
+                        if waited_pid == pid:
+                            break
+                    except ChildProcessError:
+                        # Not a direct child; probe liveness with signal 0
+                        try:
+                            os.kill(pid, 0)
+                        except ProcessLookupError:
+                            break
+                    time.sleep(0.1)
+                else:
+                    try:
+                        os.kill(pid, signal.SIGKILL)
+                        logger.warning(f"Escalated to SIGKILL for process PID {pid} (Task: {task_name})")
+                    except ProcessLookupError:
+                        pass
             logger.info(f"Sent termination signal to process PID {pid} (Task: {task_name})")
         except (ProcessLookupError, OSError) as exc:
             logger.debug(f"Process PID {pid} (Task: {task_name}) was already terminated or not found: {exc}")

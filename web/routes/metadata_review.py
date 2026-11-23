@@ -943,6 +943,12 @@ def _import_single_file(
                         existing_track.musicbrainz_id = track_dto.musicbrainz_id
                     if track_dto.isrc:
                         existing_track.isrc = track_dto.isrc
+                    if track_dto.duration_ms and track_dto.duration_ms > 0:
+                        existing_track.duration = round(track_dto.duration_ms / 1000.0)
+                        existing_lm.duration_ms = int(track_dto.duration_ms)
+                    active_dur_ms = _coerce_int(metadata.get("active_duration_ms"))
+                    if active_dur_ms and active_dur_ms > 0:
+                        existing_lm.active_duration_ms = active_dur_ms
 
                     # Sync multi-artist associations
                     associations = getattr(track_dto, "_resolved_artist_associations", None)
@@ -1370,6 +1376,17 @@ def approve_review_queue_item(
                     elif native_props.get("duration") is not None:
                         staged_updates["duration_ms"] = int(round(float(native_props["duration"]) * 1000))
 
+                    active_duration_ms = None
+                    try:
+                        fp_res = echosync_core.fingerprint_and_hash_audio(str(file_path_obj), True)
+                        if isinstance(fp_res, tuple) and len(fp_res) >= 2:
+                            if fp_res[0] and not staged_updates.get("fingerprint") and not staged_track.fingerprint:
+                                staged_updates["fingerprint"] = fp_res[0]
+                            if fp_res[1]:
+                                active_duration_ms = int(round(float(fp_res[1]) * 1000))
+                    except Exception as fp_err:
+                        logger.debug(f"Active duration extraction skipped during approval for {file_path_obj}: {fp_err}")
+
                     if staged_updates:
                         staged_track = replace(staged_track, **staged_updates)
 
@@ -1387,6 +1404,8 @@ def approve_review_queue_item(
                         "acoustid_id": staged_track.acoustid_id,
                         "mb_release_id": staged_track.mb_release_id,
                         "fingerprint": staged_track.fingerprint,
+                        "duration_ms": staged_track.duration_ms,
+                        "active_duration_ms": active_duration_ms,
                     }
 
                     # 2. Tag and verify the physical file
@@ -2210,17 +2229,20 @@ def simulate_review_pipeline(task_id: int, _=Depends(require_auth)):
                 except Exception:
                     pass
 
-            # Chromaprint extraction
+            # Chromaprint & active duration extraction
             chromaprint = (
                 raw_tags.get("chromaprint") or track_data.get("fingerprint") or detected_meta.get("chromaprint")
             )
+            active_duration_ms = None
             if not chromaprint:
                 try:
                     import echosync_core
 
-                    res_fp = echosync_core.fingerprint_and_hash_audio(str(resolved_file), False)
+                    res_fp = echosync_core.fingerprint_and_hash_audio(str(resolved_file), True)
                     if isinstance(res_fp, tuple) and len(res_fp) >= 1:
                         chromaprint = res_fp[0]
+                        if len(res_fp) >= 2 and res_fp[1]:
+                            active_duration_ms = int(round(float(res_fp[1]) * 1000))
                     elif isinstance(res_fp, str):
                         chromaprint = res_fp
                 except Exception as fp_err:
@@ -2281,6 +2303,8 @@ def simulate_review_pipeline(task_id: int, _=Depends(require_auth)):
                 "musicbrainz_id": result.musicbrainz_id,
                 "isrc": result.isrc,
                 "confidence_score": result.confidence_score,
+                "duration_ms": duration_ms or None,
+                "active_duration_ms": active_duration_ms,
             }
 
             return {

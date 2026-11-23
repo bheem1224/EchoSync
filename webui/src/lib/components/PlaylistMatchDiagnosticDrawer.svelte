@@ -104,7 +104,8 @@
             MATCH DIAGNOSTICS
           </span>
           {#if track}
-            {@const isFound = track.status === 'found' || track.library_match === 'Found' || (track.library_match && !track.library_match.includes('missing'))}
+            {@const libMatchLower = (track.library_match || '').toLowerCase()}
+            {@const isFound = track.status === 'found' || (Boolean(track.library_match) && !libMatchLower.includes('not found') && !libMatchLower.includes('missing'))}
             <span class="text-xs font-bold px-2 py-0.5 rounded border {isFound ? 'text-emerald-400 bg-emerald-950/50 border-emerald-800/50' : 'text-rose-400 bg-rose-950/50 border-rose-800/50'}">
               {isFound ? 'Found' : 'Not Found'}
             </span>

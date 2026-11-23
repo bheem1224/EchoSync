@@ -1415,6 +1415,47 @@ class WeightedMatchingEngine:
             result.target_exists = bool(target_identifier)
         return result
 
+    @staticmethod
+    def _remixer_matches_source(
+        source: EchosyncTrack,
+        candidate_edition: str,
+        duration_delta_ms: int | None,
+    ) -> bool:
+        """Return True if candidate is a named remix whose remixer appears in source title/artist and duration aligns."""
+        if duration_delta_ms is not None and duration_delta_ms > 3000:
+            return False
+        if get_version_family(candidate_edition) != "remix":
+            return False
+
+        import re
+
+        from core.matching_engine.text_utils import normalize_text
+
+        remixer_raw = re.sub(
+            r"\b(remixes|remix|rmx|club mix|mix|edit|bootleg|flip|version)\b",
+            "",
+            candidate_edition.lower(),
+        )
+        remixer_tokens = [
+            tok
+            for tok in re.findall(r"[a-z0-9]+", normalize_text(remixer_raw))
+            if len(tok) >= 3 and tok not in {"the", "and", "feat", "with"}
+        ]
+        if not remixer_tokens:
+            return False
+
+        src_text = " ".join(
+            part
+            for part in (
+                getattr(source, "raw_title", None) or "",
+                getattr(source, "title", None) or "",
+                getattr(source, "artist_name", None) or "",
+            )
+            if part
+        )
+        src_words = set(re.findall(r"[a-z0-9]+", normalize_text(src_text)))
+        return all(tok in src_words for tok in remixer_tokens)
+
     def _check_version_match(
         self,
         source: EchosyncTrack,
@@ -1443,6 +1484,10 @@ class WeightedMatchingEngine:
             duration_delta_ms=duration_delta_ms,
         )
         if not is_compat:
+            if not get_version_family(source_edition) and self._remixer_matches_source(
+                source, candidate_edition, duration_delta_ms
+            ):
+                return True, f"Remixer '{candidate_edition}' verified in source metadata", 0.0
             return False, reason, 0.0
 
         source_version_lower = source_edition.lower()

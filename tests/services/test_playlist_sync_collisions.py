@@ -85,6 +85,42 @@ def test_resolve_duplicate_matches_fallback_to_second_candidate():
     assert resolved[1]["library_match"] == "Found (score: 78%)"
 
 
+def test_resolve_duplicate_matches_allows_exact_same_song_duplicates_in_playlist():
+    """Exact duplicate entries of the same song in a playlist should both remain Found."""
+    all_tracks = [
+        {
+            "title": "Rewrite The Stars",
+            "artist": "Zac Efron",
+            "matched_track_id": 8149,
+            "match_score": 97.0,
+            "status": "found",
+            "library_match": "Found",
+            "target_identifier": "plex://8149",
+            "target_exists": True,
+            "candidate_matches": [{"id": 8149, "score": 97.0, "target_identifier": "plex://8149"}],
+        },
+        {
+            "title": "Rewrite The Stars",
+            "artist": "Zac Efron",
+            "matched_track_id": 8149,
+            "match_score": 97.0,
+            "status": "found",
+            "library_match": "Found",
+            "target_identifier": "plex://8149",
+            "target_exists": True,
+            "candidate_matches": [{"id": 8149, "score": 97.0, "target_identifier": "plex://8149"}],
+        },
+    ]
+
+    resolved = resolve_duplicate_matches(all_tracks)
+
+    assert resolved[0]["matched_track_id"] == 8149
+    assert resolved[0]["library_match"] == "Found"
+    assert resolved[1]["matched_track_id"] == 8149
+    assert resolved[1]["library_match"] == "Found"
+    assert resolved[1]["target_exists"] is True
+
+
 def test_matching_engine_rejects_cover_versions_across_artist_boundaries():
     """Verify that distinct recognized artists (covers) score 0.0 and do not trigger Rescue B."""
     engine = WeightedMatchingEngine(ExactSyncProfile())

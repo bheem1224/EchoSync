@@ -94,7 +94,7 @@ def test_resolve_duplicate_matches_updates_status_and_diagnostics():
         },
         {
             "title": "Just so You Know",
-            "artist": "Blacklite District",
+            "artist": "Cover Band",
             "status": "found",
             "library_match": "Found",
             "matched_track_id": 42,
@@ -162,3 +162,50 @@ def test_evaluate_single_track_diagnostics_uses_active_duration(tmp_path: Path):
     assert trace["best_match"] is not None
     assert trace["best_match"]["accepted"] is True
     assert trace["best_match"]["composite_score"] >= 85.0
+
+
+def test_matching_engine_accepts_remixer_in_source_title_without_remix_word():
+    """Source titles like 'I Took A Pill In Ibiza - Seeb' should match 'SeeB Remix' when duration aligns."""
+    engine = WeightedMatchingEngine(ExactSyncProfile())
+
+    source_ibiza = EchosyncTrack(
+        raw_title="I Took A Pill In Ibiza - Seeb",
+        artist_name="Mike Posner",
+        duration_ms=199000,
+    )
+    cand_ibiza = EchosyncTrack(
+        raw_title="I Took a Pill in Ibiza (SeeB Remix)",
+        title="I Took a Pill in Ibiza",
+        edition="SeeB Remix",
+        artist_name="Mike Posner",
+        duration_ms=199000,
+    )
+    res_ibiza = engine.calculate_match(source_ibiza, cand_ibiza, context="sync")
+    assert res_ibiza.passed_version_check is True
+    assert res_ibiza.confidence_score >= 85.0
+
+    source_monster = EchosyncTrack(
+        raw_title="Monster (Dotexe )",
+        artist_name="Meg & Dia",
+        duration_ms=223000,
+    )
+    cand_monster = EchosyncTrack(
+        raw_title="Monster (dotEXE remix)",
+        title="Monster",
+        edition="dotEXE remix",
+        artist_name="Meg & Dia",
+        duration_ms=223020,
+    )
+    res_monster = engine.calculate_match(source_monster, cand_monster, context="sync")
+    assert res_monster.passed_version_check is True
+    assert res_monster.confidence_score >= 85.0
+
+    # Negative check: original source without remixer name must still reject the remix
+    source_orig = EchosyncTrack(
+        raw_title="I Took A Pill In Ibiza",
+        artist_name="Mike Posner",
+        duration_ms=199000,
+    )
+    res_orig = engine.calculate_match(source_orig, cand_ibiza, context="sync")
+    assert res_orig.passed_version_check is False
+    assert res_orig.confidence_score == 0.0

@@ -872,6 +872,29 @@ def register_user_history_sync_job(interval_seconds: int = 43200, enabled: bool 
     )
 
 
+def _retroactive_metadata_worker_entry(
+    batch_size: int,
+    check_all_files: bool,
+    limit: int | None,
+    force_refresh: bool,
+) -> None:
+    """Top-level picklable entrypoint for spawned retroactive metadata enhancement worker."""
+    try:
+        from services.retroactive_metadata_worker import run_retroactive_metadata_worker
+
+        run_retroactive_metadata_worker(
+            batch_size=batch_size,
+            check_all_files=check_all_files,
+            limit=limit,
+            force_refresh=force_refresh,
+            require_signature=True,
+        )
+    except Exception as e:
+        from core.tiered_logger import get_logger
+
+        get_logger("retroactive_metadata_worker").error(f"Job failed: {e}", exc_info=True)
+
+
 def register_retroactive_metadata_enhancement_job(
     interval_seconds: int = 86400,
     enabled: bool = True,
@@ -904,37 +927,23 @@ def register_retroactive_metadata_enhancement_job(
         if "limit" in kwargs and kwargs["limit"] is not None:
             limit = int(kwargs["limit"])
 
-        def _worker(batch_size, check_all_files, limit, force_refresh):
-            try:
-                from services.retroactive_metadata_worker import (
-                    run_retroactive_metadata_worker,
-                )
-
-                run_retroactive_metadata_worker(
-                    batch_size=batch_size,
-                    check_all_files=check_all_files,
-                    limit=limit,
-                    force_refresh=force_refresh,
-                    require_signature=True,
-                )
-            except Exception as e:
-                from core.tiered_logger import get_logger
-
-                get_logger("retroactive_metadata_worker").error(f"Job failed: {e}", exc_info=True)
-
         try:
             import multiprocessing
+            import threading
 
             from core.task_manager.models import OwnerType, ProcessOwner
             from core.task_manager.supervisor import supervisor
+            from core.task_manager.task_queue import TaskStatus, job_queue
 
-            p = multiprocessing.Process(
-                target=_worker,
+            ctx = multiprocessing.get_context("spawn")
+            p = ctx.Process(
+                target=_retroactive_metadata_worker_entry,
                 args=(batch_size, check_all_files, limit, force_refresh),
                 daemon=True,
             )
             p.start()
 
+            cancel_event = threading.Event()
             reg_id = None
             if p.pid:
                 owner = ProcessOwner(
@@ -943,15 +952,26 @@ def register_retroactive_metadata_enhancement_job(
                     pid=p.pid,
                     task_name="retroactive_metadata_enhancement",
                 )
-                reg_id = supervisor.register_process(owner)
+                reg_id = supervisor.register_process(owner, cancellation_event=cancel_event)
 
-            p.join()
+            while p.is_alive():
+                p.join(timeout=0.5)
+                job_obj = job_queue.get_job("retroactive_metadata_enhancement")
+                if cancel_event.is_set() or (job_obj and job_obj.state == TaskStatus.CANCELLED):
+                    logger.info("Cancellation requested for retroactive_metadata_enhancement; terminating child process")
+                    p.terminate()
+                    p.join(timeout=3.0)
+                    if p.is_alive():
+                        logger.warning("Child process did not exit on SIGTERM; escalating to SIGKILL")
+                        p.kill()
+                        p.join(timeout=1.0)
+                    break
 
             if reg_id:
                 supervisor.unregister_process(reg_id)
 
             if p.exitcode and p.exitcode != 0:
-                if p.exitcode == -15:  # SIGTERM
+                if p.exitcode in (-15, -9):  # SIGTERM / SIGKILL
                     logger.info("Retroactive metadata enhancement job was terminated by supervisor")
                 else:
                     raise RuntimeError(f"Child process exited with code {p.exitcode}")
