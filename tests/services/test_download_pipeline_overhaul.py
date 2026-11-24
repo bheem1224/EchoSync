@@ -415,3 +415,72 @@ def test_exact_sync_remaster_fallback_prefers_original_and_falls_back_when_absen
     assert trace3["best_match"] is None
 
 
+@pytest.mark.asyncio
+async def test_reclaim_orphaned_searching_and_safe_failure_dispatch(tmp_path):
+    """Orphaned SEARCHING rows are reclaimed to QUEUED without touching DOWNLOADING or live searches,
+    and _handle_active_download_failure awaits backup dispatch instead of fire-and-forget create_task."""
+    from unittest.mock import AsyncMock, MagicMock
+    from database.working_database import WorkingDatabase, WorkingBase
+    from core.database.models.working import DownloadQueue, DownloadStatus
+    from services.download_manager import DownloadManager
+
+    wdb = WorkingDatabase(str(tmp_path / "working.db"))
+    WorkingBase.metadata.create_all(wdb.engine)
+    dm = object.__new__(DownloadManager)
+    dm.work_db = wdb
+    dm._active_search_ids = set()
+    dm._transfer_progress_tracker = {}
+    dm._repo_instance = None
+
+    with wdb.session_scope() as s:
+        orphan = DownloadQueue(
+            status=DownloadStatus.SEARCHING.value,
+            echo_sync_track={"title": "Orphan", "artist_name": "A"},
+        )
+        live_search = DownloadQueue(
+            status=DownloadStatus.SEARCHING.value,
+            echo_sync_track={"title": "Live", "artist_name": "B"},
+        )
+        downloading = DownloadQueue(
+            status=DownloadStatus.DOWNLOADING.value,
+            provider_id="peer|file.flac",
+            echo_sync_track={"title": "ActiveDL", "artist_name": "C"},
+        )
+        s.add_all([orphan, live_search, downloading])
+        s.flush()
+        orphan_id, live_id, dl_id = orphan.id, live_search.id, downloading.id
+
+    dm._active_search_ids.add(live_id)
+    reclaimed = dm._reclaim_orphaned_searching_items()
+    assert reclaimed == 1
+
+    with wdb.session_scope() as s:
+        assert s.get(DownloadQueue, orphan_id).status == DownloadStatus.QUEUED.value
+        assert s.get(DownloadQueue, live_id).status == DownloadStatus.SEARCHING.value
+        assert s.get(DownloadQueue, dl_id).status == DownloadStatus.DOWNLOADING.value
+
+    # Verify _handle_active_download_failure awaits _dispatch_candidate when a backup exists
+    with wdb.session_scope() as s:
+        rot = DownloadQueue(
+            status=DownloadStatus.DOWNLOADING.value,
+            active_candidate_id="peer1|a.flac",
+            provider_id="peer1|a.flac",
+            candidate_stack=[{"id": "peer2|b.flac", "size": 25000000}],
+            echo_sync_track={"title": "RotateMe", "artist_name": "D"},
+        )
+        s.add(rot)
+        s.flush()
+        rot_id = rot.id
+
+    dm._cancel_transfer_async = AsyncMock()
+    dm._dispatch_candidate = AsyncMock()
+    dm.process_single_download = MagicMock()
+
+    await dm._handle_active_download_failure(
+        rot_id, "peer1|a.flac", [], [], reason="TRANSFER_FAILED"
+    )
+    dm._dispatch_candidate.assert_awaited_once()
+    dm.process_single_download.assert_not_called()
+
+
+

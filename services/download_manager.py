@@ -159,6 +159,8 @@ class DownloadManager:
         self._remaster_fallback_ids: set[int] = set()
         # In-memory progress clock for 5m queued-stall / 2m mid-transfer freeze timeouts
         self._transfer_progress_tracker: dict[int, dict[str, Any]] = {}
+        # In-memory set of download IDs currently executing a live search coroutine
+        self._active_search_ids: set[int] = set()
 
         from core.event_bus import event_bus
 
@@ -844,6 +846,7 @@ class DownloadManager:
             return
 
         async with self._processing_queue_lock:
+            self._reclaim_orphaned_searching_items()
             self._deduplicate_queue()
 
             # Fetch queued items from DB
@@ -971,6 +974,10 @@ class DownloadManager:
             self._update_status(download_id, DownloadStatus.FAILED)
             return
 
+        if not hasattr(self, "_active_search_ids"):
+            self._active_search_ids = set()
+        self._active_search_ids.add(download_id)
+
         try:
             self.transition_to_searching(download_id)
         except Exception:
@@ -992,6 +999,7 @@ class DownloadManager:
                 f"JIT Check: Track '{target_track.artist_name} - {target_track.title}' already present in library. Transitioning status to 'completed'."
             )
             self._update_status(download_id, "completed")
+            self._active_search_ids.discard(download_id)
             return
 
         # Keep provider query broad; matching engine handles duration scoring/gating.
@@ -1688,12 +1696,28 @@ class DownloadManager:
                 logger.error(f"All candidate download attempts failed for download {download_id}")
                 self._update_status(download_id, DownloadStatus.FAILED)
 
+        except asyncio.CancelledError:
+            logger.warning(
+                f"Search task for download {download_id} was cancelled; resetting from SEARCHING to QUEUED."
+            )
+            try:
+                with self.work_db.session_scope() as session:
+                    item = session.get(DownloadQueue, download_id)
+                    if item and str(item.status).upper() == DownloadStatus.SEARCHING.value:
+                        item.status = DownloadStatus.QUEUED.value
+                        item.updated_at = utc_now()
+            except Exception:
+                pass
+            raise
         except Exception as e:
             logger.error(
                 f"Error executing waterfall search and download {download_id}: {e}",
                 exc_info=True,
             )
             self._update_status(download_id, DownloadStatus.FAILED)
+        finally:
+            if hasattr(self, "_active_search_ids"):
+                self._active_search_ids.discard(download_id)
 
     def _can_resume_next_strategy(self, download_id: int) -> bool:
         """Return True if download has unsearched strategies remaining within the 10-minute checkpoint window."""
@@ -1771,15 +1795,18 @@ class DownloadManager:
                 has_next_backup = bool(refreshed and refreshed.active_candidate_id)
 
         if rotated and has_next_backup:
-            asyncio.create_task(self._dispatch_candidate(db_id, providers=all_providers))
+            # Await directly so short-lived asyncio.run() poller loops do not cancel the dispatch
+            await self._dispatch_candidate(db_id, providers=all_providers)
         elif self._can_resume_next_strategy(db_id):
             logger.info(
                 f"Download {db_id} exhausted Top-3 backups ({reason}); resuming next search strategy within 10m window."
             )
             self._update_status(db_id, DownloadStatus.RETRYING.value)
-            asyncio.create_task(self._execute_waterfall_search_and_download(db_id, all_providers))
+            # Delegate to JobQueue-backed single-download runner so the search survives poller loop exit
+            self.process_single_download(db_id)
         elif rotated:
-            asyncio.create_task(self._execute_waterfall_search_and_download(db_id, all_providers))
+            self._update_status(db_id, DownloadStatus.RETRYING.value)
+            self.process_single_download(db_id)
 
     async def _check_active_downloads(self):
         """Poll providers for status of active downloads using waterfall strategy"""
@@ -3098,6 +3125,35 @@ class DownloadManager:
 
         except Exception as e:
             logger.error(f"Error purging existing tracks from queue: {e}")
+
+    def _reclaim_orphaned_searching_items(self) -> int:
+        """Reset rows stuck in SEARCHING with no live in-process search coroutine back to QUEUED.
+
+        Unlike _recover_stuck_items(), this NEVER touches active DOWNLOADING or VERIFYING rows,
+        so it is safe to invoke on every live manual or scheduled processing cycle.
+        """
+        active_ids = set(getattr(self, "_active_search_ids", set()) or set())
+        reclaimed = 0
+        now = utc_now()
+        try:
+            with self.work_db.session_scope() as session:
+                stuck_rows = (
+                    session.query(DownloadQueue)
+                    .filter(DownloadQueue.status.in_([DownloadStatus.SEARCHING.value, "searching"]))
+                    .all()
+                )
+                for row in stuck_rows:
+                    if row.id in active_ids:
+                        continue
+                    row.status = DownloadStatus.QUEUED.value
+                    row.provider_id = None
+                    row.updated_at = now
+                    reclaimed += 1
+            if reclaimed > 0:
+                logger.info(f"Reclaimed {reclaimed} orphaned SEARCHING download(s) back to QUEUED.")
+        except Exception as e:
+            logger.warning(f"Failed to reclaim orphaned SEARCHING items: {e}")
+        return reclaimed
 
     def process_downloads_now(self):
         """Run one processing cycle. Safe to call from any sync or async context.
