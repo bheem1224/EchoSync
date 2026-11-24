@@ -447,10 +447,26 @@ class TestAcquisitionOverhaul:
             duration_ms=258500,
         )
 
-        with patch("echosync_core.extract_metadata", return_value={"duration_ms": 258000}), patch(
-            "echosync_core.fingerprint_hash_and_active_duration",
-            return_value=("fp", 258.0, "hash", 258000),
-            create=True,
+        with (
+            patch("echosync_core.extract_metadata", return_value={"duration_ms": 258000}),
+            patch(
+                "echosync_core.analyze_and_fingerprint_audio",
+                return_value={
+                    "fingerprint": "fp",
+                    "duration_seconds": 258.0,
+                    "pcm_hash": "hash",
+                    "active_duration_ms": 258000,
+                    "is_corrupt": False,
+                    "is_fake_lossless": False,
+                    "has_interior_silence_dropout": False,
+                },
+                create=True,
+            ),
+            patch(
+                "echosync_core.fingerprint_hash_and_active_duration",
+                return_value=("fp", 258.0, "hash", 258000),
+                create=True,
+            ),
         ):
             ok_bad, reason_bad = svc._verify_downloaded_file_against_intent(fake_file, target, wrong_remix)
             assert ok_bad is False
@@ -461,10 +477,26 @@ class TestAcquisitionOverhaul:
             assert reason_good == "OK"
 
         # Truncated 30s preview must fail DURATION_MISMATCH
-        with patch("echosync_core.extract_metadata", return_value={"duration_ms": 30000}), patch(
-            "echosync_core.fingerprint_hash_and_active_duration",
-            return_value=("fp", 30.0, "hash", 30000),
-            create=True,
+        with (
+            patch("echosync_core.extract_metadata", return_value={"duration_ms": 30000}),
+            patch(
+                "echosync_core.analyze_and_fingerprint_audio",
+                return_value={
+                    "fingerprint": "fp",
+                    "duration_seconds": 30.0,
+                    "pcm_hash": "hash",
+                    "active_duration_ms": 30000,
+                    "is_corrupt": False,
+                    "is_fake_lossless": False,
+                    "has_interior_silence_dropout": False,
+                },
+                create=True,
+            ),
+            patch(
+                "echosync_core.fingerprint_hash_and_active_duration",
+                return_value=("fp", 30.0, "hash", 30000),
+                create=True,
+            ),
         ):
             ok_trunc, reason_trunc = svc._verify_downloaded_file_against_intent(fake_file, target, good_match)
             assert ok_trunc is False

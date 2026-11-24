@@ -498,21 +498,6 @@ class TrackParser:
         "junk_extensions_clean": re.compile(r"\s*(?:www\d+|320|192|256)[\.\s]*$", re.IGNORECASE),
         "file_extensions_clean": re.compile(r"\b(?:mp3|flac|m4a|aac|ogg|wav|wma)$", re.IGNORECASE),
         "whitespace_clean": re.compile(r"\s+"),
-        "extension_strip": re.compile(r"\.(mp3|flac|m4a|aac|ogg|wav|wma)$", re.IGNORECASE),
-        "quality_marker_strip": re.compile(r"(?:FLAC|MP3|AAC|OGG|ALAC|Opus|WMA)", re.IGNORECASE),
-        "bitrate_marker_strip": re.compile(
-            r"(?:24[-_]?bit|16[-_]?bit|lossless|320kbps|256kbps|192kbps|320k|256k|192k)",
-            re.IGNORECASE,
-        ),
-        "phrase_clean": re.compile(r"[()[\]{}<>]"),
-        "brackets_clean": re.compile(r"\[.*?\]"),
-        "braces_clean": re.compile(r"{.*?}"),
-        "angle_brackets_clean": re.compile(r"<.*?>"),
-        "underscores_clean": re.compile(r"_+"),
-        "tildes_clean": re.compile(r"~.*?~"),
-        "junk_extensions_clean": re.compile(r"\s*(?:www\d+|320|192|256)[\.\s]*$", re.IGNORECASE),
-        "file_extensions_clean": re.compile(r"(?:mp3|flac|m4a|aac|ogg|wav|wma)$", re.IGNORECASE),
-        "whitespace_clean": re.compile(r"\s+"),
         # Artist - Title format (most common)
         "artist_title": re.compile(
             r"^(?P<artist>.+?)\s+[-–—]\s+(?P<title>.+?)(?:\s*\((?P<version>[^)]+)\))?$",

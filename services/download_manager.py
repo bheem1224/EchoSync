@@ -1135,7 +1135,10 @@ class DownloadManager:
                 last_executed_strategy_idx = start_idx
                 preferred_live_keys: set[tuple[str, str]] = set()
 
-                def _make_live_early_stop():
+                def _make_live_early_stop(
+                    _matcher=matcher,
+                    _live_keys=preferred_live_keys,
+                ):
                     def _evaluator(delta_tracks: list[EchosyncTrack]) -> bool:
                         for raw_c in delta_tracks:
                             if self._is_candidate_blacklisted(raw_c, blacklisted_candidates):
@@ -1147,7 +1150,7 @@ class DownloadManager:
                                 pref_ok = self._filter_by_formats([enriched_c], preferred_formats)
                             if not pref_ok:
                                 continue
-                            sc = matcher.calculate_match(target_track, enriched_c, context="download").confidence_score
+                            sc = _matcher.calculate_match(target_track, enriched_c, context="download").confidence_score
                             if sc >= 80.0:
                                 uname = str(enriched_c.identifiers.get("username") or "")
                                 fname = str(
@@ -1155,8 +1158,8 @@ class DownloadManager:
                                     or enriched_c.identifiers.get("provider_item_id")
                                     or ""
                                 )
-                                preferred_live_keys.add((uname, fname))
-                                if len(preferred_live_keys) >= 3:
+                                _live_keys.add((uname, fname))
+                                if len(_live_keys) >= 3:
                                     return True
                         return False
 
@@ -1319,6 +1322,8 @@ class DownloadManager:
                     target_pool: list[tuple[EchosyncTrack, float, PluginBase]],
                     *,
                     match_context: str = "download",
+                    _candidates=provider_candidates,
+                    _provider=provider,
                 ) -> None:
                     tiers = self._get_priority_tiers(prof)
                     if not tiers:
@@ -1327,7 +1332,7 @@ class DownloadManager:
                     for priority_num, priority_formats in tiers:
                         try:
                             tier_candidates = self._filter_by_formats(
-                                provider_candidates,
+                                _candidates,
                                 priority_formats,
                                 prof,
                                 priority=priority_num,
@@ -1335,10 +1340,10 @@ class DownloadManager:
                         except TypeError:
                             try:
                                 tier_candidates = self._filter_by_formats(
-                                    provider_candidates, priority_formats, prof
+                                    _candidates, priority_formats, prof
                                 )
                             except TypeError:
-                                tier_candidates = self._filter_by_formats(provider_candidates, priority_formats)
+                                tier_candidates = self._filter_by_formats(_candidates, priority_formats)
                         if not tier_candidates:
                             continue
 
@@ -1346,7 +1351,7 @@ class DownloadManager:
                         for candidate in tier_candidates:
                             raw_score = _score_candidate(prof_matcher, candidate, context=match_context)
                             if raw_score >= 70.0:
-                                tier_hits.append((candidate, raw_score, provider))
+                                tier_hits.append((candidate, raw_score, _provider))
 
                         if tier_hits:
                             tier_hits.sort(key=_peer_sort_key, reverse=True)
@@ -2834,7 +2839,7 @@ class DownloadManager:
                         continue
 
                     matched_key = None
-                    for existing_sig, existing_item_id in seen_signatures.items():
+                    for existing_sig, _existing_item_id in seen_signatures.items():
                         if self._is_signature_match(sig, existing_sig):
                             matched_key = existing_sig
                             break

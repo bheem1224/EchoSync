@@ -1975,7 +1975,7 @@ class ConfigDatabase:
 
                 c.execute("SELECT profile_id, priority, rules FROM quality_profile_steps ORDER BY priority ASC")
                 for row in c.fetchall():
-                    pid, priority, rules_raw = str(row[0]), row[1], row[2]
+                    pid, _priority, rules_raw = str(row[0]), row[1], row[2]
                     if pid not in profiles_map:
                         continue
                     rules = {}

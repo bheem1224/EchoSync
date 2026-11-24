@@ -28,6 +28,7 @@ MusicBrainz for recently-failed tracks on every scan cycle.
 
 import os
 import threading
+from dataclasses import is_dataclass, replace
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
@@ -1010,7 +1011,11 @@ class AutoImportService:
             matcher = WeightedMatchingEngine(ExactSyncProfile())
             cand_for_check = resolved_track
             if active_dur_ms and isinstance(getattr(cand_for_check, "extra_metadata", None), dict):
-                cand_for_check.extra_metadata["active_duration_ms"] = active_dur_ms
+                updated_extra = {**cand_for_check.extra_metadata, "active_duration_ms": active_dur_ms}
+                if is_dataclass(cand_for_check) and not isinstance(cand_for_check, type):
+                    cand_for_check = replace(cand_for_check, extra_metadata=updated_extra)
+                else:
+                    cand_for_check.extra_metadata = updated_extra
             match_ctx = "download_remaster_fallback" if allow_remaster_fallback else "sync"
             match_res = matcher.calculate_match(target_track, cand_for_check, context=match_ctx)
             if not match_res.passed_version_check:
