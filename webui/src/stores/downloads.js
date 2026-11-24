@@ -29,12 +29,15 @@ export async function fetchDownloads() {
       downloadQueue.set(allItems);
     }
 
-    const activeStatuses = new Set(['DOWNLOADING', 'SEARCHING', 'QUEUED', 'PAUSED', 'downloading', 'searching', 'queued', 'paused']);
+    const activeStatuses = new Set([
+      'DOWNLOADING', 'SEARCHING', 'VERIFYING', 'RETRYING', 'QUEUED', 'PAUSED',
+      'downloading', 'searching', 'verifying', 'retrying', 'queued', 'paused'
+    ]);
     const activeItems = allItems.filter(i => activeStatuses.has(i.status));
     activeDownloads.set(activeItems);
 
     const activelyRunningCount = allItems.filter(i => 
-      ['DOWNLOADING', 'SEARCHING', 'QUEUED', 'downloading', 'searching', 'queued'].includes(i.status)
+      ['DOWNLOADING', 'SEARCHING', 'VERIFYING', 'RETRYING', 'QUEUED', 'downloading', 'searching', 'verifying', 'retrying', 'queued'].includes(i.status)
     ).length;
     activeDownloadCount.set(activelyRunningCount);
 
@@ -56,10 +59,10 @@ export async function fetchDownloads() {
 
     downloadStats.set({
       totalSpeed,
-      activeCount: allItems.filter(i => ['DOWNLOADING', 'SEARCHING', 'downloading', 'searching'].includes(i.status)).length,
+      activeCount: allItems.filter(i => ['DOWNLOADING', 'SEARCHING', 'VERIFYING', 'RETRYING', 'downloading', 'searching', 'verifying', 'retrying'].includes(i.status)).length,
       queuedCount: allItems.filter(i => ['QUEUED', 'queued'].includes(i.status)).length,
       completedCount: allItems.filter(i => ['COMPLETED', 'completed'].includes(i.status)).length,
-      failedCount: allItems.filter(i => ['FAILED', 'NOT_FOUND', 'failed', 'not_found'].includes(i.status)).length,
+      failedCount: allItems.filter(i => ['FAILED', 'NOT_FOUND', 'CANCELLED', 'failed', 'not_found', 'cancelled'].includes(i.status)).length,
       isRunning: isJobRunning
     });
   } catch (err) {

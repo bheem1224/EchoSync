@@ -232,3 +232,80 @@ async def test_dual_profile_single_pass_fallback_promotion():
     # Both strategies ran (didn't short-circuit on MP3), then promoted MP3 from memory with 0 extra searches
     assert len(search_calls) == 2
     assert started == [("peer_mp3", "Indie Artist - Rare Song.mp3", 8_000_000)]
+    # Compact diagnostics persisted with strategy funnel + top_candidates
+    diag = queued_download.echo_sync_track.get("_diagnostics")
+    assert diag is not None
+    assert len(diag["strategy_funnel"]) == 2
+    assert diag["top_candidates"][0]["pool"] == "fallback_profile"
+
+
+@pytest.mark.asyncio
+async def test_slskd_list_transfer_api_status_and_cancel():
+    """Verify real slskd REST API v0 list payload is parsed for Completed, Errored & Completed, Succeeded."""
+    from unittest.mock import patch
+    from plugins.EchoSync.slskd.client import SlskdProvider
+
+    provider = SlskdProvider()
+    provider.base_url = "http://localhost:5030"
+
+    real_slskd_list_payload = [
+        {
+            "username": "Vaelin",
+            "directories": [
+                {
+                    "directory": "@@ihwjx\\Music Library\\Skillet\\2009 - Awake (Deluxe Edition)",
+                    "files": [
+                        {
+                            "id": "uuid-err-1",
+                            "filename": "@@ihwjx\\Music Library\\Skillet\\2009 - Awake (Deluxe Edition)\\04. Awake And Alive.flac",
+                            "state": "Completed, Errored",
+                            "percentComplete": 0,
+                            "size": 28730982,
+                            "averageSpeed": 0,
+                        }
+                    ],
+                }
+            ],
+        },
+        {
+            "username": "beeer",
+            "directories": [
+                {
+                    "directory": "music\\Kate Bush\\Kate Bush - Hounds of Love (1985)",
+                    "files": [
+                        {
+                            "id": "uuid-ok-2",
+                            "filename": "music\\Kate Bush\\Kate Bush - Hounds of Love (1985)\\01 - Running Up That Hill (A Deal with God).flac",
+                            "state": "Completed, Succeeded",
+                            "percentComplete": 100,
+                            "size": 37539020,
+                            "averageSpeed": 1200000,
+                        }
+                    ],
+                }
+            ],
+        },
+    ]
+
+    with patch.object(provider, "_make_request", new_callable=AsyncMock) as mock_req:
+        mock_req.return_value = real_slskd_list_payload
+
+        st_err = await provider._async_get_download_status(
+            "Vaelin|@@ihwjx\\Music Library\\Skillet\\2009 - Awake (Deluxe Edition)\\04. Awake And Alive.flac"
+        )
+        assert st_err is not None
+        assert st_err["status"] == "failed"
+
+        st_ok = await provider._async_get_download_status(
+            "beeer|music\\Kate Bush\\Kate Bush - Hounds of Love (1985)\\01 - Running Up That Hill (A Deal with God).flac"
+        )
+        assert st_ok is not None
+        assert st_ok["status"] == "complete"
+        assert st_ok["speed"] == 1200000
+
+        cancelled = await provider._async_cancel_download(
+            "Vaelin|@@ihwjx\\Music Library\\Skillet\\2009 - Awake (Deluxe Edition)\\04. Awake And Alive.flac"
+        )
+        assert cancelled is True
+        mock_req.assert_any_call("DELETE", "transfers/downloads/Vaelin/uuid-err-1")
+

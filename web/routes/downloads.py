@@ -56,6 +56,8 @@ class QueueItem(BaseModel):
     current_speed: float
     progress_percent: float
     cancellation_reason: str | None = None
+    error_reason: str | None = None
+    diagnostics: dict | None = None
     created_at: str | None = None
     updated_at: str | None = None
 
@@ -148,6 +150,8 @@ def _format_item(download) -> dict:
         "current_speed": track_data.get("current_speed", 0.0),
         "progress_percent": track_data.get("progress_percent", 0.0),
         "cancellation_reason": track_data.get("cancellation_reason"),
+        "error_reason": getattr(download, "error_reason", None),
+        "diagnostics": track_data.get("_diagnostics"),
         "created_at": download.created_at.isoformat() if download.created_at else None,
         "updated_at": download.updated_at.isoformat() if download.updated_at else None,
     }

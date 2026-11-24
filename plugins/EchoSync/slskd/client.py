@@ -1252,6 +1252,36 @@ class SlskdProvider(DownloaderProvider):
             logger.error(f"Error starting download: {e}")
             return None
 
+    @staticmethod
+    def _extract_user_directories(all_downloads: Any, username: str) -> list[dict[str, Any]]:
+        """Extract directory transfer entries for *username* from slskd's /transfers/downloads payload.
+
+        Supports both real slskd REST API v0 (JSON array of user objects:
+        `[{"username": "...", "directories": [...]}]`) and legacy/mock dict mappings
+        (`{"username": {"directories": [...]}}`).
+        """
+        if not all_downloads or not username:
+            return []
+
+        if isinstance(all_downloads, list):
+            for entry in all_downloads:
+                if isinstance(entry, dict) and entry.get("username") == username:
+                    dirs = entry.get("directories", [])
+                    return dirs if isinstance(dirs, list) else []
+            return []
+
+        if isinstance(all_downloads, dict):
+            if all_downloads.get("username") == username and isinstance(
+                all_downloads.get("directories"), list
+            ):
+                return all_downloads["directories"]
+            user_data = all_downloads.get(username, {})
+            if isinstance(user_data, dict):
+                dirs = user_data.get("directories", [])
+                return dirs if isinstance(dirs, list) else []
+
+        return []
+
     async def _async_get_download_status(
         self, download_id: str
     ) -> dict[str, Any] | None:
@@ -1265,8 +1295,6 @@ class SlskdProvider(DownloaderProvider):
         try:
             # Parse compound ID
             if "|" not in download_id:
-                # Legacy download entry from before compound ID format was implemented
-                # Skip silently - these will eventually be cleaned up by periodic cleanup task
                 logger.debug(
                     f"Skipping legacy download_id without username prefix: {download_id[:80]}"
                 )
@@ -1276,81 +1304,74 @@ class SlskdProvider(DownloaderProvider):
             safe_filename = _sanitize_peer_filename(filename)
 
             # Query the transfers endpoint to find this download
-            # GET /api/v0/transfers/downloads returns all downloads grouped by username
             all_downloads = await self._make_request("GET", "transfers/downloads")
+            directories = self._extract_user_directories(all_downloads, username)
 
-            if all_downloads and isinstance(all_downloads, dict):
-                # Response format: {\"username\": {\"directories\": [{\"directory\": \"...\", \"files\": [...]}]}}
-                user_data = all_downloads.get(username, {})
-                if isinstance(user_data, dict):
-                    directories = user_data.get("directories", [])
-                    for directory in directories:
-                        if isinstance(directory, dict):
-                            files = directory.get("files", [])
-                            for file_data in files:
-                                if isinstance(file_data, dict):
-                                    file_filename = file_data.get("filename", "")
-                                    # Match by filename
-                                    if file_filename == filename:
-                                        # Map slskd composite status to our status
-                                        state_lower = file_data.get("state", "").lower()
-                                        status = "unknown"
-                                        if (
-                                            "succeeded" in state_lower
-                                            or "finished" in state_lower
-                                        ):
-                                            status = "complete"
-                                        elif any(
-                                            x in state_lower
-                                            for x in [
-                                                "error",
-                                                "reject",
-                                                "abort",
-                                                "cancel",
-                                                "timedout",
-                                                "failed",
-                                            ]
-                                        ):
-                                            status = "failed"
-                                        elif (
-                                            "queued" in state_lower
-                                            or "initializing" in state_lower
-                                        ):
-                                            status = "queued"
-                                        elif (
-                                            "downloading" in state_lower
-                                            or "transferring" in state_lower
-                                            or "inprogress" in state_lower
-                                        ):
-                                            status = "downloading"
-                                        elif "completed" in state_lower:
-                                            status = "complete"
+            for directory in directories:
+                if isinstance(directory, dict):
+                    files = directory.get("files", [])
+                    for file_data in files:
+                        if isinstance(file_data, dict):
+                            file_filename = file_data.get("filename", "")
+                            if file_filename == filename:
+                                # Inspect both state and status (slskd returns e.g. "Completed, Errored" or state="Completed", status="Succeeded")
+                                state_combined = f"{file_data.get('state', '')} {file_data.get('status', '')}".lower()
+                                status = "unknown"
+                                if (
+                                    "succeeded" in state_combined
+                                    or "finished" in state_combined
+                                ):
+                                    status = "complete"
+                                elif any(
+                                    x in state_combined
+                                    for x in [
+                                        "error",
+                                        "reject",
+                                        "abort",
+                                        "cancel",
+                                        "timedout",
+                                        "failed",
+                                    ]
+                                ):
+                                    status = "failed"
+                                elif (
+                                    "queued" in state_combined
+                                    or "initializing" in state_combined
+                                ):
+                                    status = "queued"
+                                elif (
+                                    "downloading" in state_combined
+                                    or "transferring" in state_combined
+                                    or "inprogress" in state_combined
+                                ):
+                                    status = "downloading"
+                                elif "completed" in state_combined:
+                                    status = "complete"
 
-                                        resolved_local_path = self.download_path / safe_filename
-                                        if not resolved_local_path.exists() and self.download_path.exists():
-                                            try:
-                                                for match_p in self.download_path.rglob(safe_filename):
-                                                    if match_p.is_file():
-                                                        resolved_local_path = match_p
-                                                        break
-                                            except Exception:
-                                                pass
+                                resolved_local_path = self.download_path / safe_filename
+                                if not resolved_local_path.exists() and self.download_path.exists():
+                                    try:
+                                        for match_p in self.download_path.rglob(safe_filename):
+                                            if match_p.is_file():
+                                                resolved_local_path = match_p
+                                                break
+                                    except Exception:
+                                        pass
 
-                                        local_path_str = str(resolved_local_path)
-                                        return {
-                                            "id": download_id,
-                                            "status": status,
-                                            "filename": safe_filename,
-                                            "remote_filename": filename,
-                                            "file_path": local_path_str,
-                                            "local_path": local_path_str,
-                                            "username": username,
-                                            "progress": file_data.get(
-                                                "percentComplete", 0
-                                            ),
-                                            "speed": file_data.get("averageSpeed", 0.0) or 0.0,
-                                            "size": file_data.get("size", 0),
-                                        }
+                                local_path_str = str(resolved_local_path)
+                                return {
+                                    "id": download_id,
+                                    "status": status,
+                                    "raw_state": str(file_data.get("state") or file_data.get("status") or ""),
+                                    "filename": safe_filename,
+                                    "remote_filename": filename,
+                                    "file_path": local_path_str,
+                                    "local_path": local_path_str,
+                                    "username": username,
+                                    "progress": file_data.get("percentComplete", 0),
+                                    "speed": file_data.get("averageSpeed", 0.0) or 0.0,
+                                    "size": file_data.get("size", 0),
+                                }
 
             # Not found - might be completed and removed
             logger.debug(f"Download not found in active transfers: {download_id}")
@@ -1371,21 +1392,21 @@ class SlskdProvider(DownloaderProvider):
 
             username, filename = provider_id.split("|", 1)
 
-            # Query downloads to find file transfer id if available, or delete by username
+            # Query downloads to find file transfer UUID (handles both list and dict payloads)
             all_downloads = await self._make_request("GET", "transfers/downloads")
+            directories = self._extract_user_directories(all_downloads, username)
             file_id = None
-            if all_downloads and isinstance(all_downloads, dict):
-                user_data = all_downloads.get(username, {})
-                if isinstance(user_data, dict):
-                    for directory in user_data.get("directories", []):
-                        if isinstance(directory, dict):
-                            for file_data in directory.get("files", []):
-                                if (
-                                    isinstance(file_data, dict)
-                                    and file_data.get("filename") == filename
-                                ):
-                                    file_id = file_data.get("id")
-                                    break
+            for directory in directories:
+                if isinstance(directory, dict):
+                    for file_data in directory.get("files", []):
+                        if (
+                            isinstance(file_data, dict)
+                            and file_data.get("filename") == filename
+                        ):
+                            file_id = file_data.get("id")
+                            break
+                if file_id:
+                    break
 
             if file_id:
                 try:

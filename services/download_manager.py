@@ -234,6 +234,7 @@ class DownloadManager:
                 DownloadStatus.DOWNLOADING.value,
                 DownloadStatus.VERIFYING.value,
                 DownloadStatus.RETRYING.value,
+                DownloadStatus.FAILED.value,
             }
             cancelled_count = 0
 
@@ -1059,6 +1060,28 @@ class DownloadManager:
             checkpoint_total_strategies = len(strategies)
             used_remaster_fallback = False
 
+            # Compact per-item diagnostics (bounded summary — never stores 60-100+ raw candidates)
+            diag_strategy_funnel: list[dict[str, Any]] = []
+            diag_rejections: dict[str, int] = {
+                "version_mismatch": 0,
+                "duration_mismatch": 0,
+                "low_text_score": 0,
+                "format_or_size": 0,
+                "blacklisted": 0,
+            }
+
+            def _record_rejection(match_res: Any) -> None:
+                if match_res is None:
+                    return
+                if not getattr(match_res, "passed_version_check", True):
+                    diag_rejections["version_mismatch"] += 1
+                elif getattr(match_res, "duration_match_score", 1.0) == 0.0 and getattr(match_res, "is_near_miss", False):
+                    diag_rejections["duration_mismatch"] += 1
+                elif getattr(match_res, "fuzzy_text_score", 1.0) < 0.80:
+                    diag_rejections["low_text_score"] += 1
+                else:
+                    diag_rejections["duration_mismatch"] += 1
+
             def _peer_sort_key(item: tuple[EchosyncTrack, float, PluginBase]):
                 cand_obj, sc, _prov = item
                 return (
@@ -1220,6 +1243,7 @@ class DownloadManager:
                     # Call provider search (with live in-poll early stop + dual-profile support)
                     search_results: list[EchosyncTrack] = []
                     sniper_hit = False
+                    strat_t0 = time.monotonic()
                     try:
                         logger.debug(f"    Invoking search on {provider.name} with quality profile")
                         invoke_kwargs: dict[str, Any] = {
@@ -1248,6 +1272,17 @@ class DownloadManager:
                             **invoke_kwargs,
                         )
                     except Exception as e:
+                        diag_strategy_funnel.append(
+                            {
+                                "strategy": strategy_name,
+                                "query": query,
+                                "raw": 0,
+                                "eligible": 0,
+                                "preferred": 0,
+                                "elapsed_s": round(time.monotonic() - strat_t0, 2),
+                                "outcome": "error",
+                            }
+                        )
                         logger.warning(
                             f"    Strategy {strategy_idx} [{strategy_name}] failed on {provider.name}: {e}. "
                             f"Advancing to Strategy {strategy_idx + 1}"
@@ -1255,6 +1290,17 @@ class DownloadManager:
                         continue
 
                     if not search_results:
+                        diag_strategy_funnel.append(
+                            {
+                                "strategy": strategy_name,
+                                "query": query,
+                                "raw": 0,
+                                "eligible": 0,
+                                "preferred": 0,
+                                "elapsed_s": round(time.monotonic() - strat_t0, 2),
+                                "outcome": "0_results",
+                            }
+                        )
                         logger.info(
                             f"    Strategy {strategy_idx} returned 0 candidates, advancing to Strategy {strategy_idx + 1}"
                         )
@@ -1266,6 +1312,7 @@ class DownloadManager:
                         valid_results = []
                         for c in search_results:
                             if self._is_candidate_blacklisted(c, blacklisted_candidates):
+                                diag_rejections["blacklisted"] += 1
                                 pid = c.identifiers.get("plugin_item_id") or c.identifiers.get("provider_item_id")
                                 username = c.identifiers.get("username")
                                 logger.info(f"    Skipping blacklisted candidate '{pid}' from user '{username}'")
@@ -1290,15 +1337,38 @@ class DownloadManager:
                             except TypeError:
                                 viable_cand = self._filter_by_formats([cand], preferred_formats)
                             if not viable_cand:
+                                diag_rejections["format_or_size"] += 1
                                 continue
 
-                            raw_score = _score_candidate(matcher, cand, context="download")
+                            match_obj = matcher.calculate_match(target_track, cand, context="download")
+                            raw_score = match_obj.confidence_score
+                            if raw_score < 70.0 and cand.identifiers.get("discovery_strategy") == "loose_title_duration" and hasattr(matcher, "calculate_title_duration_match"):
+                                td_res = matcher.calculate_title_duration_match(target_track, cand)
+                                if td_res.confidence_score > raw_score:
+                                    raw_score = td_res.confidence_score
+                                    match_obj = td_res
+                            if raw_score < 70.0:
+                                _record_rejection(match_obj)
                             if raw_score >= perfect_match_threshold:
                                 has_preferred_snipe = True
                             if raw_score >= 75.0:
                                 viable_preferred += 1
 
-                        if viable_preferred >= 3 or (has_preferred_snipe and (viable_preferred >= 3 or sniper_hit)):
+                        did_short_circuit = viable_preferred >= 3 or (
+                            has_preferred_snipe and (viable_preferred >= 3 or sniper_hit)
+                        )
+                        diag_strategy_funnel.append(
+                            {
+                                "strategy": strategy_name,
+                                "query": query,
+                                "raw": len(search_results),
+                                "eligible": len(enriched_results),
+                                "preferred": viable_preferred,
+                                "elapsed_s": round(time.monotonic() - strat_t0, 2),
+                                "outcome": "short_circuited" if did_short_circuit else "advanced",
+                            }
+                        )
+                        if did_short_circuit:
                             logger.info(
                                 f"  ⚡ Strategy {strategy_idx} [{strategy_name}] populated Preferred pool "
                                 f"(snipe={has_preferred_snipe}, viable_preferred={viable_preferred}) "
@@ -1452,8 +1522,54 @@ class DownloadManager:
 
             unique_candidates = unique_candidates[:3]
 
+            def _build_diagnostics_payload(finalists: list[dict[str, Any]], outcome_event: str) -> dict[str, Any]:
+                return {
+                    "strategy_funnel": diag_strategy_funnel[:12],
+                    "rejection_histogram": {k: v for k, v in diag_rejections.items() if v > 0},
+                    "pool_counts": {
+                        "preferred": len(scored_candidates),
+                        "remaster_fallback": len(remaster_fallback_candidates),
+                        "fallback_profile": len(fallback_profile_candidates),
+                    },
+                    "top_candidates": [
+                        {
+                            "peer": d["username"],
+                            "filename": d["filename"],
+                            "score": round(float(d["score"]), 1),
+                            "pool": (
+                                "remaster_fallback"
+                                if used_remaster_fallback
+                                else ("fallback_profile" if not scored_candidates and fallback_profile_candidates else "preferred")
+                            ),
+                        }
+                        for d in finalists[:3]
+                    ],
+                    "timeline": [
+                        {
+                            "ts": utc_now().isoformat(),
+                            "event": outcome_event,
+                            "candidate_id": finalists[0]["id"] if finalists else None,
+                            "detail": (
+                                f"Selected {len(finalists)} finalist(s) after {len(diag_strategy_funnel)} strategy step(s)"
+                                if finalists
+                                else f"No match >= 70% across {len(diag_strategy_funnel)} strategy step(s)"
+                            ),
+                        }
+                    ],
+                }
+
             if not unique_candidates:
                 logger.warning(f"No suitable candidate matched across all {len(providers)} providers (min score: 70%)")
+                try:
+                    with self.work_db.session_scope() as session:
+                        item = session.query(DownloadQueue).get(download_id)
+                        if item and isinstance(item.echo_sync_track, dict):
+                            updated_payload = dict(item.echo_sync_track)
+                            updated_payload["_diagnostics"] = _build_diagnostics_payload([], "SEARCH_EXHAUSTED")
+                            item.echo_sync_track = updated_payload
+                            item.error_reason = "NO_MATCHING_CANDIDATES"
+                except Exception:
+                    pass
                 self._update_status(download_id, DownloadStatus.FAILED)
                 return
 
@@ -1490,6 +1606,9 @@ class DownloadManager:
                             "total_strategies": checkpoint_total_strategies,
                             "last_search_ts": time.time(),
                         }
+                        updated_payload["_diagnostics"] = _build_diagnostics_payload(
+                            candidate_descriptors, "CANDIDATES_SELECTED"
+                        )
                         item.echo_sync_track = updated_payload
                     if hasattr(session, "commit"):
                         with db_write_lease(task_name="update_candidate_stack"):
@@ -1596,6 +1715,36 @@ class DownloadManager:
                 and (last_idx + 1) < total
             )
 
+    def _append_diagnostic_event(
+        self,
+        download_id: int,
+        event: str,
+        candidate_id: str | None = None,
+        detail: str | None = None,
+    ) -> None:
+        """Append a bounded timeline event to echo_sync_track['_diagnostics']['timeline']."""
+        try:
+            with self.work_db.session_scope() as session:
+                item = session.get(DownloadQueue, download_id)
+                if not item or not isinstance(item.echo_sync_track, dict):
+                    return
+                payload = dict(item.echo_sync_track)
+                diag = dict(payload.get("_diagnostics") or {})
+                timeline = list(diag.get("timeline") or [])
+                timeline.append(
+                    {
+                        "ts": utc_now().isoformat(),
+                        "event": str(event),
+                        "candidate_id": candidate_id,
+                        "detail": detail,
+                    }
+                )
+                diag["timeline"] = timeline[-15:]
+                payload["_diagnostics"] = diag
+                item.echo_sync_track = payload
+        except Exception:
+            pass
+
     async def _handle_active_download_failure(
         self,
         db_id: int,
@@ -1605,7 +1754,9 @@ class DownloadManager:
         reason: str,
     ) -> None:
         """Cancel remote transfer, rotate candidate via DownloadRepository, and dispatch backup or resume strategies."""
-        self._transfer_progress_tracker.pop(db_id, None)
+        if hasattr(self, "_transfer_progress_tracker"):
+            self._transfer_progress_tracker.pop(db_id, None)
+        self._append_diagnostic_event(db_id, reason, candidate_id=failed_candidate_id)
         await self._cancel_transfer_async(cancel_providers, failed_candidate_id)
 
         rotated = self.repo.transition_to_retrying_or_failed(
@@ -3093,6 +3244,25 @@ class DownloadManager:
         return requeued
 
 
+    def poll_active_downloads_if_needed(self) -> None:
+        """Lightweight active-transfer poll for JobQueue when background _process_loop is inactive."""
+        if self._loop_task and not self._loop_task.done():
+            return
+        try:
+            with self.work_db.session_scope() as session:
+                has_active = (
+                    session.query(DownloadQueue.id)
+                    .filter(DownloadQueue.status == DownloadStatus.DOWNLOADING.value)
+                    .first()
+                    is not None
+                )
+            if not has_active:
+                return
+            asyncio.run(self._check_active_downloads())
+        except Exception as e:
+            logger.debug(f"Active download poll cycle failed: {e}")
+
+
 # Global Accessor
 def get_download_manager():
     return DownloadManager.get_instance()
@@ -3100,12 +3270,8 @@ def get_download_manager():
 
 def register_download_manager_job(interval_seconds: int = 21600):
     """
-    Register download manager processing as a periodic job with the global job_queue.
-    The download manager runs a continuous processing loop, but this job allows manual
-    triggering from the Jobs UI to process queued downloads immediately.
-
-    Args:
-        interval_seconds: Interval between automatic job runs (default 6 hours = 21600s)
+    Register download manager processing + lightweight 30s active-transfer polling
+    with the global job_queue.
     """
     from core.task_manager.task_queue import job_queue, unregister_job
 
@@ -3113,6 +3279,11 @@ def register_download_manager_job(interval_seconds: int = 21600):
         """Run one full download processing cycle driven by the job queue."""
         dm = get_download_manager()
         dm.process_downloads_now()
+
+    def poll_active_downloads(**kwargs):
+        """Poll active DOWNLOADING transfers every 30s even when auto_start is False."""
+        dm = get_download_manager()
+        dm.poll_active_downloads_if_needed()
 
     unregister_job("download_manager_status")
 
@@ -3125,6 +3296,16 @@ def register_download_manager_job(interval_seconds: int = 21600):
         category=TaskCategory.GENERAL,
         tags=["echosync", "downloads"],
         max_retries=3,
+    )
+    job_queue.register_job(
+        name="download_status_poller",
+        func=poll_active_downloads,
+        interval_seconds=30,
+        start_after=30,
+        enabled=True,
+        category=TaskCategory.GENERAL,
+        tags=["echosync", "downloads"],
+        max_retries=1,
     )
 
     logger.info(
