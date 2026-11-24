@@ -1709,23 +1709,23 @@ class RetroactiveEnhancer:
                         duration_sec = None
 
                     mbid = raw_tags.get("mbid") or raw_tags.get("musicbrainz_id") or raw_tags.get("musicbrainz_trackid")
-                    track = EchosyncTrack(
-                        raw_title=raw_tags.get("title") or "",
-                        artist_name=raw_tags.get("artist") or raw_tags.get("artist_name") or "",
-                        album_title=raw_tags.get("album") or raw_tags.get("album_title") or "",
-                    )
+                    track_kwargs: dict[str, Any] = {
+                        "raw_title": raw_tags.get("title") or "",
+                        "artist_name": raw_tags.get("artist") or raw_tags.get("artist_name") or "",
+                        "album_title": raw_tags.get("album") or raw_tags.get("album_title") or "",
+                    }
                     if duration_ms:
-                        track.duration = int(duration_ms)
+                        track_kwargs["duration_ms"] = int(duration_ms)
                     if raw_tags.get("track_number") or raw_tags.get("track_no"):
                         try:
-                            track.track_number = int(
+                            track_kwargs["track_number"] = int(
                                 str(raw_tags.get("track_number") or raw_tags.get("track_no")).split("/")[0]
                             )
                         except (ValueError, TypeError, IndexError):
                             pass
                     if raw_tags.get("disc_number") or raw_tags.get("disc_no"):
                         try:
-                            track.disc_number = int(
+                            track_kwargs["disc_number"] = int(
                                 str(raw_tags.get("disc_number") or raw_tags.get("disc_no")).split("/")[0]
                             )
                         except (ValueError, TypeError, IndexError):
@@ -1733,13 +1733,14 @@ class RetroactiveEnhancer:
                     if raw_tags.get("year") or raw_tags.get("date"):
                         try:
                             val = str(raw_tags.get("year") or raw_tags.get("date"))
-                            track.release_year = int(val[:4])
+                            track_kwargs["release_year"] = int(val[:4])
                         except (ValueError, TypeError, IndexError):
                             pass
                     if mbid:
-                        track.musicbrainz_id = mbid
+                        track_kwargs["musicbrainz_id"] = mbid
                     if raw_tags.get("isrc"):
-                        track.isrc = raw_tags["isrc"]
+                        track_kwargs["isrc"] = raw_tags["isrc"]
+                    track = EchosyncTrack(**track_kwargs)
                 except Exception as parse_err:
                     logger.warning(f"Failed to get track from file via echosync_core: {parse_err}")
 

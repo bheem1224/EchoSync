@@ -620,17 +620,35 @@ class TrackParser:
         clean_path = raw_clean.replace("\\", "/")
         parts = [p.strip() for p in clean_path.split("/") if p.strip()]
 
+        # Filter out non-entity intermediate directories (multi-disc, codec/format, generic share roots)
+        # so paths like "Artist/Album/CD 1/01 - Track.flac" do not promote Album into dir_artist.
+        _non_entity_dir_re = re.compile(
+            r"^(?:"
+            r"(?:cd|disc|disk|vol(?:ume)?|part|side)\s*\d+[a-z]?"
+            r"|music|downloads?|library|media|my music|users?|documents?|desktop|complete|incomplete|shared?"
+            r"|lossless|lossy|flac|mp3|wav|dsd|alac|web|vinyl|cd\s*rip|hi[-_ ]?res"
+            r"|(?:\[|\()?(?:flac|mp3|web|vinyl|24[-_ ]?bit|16[-_ ]?bit|24[-_ ]?(?:96|192|48|44\.1)|16[-_ ]?44\.1)(?:\]|\))?"
+            r"|\d{4}|\d{2,}"
+            r")$",
+            re.IGNORECASE,
+        )
+
+        filename_part = parts[-1]
+        raw_dirs = [p for p in parts[:-1] if p and not p.startswith("@") and not re.match(r"^[a-zA-Z]:$", p)]
+        meaningful_dirs = [d for d in raw_dirs if not _non_entity_dir_re.match(d.strip())]
+
         dir_artist = None
         dir_album = None
-        if len(parts) >= 3:
-            dir_artist = parts[-3]
-            dir_album = parts[-2]
-            filename_part = parts[-1]
-        elif len(parts) == 2:
-            dir_artist = parts[-2]
-            filename_part = parts[-1]
-        else:
-            filename_part = parts[0]
+        if len(meaningful_dirs) >= 2:
+            dir_artist = meaningful_dirs[-2]
+            dir_album = meaningful_dirs[-1]
+        elif len(meaningful_dirs) == 1:
+            dir_artist = meaningful_dirs[-1]
+        elif len(raw_dirs) >= 2:
+            dir_artist = raw_dirs[-2]
+            dir_album = raw_dirs[-1]
+        elif len(raw_dirs) == 1:
+            dir_artist = raw_dirs[-1]
 
         working_string = filename_part
 
@@ -652,6 +670,14 @@ class TrackParser:
         ext_edition = None
         if self.config.detect_version:
             working_string, ext_version, ext_edition = extract_version_descriptors(working_string)
+            # Soulseek peers commonly place remaster/edition qualifiers on the parent album folder
+            # (e.g. "Album [2011 Remaster]/01 - Track.flac") rather than the track filename itself.
+            if not ext_version and not ext_edition and dir_album:
+                _, dir_ver, dir_ed = extract_version_descriptors(dir_album)
+                if dir_ver and "remaster" in dir_ver.lower():
+                    ext_version = dir_ver
+                if dir_ed and "remaster" in dir_ed.lower():
+                    ext_edition = dir_ed
 
         # Remove junk before parsing
         if self.config.remove_junk_chars:

@@ -235,7 +235,12 @@ async def _on_download_completed_or_failed(event_data: dict[str, Any]) -> None:
             event_name,
             username,
         )
-        await provider.delete_transfer(username, transfer_id)
+        # If transfer_id is a remote path (not a UUID), cancel specifically by filename so we
+        # never wipe other concurrent downloads from the same Soulseek peer.
+        if transfer_id and ("\\" in str(transfer_id) or "/" in str(transfer_id)):
+            await provider._async_cancel_download(f"{username}|{transfer_id}")
+        elif transfer_id:
+            await provider.delete_transfer(username, transfer_id)
 
 
 async def _on_service_degraded(event_data: dict[str, Any]) -> None:

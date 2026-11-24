@@ -250,7 +250,6 @@ def _delete_download_impl(download_id: int):
                 _cancel_remote_transfers([download])
 
             session.delete(download)
-            session.commit()
             logger.info(f"Deleted download {download_id} from queue")
             return {"success": True, "message": f"DownloadQueue {download_id} removed"}
     except HTTPException:
@@ -286,7 +285,6 @@ def _clear_queue_impl(
                 _cancel_remote_transfers(active_downloads)
 
             count = query.delete(synchronize_session=False)
-            session.commit()
             logger.info(
                 f"Cleared {count} downloads from queue (scope={scope}, status={status})"
             )
@@ -314,7 +312,6 @@ def _requeue_download_impl(download_id: int):
             download.status = DownloadStatus.QUEUED.value
             download.error_reason = None
             download.updated_at = utc_now()
-            session.commit()
 
         # Passive return: Do NOT call process_downloads_now or process_single_download
         logger.info(f"Passively re-queued download {download_id}")
@@ -339,7 +336,6 @@ def _pause_download_impl(download_id: int):
 
             download.status = "PAUSED"
             download.updated_at = utc_now()
-            session.commit()
             return {"success": True, "message": f"Download {download_id} paused"}
     except HTTPException:
         raise
@@ -364,7 +360,6 @@ def _cancel_download_impl(download_id: int):
 
             download.status = DownloadStatus.CANCELLED.value
             download.updated_at = utc_now()
-            session.commit()
             return {"success": True, "message": f"Download {download_id} cancelled"}
     except HTTPException:
         raise
@@ -387,7 +382,6 @@ def _requeue_all_failed_impl():
                 item.retry_count = (item.retry_count or 0) + 1
                 item.error_reason = None
                 item.updated_at = utc_now()
-            session.commit()
             logger.info(f"Re-queued {count} failed downloads")
             return {
                 "success": True,

@@ -146,8 +146,17 @@ class TrackResult(SearchResult):
             # Get meaningful directory parts (skip filename which is last)
             dir_parts = [p for p in path_parts[:-1] if p and not p.startswith("@")]
 
-            # Skip generic/system folder patterns
-            generic_folders_pattern = r"^(music|downloads?|library|media|my music|users?|documents?|desktop|lossless|flac|mp3|high.*quality|lossy|\d{4}|\d{2,})$"
+            # Skip generic/system/multi-disc/codec folder patterns so e.g.
+            # "Artist/Album/CD 1/01 - Track.flac" does not promote Album into artist.
+            generic_folders_pattern = (
+                r"^(?:"
+                r"(?:cd|disc|disk|vol(?:ume)?|part|side)\s*\d+[a-z]?"
+                r"|music|downloads?|library|media|my music|users?|documents?|desktop|complete|incomplete|shared?"
+                r"|lossless|flac|mp3|wav|dsd|alac|web|vinyl|cd\s*rip|high.*quality|hi[-_ ]?res|lossy"
+                r"|(?:\[|\()?(?:flac|mp3|web|vinyl|24[-_ ]?bit|16[-_ ]?bit|24[-_ ]?(?:96|192|48|44\.1)|16[-_ ]?44\.1)(?:\]|\))?"
+                r"|\d{4}|\d{2,}"
+                r")$"
+            )
             meaningful_dirs = [
                 d
                 for d in dir_parts
@@ -183,12 +192,96 @@ class TrackResult(SearchResult):
                         self.album = parent_folder
 
 
+def _normalize_for_prefilter(text: str) -> str:
+    """Fold diacritics, collapse apostrophes, and normalize separators for P2P token pre-filtering."""
+    import unicodedata
+
+    if not text:
+        return ""
+    decomposed = unicodedata.normalize("NFKD", str(text))
+    folded = "".join(ch for ch in decomposed if not unicodedata.combining(ch))
+    # Collapse apostrophe variants ("Don't" -> "Dont") so punctuated and unpunctuated filenames match
+    folded = re.sub(r"['’`´ʼ]", "", folded).lower()
+    # Replace remaining non-alphanumeric separators (underscores, dots, hyphens, slashes) with spaces
+    folded = re.sub(r"[^\w\s]|_", " ", folded)
+    return " ".join(folded.split())
+
+
+def _tokens_contained(needle_norm: str, haystack_norm: str) -> bool:
+    """Return True if all normalized words in needle_norm appear in haystack_norm."""
+    if not needle_norm:
+        return True
+    if needle_norm in haystack_norm:
+        return True
+    needle_tokens = needle_norm.split()
+    if not needle_tokens:
+        return True
+    haystack_tokens = set(haystack_norm.split())
+    return all(tok in haystack_tokens or tok in haystack_norm for tok in needle_tokens)
+
+
+def _passes_profile_tier_rules(
+    raw_file: dict[str, Any],
+    file_ext: str,
+    size_mb: float,
+    profile: dict[str, Any],
+) -> bool:
+    """Check whether raw_file satisfies at least one format tier in the given quality profile."""
+    formats = profile.get("formats", [])
+    if not formats:
+        return True
+    # Normalize dsf/dff to dsd for profile matching
+    canonical_ext = "dsd" if file_ext in ("dsf", "dff") else file_ext
+    matching_tiers = [
+        f
+        for f in formats
+        if (f.get("type") or f.get("format") or "").lower() in (file_ext, canonical_ext)
+    ]
+    if not matching_tiers:
+        return False
+
+    for tier in matching_tiers:
+        min_mb = tier.get("min_size_mb", 0)
+        max_mb = tier.get("max_size_mb", 0)
+        if min_mb and size_mb and size_mb < min_mb:
+            continue
+        if max_mb and size_mb and size_mb > max_mb:
+            continue
+
+        raw_bd = raw_file.get("bitDepth") or raw_file.get("bit_depth")
+        tier_bds = tier.get("bit_depths", [])
+        if tier_bds and raw_bd is not None:
+            if str(raw_bd).strip() not in [str(b).strip() for b in tier_bds]:
+                continue
+
+        raw_sr = raw_file.get("sampleRate") or raw_file.get("sample_rate")
+        tier_srs = tier.get("sample_rates", [])
+        if tier_srs and raw_sr is not None:
+            try:
+                sr_val = float(raw_sr)
+                sr_khz = f"{sr_val / 1000:.1f}".rstrip("0").rstrip(".")
+                sr_hz = str(int(sr_val))
+                allowed_sr = [str(s).strip().lower() for s in tier_srs]
+                if (
+                    sr_khz not in allowed_sr
+                    and sr_hz not in allowed_sr
+                    and str(int(sr_val)) not in allowed_sr
+                ):
+                    continue
+            except (ValueError, TypeError):
+                pass
+
+        return True
+    return False
+
+
 def _is_raw_file_eligible(
     raw_file: dict[str, Any],
     basic_filters: dict[str, Any] | None = None,
     quality_profile: dict[str, Any] | None = None,
     includes: list[str] | None = None,
     excludes: list[str] | None = None,
+    fallback_quality_profile: dict[str, Any] | None = None,
 ) -> bool:
     """Zero-allocation gate checking raw JSON file descriptors prior to object creation."""
     # 1. Reject locked files
@@ -205,7 +298,22 @@ def _is_raw_file_eligible(
 
     # 2. Extension check
     file_ext = Path(filename).suffix.lower().lstrip(".")
-    audio_extensions = {"mp3", "flac", "ogg", "aac", "wma", "wav", "m4a", "dsf", "dff"}
+    audio_extensions = {
+        "mp3",
+        "flac",
+        "ogg",
+        "aac",
+        "wma",
+        "wav",
+        "m4a",
+        "opus",
+        "alac",
+        "ape",
+        "aiff",
+        "wv",
+        "dsf",
+        "dff",
+    }
     if file_ext not in audio_extensions:
         return False
 
@@ -214,6 +322,8 @@ def _is_raw_file_eligible(
     )
     if allowed_extensions:
         allowed_set = {e.lower().lstrip(".") for e in allowed_extensions}
+        if "dsd" in allowed_set:
+            allowed_set.update({"dsf", "dff"})
         if file_ext not in allowed_set:
             return False
 
@@ -238,93 +348,73 @@ def _is_raw_file_eligible(
         except (ValueError, TypeError):
             pass
 
-    # 4. Filter expression / includes / excludes check on raw filename
+    # 4. Normalized token filter_expression / includes / excludes check on raw filename
     filter_expr = basic_filters.get("filter_expression") if basic_filters else None
-    if filter_expr and filter_expr.lower() not in filename.lower():
-        return False
-
-    if includes:
-        for inc in includes:
-            if (
-                isinstance(inc, str)
-                and inc.strip()
-                and inc.lower() not in filename.lower()
-            ):
+    if filter_expr or includes or excludes:
+        norm_filename = _normalize_for_prefilter(filename)
+        if filter_expr:
+            norm_expr = _normalize_for_prefilter(filter_expr)
+            if norm_expr and not _tokens_contained(norm_expr, norm_filename):
                 return False
 
-    if excludes:
-        for exc in excludes:
-            if isinstance(exc, str) and exc.strip() and exc.lower() in filename.lower():
-                return False
+        if includes:
+            for inc in includes:
+                if isinstance(inc, str) and inc.strip():
+                    norm_inc = _normalize_for_prefilter(inc)
+                    if norm_inc and not _tokens_contained(norm_inc, norm_filename):
+                        return False
 
-    # 5. Format & Size verification across profile tiers
+        if excludes:
+            for exc in excludes:
+                if isinstance(exc, str) and exc.strip():
+                    norm_exc = _normalize_for_prefilter(exc)
+                    if norm_exc and norm_exc in norm_filename:
+                        return False
+
+    # 5. Format & Size verification across preferred (or fallback) profile tiers
     size_bytes = raw_file.get("size", 0) or 0
     size_mb = size_bytes / (1024 * 1024) if size_bytes else 0
 
-    if quality_profile:
-        formats = quality_profile.get("formats", [])
-        if formats:
-            matching_tiers = [
-                f
-                for f in formats
-                if (f.get("type") or f.get("format") or "").lower() == file_ext
-            ]
-            if matching_tiers:
-                tier_passed = False
-                for tier in matching_tiers:
-                    min_mb = tier.get("min_size_mb", 0)
-                    max_mb = tier.get("max_size_mb", 0)
-                    if min_mb and size_mb and size_mb < min_mb:
-                        continue
-                    if max_mb and size_mb and size_mb > max_mb:
-                        continue
+    profiles_to_check = [p for p in (quality_profile, fallback_quality_profile) if p]
+    if profiles_to_check:
+        if not any(
+            _passes_profile_tier_rules(raw_file, file_ext, size_mb, prof)
+            for prof in profiles_to_check
+        ):
+            return False
 
-                    # Native bit depth check if present on raw_file
-                    raw_bd = raw_file.get("bitDepth") or raw_file.get("bit_depth")
-                    tier_bds = tier.get("bit_depths", [])
-                    if tier_bds and raw_bd is not None:
-                        if str(raw_bd).strip() not in [
-                            str(b).strip() for b in tier_bds
-                        ]:
-                            continue
-
-                    # Native sample rate check if present on raw_file
-                    raw_sr = raw_file.get("sampleRate") or raw_file.get("sample_rate")
-                    tier_srs = tier.get("sample_rates", [])
-                    if tier_srs and raw_sr is not None:
-                        try:
-                            sr_val = float(raw_sr)
-                            sr_khz = f"{sr_val / 1000:.1f}".rstrip("0").rstrip(".")
-                            sr_hz = str(int(sr_val))
-                            allowed_sr = [str(s).strip().lower() for s in tier_srs]
-                            if (
-                                sr_khz not in allowed_sr
-                                and sr_hz not in allowed_sr
-                                and str(int(sr_val)) not in allowed_sr
-                            ):
-                                continue
-                        except (ValueError, TypeError):
-                            pass
-
-                    tier_passed = True
-                    break
-                if not tier_passed:
-                    return False
-
-        # Fake FLAC heuristic
-        if file_ext == "flac" and length_val and size_bytes:
+        # Fake lossless container bitrate heuristics (controlled by Quality Profile advanced_filters)
+        if length_val and size_bytes:
             try:
                 dur_sec = float(length_val)
                 if dur_sec > 0:
-                    advanced_filters = quality_profile.get("advanced_filters", {})
-                    fake_min_bps = int(
-                        advanced_filters.get("fake_flac_min_bytes_per_second", 70000)
-                    )
-                    fake_min_kbps = int(advanced_filters.get("fake_flac_min_kbps", 500))
+                    advanced_filters = (quality_profile or {}).get("advanced_filters", {}) or {}
                     approx_bps = size_bytes / dur_sec
                     approx_kbps = (size_bytes * 8.0) / (dur_sec * 1000.0)
-                    if approx_bps < fake_min_bps or approx_kbps < fake_min_kbps:
-                        return False
+
+                    if file_ext == "flac":
+                        fake_min_bps = int(
+                            advanced_filters.get("fake_flac_min_bytes_per_second", 31250)
+                        )
+                        fake_min_kbps = int(advanced_filters.get("fake_flac_min_kbps", 250))
+                        if approx_bps < fake_min_bps or approx_kbps < fake_min_kbps:
+                            return False
+                    elif file_ext == "wav":
+                        # Uncompressed 16-bit/44.1kHz mono PCM is ~88,200 B/s (~705 kbps); stereo is ~176,400 B/s
+                        fake_wav_bps = int(
+                            advanced_filters.get("fake_wav_min_bytes_per_second", 85000)
+                        )
+                        fake_wav_kbps = int(advanced_filters.get("fake_wav_min_kbps", 680))
+                        if approx_bps < fake_wav_bps or approx_kbps < fake_wav_kbps:
+                            return False
+                    elif file_ext in ("dsf", "dff"):
+                        # Uncompressed DSD64 mono/stereo minimum sanity floor
+                        fake_dsd_bps = int(
+                            advanced_filters.get("fake_dsd_min_bytes_per_second", 350000)
+                        )
+                        fake_dsd_kbps = int(advanced_filters.get("fake_dsd_min_kbps", 2800))
+                        if approx_bps < fake_dsd_bps or approx_kbps < fake_dsd_kbps:
+                            return False
             except (ValueError, TypeError):
                 pass
 
@@ -375,6 +465,10 @@ class SlskdProvider(DownloaderProvider):
         self.api_key: str | None = None
         self.download_path: Path = Path("./downloads")
         self._loop_semaphores: dict[Any, asyncio.Semaphore] = {}
+        self._loop_post_locks: dict[Any, asyncio.Lock] = {}
+        self._last_search_post_ts: float = 0.0
+        self.min_search_interval_s: float = 3.5  # Prevent Soulseek server burst soft-bans
+        self._last_connected_ok_ts: float = 0.0
         self._setup_client()
         self._register_health_check()
 
@@ -388,6 +482,30 @@ class SlskdProvider(DownloaderProvider):
             limit = getattr(self.capabilities, "max_concurrent_searches", 3)
             self._loop_semaphores[loop] = asyncio.Semaphore(limit)
         return self._loop_semaphores[loop]
+
+    @property
+    def search_post_lock(self) -> asyncio.Lock:
+        """Lazy per-running-event-loop lock serializing POST /searches with Soulseek pacing."""
+        loop = asyncio.get_running_loop()
+        if not hasattr(self, "_loop_post_locks"):
+            self._loop_post_locks = {}
+        if loop not in self._loop_post_locks:
+            self._loop_post_locks[loop] = asyncio.Lock()
+        return self._loop_post_locks[loop]
+
+    async def _pace_search_post(self) -> None:
+        """Enforce minimum spacing between Soulseek POST /searches to prevent burst disconnects."""
+        interval = getattr(self, "min_search_interval_s", 3.5)
+        if interval <= 0:
+            return
+        async with self.search_post_lock:
+            now = time.monotonic()
+            last_ts = getattr(self, "_last_search_post_ts", 0.0)
+            wait_s = interval - (now - last_ts)
+            if last_ts > 0.0 and wait_s > 0.0:
+                logger.debug(f"Pacing slskd POST /searches by {wait_s:.2f}s (Soulseek burst protection)")
+                await asyncio.sleep(wait_s)
+            self._last_search_post_ts = time.monotonic()
 
     def _register_health_check(self):
         """Register periodic health check for Slskd API."""
@@ -706,6 +824,8 @@ class SlskdProvider(DownloaderProvider):
         basic_filters: dict[str, Any] | None = None,
         includes: list[str] | None = None,
         excludes: list[str] | None = None,
+        fallback_quality_profile: dict[str, Any] | None = None,
+        seen_keys: set[tuple[str, str]] | None = None,
     ) -> list[TrackResult]:
         """Process search responses into TrackResult objects with zero-allocation pre-filtering.
 
@@ -715,7 +835,6 @@ class SlskdProvider(DownloaderProvider):
         """
         all_tracks = []
 
-        index = 0
         for response_data in responses_data:
             if cancel_event and cancel_event.is_set():
                 return []
@@ -723,11 +842,15 @@ class SlskdProvider(DownloaderProvider):
             files = response_data.get("files", [])
 
             for file_data in files:
-                index += 1
                 if cancel_event and cancel_event.is_set():
                     return []
-                if index % 500 == 0:
-                    time.sleep(0.005)  # Yield GIL
+
+                filename = file_data.get("filename", "")
+                if seen_keys is not None:
+                    key = (username, filename)
+                    if key in seen_keys:
+                        continue
+                    seen_keys.add(key)
 
                 if not _is_raw_file_eligible(
                     file_data,
@@ -735,17 +858,30 @@ class SlskdProvider(DownloaderProvider):
                     quality_profile=quality_profile,
                     includes=includes,
                     excludes=excludes,
+                    fallback_quality_profile=fallback_quality_profile,
                 ):
                     continue
 
-                filename = file_data.get("filename", "")
                 size = file_data.get("size", 0)
                 file_ext = Path(filename).suffix.lower().lstrip(".")
 
-                # Normalize DSD extensions
+                # Normalize DSD and lossless/lossy extensions
                 if file_ext in ["dsf", "dff"]:
                     quality = "dsd"
-                elif file_ext in ["flac", "mp3", "ogg", "aac", "wma", "wav"]:
+                elif file_ext in [
+                    "flac",
+                    "mp3",
+                    "ogg",
+                    "aac",
+                    "wma",
+                    "wav",
+                    "m4a",
+                    "opus",
+                    "alac",
+                    "ape",
+                    "aiff",
+                    "wv",
+                ]:
                     quality = file_ext
                 else:
                     quality = "unknown"
@@ -793,15 +929,16 @@ class SlskdProvider(DownloaderProvider):
         includes: list[str] | None = None,
         excludes: list[str] | None = None,
         cancel_event: Any | None = None,
+        fallback_quality_profile: dict[str, Any] | None = None,
+        early_stop_evaluator: Any | None = None,
     ) -> list[EchosyncTrack]:
         """
-        Atomic Search: Post -> Poll -> Parse -> Delete.
+        Atomic Search: Post -> Poll (with live delta evaluation) -> Delete.
         Applies coarse filtering (basic_filters) before returning.
 
-        Concurrency: Limited to 3 concurrent searches (Soulseek IP ban protection).
-        Default timeout: 60 seconds (12 polls at 5s intervals).
+        Concurrency: Limited to 3 concurrent searches with global 3.5s POST pacing.
+        Default timeout: 60 seconds (first poll at 6s, then every 4.5s).
         """
-        # Acquire semaphore slot (max 3 concurrent searches — Soulseek IP ban protection)
         async with self.search_semaphore:
             return await self._do_async_search(
                 query,
@@ -811,10 +948,20 @@ class SlskdProvider(DownloaderProvider):
                 includes=includes,
                 excludes=excludes,
                 cancel_event=cancel_event,
+                fallback_quality_profile=fallback_quality_profile,
+                early_stop_evaluator=early_stop_evaluator,
             )
 
     async def _check_soulseek_connected(self) -> bool:
-        """Return True only if slskd reports it is connected and logged in to the Soulseek network."""
+        """Return True only if slskd reports it is connected and logged in to the Soulseek network.
+
+        Caches healthy state for 30s to avoid redundant GET /application calls, and
+        emits SERVICE_DEGRADED on disconnect so slskd's auto-reconnect handler fires.
+        """
+        now = time.monotonic()
+        if now - getattr(self, "_last_connected_ok_ts", 0.0) < 30.0:
+            return True
+
         try:
             app_state = await self._make_request("GET", "application")
             if not app_state:
@@ -824,10 +971,25 @@ class SlskdProvider(DownloaderProvider):
                 "connected" in server_state.lower()
                 and "disconnected" not in server_state.lower()
             )
-            if not connected:
+            if connected:
+                self._last_connected_ok_ts = now
+            else:
+                self._last_connected_ok_ts = 0.0
                 logger.warning(
                     f"slskd is not connected to the Soulseek network (state='{server_state}')"
                 )
+                try:
+                    from core.event_bus import event_bus
+
+                    event_bus.publish(
+                        {
+                            "event": "SERVICE_DEGRADED",
+                            "service": "EchoSync.slskd",
+                            "reason": f"Soulseek disconnected (state: {server_state})",
+                        }
+                    )
+                except Exception:
+                    pass
             return connected
         except Exception as e:
             logger.warning(f"Could not determine slskd network state: {e}")
@@ -865,6 +1027,8 @@ class SlskdProvider(DownloaderProvider):
         includes: list[str] | None = None,
         excludes: list[str] | None = None,
         cancel_event: Any | None = None,
+        fallback_quality_profile: dict[str, Any] | None = None,
+        early_stop_evaluator: Any | None = None,
     ) -> list[EchosyncTrack]:
         """Internal async search implementation (called under semaphore lock)."""
         if not self.base_url:
@@ -893,7 +1057,9 @@ class SlskdProvider(DownloaderProvider):
                 "minimumPeerUploadSpeed": 0,
             }
 
-            # 1. Post Search (with one 409 recovery attempt)
+            # 1. Pace & Post Search (with one 409 recovery attempt)
+            await self._pace_search_post()
+
             async def _post_search():
                 return await self._make_request("POST", "searches", json=search_data)
 
@@ -906,6 +1072,7 @@ class SlskdProvider(DownloaderProvider):
                     )
                     await self._cleanup_all_searches()
                     await asyncio.sleep(1)
+                    await self._pace_search_post()
                     response = await self._make_request(
                         "POST", "searches", json=search_data
                     )
@@ -925,44 +1092,40 @@ class SlskdProvider(DownloaderProvider):
                 logger.error("No search ID returned")
                 return []
 
-            # 2. Poll for search completion and results in 5s intervals up to 60s (12 polls max)
-            poll_interval = 5.0
-            max_polls = max(1, int(timeout / poll_interval))
-            all_responses = []
+            # 2. Live In-Poll Delta Evaluation up to `timeout` (60s default)
+            # First poll at 6s (Soulseek P2P results rarely settle instantly), then every 4.5s.
+            first_poll_delay = min(6.0, float(timeout))
+            poll_interval = 4.5
             terminal_state = False
             elapsed_time = 0.0
+            poll_count = 0
+            seen_keys: set[tuple[str, str]] = set()
+            valid_tracks: list[EchosyncTrack] = []
+            total_raw_responses = 0
 
             logger.info(
-                f"Polling for search completion in 5s intervals up to {timeout}s (max {max_polls} polls)..."
+                f"Polling search {search_id} (first poll at {first_poll_delay:.0f}s, then every {poll_interval:.1f}s up to {timeout}s)..."
             )
 
-            for poll_count in range(max_polls):
+            while elapsed_time < float(timeout):
                 if cancel_event and cancel_event.is_set():
                     logger.info("Search aborted by cancellation request")
-                    if search_id:
-                        try:
-                            await self._make_request("DELETE", f"searches/{search_id}")
-                            logger.debug(f"Atomic cleanup: Deleted search {search_id}")
-                            search_id = None
-                        except Exception as e:
-                            logger.warning(
-                                f"Failed to delete search {search_id} on cancellation: {e}"
-                            )
                     return []
 
-                # Wait 5 seconds between polls
-                await asyncio.sleep(poll_interval)
-                elapsed_time += poll_interval
+                sleep_s = first_poll_delay if poll_count == 0 else min(poll_interval, float(timeout) - elapsed_time)
+                if sleep_s <= 0:
+                    break
+                await asyncio.sleep(sleep_s)
+                elapsed_time += sleep_s
+                poll_count += 1
 
                 # Check search state to see if it's complete
                 search_state = await self._make_request("GET", f"searches/{search_id}")
                 if search_state:
                     state = search_state.get("state", "").lower()
                     logger.debug(
-                        f"Poll {poll_count + 1}/{max_polls} ({elapsed_time:.0f}s): Search state = '{state}'"
+                        f"Poll {poll_count} ({elapsed_time:.0f}s): Search state = '{state}'"
                     )
-
-                    # Check for terminal states (e.g. responselimitreached, filelimitreached, timedout, completed, etc.)
                     terminal_states = {
                         "completed",
                         "complete",
@@ -981,60 +1144,58 @@ class SlskdProvider(DownloaderProvider):
                             f"Search reached terminal state: {state} (after {elapsed_time:.0f}s)"
                         )
 
-                # Get current responses
+                # Fetch accumulated live responses while search is InProgress
                 responses_data = await self._make_request(
                     "GET", f"searches/{search_id}/responses"
                 )
                 if responses_data and isinstance(responses_data, list):
-                    all_responses = responses_data
-                    response_count = len(all_responses)
-                    logger.debug(
-                        f"Poll {poll_count + 1}/{max_polls} ({elapsed_time:.0f}s): Got {response_count} responses"
+                    total_raw_responses = len(responses_data)
+                    delta_results = self._process_search_responses(
+                        responses_data,
+                        quality_profile=quality_profile,
+                        cancel_event=cancel_event,
+                        basic_filters=basic_filters,
+                        includes=includes,
+                        excludes=excludes,
+                        fallback_quality_profile=fallback_quality_profile,
+                        seen_keys=seen_keys,
                     )
+                    delta_tracks: list[EchosyncTrack] = []
+                    for idx, tr in enumerate(delta_results):
+                        if cancel_event and cancel_event.is_set():
+                            return []
+                        if idx > 0 and idx % 200 == 0:
+                            await asyncio.sleep(0)  # Cooperative async yield
+                        echo_track = self._convert_to_echosync_track(tr)
+                        if echo_track:
+                            delta_tracks.append(echo_track)
+                    if delta_tracks:
+                        valid_tracks.extend(delta_tracks)
 
-                    if response_count >= 150:
+                    # Real-time early stop: if caller confirms 3 Preferred candidates are already secured,
+                    # stop polling immediately and free the slskd search slot.
+                    if early_stop_evaluator is not None and delta_tracks:
+                        try:
+                            if early_stop_evaluator(delta_tracks):
+                                logger.info(
+                                    f"⚡ Live in-poll short-circuit at {elapsed_time:.0f}s "
+                                    f"({len(valid_tracks)} eligible from {total_raw_responses} responses)"
+                                )
+                                break
+                        except Exception as eval_err:
+                            logger.debug(f"Early stop evaluator error: {eval_err}")
+                    elif early_stop_evaluator is None and len(valid_tracks) >= 150:
                         logger.info(
-                            f"Got {response_count} responses (threshold reached), stopping"
+                            f"Got {len(valid_tracks)} eligible candidates (threshold reached), stopping"
                         )
                         break
-                else:
-                    logger.debug(
-                        f"Poll {poll_count + 1}/{max_polls} ({elapsed_time:.0f}s): No responses yet"
-                    )
 
-                # Exit immediately on terminal state
                 if terminal_state:
                     logger.info("Exiting polling loop due to terminal state")
                     break
 
-            if not all_responses:
+            if total_raw_responses == 0:
                 logger.info("Search complete but no responses received")
-
-            # 3. Parse Results with Zero-Allocation Stream Pre-Filtering
-            track_results = self._process_search_responses(
-                all_responses,
-                quality_profile=quality_profile,
-                cancel_event=cancel_event,
-                basic_filters=basic_filters,
-                includes=includes,
-                excludes=excludes,
-            )
-            logger.info(f"Search yielded {len(track_results)} filtered candidates")
-
-            if cancel_event and cancel_event.is_set():
-                return []
-
-            # 4. Convert surviving TrackResult objects to EchosyncTrack
-            valid_tracks = []
-            for idx, tr in enumerate(track_results):
-                if cancel_event and cancel_event.is_set():
-                    return []
-                if idx > 0 and idx % 500 == 0:
-                    time.sleep(0.005)  # Yield GIL
-
-                echo_track = self._convert_to_echosync_track(tr)
-                if echo_track:
-                    valid_tracks.append(echo_track)
 
             logger.info(f"Total valid candidate tracks: {len(valid_tracks)}")
             return valid_tracks
@@ -1165,18 +1326,29 @@ class SlskdProvider(DownloaderProvider):
                                         elif "completed" in state_lower:
                                             status = "complete"
 
+                                        resolved_local_path = self.download_path / safe_filename
+                                        if not resolved_local_path.exists() and self.download_path.exists():
+                                            try:
+                                                for match_p in self.download_path.rglob(safe_filename):
+                                                    if match_p.is_file():
+                                                        resolved_local_path = match_p
+                                                        break
+                                            except Exception:
+                                                pass
+
+                                        local_path_str = str(resolved_local_path)
                                         return {
                                             "id": download_id,
                                             "status": status,
                                             "filename": safe_filename,
                                             "remote_filename": filename,
-                                            "local_path": str(
-                                                self.download_path / safe_filename
-                                            ),
+                                            "file_path": local_path_str,
+                                            "local_path": local_path_str,
                                             "username": username,
                                             "progress": file_data.get(
                                                 "percentComplete", 0
                                             ),
+                                            "speed": file_data.get("averageSpeed", 0.0) or 0.0,
                                             "size": file_data.get("size", 0),
                                         }
 
@@ -1227,9 +1399,11 @@ class SlskdProvider(DownloaderProvider):
                 except Exception:
                     pass
 
-            # Fallback delete by username
-            await self._make_request("DELETE", f"transfers/downloads/{username}")
-            logger.info(f"Cleared slskd downloads for user '{username}'")
+            # Never DELETE transfers/downloads/{username} — that would wipe every other
+            # concurrent track being downloaded from the same Soulseek peer.
+            logger.debug(
+                f"No active slskd transfer UUID found for '{username}|{filename}'; skipping peer-wide delete."
+            )
             return True
         except Exception as e:
             logger.warning(f"Failed to cancel slskd download '{provider_id}': {e}")

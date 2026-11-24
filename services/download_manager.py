@@ -19,7 +19,7 @@ import inspect
 import logging
 import re
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, is_dataclass, replace
 from typing import Any
 
 from core.database.models.working import DownloadIntent, DownloadStatus
@@ -146,7 +146,7 @@ class DownloadManager:
         self.db = get_database()
         self.work_db = get_working_database()
         self._repo_instance = None
-        self.matcher = WeightedMatchingEngine(PROFILE_DOWNLOAD_SEARCH)
+        self.matcher = self._instantiate_matching_engine(PROFILE_DOWNLOAD_SEARCH)
         self._shutdown = False
         self._stop_requested = False
         self._loop_task = None
@@ -154,11 +154,33 @@ class DownloadManager:
         self._provider: PluginBase | None = None
         self._active_providers: dict[str, PluginBase] = {}
         self._quality_profile_cache = None
+        # Strictly in-memory flag (no DB column) tracking downloads where a Remaster
+        # fallback was intentionally chosen because 0 Originals existed across all strategies.
+        self._remaster_fallback_ids: set[int] = set()
+        # In-memory progress clock for 5m queued-stall / 2m mid-transfer freeze timeouts
+        self._transfer_progress_tracker: dict[int, dict[str, Any]] = {}
 
         from core.event_bus import event_bus
 
         event_bus.subscribe("DOWNLOAD_INTENT", self._on_download_intent)
         event_bus.subscribe("TRACK_IMPORTED", self._on_track_imported)
+
+    @staticmethod
+    def _instantiate_matching_engine(profile: Any) -> WeightedMatchingEngine:
+        """Resolve matching engine class via ServiceRegistry so optional plugins override cleanly."""
+        try:
+            from core.nexus_framework.plugin_loader import ServiceRegistry
+
+            engine_cls = ServiceRegistry.get("matching_engine")
+            if engine_cls is not None and callable(engine_cls):
+                return engine_cls(profile)
+        except Exception:
+            pass
+        return WeightedMatchingEngine(profile)
+
+    def is_remaster_fallback_allowed(self, download_id: int) -> bool:
+        """Return True if download_id intentionally selected a Remaster fallback in memory."""
+        return download_id in getattr(self, "_remaster_fallback_ids", set())
 
     def _cancel_transfer_sync(self, providers: list[PluginBase], cancel_target: str) -> None:
         """Best-effort synchronous cancellation of an upstream provider transfer."""
@@ -300,13 +322,15 @@ class DownloadManager:
         perfect_match_threshold: int = 90,
         includes: list[str] | None = None,
         excludes: list[str] | None = None,
+        blacklisted_candidates: set[str] | None = None,
+        fallback_quality_profile: dict[str, Any] | None = None,
+        early_stop_evaluator: Any | None = None,
     ) -> tuple[list[EchosyncTrack], bool]:
         """Search a single provider for one strategy query, expanding via hooks.
 
         Returns ``(results, sniper_hit)`` where ``sniper_hit=True`` means a
-        candidate scoring >= *perfect_match_threshold* was found during variant
-        iteration and all remaining query variants were short-circuited.
-        The caller should break its own strategy loop when ``sniper_hit`` is True.
+        qualifying Preferred Profile pool (3 candidates or perfect match + backups)
+        was secured and remaining query variants were short-circuited.
         """
         query_or_queries = hook_manager.apply_filters(
             "pre_provider_search",
@@ -317,7 +341,7 @@ class DownloadManager:
         )
         queries = query_or_queries if isinstance(query_or_queries, list) else [query_or_queries]
 
-        # dict.fromkeys: order-preserving deduplication — respects the CJK priority matrix
+        # dict.fromkeys: order-preserving deduplication
         ordered_queries = list(dict.fromkeys(q for q in queries if isinstance(q, str) and q.strip()))
 
         accumulated: list[EchosyncTrack] = []
@@ -329,14 +353,25 @@ class DownloadManager:
                 quality_profile,
                 includes=includes,
                 excludes=excludes,
+                fallback_quality_profile=fallback_quality_profile,
+                early_stop_evaluator=early_stop_evaluator,
             )
             if not batch:
                 continue
 
-            # Evaluation-driven short-circuit: score this batch immediately.
-            # If a qualifying candidate is found, skip all remaining variants.
+            accumulated.extend(batch)
+
+            # Evaluation-driven short-circuit: score this batch strictly against the
+            # Preferred Profile (excluding blacklisted candidates) and return the FULL
+            # accumulated batch so candidate_stack keeps Top-3 backup peers.
             if target_track is not None:
-                hit = self._evaluate_search_batch(batch, target_track, quality_profile, perfect_match_threshold)
+                hit = self._evaluate_search_batch(
+                    batch,
+                    target_track,
+                    quality_profile,
+                    perfect_match_threshold,
+                    blacklisted_candidates=blacklisted_candidates,
+                )
                 if hit is not None:
                     remaining = len(ordered_queries) - ordered_queries.index(q) - 1
                     if remaining > 0:
@@ -346,9 +381,8 @@ class DownloadManager:
                             perfect_match_threshold,
                             remaining,
                         )
-                    return [hit], True
+                    return accumulated, True
 
-            accumulated.extend(batch)
         return accumulated, False
 
     def _enrich_candidate_metadata(self, candidate: EchosyncTrack) -> EchosyncTrack:
@@ -356,7 +390,7 @@ class DownloadManager:
 
         Extracts structured artist, title, album, version, and edition metadata
         from candidate media file path, raw_title, or identifiers using TrackParser
-        and text utilities.
+        and text utilities without discarding version/edition descriptors.
         """
         if not candidate:
             return candidate
@@ -376,6 +410,7 @@ class DownloadManager:
         elif candidate.raw_title:
             file_path = candidate.raw_title
 
+        updates: dict[str, Any] = {}
         if file_path:
             if not hasattr(self, "_track_parser") or self._track_parser is None:
                 self._track_parser = TrackParser()
@@ -384,39 +419,81 @@ class DownloadManager:
                 parsed_artist = getattr(parsed, "artist_name", None) or getattr(parsed, "artist", None)
                 parsed_title = getattr(parsed, "title", None) or getattr(parsed, "raw_title", None)
                 parsed_album = getattr(parsed, "album_title", None) or getattr(parsed, "album", None)
+                parsed_version = getattr(parsed, "version", None)
+                parsed_edition = getattr(parsed, "edition", None)
 
                 if parsed_artist and (not candidate.artist_name or candidate.artist_name == "Unknown Artist"):
-                    candidate.artist_name = parsed_artist
+                    updates["artist_name"] = parsed_artist
                 if parsed_title:
-                    candidate.title = parsed_title
-                    candidate.raw_title = parsed_title
+                    updates["title"] = parsed_title
+                    # Preserve original unstripped raw_title if present so version/edition cues aren't lost
+                    if not candidate.raw_title:
+                        updates["raw_title"] = parsed_title
                 if parsed_album and not getattr(candidate, "album_title", None):
-                    candidate.album_title = parsed_album
+                    updates["album_title"] = parsed_album
+                if parsed_version and not getattr(candidate, "version", None):
+                    updates["version"] = parsed_version
+                if parsed_edition and not getattr(candidate, "edition", None):
+                    updates["edition"] = parsed_edition
                 if getattr(parsed, "release_year", None) and not getattr(candidate, "release_year", None):
-                    candidate.release_year = parsed.release_year
+                    updates["release_year"] = parsed.release_year
                 if getattr(parsed, "track_number", None) and not getattr(candidate, "track_number", None):
-                    candidate.track_number = parsed.track_number
+                    updates["track_number"] = parsed.track_number
                 if getattr(parsed, "disc_number", None) and not getattr(candidate, "disc_number", None):
-                    candidate.disc_number = parsed.disc_number
+                    updates["disc_number"] = parsed.disc_number
 
-        # Version and edition extraction from title / raw_title / file_path
-        title_for_version = candidate.raw_title or candidate.title or file_path or ""
+        # Fallback version/edition extraction against the unstripped filename/path
+        # (never against the already-stripped parsed_title).
+        if not updates.get("version") and not updates.get("edition"):
+            from pathlib import Path as _Path
 
-        # Version info (e.g. Remix, Acoustic)
-        clean_v_title, version_str = extract_version_info(title_for_version)
-        if version_str:
-            candidate.version = version_str
-            if not getattr(candidate, "edition", None):
-                candidate.edition = version_str
+            probe_target = ""
+            if file_path:
+                norm_fp = str(file_path).replace("\\", "/")
+                fp_parts = [p for p in norm_fp.split("/") if p]
+                stem = _Path(fp_parts[-1]).stem if fp_parts else norm_fp
+                parent_dir = fp_parts[-2] if len(fp_parts) >= 2 else ""
+                probe_target = stem
+            else:
+                parent_dir = ""
+                probe_target = candidate.raw_title or candidate.title or ""
 
-        # Edition info (e.g. Remastered, Deluxe, Live)
-        clean_e_title, edition_str = extract_edition(title_for_version)
-        if edition_str:
-            candidate.edition = edition_str
-            if not getattr(candidate, "version", None):
-                candidate.version = edition_str
+            _, version_str = extract_version_info(probe_target)
+            if version_str:
+                updates["version"] = version_str
+                if not (updates.get("edition") or getattr(candidate, "edition", None)):
+                    updates["edition"] = version_str
+
+            _, edition_str = extract_edition(probe_target)
+            if edition_str:
+                updates["edition"] = edition_str
+                if not (updates.get("version") or getattr(candidate, "version", None)):
+                    updates["version"] = edition_str
+
+            # Also check parent album folder for remaster/year qualifiers (e.g. "Album [2011 Remaster]")
+            if not updates.get("edition") and not updates.get("version") and parent_dir:
+                _, dir_ver = extract_version_info(parent_dir)
+                if dir_ver and "remaster" in dir_ver.lower():
+                    updates["version"] = dir_ver
+                    updates["edition"] = dir_ver
+
+        if updates:
+            if is_dataclass(candidate) and not isinstance(candidate, type):
+                candidate = replace(candidate, **updates)
+            else:
+                for k, v in updates.items():
+                    setattr(candidate, k, v)
 
         return candidate
+
+    def _is_candidate_blacklisted(self, candidate: EchosyncTrack, blacklisted_candidates: set[str] | None) -> bool:
+        if not blacklisted_candidates:
+            return False
+        ids = getattr(candidate, "identifiers", None) or {}
+        pid = ids.get("plugin_item_id") or ids.get("provider_item_id")
+        username = ids.get("username")
+        comp_id = f"{username}|{pid}" if username and pid else None
+        return bool((pid and pid in blacklisted_candidates) or (comp_id and comp_id in blacklisted_candidates))
 
     def _evaluate_search_batch(
         self,
@@ -424,29 +501,40 @@ class DownloadManager:
         target_track: EchosyncTrack,
         quality_profile: dict[str, Any] | None,
         threshold: float,
+        blacklisted_candidates: set[str] | None = None,
     ) -> EchosyncTrack | None:
-        """Run tier filtering + matching on a raw result batch.
+        """Run Preferred Profile tier filtering + matching on a raw result batch.
 
-        Returns the best candidate if ``confidence_score >= threshold``, else
-        ``None``.  Used by the evaluation-driven short-circuit so that
-        remaining query variants are skipped as soon as a perfect match is
-        found within the current variant's result set.
+        Excludes blacklisted candidates and evaluates strictly with ``context="download"``
+        (so Remaster substitutes never short-circuit when an Original was requested).
         """
-        enriched_batch = [self._enrich_candidate_metadata(c) for c in batch]
+        non_blacklisted = [c for c in batch if not self._is_candidate_blacklisted(c, blacklisted_candidates)]
+        if not non_blacklisted:
+            return None
+        enriched_batch = [self._enrich_candidate_metadata(c) for c in non_blacklisted]
         priority_tiers = self._get_priority_tiers(quality_profile)
         matcher = self._get_matching_engine(quality_profile)
-        for _priority_num, priority_formats in priority_tiers:
+        if not priority_tiers:
+            # No quality profile configured: score across all allowed defaults
+            allowed = self._extract_allowed_formats(quality_profile)
+            priority_tiers = [(0, allowed)]
+
+        for priority_num, priority_formats in priority_tiers:
             try:
-                tier_candidates = self._filter_by_formats(enriched_batch, priority_formats, quality_profile)
+                tier_candidates = self._filter_by_formats(
+                    enriched_batch, priority_formats, quality_profile, priority=priority_num
+                )
             except TypeError:
-                tier_candidates = self._filter_by_formats(enriched_batch, priority_formats)
+                try:
+                    tier_candidates = self._filter_by_formats(enriched_batch, priority_formats, quality_profile)
+                except TypeError:
+                    tier_candidates = self._filter_by_formats(enriched_batch, priority_formats)
             if not tier_candidates:
                 continue
-            candidate = matcher.select_best_download_candidate(target_track, tier_candidates)
-            if candidate:
-                match_result = matcher.calculate_match(target_track, candidate)
+            for cand in tier_candidates:
+                match_result = matcher.calculate_match(target_track, cand, context="download")
                 if match_result.confidence_score >= threshold:
-                    return candidate
+                    return cand
         return None
 
     async def _invoke_provider_search_single(
@@ -457,8 +545,10 @@ class DownloadManager:
         quality_profile: dict[str, Any] | None,
         includes: list[str] | None = None,
         excludes: list[str] | None = None,
+        fallback_quality_profile: dict[str, Any] | None = None,
+        early_stop_evaluator: Any | None = None,
     ) -> list[EchosyncTrack]:
-        """Invoke provider search while passing quality_profile when supported."""
+        """Invoke provider search while passing quality_profile, fallback profile, and early-stop hook when supported."""
 
         if hasattr(provider, "_async_search"):
             async_search = provider._async_search
@@ -471,6 +561,10 @@ class DownloadManager:
                     kwargs["includes"] = includes
                 if "excludes" in sig.parameters:
                     kwargs["excludes"] = excludes
+                if "fallback_quality_profile" in sig.parameters:
+                    kwargs["fallback_quality_profile"] = fallback_quality_profile
+                if "early_stop_evaluator" in sig.parameters and early_stop_evaluator is not None:
+                    kwargs["early_stop_evaluator"] = early_stop_evaluator
                 return await async_search(query, strategy_filters, **kwargs)
             except (TypeError, ValueError):
                 pass
@@ -905,14 +999,19 @@ class DownloadManager:
         try:
             logger.info(f"Starting waterfall search for: {target_track.artist_name} - {target_track.title}")
 
-            # 1. Get quality profile from config to determine allowed formats
+            # 1. Get preferred quality profile & optional 1-hop fallback profile
             requested_profile_id = (
                 (download.echo_sync_track.get("identifiers") or {}).get("quality_profile_id")
                 if isinstance(download.echo_sync_track, dict)
                 else None
             )
             quality_profile = self._get_quality_profile(requested_profile_id)
-            allowed_formats = self._extract_allowed_formats(quality_profile)
+            fallback_profile = self._get_fallback_quality_profile(quality_profile)
+            preferred_formats = self._extract_allowed_formats(quality_profile)
+            fallback_formats = self._extract_allowed_formats(fallback_profile) if fallback_profile else []
+            # Pass union of Preferred + Fallback extensions to provider so fallback promotion
+            # requires ZERO extra Soulseek network searches.
+            union_formats = list(dict.fromkeys(preferred_formats + fallback_formats))
 
             # Get duration tolerance from quality profile (default 5 seconds)
             duration_tolerance_ms = 5000
@@ -921,27 +1020,73 @@ class DownloadManager:
                 if "duration_tolerance_seconds" in filters:
                     duration_tolerance_ms = int(filters["duration_tolerance_seconds"] * 1000)
 
-            # Use basic filters for coarse rejection based on quality profile
+            # Coarse provider-side duration window: wide enough so WeightedMatchingEngine's
+            # deluxe/artist/plugin duration escalations are not prematurely killed at 5.1s.
+            coarse_duration_tol_ms = max(duration_tolerance_ms * 2, 12000)
+
+            min_bitrate_pref = self._get_min_bitrate(quality_profile)
+            min_bitrate_fb = self._get_min_bitrate(fallback_profile) if fallback_profile else min_bitrate_pref
             basic_filters = {
-                "allowed_extensions": allowed_formats,
-                "min_bitrate": self._get_min_bitrate(quality_profile),
+                "allowed_extensions": union_formats,
+                "min_bitrate": min(min_bitrate_pref, min_bitrate_fb),
                 "target_duration_ms": target_duration_ms,
-                "duration_tolerance_ms": duration_tolerance_ms,
+                "duration_tolerance_ms": coarse_duration_tol_ms,
             }
 
-            logger.info(f"Quality profile allows: {allowed_formats}")
+            logger.info(
+                f"Quality profile allows: {preferred_formats}"
+                + (f" (fallback profile: {fallback_formats})" if fallback_profile else "")
+            )
 
             # Generate explicit fallback strategies (artist+title, album+title, title+strict duration)
             strategies = self._generate_search_strategies(target_track, duration_tolerance_ms)
             logger.info(f"Generated {len(strategies)} search strategies")
 
+            # Determine if source requested an unannotated Original (so Remasters go only to fallback pool)
+            from core.matching_engine.matching_engine import get_version_family
+
+            src_ver_str = (getattr(target_track, "edition", None) or getattr(target_track, "version", None) or "").strip()
+            source_requests_original = get_version_family(src_ver_str) is None
+
             # ============================================================================
-            # WATERFALL PROVIDER SEARCH
+            # WATERFALL PROVIDER SEARCH (SINGLE-PASS DUAL-PROFILE PARTITIONING)
             # ============================================================================
             scored_candidates: list[tuple[EchosyncTrack, float, PluginBase]] = []
-            perfect_match_threshold = 90  # Score >= 90 triggers immediate break
+            remaster_fallback_candidates: list[tuple[EchosyncTrack, float, PluginBase]] = []
+            fallback_profile_candidates: list[tuple[EchosyncTrack, float, PluginBase]] = []
+            perfect_match_threshold = 90  # Score >= 90 triggers immediate break once pool filled
             checkpoint_strategy_idx = 0
             checkpoint_total_strategies = len(strategies)
+            used_remaster_fallback = False
+
+            def _peer_sort_key(item: tuple[EchosyncTrack, float, PluginBase]):
+                cand_obj, sc, _prov = item
+                return (
+                    round(float(sc), 1),
+                    1 if (cand_obj.identifiers.get("free_upload_slots") or 0) > 0 else 0,
+                    -(int(cand_obj.identifiers.get("queue_length") or 0)),
+                    int(cand_obj.identifiers.get("upload_speed") or 0),
+                )
+
+            def _score_candidate(
+                matcher_obj: WeightedMatchingEngine,
+                cand_obj: EchosyncTrack,
+                *,
+                context: str = "download",
+            ) -> float:
+                res = matcher_obj.calculate_match(target_track, cand_obj, context=context)
+                score_val = res.confidence_score
+                # Strategy 7 (loose_title_duration): allow title+duration fallback when artist metadata differs
+                if (
+                    score_val < 70.0
+                    and context == "download"
+                    and cand_obj.identifiers.get("discovery_strategy") == "loose_title_duration"
+                    and hasattr(matcher_obj, "calculate_title_duration_match")
+                ):
+                    td_res = matcher_obj.calculate_title_duration_match(target_track, cand_obj)
+                    if td_res.confidence_score > score_val:
+                        score_val = td_res.confidence_score
+                return score_val
 
             # Iterate through providers in priority order
             for provider_idx, provider in enumerate(providers, 1):
@@ -988,6 +1133,34 @@ class DownloadManager:
                     )
 
                 last_executed_strategy_idx = start_idx
+                preferred_live_keys: set[tuple[str, str]] = set()
+
+                def _make_live_early_stop():
+                    def _evaluator(delta_tracks: list[EchosyncTrack]) -> bool:
+                        for raw_c in delta_tracks:
+                            if self._is_candidate_blacklisted(raw_c, blacklisted_candidates):
+                                continue
+                            enriched_c = self._enrich_candidate_metadata(raw_c)
+                            try:
+                                pref_ok = self._filter_by_formats([enriched_c], preferred_formats, quality_profile)
+                            except TypeError:
+                                pref_ok = self._filter_by_formats([enriched_c], preferred_formats)
+                            if not pref_ok:
+                                continue
+                            sc = matcher.calculate_match(target_track, enriched_c, context="download").confidence_score
+                            if sc >= 80.0:
+                                uname = str(enriched_c.identifiers.get("username") or "")
+                                fname = str(
+                                    enriched_c.identifiers.get("plugin_item_id")
+                                    or enriched_c.identifiers.get("provider_item_id")
+                                    or ""
+                                )
+                                preferred_live_keys.add((uname, fname))
+                                if len(preferred_live_keys) >= 3:
+                                    return True
+                        return False
+
+                    return _evaluator
 
                 # Try all supported strategies for this provider (starting from checkpoint)
                 for strategy_idx in range(start_idx + 1, len(provider_strategies) + 1):
@@ -1028,7 +1201,11 @@ class DownloadManager:
                     )
 
                     strategy_filters = dict(basic_filters)
-                    strategy_filters["duration_tolerance_ms"] = strategy_tolerance
+                    # Keep coarse tolerance generous unless Strategy 7 explicitly tightened it
+                    if strategy_name == "title+strict-duration":
+                        strategy_filters["duration_tolerance_ms"] = strategy_tolerance
+                    else:
+                        strategy_filters["duration_tolerance_ms"] = max(int(strategy_tolerance) * 2, 12000)
                     if strategy_filter_expr:
                         strategy_filters["filter_expression"] = strategy_filter_expr
 
@@ -1037,21 +1214,35 @@ class DownloadManager:
                         f"via {provider.name}: query='{query}'"
                     )
 
-                    # Call provider search (evaluation-driven short-circuit)
+                    # Call provider search (with live in-poll early stop + dual-profile support)
                     search_results: list[EchosyncTrack] = []
                     sniper_hit = False
                     try:
                         logger.debug(f"    Invoking search on {provider.name} with quality profile")
+                        invoke_kwargs: dict[str, Any] = {
+                            "target_track": target_track,
+                            "strategy_name": strategy_name,
+                            "perfect_match_threshold": perfect_match_threshold,
+                            "includes": strategy_includes,
+                            "excludes": strategy_excludes,
+                        }
+                        try:
+                            inv_sig = inspect.signature(self._invoke_provider_search)
+                            if "blacklisted_candidates" in inv_sig.parameters:
+                                invoke_kwargs["blacklisted_candidates"] = blacklisted_candidates
+                            if "fallback_quality_profile" in inv_sig.parameters:
+                                invoke_kwargs["fallback_quality_profile"] = fallback_profile
+                            if "early_stop_evaluator" in inv_sig.parameters:
+                                invoke_kwargs["early_stop_evaluator"] = _make_live_early_stop()
+                        except (TypeError, ValueError):
+                            pass
+
                         search_results, sniper_hit = await self._invoke_provider_search(
                             provider,
                             query,
                             strategy_filters,
                             quality_profile,
-                            target_track=target_track,
-                            strategy_name=strategy_name,
-                            perfect_match_threshold=perfect_match_threshold,
-                            includes=strategy_includes,
-                            excludes=strategy_excludes,
+                            **invoke_kwargs,
                         )
                     except Exception as e:
                         logger.warning(
@@ -1071,12 +1262,9 @@ class DownloadManager:
                     if search_results:
                         valid_results = []
                         for c in search_results:
-                            pid = c.identifiers.get("plugin_item_id") or c.identifiers.get("provider_item_id")
-                            username = c.identifiers.get("username")
-                            comp_id = f"{username}|{pid}" if username and pid else None
-                            if (pid and pid in blacklisted_candidates) or (
-                                comp_id and comp_id in blacklisted_candidates
-                            ):
+                            if self._is_candidate_blacklisted(c, blacklisted_candidates):
+                                pid = c.identifiers.get("plugin_item_id") or c.identifiers.get("provider_item_id")
+                                username = c.identifiers.get("username")
                                 logger.info(f"    Skipping blacklisted candidate '{pid}' from user '{username}'")
                                 continue
                             c.identifiers["discovery_strategy"] = (
@@ -1089,37 +1277,35 @@ class DownloadManager:
                         enriched_results = [self._enrich_candidate_metadata(c) for c in valid_results]
                         provider_candidates.extend(enriched_results)
 
-                        # Scan ALL results in the current strategy to fill backup candidates,
-                        # then stop advancing to the next strategy once we have a strong match or 3 viable backups.
-                        viable_matches = 0
-                        has_snipe_match = False
+                        # Short-circuit ONLY on Preferred Profile candidates (never Fallback Profile
+                        # and never Remaster substitutes when an Original was requested).
+                        viable_preferred = 0
+                        has_preferred_snipe = False
                         for cand in enriched_results:
                             try:
-                                viable_cand = self._filter_by_formats([cand], allowed_formats, quality_profile)
+                                viable_cand = self._filter_by_formats([cand], preferred_formats, quality_profile)
                             except TypeError:
-                                viable_cand = self._filter_by_formats([cand], allowed_formats)
+                                viable_cand = self._filter_by_formats([cand], preferred_formats)
                             if not viable_cand:
                                 continue
 
-                            match_res = matcher.calculate_match(target_track, cand, context="download")
-                            raw_score = match_res.confidence_score
+                            raw_score = _score_candidate(matcher, cand, context="download")
                             if raw_score >= perfect_match_threshold:
-                                has_snipe_match = True
+                                has_preferred_snipe = True
                             if raw_score >= 75.0:
-                                viable_matches += 1
+                                viable_preferred += 1
 
-                        if sniper_hit or has_snipe_match or viable_matches >= 3:
+                        if viable_preferred >= 3 or (has_preferred_snipe and (viable_preferred >= 3 or sniper_hit)):
                             logger.info(
-                                f"  ⚡ Strategy {strategy_idx} [{strategy_name}] populated candidate pool "
-                                f"(snipe={has_snipe_match or sniper_hit}, viable_matches={viable_matches}) "
+                                f"  ⚡ Strategy {strategy_idx} [{strategy_name}] populated Preferred pool "
+                                f"(snipe={has_preferred_snipe}, viable_preferred={viable_preferred}) "
                                 f"— holding at strategy {strategy_idx}/{len(provider_strategies)}."
                             )
                             break
 
                 matcher = self._get_matching_engine(quality_profile)
 
-                # ── Deduplicate + full priority-tier scoring with peer-health tie-breaker ──
-                # Deduplicate candidates for this provider
+                # ── Deduplicate + Preferred Profile / Remaster Fallback / Fallback Profile scoring ──
                 provider_candidates = self._deduplicate_candidates(provider_candidates)
                 logger.info(f"  Total candidates from {provider.name}: {len(provider_candidates)}")
 
@@ -1127,86 +1313,132 @@ class DownloadManager:
                     logger.info(f"  No candidates found on {provider.name}, trying next provider...")
                     continue
 
-                # Run matching engine on this provider's candidates across priority tiers
-                priority_tiers = self._get_priority_tiers(quality_profile)
-                found_in_tier = False
-
-                for priority_num, priority_formats in priority_tiers:
-                    # Filter by priority formats
-                    try:
-                        tier_candidates = self._filter_by_formats(
-                            provider_candidates,
-                            priority_formats,
-                            quality_profile,
-                            priority=priority_num,
-                        )
-                    except TypeError:
+                def _evaluate_profile_into_pool(
+                    prof: dict[str, Any] | None,
+                    prof_formats: list[str],
+                    target_pool: list[tuple[EchosyncTrack, float, PluginBase]],
+                    *,
+                    match_context: str = "download",
+                ) -> None:
+                    tiers = self._get_priority_tiers(prof)
+                    if not tiers:
+                        tiers = [(0, prof_formats)]
+                    prof_matcher = self._get_matching_engine(prof)
+                    for priority_num, priority_formats in tiers:
                         try:
                             tier_candidates = self._filter_by_formats(
-                                provider_candidates, priority_formats, quality_profile
+                                provider_candidates,
+                                priority_formats,
+                                prof,
+                                priority=priority_num,
                             )
                         except TypeError:
-                            tier_candidates = self._filter_by_formats(provider_candidates, priority_formats)
-                    logger.debug(f"    Priority {priority_num}: {len(tier_candidates)} candidates match formats")
+                            try:
+                                tier_candidates = self._filter_by_formats(
+                                    provider_candidates, priority_formats, prof
+                                )
+                            except TypeError:
+                                tier_candidates = self._filter_by_formats(provider_candidates, priority_formats)
+                        if not tier_candidates:
+                            continue
 
-                    if not tier_candidates:
-                        continue
+                        tier_hits: list[tuple[EchosyncTrack, float, PluginBase]] = []
+                        for candidate in tier_candidates:
+                            raw_score = _score_candidate(prof_matcher, candidate, context=match_context)
+                            if raw_score >= 70.0:
+                                tier_hits.append((candidate, raw_score, provider))
 
-                    # Score candidates via WeightedMatchingEngine on pure raw match merit
-                    for candidate in tier_candidates:
-                        match_result = matcher.calculate_match(target_track, candidate, context="download")
-                        raw_score = match_result.confidence_score
+                        if tier_hits:
+                            tier_hits.sort(key=_peer_sort_key, reverse=True)
+                            target_pool.extend(tier_hits[:3])
+                            # Preserve profile format priority ordering: stop advancing lower format tiers
+                            # once we have 3 qualifying candidates in higher-priority format rules.
+                            if len(target_pool) >= 3:
+                                break
 
-                        if raw_score >= 70.0:
-                            scored_candidates.append((candidate, raw_score, provider))
-                            found_in_tier = True
+                    if target_pool:
+                        target_pool.sort(key=_peer_sort_key, reverse=True)
+                        del target_pool[3:]
 
-                    # Keep only Top-3 scoring candidates globally, tie-breaking by peer health
-                    if scored_candidates:
-                        scored_candidates.sort(
-                            key=lambda x: (
-                                round(float(x[1]), 1),
-                                1 if (x[0].identifiers.get("free_upload_slots") or 0) > 0 else 0,
-                                -(int(x[0].identifiers.get("queue_length") or 0)),
-                                int(x[0].identifiers.get("upload_speed") or 0),
-                            ),
-                            reverse=True,
-                        )
-                        scored_candidates = scored_candidates[:3]
+                # 1. Preferred Profile (strict Original if Original requested)
+                _evaluate_profile_into_pool(
+                    quality_profile, preferred_formats, scored_candidates, match_context="download"
+                )
 
-                    if found_in_tier:
-                        best_tier_score = scored_candidates[0][1]
-                        logger.info(
-                            f"    Got matching candidate(s) in priority {priority_num} "
-                            f"(best score: {best_tier_score:.1f})"
-                        )
-                        break  # Found matches in highest available quality tier
+                # 2. Remaster fallback pool (ONLY if Original was requested and Preferred pool has < 3)
+                if source_requests_original and len(scored_candidates) < 3:
+                    _evaluate_profile_into_pool(
+                        quality_profile,
+                        preferred_formats,
+                        remaster_fallback_candidates,
+                        match_context="download_remaster_fallback",
+                    )
+
+                # 3. Fallback ("Good Enough") Profile evaluated IN-MEMORY (0 extra Soulseek searches!)
+                if fallback_profile and len(scored_candidates) == 0:
+                    _evaluate_profile_into_pool(
+                        fallback_profile,
+                        fallback_formats,
+                        fallback_profile_candidates,
+                        match_context="download",
+                    )
 
                 # Release raw provider candidate payloads immediately
                 provider_candidates.clear()
 
                 if scored_candidates:
                     best_provider_score = scored_candidates[0][1]
-                    logger.info(f"  Current best match: score={best_provider_score:.1f}")
-
-                    # Check if this is a perfect match (>= 90)
-                    if best_provider_score >= perfect_match_threshold:
+                    logger.info(f"  Current best Preferred match: score={best_provider_score:.1f}")
+                    if best_provider_score >= perfect_match_threshold and len(scored_candidates) >= 3:
                         logger.info(
-                            f"  ✓ PERFECT MATCH from {provider.name} "
-                            f"(score {best_provider_score:.1f} >= {perfect_match_threshold})"
+                            f"  ✓ PERFECT PREFERRED POOL from {provider.name} "
+                            f"(score {best_provider_score:.1f} >= {perfect_match_threshold}, count={len(scored_candidates)})"
                         )
-                        break  # Exit provider loop - perfect match secured
+                        break
                 else:
-                    logger.info(f"  No acceptable match from {provider.name}")
+                    logger.info(f"  No acceptable Preferred match from {provider.name}")
                     continue
+
+            # Assemble final Top-3:
+            # - Preferred Originals ALWAYS occupy Pick #1 (Remasters can NEVER displace an Original).
+            # - If Preferred Originals has 1-2 items, backfill remaining backup slots from remaster_fallback_candidates.
+            # - If Preferred Originals is empty, try remaster_fallback_candidates (marking in-memory remaster flag).
+            # - If still empty after all strategies, promote Fallback ("Good Enough") Profile pool.
+            final_pool: list[tuple[EchosyncTrack, float, PluginBase]] = list(scored_candidates)
+            if remaster_fallback_candidates:
+                existing_keys = {
+                    (prov.name, c.identifiers.get("provider_item_id") or c.identifiers.get("plugin_item_id"))
+                    for c, _, prov in final_pool
+                }
+                for cand, sc, prov in remaster_fallback_candidates:
+                    ckey = (prov.name, cand.identifiers.get("provider_item_id") or cand.identifiers.get("plugin_item_id"))
+                    if ckey not in existing_keys and len(final_pool) < 3:
+                        if not final_pool:
+                            used_remaster_fallback = True
+                        final_pool.append((cand, sc, prov))
+                        existing_keys.add(ckey)
+
+            if not final_pool and fallback_profile_candidates:
+                logger.info(
+                    f"Preferred profile yielded 0 candidates across all strategies; "
+                    f"promoting {len(fallback_profile_candidates)} candidate(s) from fallback profile."
+                )
+                final_pool = list(fallback_profile_candidates)
+
+            if not hasattr(self, "_remaster_fallback_ids"):
+                self._remaster_fallback_ids = set()
+            if used_remaster_fallback:
+                self._remaster_fallback_ids.add(download_id)
+            else:
+                self._remaster_fallback_ids.discard(download_id)
 
             # ============================================================================
             # DOWNLOAD CANDIDATE (WITH PEER ENQUEUE FALLBACK RESILIENCE)
             # ============================================================================
-            # Deduplicate scored_candidates by (provider.name, filename) and retain Top-3
+            # Deduplicate final_pool by (provider.name, filename) and retain Top-3 (preserving priority order)
             unique_candidates: list[tuple[EchosyncTrack, float, PluginBase]] = []
             seen_cand_keys = set()
-            for cand, score, prov in sorted(scored_candidates, key=lambda x: x[1], reverse=True):
+            for cand, score, prov in final_pool:
                 fname = cand.identifiers.get("provider_item_id") or cand.identifiers.get("plugin_item_id")
                 ckey = (prov.name, fname)
                 if ckey not in seen_cand_keys:
@@ -1368,6 +1600,7 @@ class DownloadManager:
         reason: str,
     ) -> None:
         """Cancel remote transfer, rotate candidate via DownloadRepository, and dispatch backup or resume strategies."""
+        self._transfer_progress_tracker.pop(db_id, None)
         await self._cancel_transfer_async(cancel_providers, failed_candidate_id)
 
         rotated = self.repo.transition_to_retrying_or_failed(
@@ -1375,13 +1608,21 @@ class DownloadManager:
             reason=reason,
             failed_candidate_id=failed_candidate_id,
         )
+        has_next_backup = False
         if rotated:
+            with self.work_db.session_scope() as session:
+                refreshed = session.get(DownloadQueue, db_id)
+                has_next_backup = bool(refreshed and refreshed.active_candidate_id)
+
+        if rotated and has_next_backup:
             asyncio.create_task(self._dispatch_candidate(db_id, providers=all_providers))
         elif self._can_resume_next_strategy(db_id):
             logger.info(
                 f"Download {db_id} exhausted Top-3 backups ({reason}); resuming next search strategy within 10m window."
             )
             self._update_status(db_id, DownloadStatus.RETRYING.value)
+            asyncio.create_task(self._execute_waterfall_search_and_download(db_id, all_providers))
+        elif rotated:
             asyncio.create_task(self._execute_waterfall_search_and_download(db_id, all_providers))
 
     async def _check_active_downloads(self):
@@ -1478,7 +1719,8 @@ class DownloadManager:
                     progress = status.get("progress", 0.0)  # 0.0 to 100.0
 
                     if new_status == DownloadStatus.VERIFYING.value:
-                        file_path = status.get("file_path") or status.get("path")
+                        self._transfer_progress_tracker.pop(db_id, None)
+                        file_path = status.get("file_path") or status.get("local_path") or status.get("path")
                         self.transition_to_verifying(db_id, file_path=file_path)
                     elif new_status == DownloadStatus.FAILED.value:
                         logger.warning(
@@ -1497,6 +1739,48 @@ class DownloadManager:
                             reason="TRANSFER_FAILED",
                         )
                     else:
+                        # Enforce 5-minute queued/0% stall timeout and 2-minute mid-transfer freeze timeout
+                        import time as _time
+
+                        now_mono = _time.monotonic()
+                        tracker = self._transfer_progress_tracker.get(db_id)
+                        if tracker is None or tracker.get("transfer_id") != provider_id:
+                            tracker = {
+                                "transfer_id": provider_id,
+                                "first_seen_ts": now_mono,
+                                "last_progress_ts": now_mono,
+                                "last_progress_pct": float(progress or 0.0),
+                            }
+                            self._transfer_progress_tracker[db_id] = tracker
+                        else:
+                            cur_pct = float(progress or 0.0)
+                            if cur_pct > tracker["last_progress_pct"] + 0.01 or float(speed or 0.0) > 1024.0:
+                                tracker["last_progress_pct"] = cur_pct
+                                tracker["last_progress_ts"] = now_mono
+
+                        stalled_seconds = now_mono - tracker["last_progress_ts"]
+                        is_queued_stall = tracker["last_progress_pct"] <= 0.01 and stalled_seconds >= 300.0
+                        is_mid_transfer_freeze = tracker["last_progress_pct"] > 0.01 and stalled_seconds >= 120.0
+
+                        if is_queued_stall or is_mid_transfer_freeze:
+                            stall_reason = "PEER_QUEUED_TIMEOUT" if is_queued_stall else "PEER_TRANSFER_FROZEN"
+                            logger.warning(
+                                f"Download {db_id} stalled ({stall_reason}, {stalled_seconds:.0f}s at {tracker['last_progress_pct']:.1f}%) "
+                                f"on {found_provider} (ID: {provider_id}). Rotating to next candidate."
+                            )
+                            active_prov = next(
+                                (p for p in providers if p.name == found_provider),
+                                providers[0],
+                            )
+                            await self._handle_active_download_failure(
+                                db_id,
+                                provider_id,
+                                providers,
+                                [active_prov],
+                                reason=stall_reason,
+                            )
+                            continue
+
                         self._update_status(db_id, new_status, provider_id, speed, progress)
                         if new_status != DownloadStatus.DOWNLOADING.value:
                             logger.info(
@@ -1744,23 +2028,27 @@ class DownloadManager:
         return unique
 
     def _build_core_search_title(self, title: str | None) -> str:
-        """Build core query title by stripping bracketed qualifiers before normalization.
-
-        Example:
-            "Song Name (2011 Remaster) [Deluxe]" -> "song name"
+        """Build core query title by stripping bracketed/version qualifiers while preserving
+        native Unicode diacritics (e.g. 'Déjà Vu') and 104-key symbols ('!', '$') so
+        Strategy 2 queries native characters and Strategy 2b queries diacritic-folded ASCII.
         """
         if not title:
             return ""
 
+        from core.matching_engine.text_utils import _NORM_PROMO_EVENT_RE, _NORM_VERSION_DASH_RE, normalize_chars
+
+        core_title = normalize_chars(str(title))
         # Strip anything in parentheses/brackets before constructing provider query.
-        core_title = re.sub(r"\s*[\(\[][^(\)\]]*[\)\]]", "", title)
+        core_title = re.sub(r"\s*[\(\[][^(\)\]]*[\)\]]", "", core_title)
+        # Strip trailing hyphenated version/remaster/promo qualifiers (e.g. " - 2011 Remaster")
+        core_title = _NORM_PROMO_EVENT_RE.sub("", core_title)
+        core_title = _NORM_VERSION_DASH_RE.sub("", core_title)
         core_title = re.sub(r"\s+", " ", core_title).strip()
 
-        # Fall back to original title if stripping removed too much.
         if not core_title:
-            core_title = title
+            core_title = str(title).strip()
 
-        return normalize_title(core_title)
+        return core_title.lower()
 
     def _deduplicate_candidates(self, candidates: list[EchosyncTrack]) -> list[EchosyncTrack]:
         """Deduplicate candidates collected from multiple fallback strategies.
@@ -1832,16 +2120,34 @@ class DownloadManager:
             logger.warning(f"Failed to load quality profile: {e}")
         return None
 
+    def _get_fallback_quality_profile(self, primary_profile: dict[str, Any] | None) -> dict[str, Any] | None:
+        """Resolve optional 1-hop fallback ('Good Enough') quality profile if configured."""
+        if not primary_profile or not isinstance(primary_profile, dict):
+            return None
+        fb_id = primary_profile.get("fallback_profile_id")
+        if not fb_id or str(fb_id).strip() == "":
+            return None
+        fb_id_str = str(fb_id).strip()
+        if fb_id_str == str(primary_profile.get("id") or ""):
+            return None
+        try:
+            profiles = config_manager.get_quality_profiles() or []
+            for p in profiles:
+                if str(p.get("id")) == fb_id_str:
+                    return p
+        except Exception as e:
+            logger.debug(f"Failed to resolve fallback quality profile '{fb_id_str}': {e}")
+        return None
+
     def _get_matching_engine(self, quality_profile: dict[str, Any] | None = None) -> WeightedMatchingEngine:
         """
         Get or create the matching engine with settings from quality profile.
-        If quality profile has custom settings, create a custom profile.
-        Otherwise use the default PROFILE_DOWNLOAD_SEARCH.
+        Resolves via ServiceRegistry so optional language/plugin overrides apply automatically.
         """
         if quality_profile is None:
             quality_profile = self._get_quality_profile()
         if not quality_profile:
-            return WeightedMatchingEngine(PROFILE_DOWNLOAD_SEARCH)
+            return self._instantiate_matching_engine(PROFILE_DOWNLOAD_SEARCH)
 
         # Check for custom matching settings in quality profile
         has_custom_settings = False
@@ -1866,18 +2172,20 @@ class DownloadManager:
         if has_custom_settings:
             # Create custom profile with updated weights
             from core.matching_engine.scoring_profile import (
-                ScoringProfile,
+                ConfigurableProfile,
                 ScoringWeights,
             )
 
-            custom_profile = ScoringProfile()
-            custom_profile.weights = ScoringWeights(**custom_weights)
+            custom_profile = ConfigurableProfile(
+                name=str(quality_profile.get("name") or "download_custom"),
+                weights=ScoringWeights(**custom_weights),
+            )
             logger.info(
                 f"Using custom matching profile: duration_tolerance={custom_weights.get('duration_tolerance_ms')}ms, tie_breaker={custom_weights.get('tie_breaker')}"
             )
-            return WeightedMatchingEngine(custom_profile)
+            return self._instantiate_matching_engine(custom_profile)
 
-        return WeightedMatchingEngine(PROFILE_DOWNLOAD_SEARCH)
+        return self._instantiate_matching_engine(PROFILE_DOWNLOAD_SEARCH)
 
     def _extract_allowed_formats(self, quality_profile: dict[str, Any] | None) -> list[str]:
         """Extract allowed file formats from quality profile."""
@@ -1916,24 +2224,32 @@ class DownloadManager:
 
         return min_bitrate if min_bitrate < 9999 else 128
 
-    def _get_priority_tiers(self, quality_profile: dict[str, Any]) -> list[tuple[int, list[str]]]:
+    def _get_priority_tiers(self, quality_profile: dict[str, Any] | None) -> list[tuple[int, list[str]]]:
         """
-        Extract priority tiers from quality profile.
+        Extract priority tiers from quality profile while preserving exact rule ordering.
         Returns list of (priority_number, [format_list]) sorted by priority.
         """
+        if not quality_profile or not isinstance(quality_profile, dict):
+            return []
         formats = quality_profile.get("formats", [])
         if not formats:
             return []
 
-        # Group formats by priority
-        priority_map = {}
-        for fmt in formats:
-            priority = fmt.get("priority", 999)
-            format_type = fmt.get("type", "").lower()
+        # Group formats by priority (defaulting to index when priority omitted so rule order is preserved)
+        priority_map: dict[int, list[str]] = {}
+        for idx, fmt in enumerate(formats):
+            if not isinstance(fmt, dict):
+                continue
+            priority = fmt.get("priority")
+            priority_num = int(priority) if priority is not None else idx
+            format_type = (fmt.get("type") or fmt.get("format") or "").lower()
+            if not format_type:
+                continue
 
-            if priority not in priority_map:
-                priority_map[priority] = []
-            priority_map[priority].append(format_type)
+            if priority_num not in priority_map:
+                priority_map[priority_num] = []
+            if format_type not in priority_map[priority_num]:
+                priority_map[priority_num].append(format_type)
 
         # Sort by priority (lower number = higher priority)
         sorted_tiers = sorted(priority_map.items(), key=lambda x: x[0])
@@ -2100,9 +2416,14 @@ class DownloadManager:
 
                 download.updated_at = utc_now()
                 if provider_id:
-                    download.plugin_id = provider_id
-                    if not download.active_candidate_id:
-                        download.active_candidate_id = provider_id
+                    # Keep download.plugin_id as the provider identifier; store transfer IDs
+                    # ("username|filename") in active_candidate_id instead of clobbering plugin_id.
+                    if "|" in str(provider_id):
+                        download.active_candidate_id = str(provider_id)
+                    else:
+                        download.plugin_id = str(provider_id)
+                        if not download.active_candidate_id:
+                            download.active_candidate_id = str(provider_id)
 
     def transition_to_searching(self, download_id: int) -> bool:
         """Transition item to SEARCHING state."""
@@ -2142,6 +2463,8 @@ class DownloadManager:
 
     def handle_verification_success(self, download_id: int, file_path: str | None = None) -> bool:
         """Transition item from VERIFYING to COMPLETED and emit DOWNLOAD_COMPLETED."""
+        self._remaster_fallback_ids.discard(download_id)
+        self._transfer_progress_tracker.pop(download_id, None)
         with self.work_db.session_scope() as session:
             item = session.get(DownloadQueue, download_id)
             if not item:
@@ -2186,51 +2509,84 @@ class DownloadManager:
         download_id: int,
         reason: str = "MISMATCH_EDITION",
         file_path: str | None = None,
+        *,
+        delete_file: bool = False,
     ) -> bool:
-        """On verification failure, route file to quarantine, blacklist candidate, and rotate to next candidate."""
+        """On verification failure, delete or quarantine rejected file, blacklist candidate, and rotate."""
+        self._transfer_progress_tracker.pop(download_id, None)
         if file_path:
-            self._quarantine_file(file_path, reason)
+            if delete_file:
+                self._delete_rejected_file(file_path, reason)
+            else:
+                self._quarantine_file(file_path, reason)
 
         rotated = False
+        has_next_backup = False
         with self.work_db.session_scope() as session:
             item = session.get(DownloadQueue, download_id)
             if item:
                 rotated = item.rotate_candidate(reason=reason)
+                has_next_backup = bool(item.active_candidate_id)
                 item.updated_at = utc_now()
                 with db_write_lease(task_name="handle_verification_failure"):
                     session.commit()
 
-        if rotated:
+        def _schedule_retry_coro(coro_factory):
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(coro_factory())
+                return
+            except RuntimeError:
+                pass
+            if getattr(self, "_loop", None) and self._loop.is_running():
+                asyncio.run_coroutine_threadsafe(coro_factory(), self._loop)
+                return
+            # Non-async worker/watchdog thread: dispatch asynchronously via JobQueue when running
+            if getattr(job_queue, "_running", False):
+                self.process_single_download(download_id)
+
+        if rotated and has_next_backup:
             logger.info(
                 f"DownloadQueue {download_id} rotated candidate ({reason}) -> RETRYING. Dispatching next backup candidate."
             )
-            try:
-                loop = asyncio.get_running_loop()
-                loop.create_task(self._dispatch_candidate(download_id))
-            except RuntimeError:
-                pass
+            _schedule_retry_coro(lambda: self._dispatch_candidate(download_id))
             return True
         elif self._can_resume_next_strategy(download_id):
             logger.info(
                 f"DownloadQueue {download_id} exhausted Top-3 backups ({reason}); resuming next search strategy within 10m window."
             )
             self._update_status(download_id, DownloadStatus.RETRYING.value)
-            try:
-                loop = asyncio.get_running_loop()
-                providers = self._get_active_download_providers()
-                if providers:
-                    loop.create_task(self._execute_waterfall_search_and_download(download_id, providers))
-            except RuntimeError:
-                pass
+            providers = self._get_active_download_providers()
+            if providers:
+                _schedule_retry_coro(lambda: self._execute_waterfall_search_and_download(download_id, providers))
             return True
         else:
+            self._remaster_fallback_ids.discard(download_id)
             logger.warning(f"DownloadQueue {download_id} exhausted candidates -> FAILED ({reason})")
             return False
 
-    def _quarantine_file(self, file_path: str, reason: str = "MISMATCH_EDITION") -> str | None:
-        """Move rejected file to data/quarantine to isolate from ingestion sweepers."""
-        import shutil
+    def _delete_rejected_file(self, file_path: str, reason: str = "FAKE_LOSSLESS") -> bool:
+        """Delete a confirmed-fake/corrupt/mismatched download file via Gatekeeper."""
         from pathlib import Path
+
+        from core.io_gatekeeper import Gatekeeper
+
+        try:
+            src = Path(file_path)
+            if not src.exists():
+                return False
+            Gatekeeper.authorize_and_execute({"operation": "delete", "src": str(src)})
+            logger.info(f"Deleted rejected download {src.name} via Gatekeeper ({reason})")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to delete rejected file {file_path} via Gatekeeper: {e}")
+            return False
+
+    def _quarantine_file(self, file_path: str, reason: str = "MISMATCH_EDITION") -> str | None:
+        """Move rejected file to data/quarantine via Gatekeeper using Windows-safe filenames."""
+        from pathlib import Path
+
+        from core.io_gatekeeper import Gatekeeper
 
         try:
             src = Path(file_path)
@@ -2238,9 +2594,16 @@ class DownloadManager:
                 return None
             quarantine_dir = Path("data/quarantine")
             quarantine_dir.mkdir(parents=True, exist_ok=True)
-            dest = quarantine_dir / f"{src.stem}_{reason}{src.suffix}"
-            shutil.move(str(src), str(dest))
-            logger.info(f"Moved invalid file {src} to quarantine: {dest}")
+            safe_reason = re.sub(r'[<>:"/\\|?*\s]+', "_", str(reason or "REJECTED")).strip("_")[:60] or "REJECTED"
+            dest = quarantine_dir / f"{src.stem}_{safe_reason}{src.suffix}"
+            Gatekeeper.authorize_and_execute(
+                {
+                    "operation": "safe_move",
+                    "src": str(src),
+                    "dst": str(dest),
+                }
+            )
+            logger.info(f"Moved invalid file {src} to quarantine via Gatekeeper: {dest}")
             return str(dest)
         except Exception as e:
             logger.error(f"Failed to quarantine file {file_path}: {e}")
@@ -2255,7 +2618,7 @@ class DownloadManager:
 
         active_id = None
         target_plugin_id = None
-        target_track = None
+        active_file_size = 0
         with self.work_db.session_scope() as session:
             item = session.get(DownloadQueue, download_id)
             if not item:
@@ -2263,7 +2626,11 @@ class DownloadManager:
             active_id = item.active_candidate_id
             target_plugin_id = item.plugin_id
             if isinstance(item.echo_sync_track, dict):
-                target_track = EchosyncTrack.from_dict(item.echo_sync_track)
+                meta = item.echo_sync_track.get("_active_candidate_meta") or {}
+                if isinstance(meta, dict):
+                    active_file_size = int(meta.get("size") or 0)
+                    if not target_plugin_id and meta.get("plugin_id"):
+                        target_plugin_id = str(meta["plugin_id"])
 
         if active_id and "|" in active_id:
             username, filename = active_id.split("|", 1)
@@ -2278,20 +2645,22 @@ class DownloadManager:
             )
             try:
                 logger.info(
-                    f"Direct backup dispatch for download {download_id}: user='{username}', file='{filename}' via {provider.name}"
+                    f"Direct backup dispatch for download {download_id}: user='{username}', file='{filename}' "
+                    f"(size={active_file_size}) via {provider.name}"
                 )
-                download_kwargs = {"username": username, "filename": filename}
                 if hasattr(provider, "_async_download"):
-                    provider_id = await provider._async_download(**download_kwargs)
+                    provider_id = await provider._async_download(
+                        username=username, filename=filename, file_size=active_file_size
+                    )
                 elif hasattr(provider, "download"):
                     loop = asyncio.get_running_loop()
                     try:
                         provider_id = await loop.run_in_executor(
-                            None, lambda: provider.download(filename, username=username)
+                            None, lambda: provider.download(username, filename, active_file_size)
                         )
                     except TypeError:
                         provider_id = await loop.run_in_executor(
-                            None, lambda: provider.download(filename)
+                            None, lambda: provider.download(username, filename)
                         )
                 else:
                     provider_id = None
@@ -2591,7 +2960,8 @@ class DownloadManager:
             requeued = self._requeue_retryable_failed_items(limit=50)
             if requeued > 0:
                 logger.info(f"Manual run: re-queued {requeued} retryable failed items")
-            await self._recover_stuck_items()
+            # Do NOT call _recover_stuck_items() during live manual cycles — it resets active
+            # in-flight DOWNLOADING transfers back to queued. Startup recovery runs in _process_loop.
             self._deduplicate_queue()
             self._purge_existing_tracks_from_queue()
             await self._process_queued_items()

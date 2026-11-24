@@ -1241,9 +1241,9 @@ def queue_missing_downloads(
             except Exception as proc_err:
                 logger.warning(f"Error calling process_downloads_now: {proc_err}")
         try:
-            from core.task_manager.task_queue import task_queue
+            from core.task_manager.task_queue import job_queue
 
-            task_queue.trigger_job_by_name("download_queue_runner")
+            job_queue.trigger_job_by_name("download_manager")
         except Exception as e:
             logger.warning(f"Queued downloads but background trigger failed: {e}")
 

@@ -209,6 +209,20 @@ class DownloadQueue(WorkingBase):
                 continue
             self.candidate_stack = stack
             self.active_candidate_id = next_id
+            if isinstance(next_candidate, dict):
+                if next_candidate.get("plugin_id"):
+                    self.plugin_id = str(next_candidate["plugin_id"])
+                if isinstance(self.echo_sync_track, dict):
+                    payload = dict(self.echo_sync_track)
+                    payload["_active_candidate_meta"] = {
+                        "id": next_id,
+                        "username": next_candidate.get("username") or "",
+                        "filename": next_candidate.get("filename") or "",
+                        "size": int(next_candidate.get("size") or 0),
+                        "plugin_id": next_candidate.get("plugin_id"),
+                        "provider_name": next_candidate.get("provider_name"),
+                    }
+                    self.echo_sync_track = payload
             self.status = DownloadStatus.RETRYING.value
             return True
 

@@ -1915,6 +1915,41 @@ class ConfigDatabase:
     # Quality Profiles & Steps (Relational Storage)
     # =========================================================================
 
+    @staticmethod
+    def validate_quality_profiles_fallback_dag(profiles: list[dict[str, Any]]) -> tuple[bool, str | None]:
+        """Validate 1-hop fallback profile constraint (no cycles, no chains).
+
+        If Profile B is referenced as `fallback_profile_id` by >= 1 other profile,
+        Profile B cannot itself define a `fallback_profile_id`.
+        """
+        by_id: dict[str, dict[str, Any]] = {}
+        for p in profiles:
+            if isinstance(p, dict) and p.get("id") is not None:
+                by_id[str(p["id"])] = p
+
+        referenced_as_fallback: set[str] = set()
+        for pid, p in by_id.items():
+            fb = p.get("fallback_profile_id")
+            if fb is None or str(fb).strip() == "":
+                continue
+            fb_id = str(fb).strip()
+            if fb_id == pid:
+                return False, f"Quality profile '{pid}' cannot reference itself as its own fallback."
+            if fb_id not in by_id:
+                return False, f"Quality profile '{pid}' references unknown fallback profile '{fb_id}'."
+            referenced_as_fallback.add(fb_id)
+
+        for fb_id in referenced_as_fallback:
+            fb_prof = by_id.get(fb_id) or {}
+            nested_fb = fb_prof.get("fallback_profile_id")
+            if nested_fb is not None and str(nested_fb).strip() != "":
+                return (
+                    False,
+                    f"Quality profile '{fb_id}' is already used as a fallback and cannot name its own fallback '{nested_fb}'.",
+                )
+
+        return True, None
+
     def get_quality_profiles(self) -> list[dict[str, Any]]:
         """Retrieve all quality profiles with reconstructed formats and step hierarchies."""
         try:
@@ -1930,6 +1965,7 @@ class ConfigDatabase:
                         "id": pid,
                         "name": str(row[1] or ""),
                         "prefer_max_quality": bool(row[2]),
+                        "fallback_profile_id": None,
                         "formats": [],
                         "advanced_filters": {},
                     }
@@ -1952,8 +1988,11 @@ class ConfigDatabase:
                         elif isinstance(rules_raw, dict):
                             rules = rules_raw
 
-                    # If rules contains advanced_filters metadata
-                    if isinstance(rules, dict) and "advanced_filters" in rules and len(rules) == 1:
+                    # If rules contains advanced_filters or fallback_profile_id metadata
+                    if isinstance(rules, dict) and "fallback_profile_id" in rules and len(rules) == 1:
+                        fb_val = rules["fallback_profile_id"]
+                        profiles_map[pid]["fallback_profile_id"] = str(fb_val).strip() if fb_val else None
+                    elif isinstance(rules, dict) and "advanced_filters" in rules and len(rules) == 1:
                         profiles_map[pid]["advanced_filters"] = rules["advanced_filters"]
                     elif isinstance(rules, dict) and "formats" in rules and len(rules) == 1:
                         profiles_map[pid]["formats"] = rules["formats"]
@@ -1983,6 +2022,21 @@ class ConfigDatabase:
         """Persist quality profiles and steps relationally into quality_profiles and quality_profile_steps."""
         try:
             import json
+
+            # Validate 1-hop fallback DAG against full profile set
+            if overwrite_all:
+                full_set = [p for p in profiles if isinstance(p, dict)]
+            else:
+                existing_map = {str(p.get("id")): p for p in self.get_quality_profiles() if isinstance(p, dict)}
+                for p in profiles:
+                    if isinstance(p, dict) and p.get("id") is not None:
+                        existing_map[str(p["id"])] = p
+                full_set = list(existing_map.values())
+
+            is_valid, err_msg = self.validate_quality_profiles_fallback_dag(full_set)
+            if not is_valid:
+                logger.warning(f"Rejected quality profile update: {err_msg}")
+                return False
 
             def _write_profiles(cursor):
                 if overwrite_all:
@@ -2014,6 +2068,15 @@ class ConfigDatabase:
                         cursor.execute(
                             "INSERT INTO quality_profile_steps (profile_id, priority, rules) VALUES (?, ?, ?)",
                             (pid, idx, fmt_rules),
+                        )
+
+                    # Store fallback_profile_id if provided
+                    fb_id = p.get("fallback_profile_id")
+                    if fb_id is not None and str(fb_id).strip():
+                        fb_rules = json.dumps({"fallback_profile_id": str(fb_id).strip()})
+                        cursor.execute(
+                            "INSERT INTO quality_profile_steps (profile_id, priority, rules) VALUES (?, ?, ?)",
+                            (pid, 9998, fb_rules),
                         )
 
                     # Store advanced_filters if provided

@@ -161,6 +161,13 @@ class TestSearchStrategyLadder:
         assert converted.media[0].bit_depth == 24
         assert converted.identifiers["username"] == "q89u7yrcl"
 
+        # Verify DownloadManager._enrich_candidate_metadata works on frozen EchosyncTrack without FrozenInstanceError
+        manager = object.__new__(DownloadManager)
+        enriched = manager._enrich_candidate_metadata(converted)
+        assert enriched is not None
+        assert "walk thru fire" in (enriched.title or "").lower()
+        assert enriched.artist_name and enriched.artist_name != "Unknown Artist"
+
 
 class TestCapabilityDispatching:
     """Test provider capability filtering."""

@@ -870,6 +870,12 @@ async def save_quality_profiles(request: Request):
             if not isinstance(p, dict) or "id" not in p or "name" not in p:
                 return {"error": "Invalid profiles format; each profile must include id and name"}
 
+        from database.config_database import ConfigDatabase
+
+        is_valid, err_msg = ConfigDatabase.validate_quality_profiles_fallback_dag(profiles)
+        if not is_valid:
+            return {"error": err_msg or "Invalid fallback profile configuration"}
+
         ok = config_manager.set_quality_profiles(profiles)
         if not ok:
             return {"error": "Failed to persist profiles"}

@@ -1336,19 +1336,33 @@ class _WorkingSDKFacade:
                 .order_by(DownloadQueue.id.desc())
                 .all()
             )
-            for item in active_items:
-                cand_id = item.active_candidate_id or item.plugin_id or ""
-                if cand_id:
-                    c_lower = cand_id.lower()
-                    if norm_filename and norm_filename in c_lower:
-                        return item.id
-                    if username and username.lower() in c_lower:
+            # Pass 1: Strict match on BOTH username and filename (prevents cross-track collision
+            # when downloading multiple tracks from the same peer).
+            if norm_filename and username:
+                u_lower = username.strip().lower()
+                for item in active_items:
+                    cand_id = (item.active_candidate_id or item.plugin_id or "").lower()
+                    if cand_id and u_lower in cand_id and norm_filename in cand_id:
                         return item.id
 
-                track = item.echo_sync_track or {}
-                t_file = track.get("file_path") or track.get("title") or ""
-                if norm_filename and norm_filename in str(t_file).lower():
-                    return item.id
+            # Pass 2: Exact filename match across active candidates or track payloads
+            if norm_filename:
+                for item in active_items:
+                    cand_id = (item.active_candidate_id or item.plugin_id or "").lower()
+                    if cand_id and norm_filename in cand_id:
+                        return item.id
+                    track = item.echo_sync_track or {}
+                    t_file = track.get("downloaded_file_path") or track.get("file_path") or track.get("title") or ""
+                    if norm_filename in str(t_file).lower():
+                        return item.id
+
+            # Pass 3: Username-only fallback ONLY when payload omitted filename completely
+            if username and not norm_filename:
+                u_lower = username.strip().lower()
+                for item in active_items:
+                    cand_id = (item.active_candidate_id or item.plugin_id or "").lower()
+                    if cand_id and u_lower in cand_id:
+                        return item.id
         return None
 
     def transition_download_to_verifying(

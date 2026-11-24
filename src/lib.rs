@@ -459,6 +459,60 @@ pub fn fingerprint_hash_and_active_duration<'py>(
     }
 }
 
+/// Single-pass decode: Chromaprint + BLAKE3 PCM hash + active duration + spectral fake-lossless + dropout analysis.
+#[pyfunction]
+#[pyo3(signature = (path, trim_silence = true, check_spectral = true))]
+pub fn analyze_and_fingerprint_audio<'py>(
+    py: Python<'py>,
+    path: String,
+    trim_silence: bool,
+    check_spectral: bool,
+) -> PyResult<Bound<'py, PyDict>> {
+    let result = py.allow_threads(|| {
+        audio::fingerprint::analyze_and_fingerprint_audio(&path, trim_silence, check_spectral)
+    });
+    match result {
+        Ok(res) => {
+            let dict = PyDict::new_bound(py);
+            dict.set_item("fingerprint", res.fingerprint)?;
+            dict.set_item("duration_seconds", res.duration_seconds)?;
+            dict.set_item("pcm_hash", res.pcm_hash)?;
+            dict.set_item("active_duration_ms", res.active_duration_ms)?;
+            dict.set_item("sample_rate", res.sample_rate)?;
+            dict.set_item("is_fake_lossless", res.is_fake_lossless)?;
+            dict.set_item("estimated_cutoff_hz", res.estimated_cutoff_hz)?;
+            dict.set_item("high_freq_drop_db", res.high_freq_drop_db)?;
+            dict.set_item("has_interior_silence_dropout", res.has_interior_silence_dropout)?;
+            dict.set_item("max_interior_silence_ms", res.max_interior_silence_ms)?;
+            dict.set_item("decode_error_count", res.decode_error_count)?;
+            dict.set_item("is_corrupt", res.is_corrupt)?;
+            Ok(dict)
+        }
+        Err(e) => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(e)),
+    }
+}
+
+/// Analyze raw decoded mono f32 PCM samples for spectral fake-lossless cutoffs and interior digital-zero dropouts.
+#[pyfunction]
+#[pyo3(signature = (samples, sample_rate, check_spectral = true))]
+pub fn analyze_pcm<'py>(
+    py: Python<'py>,
+    samples: Vec<f32>,
+    sample_rate: u32,
+    check_spectral: bool,
+) -> PyResult<Bound<'py, PyDict>> {
+    let res = py.allow_threads(|| audio::analyzer::analyze_pcm(&samples, sample_rate, check_spectral));
+    let dict = PyDict::new_bound(py);
+    dict.set_item("is_fake_lossless", res.is_fake_lossless)?;
+    dict.set_item("estimated_cutoff_hz", res.estimated_cutoff_hz)?;
+    dict.set_item("high_freq_drop_db", res.high_freq_drop_db)?;
+    dict.set_item("has_interior_silence_dropout", res.has_interior_silence_dropout)?;
+    dict.set_item("max_interior_silence_ms", res.max_interior_silence_ms)?;
+    dict.set_item("decode_error_count", res.decode_error_count)?;
+    dict.set_item("is_corrupt", res.is_corrupt)?;
+    Ok(dict)
+}
+
 /// Measure silence-trimmed active audio duration in milliseconds (-60 dBFS threshold).
 #[pyfunction]
 pub fn measure_active_duration<'py>(py: Python<'py>, path: String) -> PyResult<u64> {
@@ -604,6 +658,8 @@ fn echosync_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(fingerprint_audio, m)?)?;
     m.add_function(wrap_pyfunction!(fingerprint_and_hash_audio, m)?)?;
     m.add_function(wrap_pyfunction!(fingerprint_hash_and_active_duration, m)?)?;
+    m.add_function(wrap_pyfunction!(analyze_and_fingerprint_audio, m)?)?;
+    m.add_function(wrap_pyfunction!(analyze_pcm, m)?)?;
     m.add_function(wrap_pyfunction!(measure_active_duration, m)?)?;
     m.add_function(wrap_pyfunction!(compare_chromaprints, m)?)?;
     m.add_function(wrap_pyfunction!(batch_compare_chromaprints, m)?)?;

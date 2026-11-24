@@ -165,6 +165,14 @@ def calculate_duration_score(
     return max(0.0, 1.0 - decay)
 
 
+def _extract_remaster_year(version_str: str | None) -> str | None:
+    """Extract a 4-digit remaster year (e.g. '2011') from a version/edition string if present."""
+    if not version_str:
+        return None
+    m = re.search(r"\b(19\d{2}|20\d{2})\b", str(version_str))
+    return m.group(1) if m else None
+
+
 def evaluate_version_compatibility(
     source_version: str | None,
     candidate_version: str | None,
@@ -176,11 +184,18 @@ def evaluate_version_compatibility(
 
     Rules:
     - Identical version strings or version families match cleanly.
+    - When source requests a year-specific remaster (e.g. '2011 Remaster'):
+      - A contradicting remaster year ('2009 Remaster') is STRICTLY REJECTED (0.0).
+      - A matching year ('2011') scores with 0.0 penalty (Pick #1).
+      - A generic remaster ('Remastered') or unlabeled candidate in context='download'
+        is permitted with a small ordering penalty (-3.0 / -4.0) so exact year always ranks #1.
+    - When source requests a remaster without a year: year is not enforced.
     - When source requests original cut (no edition/version):
-      - Remasters ('remaster', 'remastered') are STRICTLY REJECTED with (False, 0.0, ...) across all sync/download tiers.
+      - Remasters ('remaster', 'remastered') are strictly rejected in standard/sync/download
+        so they never become Pick #1 or trigger short-circuit; permitted ONLY in
+        context='download_remaster_fallback' or 'tier3_fallback' when duration_delta_ms <= 5000.
       - Other variants ('live', 'instrumental', 'karaoke', 'demo', 'remix', 'clean', 'acapella', 'sea_shanty') are strictly rejected.
-      - Deluxe ('deluxe') is permitted ONLY if context == 'tier3_fallback' and duration_delta_ms <= 10000.
-        Otherwise rejected during primary Tier 1 / Tier 2 matching.
+      - Deluxe ('deluxe') is permitted ONLY if duration_delta_ms <= 10000.
     """
     src_v = (source_version or "").strip()
     cand_v = (candidate_version or "").strip()
@@ -198,8 +213,26 @@ def evaluate_version_compatibility(
     src_fam = get_version_family(source_version)
     cand_fam = get_version_family(candidate_version)
 
-    # If both belong to the same version family (e.g. both remix, both piano, both radio_single, etc.)
+    # If both belong to the same version family (e.g. both remix, both piano, both remaster, etc.)
     if src_fam and cand_fam and src_fam == cand_fam:
+        if src_fam == "remaster":
+            src_year = _extract_remaster_year(src_v)
+            cand_year = _extract_remaster_year(cand_v)
+            if src_year:
+                if cand_year and cand_year != src_year:
+                    return (
+                        False,
+                        0.0,
+                        f"Remaster year mismatch: source requested {src_year} remaster, candidate is {cand_year} remaster",
+                    )
+                if not cand_year:
+                    return (
+                        True,
+                        3.0,
+                        f"Generic remaster '{cand_v}' matches year-specific '{src_v}' with -3.0 ordering penalty",
+                    )
+            return True, 0.0, f"Remaster match: '{src_v}' ≡ '{cand_v}'"
+
         if src_fam == "remix":
             src_clean = src_v.strip().lower()
             cand_clean = cand_v.strip().lower()
@@ -270,14 +303,15 @@ def evaluate_version_compatibility(
     # Source has version, candidate has no version info
     if src_fam and not cand_fam:
         if src_fam == "remaster":
-            if context == "tier3_fallback":
+            if context in ("tier3_fallback", "download", "download_remaster_fallback"):
                 if duration_delta_ms is not None and duration_delta_ms > 5000:
                     return (
                         False,
                         0.0,
                         f"Remaster duration mismatch ({duration_delta_ms}ms > 5000ms)",
                     )
-                return True, 1.0, "Original fallback permitted for Remaster in Tier 3"
+                penalty = 4.0 if context in ("download", "download_remaster_fallback") else 1.0
+                return True, penalty, f"Unlabeled candidate allowed for Remaster in {context} (-{penalty} ordering penalty)"
             return (
                 False,
                 0.0,
@@ -334,14 +368,14 @@ def evaluate_version_compatibility(
             return True, 0.0, f"Studio container qualifier amnesty: Original ≡ '{cand_v}'"
 
         if cand_fam == "remaster":
-            if context == "tier3_fallback":
+            if context in ("tier3_fallback", "download_remaster_fallback"):
                 if duration_delta_ms is not None and duration_delta_ms > 5000:
                     return (
                         False,
                         0.0,
                         f"Remaster duration mismatch ({duration_delta_ms}ms > 5000ms)",
                     )
-                return True, 1.0, "Remaster fallback permitted in Tier 3"
+                return True, 1.0, f"Remaster fallback permitted in {context}"
             return (
                 False,
                 0.0,

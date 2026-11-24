@@ -894,10 +894,31 @@ from core.nexus_framework.plugin_loader import PluginRegistry, ServiceRegistry
 
 class CJKMatchingEngine(WeightedMatchingEngine):
     """
-    Subclass reserved for future CJK-specific scoring overrides.
-    Currently delegates all scoring to WeightedMatchingEngine unchanged;
-    the pre_normalize_text hook above is sufficient for correct CJK matching.
+    CJK-aware WeightedMatchingEngine override registered via ServiceRegistry.
+    Adds cross-script CJK <-> Latin (Romaji/Pinyin/Revised Romanization) fuzzy
+    comparison fallback so Romanized P2P candidates retrieved by pre_provider_search
+    score accurately against native CJK target tracks without coupling core to CJK.
     """
 
+    def _fuzzy_match(self, a: str, b: str) -> float:
+        base_score = super()._fuzzy_match(a, b)
+        if base_score >= 0.80 or not a or not b:
+            return base_score
 
+        a_cjk = _has_cjk(a)
+        b_cjk = _has_cjk(b)
+        if a_cjk != b_cjk:
+            try:
+                tr = get_transliterator()
+                a_lat = tr.flatten_to_romaji(a) if a_cjk else a
+                b_lat = tr.flatten_to_romaji(b) if b_cjk else b
+                if a_lat and b_lat:
+                    cross_score = super()._fuzzy_match(a_lat, b_lat)
+                    return max(base_score, cross_score)
+            except Exception:
+                pass
+        return base_score
+
+
+ServiceRegistry.register_override("matching_engine", CJKMatchingEngine)
 ServiceRegistry.register_override("com.echosync.cjk-pack", CJKMatchingEngine)

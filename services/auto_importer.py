@@ -81,7 +81,7 @@ _TEMP_EXTENSIONS: tuple[str, ...] = (".tmp", ".part", ".crdownload")
 def _is_path_component_ignored(file_path: str | Path, ignored_directories: set[str] | None = None) -> bool:
     """Check if a file or directory path contains an ignored path component."""
     if ignored_directories is None:
-        ignored_directories = {"poor_metadata", "incomplete", "quarantine"}
+        ignored_directories = {"poor_metadata", "incomplete", "quarantine", ".staging"}
     try:
         p = Path(file_path)
         parts_lower = {part.lower().strip("/\\") for part in p.parts}
@@ -130,6 +130,7 @@ class AutoImportService:
         self._processing_lock = threading.Lock()
         self._processing_files = set()
         self._recently_completed = {}  # Track completed files to avoid duplicate processing
+        self._staged_unidentifiable: dict[int, Path] = {}  # Option B: dl_id -> staged Pick #1 path
         # Watchdog state
         self._observer: Any = None
         self._handler: _DownloadDirEventHandler | None = None
@@ -719,18 +720,64 @@ class AutoImportService:
                             dl_match = self._find_verifying_download_item(file_path)
                             if dl_match is not None:
                                 dl_id, target_track = dl_match
+                                from services.download_manager import get_download_manager
+
+                                dm = get_download_manager()
+                                allow_remaster_fb = dm.is_remaster_fallback_allowed(dl_id)
                                 verified, fail_reason = self._verify_downloaded_file_against_intent(
                                     file_path=file_path,
                                     target_track=target_track,
                                     resolved_track=res,
+                                    allow_remaster_fallback=allow_remaster_fb,
                                 )
-                                from services.download_manager import get_download_manager
-
-                                dm = get_download_manager()
                                 if not verified:
+                                    if fail_reason == "UNIDENTIFIABLE_AUDIO":
+                                        # Option B: Park Pick #1 silently in .staging while trying backups #2/#3.
+                                        # Only promote Pick #1 to ReviewTask if all backups also fail to identify.
+                                        staged_existing = self._staged_unidentifiable.get(dl_id)
+                                        if staged_existing is None:
+                                            staged_path = self._stage_unidentifiable_file(dl_id, file_path)
+                                            if staged_path is not None:
+                                                self._staged_unidentifiable[dl_id] = staged_path
+                                            rotated = dm.handle_verification_failure(
+                                                dl_id,
+                                                reason="UNIDENTIFIABLE_AUDIO",
+                                                file_path=None,
+                                            )
+                                        else:
+                                            # Backup is also unidentifiable — delete duplicate backup via Gatekeeper
+                                            rotated = dm.handle_verification_failure(
+                                                dl_id,
+                                                reason="UNIDENTIFIABLE_AUDIO",
+                                                file_path=str(file_path),
+                                                delete_file=True,
+                                            )
+
+                                        if not rotated:
+                                            # All backups exhausted — surface single Pick #1 to Review Queue
+                                            final_staged = self._staged_unidentifiable.pop(dl_id, None)
+                                            if final_staged and final_staged.exists():
+                                                logger.info(
+                                                    "All backups exhausted for DownloadQueue #%s; promoting staged Pick #1 (%s) to Review Queue.",
+                                                    dl_id,
+                                                    final_staged.name,
+                                                )
+                                                self.enhancer.create_or_update_review_task(
+                                                    str(final_staged),
+                                                    "Unidentifiable download (all backups exhausted)",
+                                                    match_data=target_track.to_dict() if hasattr(target_track, "to_dict") else res.to_dict(),
+                                                    confidence_score=confidence,
+                                                )
+                                                batch_stats["pending_review"] += 1
+                                        else:
+                                            batch_stats["failed"] += 1
+                                        continue
+
+                                    # Corrupt audio, fake lossless, interior silence dropout, or confirmed wrong track:
+                                    # delete immediately via Gatekeeper and blacklist/rotate to next backup.
                                     logger.warning(
                                         "Post-download verification FAILED for DownloadQueue #%s (%s): %s. "
-                                        "Quarantining file and rotating candidate.",
+                                        "Deleting rejected file and rotating candidate.",
                                         dl_id,
                                         file_path.name,
                                         fail_reason,
@@ -739,10 +786,13 @@ class AutoImportService:
                                         dl_id,
                                         reason=fail_reason,
                                         file_path=str(file_path),
+                                        delete_file=True,
                                     )
                                     batch_stats["failed"] += 1
                                     continue
                                 else:
+                                    # Verification succeeded — delete any earlier staged unidentifiable Pick #1
+                                    self._cleanup_staged_unidentifiable(dl_id)
                                     dm.handle_verification_success(dl_id, file_path=str(file_path))
 
                             # Finally Decide
@@ -830,19 +880,58 @@ class AutoImportService:
             logger.debug("DownloadQueue lookup skipped for %s: %s", file_path.name, exc)
         return None
 
+    def _stage_unidentifiable_file(self, dl_id: int, file_path: Path) -> Path | None:
+        """Park Pick #1 unidentifiable download silently in downloads/.staging via Gatekeeper."""
+        try:
+            from core.io_gatekeeper import Gatekeeper
+
+            _dl = config_manager.get("storage.download_dir") or config_manager.get("download_dir")
+            staging_root = (Path(_dl) if _dl else file_path.parent) / ".staging"
+            staging_root.mkdir(parents=True, exist_ok=True)
+            dest = staging_root / f"dl_{dl_id}_{file_path.name}"
+            Gatekeeper.authorize_and_execute(
+                {
+                    "operation": "safe_move",
+                    "src": str(file_path),
+                    "dst": str(dest),
+                }
+            )
+            logger.info("Staged unidentifiable Pick #1 for DownloadQueue #%s at %s", dl_id, dest)
+            return dest
+        except Exception as exc:
+            logger.warning("Failed to stage unidentifiable file %s: %s", file_path, exc)
+            return None
+
+    def _cleanup_staged_unidentifiable(self, dl_id: int) -> None:
+        """Delete staged unidentifiable Pick #1 via Gatekeeper once a backup succeeds."""
+        staged_path = self._staged_unidentifiable.pop(dl_id, None)
+        if not staged_path or not staged_path.exists():
+            return
+        try:
+            from core.io_gatekeeper import Gatekeeper
+
+            Gatekeeper.authorize_and_execute({"operation": "delete", "src": str(staged_path)})
+            logger.info("Deleted superseded staged file for DownloadQueue #%s: %s", dl_id, staged_path.name)
+        except Exception as exc:
+            logger.debug("Failed to delete staged file %s: %s", staged_path, exc)
+
     def _verify_downloaded_file_against_intent(
         self,
         file_path: Path,
         target_track: Any,
         resolved_track: Any,
+        *,
+        allow_remaster_fallback: bool = False,
     ) -> tuple[bool, str]:
-        """Verify audio integrity, duration alignment, and semantic/version match before import."""
+        """Verify audio integrity, fake-lossless spectrum, mid-track dropouts, duration alignment,
+        and semantic/version match before import.
+        """
         import echosync_core
 
         from core.matching_engine.matching_engine import WeightedMatchingEngine
         from core.matching_engine.scoring_profile import ExactSyncProfile
 
-        # 1. Native Rust audio decode & duration check
+        # 1. Native Rust header probe
         try:
             meta = echosync_core.extract_metadata(str(file_path)) or {}
             raw_dur_ms = meta.get("duration_ms")
@@ -855,19 +944,42 @@ class AutoImportService:
             logger.warning("Audio integrity probe failed for %s: %s", file_path.name, exc)
             return False, "CORRUPT_AUDIO"
 
+        # 2. Single-pass Rust PCM decode + spectral fake-lossless + mid-track digital-zero dropout check
+        ext_lower = file_path.suffix.lower().lstrip(".")
+        is_lossless_pcm = ext_lower in {"flac", "wav", "alac", "aiff"}
         active_dur_ms = None
-        try:
-            if hasattr(echosync_core, "fingerprint_hash_and_active_duration"):
-                _, _, _, active_ms = echosync_core.fingerprint_hash_and_active_duration(str(file_path), True)
-                if active_ms and int(active_ms) > 0:
-                    active_dur_ms = int(active_ms)
-            else:
-                _, dur_sec, _ = echosync_core.fingerprint_and_hash_audio(str(file_path), True)
-                if dur_sec and float(dur_sec) > 0:
-                    active_dur_ms = int(round(float(dur_sec) * 1000))
-        except Exception:
-            pass
+        if ext_lower not in {"dsf", "dff", "dsd"}:
+            try:
+                if hasattr(echosync_core, "analyze_and_fingerprint_audio"):
+                    analysis = echosync_core.analyze_and_fingerprint_audio(
+                        str(file_path), True, is_lossless_pcm
+                    )
+                    if analysis.get("is_corrupt"):
+                        return False, f"CORRUPT_AUDIO (decode_errors={analysis.get('decode_error_count', 0)})"
+                    if is_lossless_pcm and analysis.get("is_fake_lossless"):
+                        cutoff = float(analysis.get("estimated_cutoff_hz") or 0.0)
+                        drop_db = float(analysis.get("high_freq_drop_db") or 0.0)
+                        return False, f"FAKE_LOSSLESS (cutoff={cutoff:.0f}Hz, drop={drop_db:.1f}dB)"
+                    if analysis.get("has_interior_silence_dropout"):
+                        gap_ms = int(analysis.get("max_interior_silence_ms") or 0)
+                        return False, f"INTERIOR_SILENCE_DROPOUT ({gap_ms}ms)"
+                    if analysis.get("active_duration_ms") and int(analysis["active_duration_ms"]) > 0:
+                        active_dur_ms = int(analysis["active_duration_ms"])
+                elif hasattr(echosync_core, "fingerprint_hash_and_active_duration"):
+                    _, _, _, active_ms = echosync_core.fingerprint_hash_and_active_duration(str(file_path), True)
+                    if active_ms and int(active_ms) > 0:
+                        active_dur_ms = int(active_ms)
+                else:
+                    _, dur_sec, _ = echosync_core.fingerprint_and_hash_audio(str(file_path), True)
+                    if dur_sec and float(dur_sec) > 0:
+                        active_dur_ms = int(round(float(dur_sec) * 1000))
+            except ValueError as decode_err:
+                logger.warning("Native PCM decode failed for %s: %s", file_path.name, decode_err)
+                return False, "CORRUPT_AUDIO"
+            except Exception:
+                pass
 
+        # 3. Duration sanity gate against requested target track
         target_dur_ms = getattr(target_track, "duration_ms", None) or getattr(target_track, "duration", None)
         if target_dur_ms and int(target_dur_ms) > 0:
             target_dur_ms = int(target_dur_ms)
@@ -877,17 +989,36 @@ class AutoImportService:
             if best_delta > 10000:
                 return False, f"DURATION_MISMATCH ({best_delta}ms > 10000ms)"
 
-        # 2. Semantic & version cross-check if MetadataResolutionEngine resolved a candidate
-        if resolved_track and getattr(resolved_track, "title", None) and getattr(resolved_track, "artist_name", None):
+        # 4. Semantic & version cross-check if MetadataResolutionEngine resolved a candidate
+        res_title = getattr(resolved_track, "title", None) if resolved_track else None
+        res_artist = getattr(resolved_track, "artist_name", None) if resolved_track else None
+        res_method = getattr(resolved_track, "resolution_method", None) if resolved_track else None
+        res_conf = float(getattr(resolved_track, "confidence_score", 0.0) or 0.0) if resolved_track else 0.0
+        res_mbid = (
+            getattr(resolved_track, "musicbrainz_track_id", None)
+            or getattr(resolved_track, "musicbrainz_id", None)
+            if resolved_track
+            else None
+        )
+
+        # If the resolution engine ran and could not identify the file at all (0 confidence & no MBID),
+        # classify as UNIDENTIFIABLE_AUDIO so Option B staging can hold Pick #1 while trying backups.
+        if resolved_track is not None and res_method is not None and not res_mbid and res_conf < 0.70:
+            return False, "UNIDENTIFIABLE_AUDIO"
+
+        if res_title and res_artist:
             matcher = WeightedMatchingEngine(ExactSyncProfile())
             cand_for_check = resolved_track
             if active_dur_ms and isinstance(getattr(cand_for_check, "extra_metadata", None), dict):
                 cand_for_check.extra_metadata["active_duration_ms"] = active_dur_ms
-            match_res = matcher.calculate_match(target_track, cand_for_check, context="sync")
+            match_ctx = "download_remaster_fallback" if allow_remaster_fallback else "sync"
+            match_res = matcher.calculate_match(target_track, cand_for_check, context=match_ctx)
             if not match_res.passed_version_check:
                 return False, f"MISMATCH_EDITION: {match_res.reasoning}"
             if match_res.confidence_score < 70.0:
                 return False, f"MISMATCH_TRACK (score={match_res.confidence_score:.1f}%)"
+        elif resolved_track is not None:
+            return False, "UNIDENTIFIABLE_AUDIO"
 
         return True, "OK"
 

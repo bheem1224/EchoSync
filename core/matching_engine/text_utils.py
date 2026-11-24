@@ -647,15 +647,19 @@ def sanitize_query_for_wire(text: str | None) -> str:
 
 
 def sanitize_query_preserve_keyboard(text: str | None) -> str:
-    """Sanitize a P2P wire query while keeping standard keyboard symbols (!, $) and diacritics intact.
+    """Sanitize a P2P wire query while keeping standard 104-key symbols (!, $) and diacritics intact.
 
-    Preserves artist/title tokens like 'P!nk', 'A$AP', 'Ke$ha', and 'Beyoncé' for accurate
-    primary searches while stripping brackets, slashes, quotes, and '&' delimiters.
+    Collapses apostrophes (e.g. "Don't" -> "Dont") instead of splitting them into
+    single-letter noise tokens ("Don t") that fail Soulseek's token-AND search,
+    while preserving tokens like 'P!nk', 'A$AP', 'Ke$ha', and 'Beyoncé'.
     """
     if not text:
         return ""
 
-    cleaned = re.sub(r"[\(\)\[\]\{\}\/\\&\"',:;+~`^|<>?*]+", " ", str(text))
+    cleaned = normalize_chars(str(text))
+    # Collapse contractions/apostrophes (Don't -> Dont) instead of splitting into "Don t"
+    cleaned = cleaned.replace("'", "")
+    cleaned = re.sub(r"[\(\)\[\]\{\}\/\\&\",:;+~`^|<>?*]+", " ", cleaned)
     cleaned = _NORM_COLLAPSE_SPACE_RE.sub(" ", cleaned)
     return cleaned.strip()
 
