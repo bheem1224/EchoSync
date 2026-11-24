@@ -500,7 +500,9 @@ class SlskdProvider(DownloaderProvider):
             return
         async with self.search_post_lock:
             now = time.monotonic()
-            last_ts = getattr(self, "_last_search_post_ts", 0.0)
+            if not hasattr(self, "_last_search_post_ts"):
+                self._last_search_post_ts = 0.0
+            last_ts = self._last_search_post_ts
             wait_s = interval - (now - last_ts)
             if last_ts > 0.0 and wait_s > 0.0:
                 logger.debug(f"Pacing slskd POST /searches by {wait_s:.2f}s (Soulseek burst protection)")
@@ -959,7 +961,9 @@ class SlskdProvider(DownloaderProvider):
         emits SERVICE_DEGRADED on disconnect so slskd's auto-reconnect handler fires.
         """
         now = time.monotonic()
-        if now - getattr(self, "_last_connected_ok_ts", 0.0) < 30.0:
+        if not hasattr(self, "_last_connected_ok_ts"):
+            self._last_connected_ok_ts = 0.0
+        if now - self._last_connected_ok_ts < 30.0:
             return True
 
         try:
