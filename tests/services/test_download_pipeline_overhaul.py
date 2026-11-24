@@ -483,4 +483,76 @@ async def test_reclaim_orphaned_searching_and_safe_failure_dispatch(tmp_path):
     dm.process_single_download.assert_not_called()
 
 
+def test_webhook_secret_persists_universally_across_reregistrations(tmp_path, monkeypatch):
+    """Webhook secrets must persist in config.db and never re-roll on restart/update."""
+    from database.config_database import ConfigDatabase
+    from core.nexus_framework.sdk import facades
+
+    cdb = ConfigDatabase(str(tmp_path / "config.db"))
+    monkeypatch.setattr("database.config_database.get_config_database", lambda: cdb)
+    facades._REGISTERED_WEBHOOKS.clear()
+
+    wh = facades._WebhooksSDKFacade(caller_namespace="EchoSync.slskd")
+    reg1 = wh.register_endpoint("download_status", allow_unauthenticated=False)
+    secret1 = reg1["secret"]
+    assert secret1.startswith("sk_live_")
+
+    # Simulate restart / hot-swap by wiping in-memory registry
+    facades._REGISTERED_WEBHOOKS.clear()
+    reg2 = wh.register_endpoint("download_status", allow_unauthenticated=False)
+    assert reg2["secret"] == secret1
+
+    # Second plugin endpoint shares the same universal system.webhook_secret
+    wh2 = facades._WebhooksSDKFacade(caller_namespace="EchoSync.other")
+    reg3 = wh2.register_endpoint("events", allow_unauthenticated=False)
+    assert reg3["secret"] == secret1
+
+
+def test_track_imported_reconciles_failed_download_to_completed(tmp_path):
+    """A FAILED DownloadQueue row transitions to COMPLETED when AutoImportService imports the track."""
+    from database.working_database import WorkingDatabase, WorkingBase
+    from core.database.models.working import DownloadQueue, DownloadStatus
+    from services.download_manager import DownloadManager
+
+    wdb = WorkingDatabase(str(tmp_path / "working.db"))
+    WorkingBase.metadata.create_all(wdb.engine)
+    dm = object.__new__(DownloadManager)
+    dm.work_db = wdb
+    dm._repo_instance = None
+
+    with wdb.session_scope() as s:
+        failed_item = DownloadQueue(
+            status=DownloadStatus.FAILED.value,
+            error_reason="NO_MATCHING_CANDIDATES",
+            echo_sync_track={
+                "title": "Gone, Gone, Gone",
+                "artist_name": "Phillip Phillips",
+                "duration_ms": 209000,
+            },
+        )
+        s.add(failed_item)
+        s.flush()
+        fid = failed_item.id
+
+    dm._on_track_imported(
+        {
+            "track": {
+                "title": "Gone, Gone, Gone",
+                "artist_name": "Phillip Phillips",
+                "duration_ms": 210000,
+            },
+            "file_path": "/data/library/Phillip Phillips/03 - Gone, Gone, Gone.flac",
+        }
+    )
+
+    with wdb.session_scope() as s:
+        refreshed = s.get(DownloadQueue, fid)
+        assert refreshed is not None
+        assert refreshed.status == DownloadStatus.COMPLETED.value
+        assert refreshed.error_reason is None
+        tl = refreshed.echo_sync_track["_diagnostics"]["timeline"]
+        assert any(ev["event"] == "IMPORTED_RECONCILED" for ev in tl)
+
+
+
 

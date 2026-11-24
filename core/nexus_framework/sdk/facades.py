@@ -1777,6 +1777,7 @@ class _WebhooksSDKFacade:
         allowed_subnets: list[str] | None = None,
         namespace: str | None = None,
         *,
+        rotate_secret: bool = False,
         principal: Principal | None = None,
     ) -> dict[str, Any]:
         _enforce_facade_scope(principal, "contract:webhooks:edit:own", "contract:config:edit:own")
@@ -1786,8 +1787,46 @@ class _WebhooksSDKFacade:
         else:
             ns, crc32_id = self._resolve_namespace_and_id()
 
+        # Resolve persistent webhook secret:
+        # 1. Explicit caller-provided secret takes precedence.
+        # 2. Otherwise reuse any already-persisted secret for this endpoint in config.db.
+        # 3. Otherwise reuse (or generate once) the universal system.webhook_secret in config.db
+        #    so plugin restarts, hot-swaps, and container updates NEVER re-roll the secret.
         if not allow_unauthenticated and not secret:
-            secret = f"sk_live_{secrets.token_hex(16)}"
+            existing_secret: str | None = None
+            if not rotate_secret:
+                in_mem = _REGISTERED_WEBHOOKS.get((crc32_id, slug))
+                if isinstance(in_mem, dict) and in_mem.get("secret"):
+                    existing_secret = str(in_mem["secret"])
+                if not existing_secret:
+                    try:
+                        from database.config_database import get_config_database
+
+                        _db = get_config_database()
+                        _svc_id = _db.get_service_id(crc32_id) or _db.get_service_id(ns)
+                        if _svc_id:
+                            persisted = _db.get_service_config(_svc_id, f"webhook:{slug}")
+                            if isinstance(persisted, dict) and persisted.get("secret"):
+                                existing_secret = str(persisted["secret"])
+                        if not existing_secret:
+                            univ = _db.get_system_setting("system.webhook_secret")
+                            if isinstance(univ, str) and univ.strip():
+                                existing_secret = univ.strip()
+                    except Exception:
+                        pass
+
+            if existing_secret:
+                secret = existing_secret
+            else:
+                secret = f"sk_live_{secrets.token_hex(16)}"
+                try:
+                    from database.config_database import get_config_database
+
+                    _db = get_config_database()
+                    if rotate_secret or not _db.get_system_setting("system.webhook_secret"):
+                        _db.set_system_setting("system.webhook_secret", secret)
+                except Exception:
+                    pass
 
         base_url = get_base_url()
         canonical_url = f"{base_url}/api/v1/webhooks/{ns}/{slug}"

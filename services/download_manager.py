@@ -230,6 +230,14 @@ class DownloadManager:
                 logger.warning("Cannot build signature for imported track")
                 return
 
+            from pathlib import Path
+
+            imported_basenames: set[str] = set()
+            for p_key in ("file_path", "source_file_path"):
+                p_val = payload.get(p_key)
+                if p_val:
+                    imported_basenames.add(Path(str(p_val).replace("\\", "/")).name.lower())
+
             active_states = {
                 DownloadStatus.QUEUED.value,
                 DownloadStatus.SEARCHING.value,
@@ -239,6 +247,7 @@ class DownloadManager:
                 DownloadStatus.FAILED.value,
             }
             cancelled_count = 0
+            completed_count = 0
 
             with self.work_db.session_scope() as session:
                 last_id = 0
@@ -260,36 +269,86 @@ class DownloadManager:
                     last_id = items[-1].id
 
                     for item in items:
-                        item_sig = self._normalize_track_signature(item.echo_sync_track or {})
+                        item_dict = item.echo_sync_track or {}
+                        item_sig = self._normalize_track_signature(item_dict)
                         # Match on ISRC if present
                         target_isrc = track.isrc
-                        item_isrc = (item.echo_sync_track or {}).get("isrc")
+                        item_isrc = item_dict.get("isrc")
 
                         is_match = False
                         if target_isrc and item_isrc and target_isrc == item_isrc:
                             is_match = True
                         elif target_sig[0] and item_sig[0] and target_sig[1] and item_sig[1]:
-                            if target_sig[0] == item_sig[0] and target_sig[1] == item_sig[1]:
+                            artist_aligned = (
+                                target_sig[0] == item_sig[0]
+                                or target_sig[0] in item_sig[0]
+                                or item_sig[0] in target_sig[0]
+                            )
+                            if artist_aligned and target_sig[1] == item_sig[1]:
                                 if target_sig[3] is not None and item_sig[3] is not None:
-                                    if abs(int(target_sig[3]) - int(item_sig[3])) <= 2000:
+                                    if abs(int(target_sig[3]) - int(item_sig[3])) <= 5000:
                                         is_match = True
                                 else:
                                     is_match = True
 
+                        if not is_match and imported_basenames:
+                            cand_refs = [
+                                item.active_candidate_id,
+                                item.provider_id,
+                                item_dict.get("downloaded_file_path"),
+                            ]
+                            for bl in getattr(item, "blacklisted_candidates", None) or []:
+                                if isinstance(bl, dict):
+                                    cand_refs.append(bl.get("candidate_id") or bl.get("id"))
+                                elif isinstance(bl, str):
+                                    cand_refs.append(bl)
+                            for ref in cand_refs:
+                                if ref:
+                                    ref_name = Path(str(ref).split("|")[-1].replace("\\", "/")).name.lower()
+                                    if ref_name in imported_basenames:
+                                        is_match = True
+                                        break
+
                         if is_match:
-                            logger.info(f"Purging download {item.id} matching imported track '{track.title}'")
+                            if str(item.status).upper() == DownloadStatus.FAILED.value:
+                                logger.info(
+                                    f"Reconciling FAILED download {item.id} -> COMPLETED after import of '{track.title}'"
+                                )
+                                item.status = DownloadStatus.COMPLETED.value
+                                item.error_reason = None
+                                item.updated_at = utc_now()
+                                if isinstance(item.echo_sync_track, dict):
+                                    updated_payload = dict(item.echo_sync_track)
+                                    diag = dict(updated_payload.get("_diagnostics") or {})
+                                    tl = list(diag.get("timeline") or [])
+                                    tl.append(
+                                        {
+                                            "ts": utc_now().isoformat(),
+                                            "event": "IMPORTED_RECONCILED",
+                                            "candidate_id": None,
+                                            "detail": f"Auto-imported '{track.title}'",
+                                        }
+                                    )
+                                    diag["timeline"] = tl[-15:]
+                                    updated_payload["_diagnostics"] = diag
+                                    item.echo_sync_track = updated_payload
+                                completed_count += 1
+                            else:
+                                logger.info(f"Purging download {item.id} matching imported track '{track.title}'")
 
-                            cancel_target = item.active_candidate_id or item.provider_id
-                            if item.status == DownloadStatus.DOWNLOADING.value and cancel_target:
-                                if providers is None:
-                                    providers = self._get_active_download_providers()
-                                self._cancel_transfer_sync(providers, cancel_target)
+                                cancel_target = item.active_candidate_id or item.provider_id
+                                if item.status == DownloadStatus.DOWNLOADING.value and cancel_target:
+                                    if providers is None:
+                                        providers = self._get_active_download_providers()
+                                    self._cancel_transfer_sync(providers, cancel_target)
 
-                            session.delete(item)
-                            cancelled_count += 1
+                                session.delete(item)
+                                cancelled_count += 1
 
-            if cancelled_count > 0:
-                logger.info(f"Cancelled {cancelled_count} queued downloads for newly imported track.")
+            if cancelled_count > 0 or completed_count > 0:
+                logger.info(
+                    f"TRACK_IMPORTED reconciliation: completed={completed_count}, cancelled={cancelled_count}."
+                )
 
         except Exception as e:
             logger.error(f"Error handling TRACK_IMPORTED: {e}", exc_info=True)

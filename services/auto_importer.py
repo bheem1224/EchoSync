@@ -1050,7 +1050,28 @@ class AutoImportService:
         # 2. Move & persist/deduplicate into library DB
         dest_path = self._move_file(file_path, metadata)
 
-        # 3. Update Review Task status if it exists
+        # 3. Publish TRACK_IMPORTED so DownloadManager reconciles any matching queue rows
+        #    (including FAILED rows from manual retries or when webhooks are disabled)
+        try:
+            from core.event_bus import event_bus
+
+            track_payload = dict(metadata)
+            if "artist_name" not in track_payload and track_payload.get("artist"):
+                track_payload["artist_name"] = track_payload["artist"]
+            if "album_title" not in track_payload and track_payload.get("album"):
+                track_payload["album_title"] = track_payload["album"]
+            event_bus.publish(
+                "TRACK_IMPORTED",
+                {
+                    "track": track_payload,
+                    "file_path": str(dest_path),
+                    "source_file_path": str(file_path),
+                },
+            )
+        except Exception as eb_err:
+            logger.debug("Could not publish TRACK_IMPORTED after finalize_import: %s", eb_err)
+
+        # 4. Update Review Task status if it exists
         self.enhancer.create_or_update_review_task(file_path, metadata, 1.0, status="approved")
         return dest_path
 
