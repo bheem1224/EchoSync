@@ -36,7 +36,10 @@ _EVENT_SUBSCRIPTIONS: list[tuple[str, Callable[[dict[str, Any]], None]]] = []
 
 def _get_slskd_provider():
     """Retrieve the active or registered SlskdProvider instance."""
-    from plugins.EchoSync.slskd.client import SlskdProvider
+    try:
+        from .client import SlskdProvider
+    except ImportError:
+        from plugins.EchoSync.slskd.client import SlskdProvider
 
     try:
         from core.nexus_framework.plugin_loader import PluginRegistry

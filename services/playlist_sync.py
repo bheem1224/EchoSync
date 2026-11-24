@@ -548,11 +548,16 @@ def evaluate_single_track_diagnostics(
     base_search_title = re.sub(r"\s*[\(\[].*?[\)\]]", "", clean_search_title).strip()
     base_search_title = re.sub(r"\s+-.*$", "", base_search_title).strip() or clean_search_title
 
+    from core.matching_engine.track_parser import extract_version_descriptors
+
+    _src_clean_t, _src_version, _src_edition = extract_version_descriptors(title or "")
     source_track = EchosyncTrack(
         raw_title=title,
         artist_name=artist,
         album_title=album or "",
         duration_ms=duration_ms,
+        edition=_src_edition,
+        version=_src_version,
     )
     hook_manager.apply_filters(
         "pre_normalize_title",
@@ -775,8 +780,14 @@ def evaluate_single_track_diagnostics(
             best_score = confidence
             best_candidate_eval = eval_item
 
-    # Tier 3 Deluxe edition fallback when no primary candidate was accepted
+    # Tier 3 Deluxe & Remaster fallback when no primary candidate was accepted.
+    # Ensures Sync matches an existing local Remaster (within 5s duration tolerance)
+    # when the Original is absent, preventing duplicate download re-requests while
+    # always preferring the Original whenever one exists in the library.
     if candidate_evaluations and not any(c["accepted"] for c in candidate_evaluations):
+        from core.matching_engine.matching_engine import get_version_family
+
+        t3_best_score = -1.0
         for eval_item in candidate_evaluations:
             cand_track = candidate_tracks_by_id.get(eval_item["track_id"])
             if cand_track is None:
@@ -799,7 +810,14 @@ def evaluate_single_track_diagnostics(
                 eval_item["composite_score"] = round(t3_conf, 2)
                 eval_item["accepted"] = True
                 eval_item["rejection_reason"] = None
-                if t3_conf > best_score:
+                eval_item["fallback_tier"] = "tier3_fallback"
+                if (
+                    get_version_family(getattr(cand_track, "edition", None)) == "remaster"
+                    or get_version_family(getattr(source_track, "edition", None)) == "remaster"
+                ):
+                    eval_item["matched_via_remaster_fallback"] = True
+                if t3_conf > t3_best_score:
+                    t3_best_score = t3_conf
                     best_score = t3_conf
                     best_candidate_eval = eval_item
 

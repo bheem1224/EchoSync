@@ -58,15 +58,23 @@ function createPreferencesStore() {
 
   async function saveProfiles(profiles) {
     try {
-      await apiClient.post('/system/quality-profiles', { profiles });
+      const resp = await apiClient.post('/system/quality-profiles', { profiles });
+      if (resp.data?.error) {
+        throw new Error(resp.data.error);
+      }
       update((s) => ({ ...s, profiles }));
     } catch (e) {
+      if (e instanceof Error && e.message && !e.response) {
+        // Re-throw explicit API validation errors (e.g. fallback DAG violations)
+        throw e;
+      }
       console.error('Failed to save quality profiles via API, falling back to settings.save', e);
       try {
         await apiClient.post('/system/settings', { quality_profiles: profiles });
         update((s) => ({ ...s, profiles }));
       } catch (e2) {
         console.error('Fallback save also failed', e2);
+        throw e2;
       }
     }
   }
@@ -87,7 +95,10 @@ function createPreferencesStore() {
 
   async function saveProfile(profile) {
     try {
-      await apiClient.post('/system/quality-profile', { profile });
+      const resp = await apiClient.post('/system/quality-profile', { profile });
+      if (resp.data?.error) {
+        throw new Error(resp.data.error);
+      }
       // merge into existing store
       update((s) => {
         const list = Array.isArray(s.profiles) ? [...s.profiles] : [];
@@ -96,14 +107,24 @@ function createPreferencesStore() {
         return { ...s, profiles: list };
       });
     } catch (e) {
+      if (e instanceof Error && e.message && !e.response) {
+        // Re-throw explicit API validation errors (e.g. fallback DAG violations)
+        throw e;
+      }
       console.error('Failed to save single profile via API, falling back to full save', e);
       try {
         const s = await apiClient.get('/system/quality-profiles');
         const profiles = s.data?.profiles || [];
-        await apiClient.post('/system/quality-profiles', { profiles });
+        const idx = profiles.findIndex((p) => String(p.id) === String(profile.id));
+        if (idx >= 0) profiles[idx] = profile; else profiles.push(profile);
+        const resp2 = await apiClient.post('/system/quality-profiles', { profiles });
+        if (resp2.data?.error) {
+          throw new Error(resp2.data.error);
+        }
         update((st) => ({ ...st, profiles }));
       } catch (e2) {
         console.error('Fallback single profile save also failed', e2);
+        throw e2;
       }
     }
   }

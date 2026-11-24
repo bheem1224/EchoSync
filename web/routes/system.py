@@ -935,6 +935,12 @@ async def save_single_quality_profile(request: Request):
                 profile["name"] = f"Profile {len(existing) + 1}"
             existing.append(profile)
 
+        from database.config_database import ConfigDatabase
+
+        is_valid, err_msg = ConfigDatabase.validate_quality_profiles_fallback_dag(existing)
+        if not is_valid:
+            return {"error": err_msg or "Invalid fallback profile configuration"}
+
         ok = config_manager.set_quality_profiles(existing)
         if not ok:
             return {"error": "Failed to persist profile"}

@@ -309,3 +309,109 @@ async def test_slskd_list_transfer_api_status_and_cancel():
         assert cancelled is True
         mock_req.assert_any_call("DELETE", "transfers/downloads/Vaelin/uuid-err-1")
 
+
+def test_exact_sync_remaster_fallback_prefers_original_and_falls_back_when_absent(monkeypatch):
+    """ExactSync matches a local Remaster via tier3_fallback when Original is absent,
+    always prefers Original when present, and rejects wrong remaster years."""
+    from unittest.mock import MagicMock
+    from services import playlist_sync as ps
+
+    # Stub DB engine so _fetch_candidates_tier1 returns our controlled rows
+    class _FakeConn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def execute(self, *args, **kwargs):
+            m = MagicMock()
+            m.fetchall.return_value = []
+            return m
+
+    class _FakeEngine:
+        def connect(self):
+            return _FakeConn()
+
+    fake_db = MagicMock()
+    fake_db.engine = _FakeEngine()
+
+    # Row tuple: (id, title, duration_ms, edition, artist, artist_id, sort_title, album, media_path, sync_id)
+    remaster_row = (
+        101,
+        "Bohemian Rhapsody (2011 Remaster)",
+        355000,
+        "2011 Remaster",
+        "Queen",
+        1,
+        "bohemian rhapsody",
+        "A Night at the Opera",
+        "/library/Queen/Bohemian Rhapsody (2011 Remaster).flac",
+        "sync-101",
+    )
+    original_row = (
+        102,
+        "Bohemian Rhapsody",
+        355000,
+        None,
+        "Queen",
+        1,
+        "bohemian rhapsody",
+        "A Night at the Opera",
+        "/library/Queen/Bohemian Rhapsody.flac",
+        "sync-102",
+    )
+    wrong_year_row = (
+        103,
+        "Bohemian Rhapsody (2009 Remaster)",
+        355000,
+        "2009 Remaster",
+        "Queen",
+        1,
+        "bohemian rhapsody",
+        "A Night at the Opera",
+        "/library/Queen/Bohemian Rhapsody (2009 Remaster).flac",
+        "sync-103",
+    )
+
+    # Case 1: Only Remaster exists in library, Original requested -> matches via tier3_fallback
+    monkeypatch.setattr(ps, "_fetch_candidates_tier1", lambda *a, **k: [remaster_row])
+    monkeypatch.setattr(ps, "_fetch_candidates_tier2", lambda *a, **k: [])
+    trace1 = ps.evaluate_single_track_diagnostics(
+        title="Bohemian Rhapsody",
+        artist="Queen",
+        duration_ms=355000,
+        album="A Night at the Opera",
+        db=fake_db,
+    )
+    assert trace1["best_match"] is not None
+    assert trace1["best_match"]["track_id"] == 101
+    assert trace1["best_match"]["accepted"] is True
+    assert trace1["best_match"]["fallback_tier"] == "tier3_fallback"
+    assert trace1["best_match"]["matched_via_remaster_fallback"] is True
+
+    # Case 2: Both Original and Remaster exist -> Original wins in primary pass (no tier3 fallback)
+    monkeypatch.setattr(ps, "_fetch_candidates_tier1", lambda *a, **k: [remaster_row, original_row])
+    trace2 = ps.evaluate_single_track_diagnostics(
+        title="Bohemian Rhapsody",
+        artist="Queen",
+        duration_ms=355000,
+        album="A Night at the Opera",
+        db=fake_db,
+    )
+    assert trace2["best_match"] is not None
+    assert trace2["best_match"]["track_id"] == 102
+    assert trace2["best_match"].get("fallback_tier") is None
+
+    # Case 3: 2011 Remaster requested, only 2009 Remaster in library -> strictly rejected
+    monkeypatch.setattr(ps, "_fetch_candidates_tier1", lambda *a, **k: [wrong_year_row])
+    trace3 = ps.evaluate_single_track_diagnostics(
+        title="Bohemian Rhapsody (2011 Remaster)",
+        artist="Queen",
+        duration_ms=355000,
+        album="A Night at the Opera",
+        db=fake_db,
+    )
+    assert trace3["best_match"] is None
+
+
