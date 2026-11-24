@@ -554,5 +554,66 @@ def test_track_imported_reconciles_failed_download_to_completed(tmp_path):
         assert any(ev["event"] == "IMPORTED_RECONCILED" for ev in tl)
 
 
+def test_reconcile_verifying_items_completes_owned_and_fails_orphaned(tmp_path):
+    """VERIFYING rows already in library flip to COMPLETED (100%, 0 KB/s), while
+    orphaned >5m VERIFYING rows with missing files fail cleanly as VERIFICATION_ORPHANED."""
+    from datetime import timedelta
+    from database.working_database import WorkingDatabase, WorkingBase
+    from core.database.models.working import DownloadQueue, DownloadStatus
+    from services.download_manager import DownloadManager
+    from time_utils import utc_now
+
+    wdb = WorkingDatabase(str(tmp_path / "working.db"))
+    WorkingBase.metadata.create_all(wdb.engine)
+    dm = object.__new__(DownloadManager)
+    dm.work_db = wdb
+    dm._repo_instance = None
+    dm._loop_task = None
+    dm._active_search_ids = set()
+
+    # Stub _track_exists_in_library: "Running Up That Hill" is in library, "Ghost Track" is not
+    dm._track_exists_in_library = lambda artist, title, **kw: "running up that hill" in (title or "").lower()
+
+    with wdb.session_scope() as s:
+        owned = DownloadQueue(
+            status=DownloadStatus.VERIFYING.value,
+            echo_sync_track={
+                "title": "Running Up That Hill (A Deal With God)",
+                "artist_name": "Kate Bush",
+                "current_speed": 803500.0,
+                "progress_percent": 85.0,
+            },
+            updated_at=utc_now() - timedelta(minutes=2),
+        )
+        orphaned = DownloadQueue(
+            status=DownloadStatus.VERIFYING.value,
+            echo_sync_track={
+                "title": "Ghost Track",
+                "artist_name": "Nobody",
+                "downloaded_file_path": str(tmp_path / "nonexistent.flac"),
+                "current_speed": 500000.0,
+                "progress_percent": 90.0,
+            },
+            updated_at=utc_now() - timedelta(minutes=6),
+        )
+        s.add_all([owned, orphaned])
+        s.flush()
+        owned_id, orphaned_id = owned.id, orphaned.id
+
+    dm._reconcile_verifying_items()
+
+    with wdb.session_scope() as s:
+        r_owned = s.get(DownloadQueue, owned_id)
+        assert r_owned.status == DownloadStatus.COMPLETED.value
+        assert r_owned.echo_sync_track["progress_percent"] == 100.0
+        assert r_owned.echo_sync_track["current_speed"] == 0.0
+
+        r_orph = s.get(DownloadQueue, orphaned_id)
+        assert r_orph.status == DownloadStatus.FAILED.value
+        assert r_orph.error_reason == "VERIFICATION_ORPHANED"
+        assert r_orph.echo_sync_track["current_speed"] == 0.0
+
+
+
 
 

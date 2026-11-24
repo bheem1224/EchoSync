@@ -2693,10 +2693,12 @@ class DownloadManager:
             if not item:
                 return False
             item.status = DownloadStatus.VERIFYING.value
-            if file_path and item.echo_sync_track is not None:
-                track_dict = dict(item.echo_sync_track)
+            track_dict = dict(item.echo_sync_track or {})
+            track_dict["current_speed"] = 0.0
+            track_dict["progress_percent"] = 100.0
+            if file_path:
                 track_dict["downloaded_file_path"] = file_path
-                item.echo_sync_track = track_dict
+            item.echo_sync_track = track_dict
             item.updated_at = utc_now()
             with db_write_lease(task_name="transition_to_verifying"):
                 session.commit()
@@ -3018,41 +3020,62 @@ class DownloadManager:
         title: str,
         album: str | None = None,
         duration: int | None = None,
+        isrc: str | None = None,
     ) -> bool:
         """
         Check if a track already exists in the library (database).
+
+        Checks ISRC first (exact indexed lookup), then normalized artist + title
+        within a 5s duration tolerance (without brittle exact-album gating so
+        remaster/deluxe/featured-artist tags don't cause duplicate downloads).
         """
-        if not artist_name or not title:
+        if not isrc and (not artist_name or not title):
             return False
 
         try:
             with self.db.session_scope() as session:
-                # Base filters: artist + title
-                filters = [
-                    Artist.name.ilike(artist_name.strip()),
-                    Track.title.ilike(title.strip()),
-                ]
+                # 1. Authoritative ISRC lookup if available
+                if isrc and str(isrc).strip():
+                    clean_isrc = str(isrc).strip().upper().replace("-", "")
+                    if session.query(Track.id).filter(Track.isrc.ilike(clean_isrc)).first() is not None:
+                        return True
 
-                # If album provided, filter by album title as well
-                if album:
-                    try:
-                        filters.append(Track.album.has(Album.title.ilike(album.strip())))
-                    except Exception:
-                        # Fallback: ignore album constraint if relationship lookup fails
-                        pass
+                if not artist_name or not title:
+                    return False
 
-                # If duration provided, allow a small tolerance window (2s) to match
+                norm_target_title = normalize_title(title)
+                norm_target_artist = normalize_artist(artist_name)
+                if not norm_target_title or not norm_target_artist:
+                    return False
+
+                # Coarse SQL filter on title + optional ±5s duration window
+                filters = [Track.title.ilike(f"%{norm_target_title}%")]
                 if duration is not None:
                     try:
-                        tol = 2000
-                        min_d = int(duration) - tol
-                        max_d = int(duration) + tol
-                        filters.append(Track.duration.between(min_d, max_d))
+                        dur_ms = int(duration)
+                        if dur_ms > 0:
+                            tol = 5000
+                            filters.append(Track.duration.between(dur_ms - tol, dur_ms + tol))
                     except Exception:
                         pass
 
-                exists = session.query(session.query(Track).join(Artist).filter(*filters).exists()).scalar()
-                return bool(exists)
+                rows = (
+                    session.query(Track.title, Artist.name)
+                    .join(Artist)
+                    .filter(*filters)
+                    .limit(50)
+                    .all()
+                )
+                for cand_title, cand_artist in rows:
+                    nt = normalize_title(cand_title or "")
+                    na = normalize_artist(cand_artist or "")
+                    if nt == norm_target_title and na and (
+                        na == norm_target_artist
+                        or norm_target_artist in na
+                        or na in norm_target_artist
+                    ):
+                        return True
+                return False
         except Exception as e:
             logger.error(f"Error checking library for {artist_name} - {title}: {e}")
             return False
@@ -3097,14 +3120,17 @@ class DownloadManager:
 
     def _purge_existing_tracks_from_queue(self):
         """
-        Startup Check: Remove items from the download queue that are already in the library.
-        Prevents re-downloading tracks that were imported while the queue was active/stalled.
+        Startup / Pre-Run Check: Reconcile or remove download queue items already in the library.
+        - VERIFYING / FAILED items already in library -> marked COMPLETED (100%, 0 KB/s).
+        - QUEUED / SEARCHING / RETRYING items already in library -> deleted to prevent duplicate downloads.
         """
         try:
             with self.work_db.session_scope() as session:
                 last_id = 0
                 batch_size = 25
                 removed_count = 0
+                completed_count = 0
+                now = utc_now()
                 while True:
                     queued_items = (
                         session.query(DownloadQueue)
@@ -3114,10 +3140,12 @@ class DownloadManager:
                                     DownloadStatus.QUEUED.value,
                                     DownloadStatus.SEARCHING.value,
                                     DownloadStatus.RETRYING.value,
+                                    DownloadStatus.VERIFYING.value,
                                     DownloadStatus.FAILED.value,
                                     "queued",
                                     "searching",
                                     "retrying",
+                                    "verifying",
                                     "failed",
                                     "failed_no_match",
                                 ]
@@ -3135,52 +3163,55 @@ class DownloadManager:
                     for item in queued_items:
                         try:
                             track_data = item.echo_sync_track
-                            if not track_data:
+                            if not isinstance(track_data, dict):
                                 continue
 
-                            artist = track_data.get("artist_name") or track_data.get("artist")
-                            title = track_data.get("title")
+                            artist = track_data.get("artist_name") or track_data.get("artist") or ""
+                            title = track_data.get("title") or track_data.get("raw_title") or ""
                             album = track_data.get("album_title") or track_data.get("album")
-                            duration = track_data.get("duration") or track_data.get("duration_ms")
+                            duration = track_data.get("duration_ms") or track_data.get("duration")
+                            isrc = track_data.get("isrc")
 
-                            if not artist or not title:
+                            if not isrc and (not artist or not title):
                                 continue
 
-                            filters = [
-                                Artist.name.ilike(artist.strip()),
-                                Track.title.ilike(title.strip()),
-                            ]
-                            if album:
-                                try:
-                                    filters.append(Track.album.has(Album.title.ilike(album.strip())))
-                                except Exception:
-                                    pass
-                            if duration is not None:
-                                try:
-                                    tol = 2000
-                                    min_d = int(duration) - tol
-                                    max_d = int(duration) + tol
-                                    filters.append(Track.duration.between(min_d, max_d))
-                                except Exception:
-                                    pass
-
-                            db = get_database()
-                            with db.session_scope() as music_session:
-                                exists = music_session.query(
-                                    music_session.query(Track).join(Artist).filter(*filters).exists()
-                                ).scalar()
-
-                            if exists:
-                                logger.info(
-                                    f"Removing redundant download {item.id}: '{title}' by '{artist}' is already in library"
-                                )
-                                session.delete(item)
-                                removed_count += 1
+                            if self._track_exists_in_library(
+                                artist,
+                                title,
+                                album=album,
+                                duration=duration,
+                                isrc=isrc,
+                            ):
+                                status_upper = str(item.status or "").upper()
+                                if status_upper in (
+                                    DownloadStatus.VERIFYING.value,
+                                    DownloadStatus.FAILED.value,
+                                ):
+                                    logger.info(
+                                        f"Reconciling {status_upper} download {item.id} -> COMPLETED: "
+                                        f"'{title}' by '{artist}' is already in library"
+                                    )
+                                    item.status = DownloadStatus.COMPLETED.value
+                                    item.error_reason = None
+                                    item.updated_at = now
+                                    payload = dict(track_data)
+                                    payload["current_speed"] = 0.0
+                                    payload["progress_percent"] = 100.0
+                                    item.echo_sync_track = payload
+                                    completed_count += 1
+                                else:
+                                    logger.info(
+                                        f"Removing redundant download {item.id}: '{title}' by '{artist}' is already in library"
+                                    )
+                                    session.delete(item)
+                                    removed_count += 1
                         except Exception as e:
                             logger.warning(f"Error checking queued item {item.id}: {e}")
 
-                if removed_count > 0:
-                    logger.info(f"Startup purge removed {removed_count} redundant items from download queue")
+                if removed_count > 0 or completed_count > 0:
+                    logger.info(
+                        f"Library queue reconciliation: completed={completed_count}, removed={removed_count}"
+                    )
 
         except Exception as e:
             logger.error(f"Error purging existing tracks from queue: {e}")
@@ -3284,14 +3315,14 @@ class DownloadManager:
                 await self._execute_waterfall_search_and_download(download_id, providers)
 
             try:
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    future = asyncio.run_coroutine_threadsafe(_run_single(), loop)
-                    return future.result()
-                else:
-                    return loop.run_until_complete(_run_single())
+                running_loop = asyncio.get_running_loop()
             except RuntimeError:
-                return asyncio.run(_run_single())
+                running_loop = None
+
+            if running_loop is not None:
+                # Already on the running event-loop thread; schedule directly to avoid self-deadlock
+                return running_loop.create_task(_run_single())
+            return asyncio.run(_run_single())
 
         job_queue.register_job(
             name=job_name,
@@ -3359,8 +3390,144 @@ class DownloadManager:
         return requeued
 
 
+    def _reconcile_verifying_items(self) -> None:
+        """Reconcile VERIFYING rows against library DB, download directory, and review queue.
+
+        Prevents rows from staying stuck at VERIFYING after restarts or completed imports:
+        1. Already in library -> COMPLETED (100%, 0 KB/s).
+        2. Idle > 90s & file still in download_dir -> nudge auto_import_batch.
+        3. Idle > 300s & file missing & no pending ReviewTask -> FAILED (VERIFICATION_ORPHANED).
+        """
+        from pathlib import Path
+
+        now = utc_now()
+        nudge_auto_import = False
+        dl_dir_cfg = config_manager.get("storage.download_dir") or config_manager.get("download_dir")
+        dl_root = Path(dl_dir_cfg) if dl_dir_cfg else None
+
+        try:
+            with self.work_db.session_scope() as session:
+                verifying_items = (
+                    session.query(DownloadQueue)
+                    .filter(DownloadQueue.status.in_([DownloadStatus.VERIFYING.value, "verifying"]))
+                    .all()
+                )
+                if not verifying_items:
+                    return
+
+                for item in verifying_items:
+                    track_data = item.echo_sync_track if isinstance(item.echo_sync_track, dict) else {}
+                    artist = track_data.get("artist_name") or track_data.get("artist") or ""
+                    title = track_data.get("title") or track_data.get("raw_title") or ""
+                    duration = track_data.get("duration_ms") or track_data.get("duration")
+                    isrc = track_data.get("isrc")
+
+                    # 1. Ground truth: already imported into library DB?
+                    if (isrc or (artist and title)) and self._track_exists_in_library(
+                        artist, title, duration=duration, isrc=isrc
+                    ):
+                        logger.info(
+                            f"Reconciled VERIFYING download {item.id} -> COMPLETED (already in library: '{title}')"
+                        )
+                        item.status = DownloadStatus.COMPLETED.value
+                        item.error_reason = None
+                        item.updated_at = now
+                        payload = dict(track_data)
+                        payload["current_speed"] = 0.0
+                        payload["progress_percent"] = 100.0
+                        item.echo_sync_track = payload
+                        continue
+
+                    last_ts = item.updated_at or item.created_at or now
+                    elapsed_s = max(0.0, (now - last_ts).total_seconds())
+                    if elapsed_s < 90.0:
+                        continue
+
+                    # 2. Check if downloaded file still exists on disk
+                    dl_path_str = track_data.get("downloaded_file_path")
+                    file_exists = False
+                    target_basename = None
+                    if dl_path_str:
+                        p = Path(str(dl_path_str))
+                        target_basename = p.name
+                        if p.exists():
+                            file_exists = True
+                    if not file_exists and item.active_candidate_id:
+                        target_basename = Path(str(item.active_candidate_id).split("|")[-1].replace("\\", "/")).name
+                    if not file_exists and dl_root and dl_root.exists() and target_basename:
+                        try:
+                            for found in dl_root.rglob(target_basename):
+                                if found.is_file():
+                                    file_exists = True
+                                    break
+                        except Exception:
+                            pass
+
+                    if file_exists:
+                        nudge_auto_import = True
+                        continue
+
+                    # 3. File is gone and not in library: after 5m, check ReviewTask before failing
+                    if elapsed_s >= 300.0:
+                        has_review = False
+                        try:
+                            from database.working_database import ReviewTask
+
+                            if target_basename:
+                                has_review = (
+                                    session.query(ReviewTask.id)
+                                    .filter(
+                                        ReviewTask.file_path.ilike(f"%{target_basename}%"),
+                                        ReviewTask.status == "pending",
+                                    )
+                                    .first()
+                                    is not None
+                                )
+                        except Exception:
+                            pass
+
+                        if not has_review:
+                            logger.warning(
+                                f"VERIFYING download {item.id} ('{title}') orphaned for {int(elapsed_s)}s "
+                                f"(file missing and not in library/review queue) -> FAILED"
+                            )
+                            item.status = DownloadStatus.FAILED.value
+                            item.error_reason = "VERIFICATION_ORPHANED"
+                            item.updated_at = now
+                            payload = dict(track_data)
+                            payload["current_speed"] = 0.0
+                            item.echo_sync_track = payload
+
+            if nudge_auto_import:
+                try:
+                    from core.task_manager.task_queue import job_queue
+
+                    job_queue.trigger_job_by_name("auto_import_batch")
+                except Exception as ne:
+                    logger.debug(f"Could not nudge auto_import_batch: {ne}")
+        except Exception as e:
+            logger.debug(f"VERIFYING reconciliation pass failed: {e}")
+
     def poll_active_downloads_if_needed(self) -> None:
-        """Lightweight active-transfer poll for JobQueue when background _process_loop is inactive."""
+        """Lightweight 30s reconciler & active-transfer poll for JobQueue.
+
+        - On first run after boot: reclaims orphaned SEARCHING rows and reconciles
+          already-imported library tracks against the queue.
+        - Every 30s: reconciles VERIFYING rows and polls active DOWNLOADING transfers.
+        """
+        if not getattr(self, "_startup_reconciled", False):
+            self._startup_reconciled = True
+            try:
+                self._reclaim_orphaned_searching_items()
+                self._purge_existing_tracks_from_queue()
+            except Exception as se:
+                logger.debug(f"Startup queue reconciliation failed: {se}")
+
+        try:
+            self._reconcile_verifying_items()
+        except Exception as ve:
+            logger.debug(f"VERIFYING reconciliation failed: {ve}")
+
         if self._loop_task and not self._loop_task.done():
             return
         try:
@@ -3396,7 +3563,7 @@ def register_download_manager_job(interval_seconds: int = 21600):
         dm.process_downloads_now()
 
     def poll_active_downloads(**kwargs):
-        """Poll active DOWNLOADING transfers every 30s even when auto_start is False."""
+        """Reconcile VERIFYING/startup state and poll active DOWNLOADING transfers every 30s."""
         dm = get_download_manager()
         dm.poll_active_downloads_if_needed()
 
@@ -3416,7 +3583,7 @@ def register_download_manager_job(interval_seconds: int = 21600):
         name="download_status_poller",
         func=poll_active_downloads,
         interval_seconds=30,
-        start_after=30,
+        start_after=15,
         enabled=True,
         category=TaskCategory.GENERAL,
         tags=["echosync", "downloads"],
