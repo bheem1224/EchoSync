@@ -2480,10 +2480,12 @@ class MetadataResolutionEngine:
                     and (clean_file_isrc in clean_cand_isrcs or (file_isrc and file_isrc.strip().upper() in cand_isrcs))
                 )
 
-                if is_exact_isrc_match and not is_untrusted:
-                    # Authoritative verified stream ISRC grants Master ISRC Match bonus (+50.0).
-                    # Unverified / untrusted physical ISRC tags must NOT poison candidate arbitration.
-                    isrc_adjustment = 50.0
+                stage_0_demoted = bool(getattr(request, "stage_0_demoted", False)) if request else False
+                if is_exact_isrc_match and not stage_0_demoted:
+                    # Authoritative embedded stream ISRC grants Master ISRC Match bonus
+                    # (+25.0 when text tags are untrusted, +50.0 when verified).
+                    # Demoted Stage 0 files (corrupted/unverified embedded MBID) get 0.0 bonus.
+                    isrc_adjustment = 25.0 if is_untrusted else 50.0
                     cand_meta["isrc_match"] = True
                 else:
                     cand_meta["isrc_match"] = False
