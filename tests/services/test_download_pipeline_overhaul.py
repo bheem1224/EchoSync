@@ -614,6 +614,63 @@ def test_reconcile_verifying_items_completes_owned_and_fails_orphaned(tmp_path):
         assert r_orph.echo_sync_track["current_speed"] == 0.0
 
 
+@pytest.mark.asyncio
+async def test_transient_errored_transfer_retries_same_peer_once_then_rotates(tmp_path):
+    """On transient 'Completed, Errored', DownloadManager cancels and retries the same peer once;
+    on the 2nd error for the same transfer, it rotates to the next candidate."""
+    from unittest.mock import AsyncMock, MagicMock
+    from database.working_database import WorkingDatabase, WorkingBase
+    from core.database.models.working import DownloadQueue, DownloadStatus
+    from services.download_manager import DownloadManager
+
+    wdb = WorkingDatabase(str(tmp_path / "working.db"))
+    WorkingBase.metadata.create_all(wdb.engine)
+    dm = object.__new__(DownloadManager)
+    dm.work_db = wdb
+    dm._repo_instance = None
+    dm._transfer_progress_tracker = {}
+    dm._same_candidate_retried = set()
+
+    with wdb.session_scope() as s:
+        item = DownloadQueue(
+            status=DownloadStatus.DOWNLOADING.value,
+            active_candidate_id="peer1|01 - Song.flac",
+            provider_id="peer1|01 - Song.flac",
+            candidate_stack=[{"id": "peer2|01 - Song.flac", "size": 28000000}],
+            echo_sync_track={"title": "Song", "artist_name": "Artist"},
+        )
+        s.add(item)
+        s.flush()
+        dl_id = item.id
+
+    prov = MagicMock()
+    prov.name = "EchoSync.slskd"
+    prov._async_get_download_status = AsyncMock(
+        return_value={
+            "status": "failed",
+            "raw_state": "Completed, Errored",
+            "progress": 0,
+            "size": 28000000,
+        }
+    )
+    prov._async_cancel_download = AsyncMock(return_value=True)
+    prov._async_download = AsyncMock(return_value="peer1|01 - Song.flac")
+
+    dm._get_active_download_providers = MagicMock(return_value=[prov])
+    dm._handle_active_download_failure = AsyncMock()
+
+    # 1st poll: transient errored -> evicts and re-enqueues same peer once, does NOT rotate
+    await dm._check_active_downloads()
+    prov._async_cancel_download.assert_awaited_once_with("peer1|01 - Song.flac")
+    prov._async_download.assert_awaited_once_with("peer1", "01 - Song.flac", 28000000)
+    dm._handle_active_download_failure.assert_not_awaited()
+
+    # 2nd poll: still errored -> rotates to next candidate instead of looping
+    await dm._check_active_downloads()
+    dm._handle_active_download_failure.assert_awaited_once()
+
+
+
 
 
 

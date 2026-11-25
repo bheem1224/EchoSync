@@ -649,6 +649,8 @@ def evaluate_single_track_diagnostics(
             logger.debug(f"Alias query error: {ex}")
 
     active_dur_map: dict[int, int] = {}
+    primary_artist_map: dict[int, list[str]] = {}
+    featured_artist_map: dict[int, list[str]] = {}
     remixer_map: dict[int, list[str]] = {}
     if candidate_rows:
         try:
@@ -666,7 +668,7 @@ def evaluate_single_track_diagnostics(
                         active_dur_map[int(adr[0])] = int(adr[1])
                 for rar in ac.execute(
                     text(
-                        "SELECT ta.track_id, a.name FROM track_artists ta "
+                        "SELECT ta.track_id, a.name, lower(ta.role) FROM track_artists ta "
                         "JOIN artists a ON ta.artist_id = a.id "
                         "WHERE ta.track_id IN ("
                         + ",".join(str(cid) for cid in cids)
@@ -674,7 +676,15 @@ def evaluate_single_track_diagnostics(
                     )
                 ).fetchall():
                     if rar[1]:
-                        remixer_map.setdefault(int(rar[0]), []).append(str(rar[1]))
+                        tid = int(rar[0])
+                        aname = str(rar[1])
+                        role = str(rar[2] or "").strip().lower()
+                        if role == "primary":
+                            primary_artist_map.setdefault(tid, []).append(aname)
+                        elif role == "featured":
+                            featured_artist_map.setdefault(tid, []).append(aname)
+                        elif role == "remixer":
+                            remixer_map.setdefault(tid, []).append(aname)
         except Exception as ex:
             logger.debug(f"Active duration / remixer query error: {ex}")
 
@@ -689,6 +699,8 @@ def evaluate_single_track_diagnostics(
         cand_media_path = row[8] if len(row) > 8 else None
         sync_id = row[9] if len(row) > 9 and row[9] else str(cand_id)
         cand_active_dur = active_dur_map.get(cand_id)
+        cand_primary_artists = primary_artist_map.get(cand_id, [])
+        cand_featured_artists = featured_artist_map.get(cand_id, [])
         cand_remixers = remixer_map.get(cand_id, [])
 
         cand_extra: dict[str, Any] = {}
@@ -703,6 +715,8 @@ def evaluate_single_track_diagnostics(
             album_title=cand_album or "",
             duration_ms=cand_dur,
             edition=cand_ed,
+            primary_artists=cand_primary_artists,
+            featured_artists=cand_featured_artists,
             remixers=cand_remixers,
             sync_id=sync_id,
             extra_metadata=cand_extra,

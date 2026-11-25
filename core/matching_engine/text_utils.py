@@ -519,7 +519,7 @@ def normalize_title(title: str | None, plugin_context: dict[str, Any] | None = N
     # Remove OST/Soundtrack/Movie metadata (must be done before other cleanup)
     # Patterns cover: (From "Movie"), [From Movie], - from "X", (OST), (Original Motion Picture Soundtrack), etc.
     ost_patterns = [
-        r'\s*-\s*from\s+"[^"]*"',  # - from "Movie Name" (dash-based suffix)
+        r'\s*-\s*from\s+"[^"]*"(?:\s+(?:(?:original\s+)?(?:motion\s+picture\s+)?soundtrack|ost))?',  # - from "Movie Name" [Soundtrack/OST]
         r"\s*-\s*from\s+[\w\s]+$",  # - from Movie Name (dash-based suffix without quotes)
         r"\s*[\(\[]\s*original\s+motion\s+picture\s+soundtrack\s*[\)\]]",  # (Original Motion Picture Soundtrack)
         r"\s*[\(\[]\s*motion\s+picture\s+soundtrack\s*[\)\]]",  # (Motion Picture Soundtrack)

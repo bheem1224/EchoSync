@@ -161,6 +161,8 @@ class DownloadManager:
         self._transfer_progress_tracker: dict[int, dict[str, Any]] = {}
         # In-memory set of download IDs currently executing a live search coroutine
         self._active_search_ids: set[int] = set()
+        # In-memory set of (download_id, transfer_id) pairs that already received 1 transient-error retry
+        self._same_candidate_retried: set[tuple[int, str]] = set()
 
         from core.event_bus import event_bus
 
@@ -1965,21 +1967,68 @@ class DownloadManager:
                         file_path = status.get("file_path") or status.get("local_path") or status.get("path")
                         self.transition_to_verifying(db_id, file_path=file_path)
                     elif new_status == DownloadStatus.FAILED.value:
-                        logger.warning(
-                            f"Download {db_id} transfer errored/rejected on {found_provider or 'provider'} "
-                            f"(ID: {provider_id}). Cancelling remote transfer and rotating candidate."
-                        )
                         active_prov = next(
                             (p for p in providers if p.name == found_provider),
                             providers[0],
                         )
-                        await self._handle_active_download_failure(
-                            db_id,
-                            provider_id,
-                            providers,
-                            [active_prov],
-                            reason="TRANSFER_FAILED",
-                        )
+                        raw_state_lower = str(
+                            status.get("raw_state") or status.get("state") or ""
+                        ).lower()
+                        is_transient_error = (
+                            "errored" in raw_state_lower or "timedout" in raw_state_lower
+                        ) and "rejected" not in raw_state_lower
+
+                        if not hasattr(self, "_same_candidate_retried"):
+                            self._same_candidate_retried = set()
+                        retry_key = (db_id, str(provider_id))
+
+                        retried_same = False
+                        if (
+                            is_transient_error
+                            and retry_key not in self._same_candidate_retried
+                            and "|" in str(provider_id)
+                            and inspect.iscoroutinefunction(getattr(active_prov, "_async_download", None))
+                        ):
+                            self._same_candidate_retried.add(retry_key)
+                            username, remote_filename = str(provider_id).split("|", 1)
+                            file_size = int(status.get("size") or 0)
+                            logger.info(
+                                f"Download {db_id} hit transient '{raw_state_lower}' on {found_provider or 'provider'} "
+                                f"(ID: {provider_id}). Attempting 1 delayed same-peer retry before rotating."
+                            )
+                            self._append_diagnostic_event(
+                                db_id,
+                                "TRANSFER_RETRY_1",
+                                candidate_id=str(provider_id),
+                                detail=f"Retrying after transient '{raw_state_lower}'",
+                            )
+                            try:
+                                # Evict the errored entry first so slskd does not return HTTP 500 on re-enqueue
+                                await self._cancel_transfer_async([active_prov], provider_id)
+                                re_id = await active_prov._async_download(
+                                    username, remote_filename, file_size
+                                )
+                                if re_id:
+                                    self._transfer_progress_tracker.pop(db_id, None)
+                                    self._update_status(db_id, DownloadStatus.DOWNLOADING, re_id)
+                                    retried_same = True
+                            except Exception as retry_err:
+                                logger.warning(
+                                    f"Same-peer retry failed for download {db_id} ({provider_id}): {retry_err}"
+                                )
+
+                        if not retried_same:
+                            logger.warning(
+                                f"Download {db_id} transfer errored/rejected on {found_provider or 'provider'} "
+                                f"(ID: {provider_id}). Cancelling remote transfer and rotating candidate."
+                            )
+                            await self._handle_active_download_failure(
+                                db_id,
+                                provider_id,
+                                providers,
+                                [active_prov],
+                                reason="TRANSFER_FAILED",
+                            )
                     else:
                         # Enforce 5-minute queued/0% stall timeout and 2-minute mid-transfer freeze timeout
                         import time as _time
