@@ -25,7 +25,7 @@ def compute_prototype_signature(audio_stream_hash: str, title: str, artist: str)
 class SignatureAwareResolutionEngine(MetadataResolutionEngine):
     """Reference prototype implementing the proposed Stage 0 Zero-Trust Signature Verification."""
 
-    def _execute_waterfall(self, request: ResolutionRequest) -> ResolutionResult:
+    def _execute_waterfall(self, request: ResolutionRequest, enabled_stages: set[str] | None = None) -> ResolutionResult:
         file_path = Path(request.file_path)
         raw_tags = echosync_core.extract_metadata(str(file_path)) or {}
 
@@ -56,7 +56,7 @@ class SignatureAwareResolutionEngine(MetadataResolutionEngine):
                 )
             # Signature mismatch: tampered tags! Disregard and fall through to standard waterfall
 
-        return super()._execute_waterfall(request)
+        return super()._execute_waterfall(request, enabled_stages=enabled_stages)
 
 
 def test_corrupted_embedded_mbid_with_valid_signature_bypasses_remote_egress(monkeypatch, tmp_path):

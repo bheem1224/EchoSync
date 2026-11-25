@@ -59,9 +59,14 @@ def test_supervisor_terminate_owner_processes():
 
     assert len(supervisor.get_active_processes("plugin.spotify")) == 2
 
-    with patch("os.kill") as mock_kill:
+    def _fake_kill(pid, sig):
+        if sig == 0:
+            raise ProcessLookupError(f"PID {pid} already terminated")
+
+    with patch("os.kill", side_effect=_fake_kill) as mock_kill:
         supervisor.terminate_owner_processes("plugin.spotify")
-        assert mock_kill.call_count == 2
+        term_calls = [c for c in mock_kill.call_args_list if c.args[1] != 0]
+        assert len(term_calls) == 2
         mock_kill.assert_any_call(9999, ANY)
         mock_kill.assert_any_call(9998, ANY)
 

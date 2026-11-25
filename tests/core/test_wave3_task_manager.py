@@ -147,16 +147,16 @@ def test_release_db_sessions_preserves_caller_under_thread_local_registry(tmp_pa
 def test_spawn_supervised_thread_synchronizes_before_target_and_no_fast_exit_leak():
     """Fast-exiting threads must see synchronized registration/thread_id and never leave zombies."""
     sup = ProcessSupervisor()
-    observed: list[tuple[int, object, str | None]] = []
+    observed: list[tuple[int, int, object, str | None]] = []
     lock = threading.Lock()
 
-    def fast_target(expected_event: threading.Event):
+    def fast_target(worker_idx: int, expected_event: threading.Event):
         tid = threading.get_ident()
         cancel_ev = sup.get_cancellation_event(tid)
         active = sup.get_active_processes("test.fast")
         matching_name = next((p.task_name for p in active if p.thread_id == tid), None)
         with lock:
-            observed.append((tid, cancel_ev, matching_name))
+            observed.append((worker_idx, tid, cancel_ev, matching_name))
 
     threads = []
     events = []
@@ -169,7 +169,7 @@ def test_spawn_supervised_thread_synchronizes_before_target_and_no_fast_exit_lea
             owner_id="test.fast",
             owner_type=OwnerType.CORE,
             category=ProcessCategory.WORKER_THREAD,
-            args=(ev,),
+            args=(i, ev),
             cancellation_event=ev,
             bound_to_general_pool=False,
         )
@@ -179,7 +179,7 @@ def test_spawn_supervised_thread_synchronizes_before_target_and_no_fast_exit_lea
         t.join(timeout=3.0)
 
     assert len(observed) == 40
-    for idx, (tid, cancel_ev, matching_name) in enumerate(observed):
+    for idx, tid, cancel_ev, matching_name in observed:
         assert tid > 0
         assert cancel_ev is events[idx]
         assert matching_name == f"fast_worker_{idx}"

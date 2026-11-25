@@ -2166,10 +2166,11 @@ def lookup_review_queue_item_isrc(task_id: int, payload: ISRCLookupRequest | Non
                     "task": serialized,
                 }
 
+            resolved_source = (track.identifiers or {}).get("source") or "isrc_lookup"
             merged_track = replace(
                 track,
                 isrc=canonical,
-                identifiers={**(track_obj.identifiers or {}), **(track.identifiers or {}), "source": "isrc_lookup"},
+                identifiers={**(track_obj.identifiers or {}), **(track.identifiers or {}), "source": resolved_source},
             )
             task.track_data = merged_track.to_dict()
             flag_modified(task, "track_data")

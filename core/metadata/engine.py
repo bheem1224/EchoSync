@@ -1347,7 +1347,7 @@ class MetadataResolutionEngine:
                     f"Stage 4 HIT (ISRC {effective_isrc}): {isrc_res.get('title')}",
                     {"isrc": effective_isrc, "title": isrc_res.get("title")},
                 )
-                return _create_resolved_track(
+                resolved_isrc_track = _create_resolved_track(
                     media_id=request.media_id,
                     sync_id=request.sync_id,
                     title=isrc_res["title"],
@@ -1366,6 +1366,14 @@ class MetadataResolutionEngine:
                     resolution_method="isrc",
                     request=request,
                 )
+                if isrc_res.get("source"):
+                    from dataclasses import replace as _replace_isrc
+
+                    resolved_isrc_track = _replace_isrc(
+                        resolved_isrc_track,
+                        identifiers={**(resolved_isrc_track.identifiers or {}), "source": isrc_res["source"]},
+                    )
+                return resolved_isrc_track
             else:
                 _add_diagnostic(
                     request,
@@ -2472,9 +2480,10 @@ class MetadataResolutionEngine:
                     and (clean_file_isrc in clean_cand_isrcs or (file_isrc and file_isrc.strip().upper() in cand_isrcs))
                 )
 
-                if is_exact_isrc_match:
-                    # Authoritative embedded stream ISRC grants Master ISRC Match bonus (+25.0 when untrusted, +50.0 when trusted)
-                    isrc_adjustment = 25.0 if is_untrusted else 50.0
+                if is_exact_isrc_match and not is_untrusted:
+                    # Authoritative verified stream ISRC grants Master ISRC Match bonus (+50.0).
+                    # Unverified / untrusted physical ISRC tags must NOT poison candidate arbitration.
+                    isrc_adjustment = 50.0
                     cand_meta["isrc_match"] = True
                 else:
                     cand_meta["isrc_match"] = False
@@ -2843,6 +2852,11 @@ class MetadataResolutionEngine:
                 "musicbrainz_track_id": mbid,
                 "musicbrainz_release_id": rel_id,
                 "duration_ms": isrc_track.duration_ms,
+                "source": (
+                    isrc_track.identifiers.get("source")
+                    if isinstance(isrc_track.identifiers, dict)
+                    else None
+                ),
             }
         except Exception as exc:
             logger.warning("[resolution_engine] ISRC resolution error: %s", exc)

@@ -539,7 +539,7 @@ class TrackParser:
         "duration": re.compile(r"\b(?:(\d{1,2}):(\d{2}):(\d{2})|(\d{1,2}):(\d{2}))\b"),
         # Junk patterns to remove
         "junk": re.compile(
-            r"\b(?:www\d+|320|192|256|FLAC|MP3|AAC|OGG|WAV|m4a|flac|mp3|aac|ogg|wav)[\.\s]*$|"
+            r"(?:\.\s*|\b)(?:www\d+|320|192|256|FLAC|MP3|AAC|OGG|WAV|m4a|flac|mp3|aac|ogg|wav)[\.\s]*$|"
             r"^\[.*?\]|"  # [brackets]
             r"{.*?}|"  # {braces}
             r"<.*?>|"  # <angle brackets>
@@ -647,8 +647,12 @@ class TrackParser:
         quality_tags = []
         if self.config.extract_quality_tags:
             quality_tags = self._extract_quality_tags(working_string)
+            # Strip trailing audio extension (including its leading dot) before quality marker cleanup
+            working_string = self.PATTERNS["extension_strip"].sub("", working_string).strip()
             # Remove quality info for cleaner parsing
             working_string = self._remove_quality_markers(working_string)
+        else:
+            working_string = self.PATTERNS["extension_strip"].sub("", working_string).strip()
 
         # Extract version/edition descriptors before junk removal (prevents data loss of [Remastered] etc)
         ext_version = None

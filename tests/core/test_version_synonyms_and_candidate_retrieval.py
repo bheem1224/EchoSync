@@ -361,31 +361,32 @@ def test_promotional_event_title_sanitization():
 def test_edition_penalty_hierarchy_and_context_policies():
     """
     Verify edition penalty hierarchy and context-scoped policies:
-    - Deluxe Edition: strictly rejected in primary tiers (sync/download); permitted in tier3_fallback if delta <= 10000ms.
-    - Remaster: strictly rejected across all sync/download tiers when original requested.
+    - Deluxe Edition: studio container qualifier amnesty when delta <= 10000ms; rejected if delta > 10000ms.
+    - Remaster: strictly rejected in primary sync/download tiers when original requested.
     """
     from core.matching_engine.matching_engine import evaluate_version_compatibility
 
-    # ── 1. Deluxe Edition fallback ──
-    # Primary tiers (download & sync): Rejected
-    compat_dl, _, _ = evaluate_version_compatibility(
+    # ── 1. Deluxe Edition studio container qualifier amnesty ──
+    compat_dl, pen_dl, _ = evaluate_version_compatibility(
         None, "Deluxe Edition", context="download", duration_delta_ms=2000
     )
-    assert compat_dl is False
+    assert compat_dl is True
+    assert pen_dl == 0.0
 
-    compat_sync, _, _ = evaluate_version_compatibility(
+    compat_sync, pen_sync, _ = evaluate_version_compatibility(
         None, "Deluxe Edition", context="sync", duration_delta_ms=2000
     )
-    assert compat_sync is False
+    assert compat_sync is True
+    assert pen_sync == 0.0
 
-    # Tier 3 fallback: Allowed with 1.0 penalty if delta <= 10000ms
+    # Tier 3 fallback: Allowed if delta <= 10000ms
     compat_t3, pen_t3, _ = evaluate_version_compatibility(
         None, "Deluxe Edition", context="tier3_fallback", duration_delta_ms=2000
     )
     assert compat_t3 is True
-    assert pen_t3 == 1.0
+    assert pen_t3 == 0.0
 
-    # Duration delta > 10,000ms in Tier 3: Rejected
+    # Duration delta > 10,000ms: Rejected across contexts
     compat_t3_long, _, _ = evaluate_version_compatibility(
         None, "Deluxe Edition", context="tier3_fallback", duration_delta_ms=12000
     )
@@ -430,10 +431,10 @@ def test_matching_engine_context_scoped_scoring():
         duration_ms=367500,
     )
 
-    # In primary modes (download / sync): Deluxe is rejected, Remaster is rejected
+    # In primary modes (download / sync): Deluxe gets studio container amnesty, Remaster is rejected
     res_dl_deluxe = engine.calculate_match(source_orig, cand_deluxe, context="download")
-    assert res_dl_deluxe.passed_version_check is False
-    assert res_dl_deluxe.confidence_score == 0.0
+    assert res_dl_deluxe.passed_version_check is True
+    assert res_dl_deluxe.confidence_score >= 85.0
 
     res_dl_remaster = engine.calculate_match(
         source_orig, cand_remaster, context="download"
@@ -442,8 +443,8 @@ def test_matching_engine_context_scoped_scoring():
     assert res_dl_remaster.confidence_score == 0.0
 
     res_sync_deluxe = engine.calculate_match(source_orig, cand_deluxe, context="sync")
-    assert res_sync_deluxe.passed_version_check is False
-    assert res_sync_deluxe.confidence_score == 0.0
+    assert res_sync_deluxe.passed_version_check is True
+    assert res_sync_deluxe.confidence_score >= 85.0
 
     res_sync_remaster = engine.calculate_match(
         source_orig, cand_remaster, context="sync"
@@ -451,12 +452,12 @@ def test_matching_engine_context_scoped_scoring():
     assert res_sync_remaster.passed_version_check is False
     assert res_sync_remaster.confidence_score == 0.0
 
-    # In Tier 3 fallback mode: Deluxe passes with 1.0 penalty
+    # In Tier 3 fallback mode: Deluxe passes
     res_t3_deluxe = engine.calculate_match(
         source_orig, cand_deluxe, context="tier3_fallback"
     )
     assert res_t3_deluxe.passed_version_check is True
-    assert res_t3_deluxe.edition_penalty_applied == 1.0
+    assert res_t3_deluxe.edition_penalty_applied == 0.0
 
 
 def test_tier2_strict_2000ms_duration_gate():

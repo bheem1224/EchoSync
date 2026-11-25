@@ -537,8 +537,12 @@ def test_update_force_consent_completes_hot_swap(temp_plugins_env):
     assert result is True
     assert plugin_id_int in reloaded_plugin_ids
 
-    # Verify physical file updated
-    init_content = (plugin_path / "__init__.py").read_text(encoding="utf-8")
+    # Verify physical file updated (canonical lowercase folder on case-sensitive filesystems)
+    canonical_plugin_path = plugins_dir / author / name.lower()
+    init_file = canonical_plugin_path / "__init__.py"
+    if not init_file.exists():
+        init_file = plugin_path / "__init__.py"
+    init_content = init_file.read_text(encoding="utf-8")
     assert "# New version 2.0.0" in init_content
 
     # Verify database updated with new permissions

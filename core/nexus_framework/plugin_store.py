@@ -769,19 +769,6 @@ class PluginStore:
                 dest_dir = resolve_safe_path(self.plugins_dir, f"{manifest_author}/{folder_name}")
                 legacy_dest_dir = resolve_safe_path(self.plugins_dir, f"{manifest_author}/{manifest_name}")
 
-                if legacy_dest_dir.exists() and (
-                    not dest_dir.exists() or not os.path.samefile(legacy_dest_dir, dest_dir)
-                ):
-                    if not dest_dir.exists():
-                        dest_dir.parent.mkdir(parents=True, exist_ok=True)
-                        os.rename(str(legacy_dest_dir), str(dest_dir))
-                    else:
-                        for db_file in legacy_dest_dir.glob("*.db"):
-                            target_db = dest_dir / db_file.name
-                            if not target_db.exists():
-                                shutil.copy2(db_file, target_db)
-                        shutil.rmtree(legacy_dest_dir, ignore_errors=True)
-
                 beta_dir = dest_dir / "beta"
                 if channel == "beta":
                     target_dir = beta_dir
@@ -995,6 +982,19 @@ class PluginStore:
                         logger.debug(f"Raw exception data: {e}", exc_info=True)
 
                 # Task 3: Atomic Swap
+                # Migrate legacy mixed-case folder ONLY after pre-flight consent checks succeed
+                if legacy_dest_dir.exists() and (
+                    not dest_dir.exists() or not os.path.samefile(legacy_dest_dir, dest_dir)
+                ):
+                    if not dest_dir.exists():
+                        dest_dir.parent.mkdir(parents=True, exist_ok=True)
+                        os.rename(str(legacy_dest_dir), str(dest_dir))
+                    else:
+                        for db_file in legacy_dest_dir.glob("*.db"):
+                            target_db = dest_dir / db_file.name
+                            if not target_db.exists():
+                                shutil.copy2(db_file, target_db)
+                        shutil.rmtree(legacy_dest_dir, ignore_errors=True)
 
                 if channel == "stable" and beta_dir.exists():
                     shutil.rmtree(beta_dir, ignore_errors=True)

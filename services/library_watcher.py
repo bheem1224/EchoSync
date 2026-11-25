@@ -467,7 +467,7 @@ def _is_path_ignored(file_path: str, ignored_directories: set[str] | None = None
     if ignored_directories is None:
         ignored_directories = {"poor_metadata", "incomplete"}
     try:
-        p = Path(file_path)
+        p = Path(str(file_path).replace("\\", "/"))
         parts_lower = {part.lower().strip("/\\") for part in p.parts}
         if bool(parts_lower.intersection(ignored_directories)):
             return True

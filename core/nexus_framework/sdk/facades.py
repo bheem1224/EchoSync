@@ -2249,7 +2249,13 @@ class _SDK:
         channel = config_manager.get_plugin_channel(plugin_name) or "stable"
         db_file_name = f"{plugin_id_int}@beta.db" if channel == "beta" else f"{plugin_id_int}.db"
 
-        plugin_data_dir = "/data/plugins/data/"
+        data_root = os.environ.get("ECHOSYNC_DATA_DIR")
+        if data_root:
+            plugin_data_dir = os.path.join(data_root, "plugins", "data")
+        elif getattr(db, "database_path", None) and not str(db.database_path).startswith("/data"):
+            plugin_data_dir = os.path.join(os.path.dirname(str(db.database_path)), "plugins", "data")
+        else:
+            plugin_data_dir = "/data/plugins/data/"
         os.makedirs(plugin_data_dir, exist_ok=True)
 
         db_path = os.path.join(plugin_data_dir, db_file_name)
