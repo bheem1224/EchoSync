@@ -338,7 +338,8 @@ class AutoImportService:
 
         meta_config = config_manager.get("metadata_enhancement") or {}
         auto_import = meta_config.get("auto_import", False)
-        confidence_threshold = meta_config.get("confidence_threshold", 90) / 100.0
+        raw_thresh = float(meta_config.get("confidence_threshold", 90) or 90)
+        confidence_threshold = raw_thresh / 100.0 if raw_thresh > 1.0 else raw_thresh
 
         while True:
             tasks_to_retry: list[dict[str, Any]] = []
@@ -404,7 +405,11 @@ class AutoImportService:
                     if res_dict is None:
                         from core.metadata.schemas import ResolutionRequest
 
-                        req = ResolutionRequest(media_id=f"review_{task_id}", file_path=p)
+                        req = ResolutionRequest(
+                            media_id=f"review_{task_id}",
+                            file_path=p,
+                            ignore_cache=True,
+                        )
                         res = self.engine.resolve_track(req)
                         metadata = res.to_dict() if (res.success and res.musicbrainz_track_id) else None
                         confidence = res.confidence_score
@@ -631,7 +636,8 @@ class AutoImportService:
 
             meta_config = config_manager.get("metadata_enhancement") or {}
             auto_import = meta_config.get("auto_import", False)
-            confidence_threshold = meta_config.get("confidence_threshold", 90) / 100.0
+            raw_thresh = float(meta_config.get("confidence_threshold", 90) or 90)
+            confidence_threshold = raw_thresh / 100.0 if raw_thresh > 1.0 else raw_thresh
 
             batch_stats = {"imported": 0, "pending_review": 0, "failed": 0}
 
@@ -712,6 +718,7 @@ class AutoImportService:
                             req = ResolutionRequest(
                                 media_id=f"media_{file_path.stem}",
                                 file_path=file_path,
+                                ignore_cache=True,
                             )
                             res = self.engine.resolve_track(req)
                             metadata = res.to_dict() if (res.success and res.musicbrainz_track_id) else None

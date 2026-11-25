@@ -1,0 +1,91 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+  workflow_call:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust-tests:
+    name: Rust Unit Tests (echosync_core)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Run cargo test
+        run: cargo test --lib
+
+  python-tests:
+    name: Python Test Suite (pytest)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Setup Python 3.12
+        run: uv python install 3.12
+
+      - name: Sync dependencies
+        run: uv sync --frozen --no-install-project
+
+      - name: Build native Rust extension (echosync_core)
+        run: uv run --no-sync maturin develop --release
+
+      - name: Run static audio FFI guard
+        run: uv run --no-sync python tools/lint_audio_calls.py
+
+      - name: Run pytest suite
+        run: uv run --no-sync pytest --timeout=30
+
+  frontend-build:
+    name: WebUI Production Build (Svelte/Vite)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: webui/package-lock.json
+
+      - name: Install dependencies
+        working-directory: webui
+        run: npm ci
+
+      - name: Build production bundle
+        working-directory: webui
+        run: npm run build
