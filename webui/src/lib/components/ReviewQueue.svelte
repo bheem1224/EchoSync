@@ -154,16 +154,31 @@
         job_name: "retry_aged_review_tasks",
         params: { force_check: true },
       });
-      setTimeout(() => {
-        loadQueue();
-      }, 1500);
+      // Poll job progress briefly so the UI updates as items are imported/pruned
+      const started = Date.now();
+      const poll = async () => {
+        await loadQueue();
+        if (Date.now() - started > 60000) {
+          retryingQueue = false;
+          return;
+        }
+        try {
+          const jRes = await apiClient.get("/system/jobs/retry_aged_review_tasks");
+          if (jRes.data?.running) {
+            setTimeout(poll, 2000);
+            return;
+          }
+        } catch {}
+        await loadQueue();
+        retryingQueue = false;
+      };
+      setTimeout(poll, 1500);
     } catch (err: any) {
       console.error("Failed to trigger retry job:", err);
       error =
         err?.response?.data?.error ||
         err?.message ||
         "Failed to trigger retry job";
-    } finally {
       retryingQueue = false;
     }
   }

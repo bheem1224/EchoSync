@@ -313,7 +313,7 @@
           {m.bitrate} kbps
         </span>
       {/if}
-    {:else if track.media_ids && track.media_ids.length > 0}
+    {:else if !track._mediaHydrated && track.media_ids && track.media_ids.length > 0}
       <span class="w-10 h-4 rounded bg-gray-800 animate-pulse"></span>
       <span class="w-12 h-4 rounded bg-gray-800 animate-pulse"></span>
       <span class="w-8 h-4 rounded bg-gray-800 animate-pulse"></span>

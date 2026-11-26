@@ -32,7 +32,7 @@ function createSettingsStore() {
 
   async function save(patch) {
     try {
-      // API client baseURL is '/api' so use '/v1/system/settings'
+      // API client baseURL is '/api/v1' so use '/system/settings'
       await apiClient.patch('/system/settings', patch);
       update((state) => ({
         ...state,
@@ -40,6 +40,7 @@ function createSettingsStore() {
       }));
     } catch (error) {
       console.error('Failed to save settings:', error);
+      throw error;
     }
   }
 

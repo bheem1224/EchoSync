@@ -115,29 +115,55 @@
     if (tracksNeedingHydration.length > 0) {
       // Immediately mark sync IDs to avoid duplicate in-flight or re-triggered requests
       tracksNeedingHydration.forEach((t) => hydratedSyncIds.add(t.sync_id));
-      const syncIds = tracksNeedingHydration.map((t) => t.sync_id).join(",");
       try {
-        const res = await apiClient.get(
-          `/core/tracks?detail=true&ids=${encodeURIComponent(syncIds)}`,
-        );
-        if (res.data && res.data.items) {
-          const detailedTracksMap = new Map(
-            res.data.items.map((dt) => [dt.sync_id, dt]),
+        const detailedTracksMap = new Map();
+        const CHUNK_SIZE = 100;
+        for (let i = 0; i < tracksNeedingHydration.length; i += CHUNK_SIZE) {
+          const chunk = tracksNeedingHydration.slice(i, i + CHUNK_SIZE);
+          const syncIds = chunk.map((t) => t.sync_id).join(",");
+          const res = await apiClient.get(
+            `/core/tracks?detail=true&limit=${CHUNK_SIZE}&ids=${encodeURIComponent(syncIds)}`,
           );
-          // Update tracks in-place
-          for (const album of artist.albums) {
-            album.tracks = album.tracks.map((t) => {
-              if (detailedTracksMap.has(t.sync_id)) {
-                return { ...t, media: detailedTracksMap.get(t.sync_id).media };
+          if (res.data && Array.isArray(res.data.items)) {
+            for (const dt of res.data.items) {
+              if (dt && dt.sync_id) {
+                detailedTracksMap.set(dt.sync_id, dt);
               }
-              return t;
-            });
+            }
           }
-          // Force Svelte 5 state reactivity
-          selectedArtist = { ...selectedArtist };
+        }
+
+        // Build fresh album/track references so Svelte 5 $state proxies propagate updates to TrackRow
+        const updatedAlbums = artist.albums.map((album) => ({
+          ...album,
+          tracks: album.tracks.map((t) => {
+            if (detailedTracksMap.has(t.sync_id)) {
+              return {
+                ...t,
+                media: detailedTracksMap.get(t.sync_id).media || [],
+                _mediaHydrated: true,
+              };
+            }
+            if (hydratedSyncIds.has(t.sync_id)) {
+              return { ...t, _mediaHydrated: true };
+            }
+            return t;
+          }),
+        }));
+        artist.albums = updatedAlbums;
+        if (selectedArtist && String(selectedArtist.id) === String(artist.id)) {
+          selectedArtist = { ...artist, albums: updatedAlbums };
         }
       } catch (err) {
         console.error("Bulk hydration failed:", err);
+        const fallbackAlbums = artist.albums.map((album) => ({
+          ...album,
+          tracks: album.tracks.map((t) => ({ ...t, _mediaHydrated: true })),
+        }));
+        artist.albums = fallbackAlbums;
+        if (selectedArtist && String(selectedArtist.id) === String(artist.id)) {
+          selectedArtist = { ...artist, albums: fallbackAlbums };
+        }
       }
     }
   }

@@ -27,6 +27,7 @@ MusicBrainz for recently-failed tracks on every scan cycle.
 """
 
 import os
+import re
 import threading
 from dataclasses import is_dataclass, replace
 from datetime import timedelta
@@ -316,12 +317,129 @@ class AutoImportService:
         register_job(
             name="retry_aged_review_tasks",
             func=self._retry_aged_review_tasks,
-            interval_seconds=86400,  # Run daily
-            start_after=1200,  # Wait 20 minutes before initial check
+            interval_seconds=3600,  # Hourly sweep for auto-importable high-confidence items & aged tasks
+            start_after=30,  # Run initial cleanup/auto-import check 30s after startup
             enabled=True,
             tags=["echosync", "metadata", "review"],
             max_retries=3,
         )
+
+    @staticmethod
+    def _is_importable_metadata(meta: dict[str, Any] | None) -> bool:
+        """Return True only if *meta* has valid non-placeholder title/artist and an authoritative anchor."""
+        if not meta or not isinstance(meta, dict):
+            return False
+        title = str(meta.get("title") or meta.get("raw_title") or "").strip()
+        artist = str(meta.get("artist") or meta.get("artist_name") or "").strip()
+        if not title or not artist:
+            return False
+        # Reject mojibake ("???") or placeholder strings
+        if not re.sub(r"[?\ufffd\s._-]+", "", title) or not re.sub(r"[?\ufffd\s._-]+", "", artist):
+            return False
+        a_low = artist.lower()
+        if a_low.startswith("unknown") or a_low in ("various artists", "va", "n/a", "none"):
+            return False
+        if title.lower().startswith("unknown"):
+            return False
+        has_anchor = bool(
+            meta.get("musicbrainz_id")
+            or meta.get("musicbrainz_track_id")
+            or meta.get("mbid")
+            or meta.get("isrc")
+            or str(meta.get("resolution_method") or "").startswith("signature_verified")
+        )
+        return has_anchor
+
+    @classmethod
+    def _cap_unimportable_confidence(cls, meta: dict[str, Any] | None, raw_confidence: float) -> float:
+        """Ensure un-importable or placeholder ReviewTask rows never masquerade as 100% High confidence."""
+        conf = float(raw_confidence or 0.0)
+        if cls._is_importable_metadata(meta):
+            return conf
+        if isinstance(meta, dict):
+            title = str(meta.get("title") or meta.get("raw_title") or "").strip()
+            artist = str(meta.get("artist") or meta.get("artist_name") or "").strip()
+            if (
+                not title
+                or not artist
+                or not re.sub(r"[?\ufffd\s._-]+", "", title)
+                or not re.sub(r"[?\ufffd\s._-]+", "", artist)
+                or artist.lower().startswith("unknown")
+            ):
+                return 0.0
+        return min(conf, 0.59)
+
+    @staticmethod
+    def _get_auto_import_settings() -> tuple[bool, float]:
+        """Resolve (auto_import, confidence_threshold) from both nested and dotted config keys."""
+        meta_config = config_manager.get("metadata_enhancement")
+        if not isinstance(meta_config, dict):
+            meta_config = {}
+
+        raw_auto = meta_config.get("auto_import")
+        if raw_auto is None:
+            raw_auto = config_manager.get("metadata_enhancement.auto_import")
+        if isinstance(raw_auto, bool):
+            auto_import = raw_auto
+        elif isinstance(raw_auto, str):
+            auto_import = raw_auto.strip().lower() in ("true", "1", "yes", "on")
+        else:
+            auto_import = bool(raw_auto)
+
+        raw_thresh = meta_config.get("confidence_threshold")
+        if raw_thresh is None:
+            raw_thresh = config_manager.get("metadata_enhancement.confidence_threshold")
+        try:
+            thresh_val = float(raw_thresh) if raw_thresh is not None else 90.0
+        except (TypeError, ValueError):
+            thresh_val = 90.0
+        confidence_threshold = thresh_val / 100.0 if thresh_val > 1.0 else thresh_val
+        return auto_import, confidence_threshold
+
+    @staticmethod
+    def _resolve_existing_file(file_path_str: str | None) -> Path | None:
+        """Resolve a ReviewTask file_path to an existing physical file on disk (with PathMapper fallback)."""
+        if not file_path_str:
+            return None
+        try:
+            p = Path(file_path_str)
+            if p.exists() and p.is_file():
+                return p
+        except Exception:
+            pass
+        try:
+            from core.utils import PathMapper
+
+            mapped = PathMapper.to_local(file_path_str)
+            if mapped:
+                mp = Path(mapped)
+                if mp.exists() and mp.is_file():
+                    return mp
+        except Exception:
+            pass
+        return None
+
+    def _prune_missing_review_tasks(self) -> int:
+        """Mark pending ReviewTasks whose physical files no longer exist on disk as ignored."""
+        from time_utils import utc_now
+
+        work_db = get_working_database()
+        pruned = 0
+        try:
+            with work_db.session_scope() as session:
+                pending_tasks = session.query(ReviewTask).filter(ReviewTask.status == "pending").all()
+                now = utc_now()
+                for task in pending_tasks:
+                    if not self._resolve_existing_file(task.file_path):
+                        task.status = "ignored"
+                        task.last_checked_at = now
+                        task.updated_at = now
+                        pruned += 1
+            if pruned:
+                logger.info("Pruned %d orphaned review task(s) whose physical files no longer exist on disk.", pruned)
+        except Exception as e:
+            logger.warning("Failed to prune missing review tasks: %s", e)
+        return pruned
 
     def _retry_aged_review_tasks(self, force_check: bool = False, **kwargs) -> None:
         """Proactively re-evaluate review queue items older than 7 days, or all pending items if force_check=True."""
@@ -336,10 +454,7 @@ class AutoImportService:
         last_seen_id = 0
         total_processed = 0
 
-        meta_config = config_manager.get("metadata_enhancement") or {}
-        auto_import = meta_config.get("auto_import", False)
-        raw_thresh = float(meta_config.get("confidence_threshold", 90) or 90)
-        confidence_threshold = raw_thresh / 100.0 if raw_thresh > 1.0 else raw_thresh
+        auto_import, confidence_threshold = self._get_auto_import_settings()
 
         while True:
             tasks_to_retry: list[dict[str, Any]] = []
@@ -350,7 +465,17 @@ class AutoImportService:
                         ReviewTask.status == "pending",
                     )
                     if not is_force:
-                        query = query.filter(ReviewTask.updated_at < cutoff)
+                        if auto_import:
+                            from sqlalchemy import or_
+
+                            query = query.filter(
+                                or_(
+                                    ReviewTask.updated_at < cutoff,
+                                    ReviewTask.confidence_score >= confidence_threshold,
+                                )
+                            )
+                        else:
+                            query = query.filter(ReviewTask.updated_at < cutoff)
 
                     batch = query.order_by(ReviewTask.id.asc()).limit(batch_size).all()
                     if not batch:
@@ -376,14 +501,19 @@ class AutoImportService:
                 total_processed += 1
                 task_id = item["id"]
                 file_path_str = item["file_path"]
-                p = Path(file_path_str)
+                p = self._resolve_existing_file(file_path_str)
 
-                if not p.exists():
-                    logger.info(f"Review task file no longer on disk: {file_path_str}")
+                if p is None:
+                    logger.info(
+                        "Review task #%s file no longer on disk; auto-dismissing orphaned task: %s",
+                        task_id,
+                        file_path_str,
+                    )
                     try:
                         with work_db.session_scope() as session:
                             task = session.query(ReviewTask).filter(ReviewTask.id == task_id).first()
                             if task:
+                                task.status = "ignored"
                                 task.last_checked_at = utc_now()
                                 task.updated_at = utc_now()
                     except Exception:
@@ -396,9 +526,23 @@ class AutoImportService:
                     res_dict = None
                     if hasattr(self, "enhancer") and hasattr(self.enhancer, "identify_file"):
                         try:
-                            metadata, confidence = self.enhancer.identify_file(p)
-                            if metadata:
-                                res_dict = metadata
+                            try:
+                                cand_meta, cand_conf = self.enhancer.identify_file(p, ignore_cache=True)
+                            except TypeError:
+                                cand_meta, cand_conf = self.enhancer.identify_file(p)
+                            if cand_meta and isinstance(cand_meta, dict):
+                                t_str = str(cand_meta.get("title") or cand_meta.get("raw_title") or "").strip()
+                                a_str = str(cand_meta.get("artist") or cand_meta.get("artist_name") or "").strip()
+                                if (
+                                    t_str
+                                    and a_str
+                                    and re.sub(r"[?\ufffd\s._-]+", "", t_str)
+                                    and re.sub(r"[?\ufffd\s._-]+", "", a_str)
+                                    and not a_str.lower().startswith("unknown")
+                                ):
+                                    metadata = cand_meta
+                                    confidence = cand_conf
+                                    res_dict = cand_meta
                         except Exception as enh_err:
                             logger.debug("enhancer.identify_file failed, falling back to engine: %s", enh_err)
 
@@ -411,9 +555,13 @@ class AutoImportService:
                             ignore_cache=True,
                         )
                         res = self.engine.resolve_track(req)
-                        metadata = res.to_dict() if (res.success and res.musicbrainz_track_id) else None
-                        confidence = res.confidence_score
                         res_dict = res.to_dict()
+                        if self._is_importable_metadata(res_dict) and res.confidence_score > 0.0:
+                            metadata = res_dict
+                            confidence = res.confidence_score
+                        else:
+                            metadata = None
+                            confidence = self._cap_unimportable_confidence(res_dict, res.confidence_score)
 
                     now = utc_now()
                     with work_db.session_scope() as session:
@@ -429,16 +577,27 @@ class AutoImportService:
                         if auto_import:
                             logger.info(f"Review task match found and auto_import is True; importing: {p}")
                             self.finalize_import(p, metadata)
+                            try:
+                                with work_db.session_scope() as session:
+                                    task = session.query(ReviewTask).filter(ReviewTask.id == task_id).first()
+                                    if task and task.status == "pending":
+                                        task.status = "approved"
+                                        task.updated_at = utc_now()
+                            except Exception:
+                                pass
                         else:
                             logger.info(f"Review task match found but auto_import is False for {p}")
                 except Exception as err:
-                    logger.warning(f"Failed to re-evaluate review task #{task_id} ({file_path_str}): {err}")
+                    logger.warning(f"Failed to re-evaluate review task #{task_id} ({file_path_str}): {err}", exc_info=True)
                     try:
                         with work_db.session_scope() as session:
                             task = session.query(ReviewTask).filter(ReviewTask.id == task_id).first()
                             if task:
                                 task.last_checked_at = utc_now()
                                 task.updated_at = utc_now()
+                                td = dict(task.track_data or {})
+                                td["last_import_error"] = str(err)
+                                task.track_data = td
                     except Exception:
                         pass
 
@@ -475,6 +634,9 @@ class AutoImportService:
                 if not meta_config.get("enabled", True):
                     logger.info("Auto-import scan skipped: Feature disabled in settings.")
                     return
+
+                # Prune any orphaned pending review tasks whose physical files no longer exist on disk
+                self._prune_missing_review_tasks()
 
                 _dl = config_manager.get("storage.download_dir") or config_manager.get("download_dir")
                 download_dir = Path(_dl) if _dl else None
@@ -559,6 +721,11 @@ class AutoImportService:
                 else:
                     logger.info(f"Auto-import scan completed: No new files found in {download_dir}")
 
+                # Also sweep high-confidence pending Review Queue items (including Library items) when auto_import is ON
+                auto_imp_enabled, _ = self._get_auto_import_settings()
+                if auto_imp_enabled or params.get("force_scan"):
+                    self._retry_aged_review_tasks(force_check=bool(params.get("force_scan")))
+
                 logger.info(
                     f"[system] - Auto-import complete. Found: {stats['found']} | Imported: {stats['imported']} | Pending Review: {stats['pending_review']} | Failed: {stats['failed']}"
                 )
@@ -634,10 +801,7 @@ class AutoImportService:
                 logger.warning("Auto-import process_batch timed out waiting for library lock.")
                 return {"imported": 0, "pending_review": 0, "failed": len(files)}
 
-            meta_config = config_manager.get("metadata_enhancement") or {}
-            auto_import = meta_config.get("auto_import", False)
-            raw_thresh = float(meta_config.get("confidence_threshold", 90) or 90)
-            confidence_threshold = raw_thresh / 100.0 if raw_thresh > 1.0 else raw_thresh
+            auto_import, confidence_threshold = self._get_auto_import_settings()
 
             batch_stats = {"imported": 0, "pending_review": 0, "failed": 0}
 
@@ -721,8 +885,13 @@ class AutoImportService:
                                 ignore_cache=True,
                             )
                             res = self.engine.resolve_track(req)
-                            metadata = res.to_dict() if (res.success and res.musicbrainz_track_id) else None
-                            confidence = res.confidence_score
+                            res_dict = res.to_dict()
+                            if self._is_importable_metadata(res_dict) and res.confidence_score > 0.0:
+                                metadata = res_dict
+                                confidence = res.confidence_score
+                            else:
+                                metadata = None
+                                confidence = self._cap_unimportable_confidence(res_dict, res.confidence_score)
 
                             # Post-download verification against active DownloadQueue intent (if tracked)
                             dl_match = self._find_verifying_download_item(file_path)
@@ -1045,6 +1214,12 @@ class AutoImportService:
         if not metadata or not isinstance(metadata, dict):
             raise ValueError(f"Cannot finalize import: invalid metadata for {file_path.name}")
 
+        metadata = dict(metadata)
+        if not metadata.get("artist") and metadata.get("artist_name"):
+            metadata["artist"] = metadata["artist_name"]
+        if not metadata.get("album") and metadata.get("album_title"):
+            metadata["album"] = metadata["album_title"]
+
         # Ensure critical fields exist
         required_fields = ["title", "artist"]
         missing = [field for field in required_fields if not metadata.get(field)]
@@ -1342,9 +1517,10 @@ class AutoImportService:
                         )
                     logger.info(f"Moved {file_path.name} → {moved_to}")
 
-            # Prune empty source parent directories halting at download_dir
+            # Prune empty source parent directories halting at download_dir / library_dir
             _dl = config_manager.get("storage.download_dir") or config_manager.get("download_dir")
-            stop_roots = {Path(_dl).resolve()} if _dl else set()
+            _lib = config_manager.get("storage.library_dir") or config_manager.get("library_dir")
+            stop_roots = {Path(r).resolve() for r in (_dl, _lib) if r}
             prune_empty_parent_directories(file_path, stop_at_roots=stop_roots)
             return dest_path
 

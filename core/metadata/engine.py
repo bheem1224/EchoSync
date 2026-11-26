@@ -706,20 +706,37 @@ class MetadataResolutionEngine:
         sanitized_file_title = clean_title_from_filename(file_path.name)
         filename_is_identifiable = bool(sanitized_file_title and not is_generic_title(sanitized_file_title))
 
-        # Check if physical filename stem contradicts the requested baseline_title
+        # Check if physical filename stem contradicts the effective baseline_title (request or embedded tag)
         filename_contradicts_baseline = False
+        effective_check_title = request.baseline_title or (str(tag_title).strip() if tag_title else None)
         if (
             filename_is_identifiable
-            and request.baseline_title
-            and not is_cross_script(request.baseline_title, sanitized_file_title)
+            and effective_check_title
+            and not is_cross_script(effective_check_title, sanitized_file_title)
         ):
             base_file_sim = difflib.SequenceMatcher(
                 None,
-                request.baseline_title.lower().strip(),
+                effective_check_title.lower().strip(),
                 sanitized_file_title.lower().strip(),
             ).ratio()
             if base_file_sim < 0.60:
                 filename_contradicts_baseline = True
+
+        def _is_corrupted_or_placeholder_identity(t_val: str | None, a_val: str | None) -> bool:
+            t_s = str(t_val or "").strip()
+            a_s = str(a_val or "").strip()
+            if not t_s or not a_s:
+                return True
+            # Reject mojibake / question-mark-only strings (e.g. "???", "????????")
+            if not re.sub(r"[?\ufffd\s._-]+", "", t_s) or not re.sub(r"[?\ufffd\s._-]+", "", a_s):
+                return True
+            a_low = a_s.lower()
+            if a_low.startswith("unknown") or a_low in ("various artists", "va", "n/a", "none"):
+                return True
+            t_low = t_s.lower()
+            if t_low.startswith("unknown") or is_generic_title(t_s):
+                return True
+            return False
 
         # ── Stage 0: Zero-Trust Signature Gate (ECHOSYNC_SIGNATURE) ───────────
         signature_valid: bool = False
@@ -741,6 +758,38 @@ class MetadataResolutionEngine:
                 "bypassed",
                 "Force mode active; bypassing Stage 0 signature short-circuit.",
                 {"force_mode": True, "signature_present": bool(sig_tag)},
+            )
+        elif sig_tag and _is_corrupted_or_placeholder_identity(baseline_title, baseline_artist):
+            logger.warning(
+                "[resolution_engine] Stage 0 REJECTED on %s: signature covers placeholder or corrupted metadata ('%s' - '%s'). Voiding signature.",
+                file_path.name,
+                baseline_artist,
+                baseline_title,
+            )
+            request.signature_failed = True
+            request.untrusted_tags = True
+            _add_diagnostic(
+                request,
+                "Stage 0: Signature Gate",
+                "failed",
+                f"Signature covers placeholder/corrupted metadata ('{baseline_artist}' - '{baseline_title}'); voiding.",
+                {"signature": str(sig_tag), "valid": False},
+            )
+        elif sig_tag and filename_contradicts_baseline and not request.baseline_title:
+            logger.warning(
+                "[resolution_engine] Stage 0 REJECTED on %s: signed tag title '%s' contradicts physical filename '%s'. Voiding signature.",
+                file_path.name,
+                baseline_title,
+                sanitized_file_title,
+            )
+            request.signature_failed = True
+            request.untrusted_tags = True
+            _add_diagnostic(
+                request,
+                "Stage 0: Signature Gate",
+                "failed",
+                f"Signed tag title '{baseline_title}' contradicts filename '{sanitized_file_title}'; voiding.",
+                {"signature": str(sig_tag), "valid": False},
             )
         elif sig_tag and baseline_title and baseline_artist:
             try:

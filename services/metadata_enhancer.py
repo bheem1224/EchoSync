@@ -1183,7 +1183,7 @@ class RetroactiveEnhancer:
             or PluginRegistry.get_plugin("spotify")
         )
 
-    def identify_file(self, file_path: Path) -> tuple[dict[str, Any] | None, float]:
+    def identify_file(self, file_path: Path, ignore_cache: bool = False) -> tuple[dict[str, Any] | None, float]:
         """Identify a file using the unified 5-stage MetadataResolutionEngine.
         Returns (metadata_dict, confidence_score).
 
@@ -1201,9 +1201,27 @@ class RetroactiveEnhancer:
             media_id=f"media_{path.stem}",
             file_path=path,
             prefer_studio_album=prefer_studio,
+            ignore_cache=ignore_cache,
         )
         result = self.resolution_engine.resolve_track(req)
-        if not result or result.confidence_score < 0.60 or not (result.musicbrainz_track_id or result.isrc):
+        has_verified_sig = str(getattr(result, "resolution_method", "") or "").startswith("signature_verified")
+        if (
+            not result
+            or result.confidence_score < 0.60
+            or not (result.musicbrainz_track_id or result.isrc or has_verified_sig)
+        ):
+            return None, 0.0
+
+        res_title = str(result.title or result.raw_title or "").strip()
+        res_artist = str(result.artist_name or getattr(result, "artist", "") or "").strip()
+        if (
+            not res_title
+            or not res_artist
+            or not re.sub(r"[?\ufffd\s._-]+", "", res_title)
+            or not re.sub(r"[?\ufffd\s._-]+", "", res_artist)
+            or res_artist.lower().startswith("unknown")
+            or res_artist.lower() in ("various artists", "va")
+        ):
             return None, 0.0
 
         result = normalize_singles_metadata(result, group_standalone_singles=group_singles)
@@ -1602,7 +1620,14 @@ class RetroactiveEnhancer:
                 return True
             if a1 == a2:
                 return True
-            return bool(a1 in a2 or a2 in a1)
+            if a1 in a2 or a2 in a1:
+                return True
+            split_re = r"\s*(?:;|,|&|/|\bfeat\.?\b|\bft\.?\b|\bfeaturing\b|\bwith\b)\s*"
+            parts_1 = [p.strip() for p in re.split(split_re, a1) if p.strip()]
+            parts_2 = [p.strip() for p in re.split(split_re, a2) if p.strip()]
+            if parts_1 and parts_2 and (parts_1[0] == parts_2[0] or parts_1[0] in parts_2 or parts_2[0] in parts_1):
+                return True
+            return False
 
         if (expected_title and not _titles_match(read_title, expected_title)) or (
             expected_artist and not _artists_match(read_artist, expected_artist)
@@ -2475,10 +2500,20 @@ class RetroactiveEnhancer:
                     logger.info("Absolute Trust Gate Passed: %s", t_track.title)
                     item["metadata_status"]["enhanced"] = True
 
-                    # Generate and stamp echosync_signature if missing
+                    # Generate and stamp echosync_signature if missing (never sign placeholder/mojibake tags)
                     if not item["metadata_status"].get("echosync_signature"):
                         try:
-                            if t_track.title and t_track.artist_name:
+                            sig_t = str(t_track.title or "").strip()
+                            sig_a = str(t_track.artist_name or "").strip()
+                            can_sign = bool(
+                                sig_t
+                                and sig_a
+                                and re.sub(r"[?\ufffd\s._-]+", "", sig_t)
+                                and re.sub(r"[?\ufffd\s._-]+", "", sig_a)
+                                and not sig_a.lower().startswith("unknown")
+                                and sig_a.lower() not in ("various artists", "va")
+                            )
+                            if can_sign:
                                 sig = echosync_core.generate_audio_signature(
                                     str(local_path),
                                     t_track.title,

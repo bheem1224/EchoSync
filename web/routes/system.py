@@ -578,6 +578,21 @@ async def update_settings(request: Request):
         except Exception as eb_err:
             logger.debug(f"Could not publish CONFIG_UPDATED event: {eb_err}")
 
+        # If Auto-Import was just enabled, proactively trigger review-queue & download sweep
+        meta_patch = payload.get("metadata_enhancement")
+        auto_enabled_now = (
+            (isinstance(meta_patch, dict) and bool(meta_patch.get("auto_import")))
+            or bool(payload.get("metadata_enhancement.auto_import"))
+        )
+        if auto_enabled_now:
+            try:
+                from core.task_manager.task_queue import job_queue
+
+                job_queue.execute_job_now("retry_aged_review_tasks", params={"force_check": True})
+                job_queue.execute_job_now("auto_import_scan", params={"force_scan": True})
+            except Exception as trig_err:
+                logger.debug(f"Could not trigger auto-import sweep after settings update: {trig_err}")
+
         resp = {"success": True}
         if restart_warning:
             resp["warning"] = "Application restart is required to apply the Custom UI Path."
@@ -1069,6 +1084,14 @@ async def update_preferences(request: Request):
         updated = {**current, **payload}
 
         config_manager.set("metadata_enhancement", updated)
+        if updated.get("auto_import"):
+            try:
+                from core.task_manager.task_queue import job_queue
+
+                job_queue.execute_job_now("retry_aged_review_tasks", params={"force_check": True})
+                job_queue.execute_job_now("auto_import_scan", params={"force_scan": True})
+            except Exception as trig_err:
+                logger.debug(f"Could not trigger auto-import sweep after preferences update: {trig_err}")
         return {"success": True, "preferences": updated}
     except Exception as e:
         logger.error(f"Error updating preferences: {e}")

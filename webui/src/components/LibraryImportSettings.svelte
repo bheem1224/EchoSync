@@ -1,6 +1,7 @@
 <script>
   import { onMount } from "svelte";
   import { settings } from "../stores/settings";
+  import { feedback } from "../stores/feedback";
 
   let data = $state({
     auto_import_enabled: false,
@@ -63,6 +64,21 @@
     await settings.save(patch);
   }
 
+  async function handleAutoImportToggle() {
+    try {
+      await save();
+      feedback.addToast(
+        data.auto_import_enabled
+          ? "Auto-Import enabled — sweeping high-confidence items"
+          : "Auto-Import disabled",
+        "info",
+      );
+    } catch (e) {
+      console.error("Failed to persist Auto-Import toggle:", e);
+      feedback.addToast("Failed to save Auto-Import setting", "error");
+    }
+  }
+
   export function getCurrentPattern() {
     return data.renaming_template;
   }
@@ -82,7 +98,11 @@
     <div class="row-auto-import">
       <span class="label-bold">Auto-Import</span>
       <label class="switch">
-        <input type="checkbox" bind:checked={data.auto_import_enabled} />
+        <input
+          type="checkbox"
+          bind:checked={data.auto_import_enabled}
+          onchange={handleAutoImportToggle}
+        />
         <span class="slider round"></span>
       </label>
     </div>
