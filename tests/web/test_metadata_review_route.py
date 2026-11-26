@@ -241,3 +241,41 @@ def test_echosync_track_resolution_stage_property():
 
     track = replace(track, resolution_method="signature_verified")
     assert track.resolution_stage == "Stage 0: Signature Verified"
+
+
+def test_stream_review_queue_item_resolves_poor_metadata_under_data_dir(client, tmp_path, monkeypatch):
+    """Review task files stored under data_dir/poor_metadata should stream cleanly even without storage.poor_metadata_dir set."""
+    from core.settings import config_manager
+
+    data_dir = tmp_path / "data"
+    poor_dir = data_dir / "poor_metadata"
+    poor_dir.mkdir(parents=True)
+    audio_file = poor_dir / "review_preview_test.flac"
+    audio_file.write_bytes(b"fLaCdummypreviewbytes")
+
+    monkeypatch.setattr(config_manager, "get_data_dir", lambda: data_dir)
+    monkeypatch.setattr(config_manager, "get_downloads_dir", lambda: data_dir / "downloads")
+    monkeypatch.setattr(config_manager, "get_library_dir", lambda: data_dir / "library")
+
+    work_db = get_working_database()
+    with work_db.session_scope() as session:
+        task = ReviewTask(
+            file_path=str(audio_file),
+            status="pending",
+            confidence_score=0.4,
+            track_data={"title": "Preview Track"},
+        )
+        session.add(task)
+        session.flush()
+        task_id = task.id
+
+    try:
+        resp = client.get(f"/api/v1/core/metadata_review/{task_id}/stream")
+        assert resp.status_code == 200
+        assert resp.content == b"fLaCdummypreviewbytes"
+        assert resp.headers.get("content-type", "").startswith("audio/flac")
+    finally:
+        with work_db.session_scope() as session:
+            t = session.query(ReviewTask).filter(ReviewTask.id == task_id).first()
+            if t:
+                session.delete(t)

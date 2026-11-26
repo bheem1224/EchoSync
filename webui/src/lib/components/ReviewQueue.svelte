@@ -17,6 +17,7 @@
     FileAudio
   } from "lucide-svelte";
   import apiClient from "../../api/client";
+  import { feedback } from "../../stores/feedback";
   import MetadataReviewModal from "./MetadataReviewModal.svelte";
 
   let loading = true;
@@ -175,10 +176,14 @@
       setTimeout(poll, 1500);
     } catch (err: any) {
       console.error("Failed to trigger retry job:", err);
-      error =
+      const msg =
+        err?.response?.data?.reason ||
         err?.response?.data?.error ||
+        err?.response?.data?.detail?.error ||
+        err?.response?.data?.detail ||
         err?.message ||
         "Failed to trigger retry job";
+      feedback.addToast(msg, err?.response?.status === 409 ? "warning" : "error");
       retryingQueue = false;
     }
   }

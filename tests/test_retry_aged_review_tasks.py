@@ -126,6 +126,39 @@ def test_jobs_route_force_check_parameter_propagation(monkeypatch):
     assert captured_params["params"].get("force_check") is True
 
 
+def test_jobs_route_conflict_returns_409_json(monkeypatch):
+    """Verify web/routes/jobs.py returns HTTP 409 JSON (not 500 TypeError) when a job is already running or cannot execute."""
+    app = create_app()
+    client = TestClient(app)
+
+    from core.task_manager.task_queue import job_queue
+
+    # Case 1: Job already running
+    monkeypatch.setattr(
+        "web.routes.jobs.jq_list_jobs",
+        lambda: [{"name": "retry_aged_review_tasks", "running": True, "enabled": True, "last_started": 12345.0}],
+    )
+    res_running = client.post(
+        "/api/v1/system/jobs/run",
+        json={"name": "retry_aged_review_tasks", "params": {"force_check": True}},
+    )
+    assert res_running.status_code == 409
+    assert "already running" in res_running.json()["error"]
+
+    # Case 2: execute_job_now returns False
+    monkeypatch.setattr(
+        "web.routes.jobs.jq_list_jobs",
+        lambda: [{"name": "retry_aged_review_tasks", "running": False, "enabled": True}],
+    )
+    monkeypatch.setattr(job_queue, "execute_job_now", lambda job_name, params=None: False)
+    res_blocked = client.post(
+        "/api/v1/system/jobs/run",
+        json={"name": "retry_aged_review_tasks", "params": {"force_check": True}},
+    )
+    assert res_blocked.status_code == 409
+    assert "could not be executed" in res_blocked.json()["error"]
+
+
 def test_retry_aged_review_tasks_auto_dismisses_missing_files(tmp_path):
     """Ghost review tasks whose physical files no longer exist on disk are marked ignored."""
     service = AutoImportService()

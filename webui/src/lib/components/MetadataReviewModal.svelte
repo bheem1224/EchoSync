@@ -1,7 +1,7 @@
 <script>
   import { onDestroy } from "svelte";
   import { createEventDispatcher } from "svelte";
-  import apiClient from "../../api/client";
+  import apiClient, { API_BASE_URL } from "../../api/client";
   import { feedback } from "../../stores/feedback";
 
   export let task = null;
@@ -147,11 +147,12 @@
     !normalizeUnknown(task.detected_metadata.artist_name);
 
   $: streamUrl = task?.id
-    ? `/api/v1/core/metadata_review/${task.id}/stream`
+    ? `${API_BASE_URL}/core/metadata_review/${task.id}/stream`
     : "";
-  $: coverUrl = task?.current_metadata?._has_embedded_cover
-    ? `/api/v1/core/metadata_review/${task.id}/cover`
-    : "";
+  $: coverUrl =
+    task?.id && task?.current_metadata?._has_embedded_cover
+      ? `${API_BASE_URL}/core/metadata_review/${task.id}/cover`
+      : "";
 
   function getFilename(filePath) {
     if (!filePath) return "Unknown file";
@@ -1694,9 +1695,11 @@
         >
           Track Preview
         </p>
-        <audio controls preload="metadata" src={streamUrl} class="w-full h-8">
-          Your browser does not support audio playback.
-        </audio>
+        {#key streamUrl}
+          <audio controls preload="metadata" src={streamUrl} class="w-full h-8">
+            Your browser does not support audio playback.
+          </audio>
+        {/key}
       </div>
     {/if}
 
@@ -1737,58 +1740,13 @@
 
     <!-- 3. Footer Toolbar (Pinned & Always Visible) -->
     <footer
-      class="flex shrink-0 flex-wrap items-center justify-between gap-3 p-4 bg-slate-950 border-t border-slate-800"
+      class="flex shrink-0 flex-col gap-2.5 p-3.5 sm:px-5 sm:py-3.5 bg-slate-950 border-t border-slate-800"
     >
-      <!-- Left: Destructive Actions -->
-      <div class="flex items-center gap-2">
+      <!-- Row 1: Lookup & Resolution Tools -->
+      <div class="flex flex-wrap items-center gap-2">
         <button
-          class="px-4 py-2 rounded-lg bg-rose-700/80 hover:bg-rose-600 text-white disabled:opacity-60 inline-flex items-center justify-center gap-2 active:scale-95 transition-all duration-200 text-sm font-medium"
-          on:click={rejectAndDelete}
-          disabled={rejecting || approving || savingDraft}
-          title="Reject track candidate and delete physical file from disk"
-        >
-          {#if rejecting}
-            <span
-              class="loading loading-spinner loading-xs animate-spin inline-block w-4 h-4 border-2 border-current border-t-transparent rounded-full"
-            ></span> Deleting...
-          {:else}
-            🗑️ Reject & Delete
-          {/if}
-        </button>
-      </div>
-
-      <!-- Right: Search Engines & Import -->
-      <div class="flex flex-wrap items-center justify-end gap-2 sm:gap-3">
-        <button
-          class="px-4 py-2 rounded-lg bg-slate-800 text-slate-200 hover:bg-slate-700 disabled:opacity-60 active:scale-95 transition-all duration-200 text-sm"
-          on:click={closeModal}
-          disabled={savingDraft || approving || rejecting}
-        >
-          Cancel
-        </button>
-
-        <button
-          class="px-4 py-2 rounded-lg bg-amber-600 text-white hover:bg-amber-500 disabled:opacity-60 active:scale-95 transition-all duration-200 text-sm"
-          on:click={() => saveDraft({ silent: false })}
-          disabled={savingDraft || approving || rejecting}
-        >
-          {savingDraft ? "Saving..." : "Save Draft"}
-        </button>
-
-        <button
-          class="px-4 py-2 rounded-lg bg-slate-700 text-slate-100 hover:bg-slate-600 disabled:opacity-60 active:scale-95 transition-all duration-200 text-sm"
-          on:click={undoLastChange}
-          disabled={savingDraft ||
-            approving ||
-            rejecting ||
-            metadataHistory.length < 2}
-          title="Undo last metadata edit"
-        >
-          Undo
-        </button>
-
-        <button
-          class="px-4 py-2 rounded-lg bg-indigo-700 text-white hover:bg-indigo-600 disabled:opacity-60 inline-flex items-center justify-center gap-2 active:scale-95 transition-all duration-200 text-sm"
+          type="button"
+          class="px-3 py-1.5 rounded-lg bg-indigo-700 text-white hover:bg-indigo-600 disabled:opacity-60 inline-flex items-center justify-center gap-1.5 active:scale-95 transition-all duration-200 text-xs sm:text-sm font-medium whitespace-nowrap"
           on:click={runMusicBrainzLookup}
           disabled={isScanningAcoustID ||
             isLookingUpMB ||
@@ -1799,7 +1757,7 @@
         >
           {#if isLookingUpMB}
             <span
-              class="loading loading-spinner loading-xs animate-spin inline-block w-4 h-4 border-2 border-current border-t-transparent rounded-full"
+              class="loading loading-spinner loading-xs animate-spin inline-block w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full"
             ></span> Looking up...
           {:else}
             🔍 MusicBrainz Lookup
@@ -1807,7 +1765,8 @@
         </button>
 
         <button
-          class="px-4 py-2 rounded-lg bg-emerald-700 text-white hover:bg-emerald-600 disabled:opacity-60 inline-flex items-center justify-center gap-2 active:scale-95 transition-all duration-200 text-sm"
+          type="button"
+          class="px-3 py-1.5 rounded-lg bg-emerald-700 text-white hover:bg-emerald-600 disabled:opacity-60 inline-flex items-center justify-center gap-1.5 active:scale-95 transition-all duration-200 text-xs sm:text-sm font-medium whitespace-nowrap"
           on:click={runAcoustIDLookup}
           disabled={isScanningAcoustID ||
             isLookingUpMB ||
@@ -1818,7 +1777,7 @@
         >
           {#if isScanningAcoustID}
             <span
-              class="loading loading-spinner loading-xs animate-spin inline-block w-4 h-4 border-2 border-current border-t-transparent rounded-full"
+              class="loading loading-spinner loading-xs animate-spin inline-block w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full"
             ></span> Scanning...
           {:else}
             🧬 AcoustID Scan
@@ -1826,7 +1785,8 @@
         </button>
 
         <button
-          class="px-4 py-2 rounded-lg bg-orange-700 text-white hover:bg-orange-600 disabled:opacity-60 inline-flex items-center justify-center gap-2 active:scale-95 transition-all duration-200 text-sm"
+          type="button"
+          class="px-3 py-1.5 rounded-lg bg-orange-700 text-white hover:bg-orange-600 disabled:opacity-60 inline-flex items-center justify-center gap-1.5 active:scale-95 transition-all duration-200 text-xs sm:text-sm font-medium whitespace-nowrap"
           on:click={runISRCLookup}
           disabled={isScanningAcoustID ||
             isLookingUpMB ||
@@ -1838,7 +1798,7 @@
         >
           {#if isLookingUpISRC}
             <span
-              class="loading loading-spinner loading-xs animate-spin inline-block w-4 h-4 border-2 border-current border-t-transparent rounded-full"
+              class="loading loading-spinner loading-xs animate-spin inline-block w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full"
             ></span> Looking up...
           {:else}
             🎵 ISRC Lookup
@@ -1847,7 +1807,7 @@
 
         <button
           type="button"
-          class="px-4 py-2 rounded-lg bg-indigo-600/90 hover:bg-indigo-500 text-white disabled:opacity-60 inline-flex items-center justify-center gap-2 active:scale-95 transition-all duration-200 text-sm font-medium shadow-sm border border-indigo-400/30"
+          class="px-3 py-1.5 rounded-lg bg-indigo-600/90 hover:bg-indigo-500 text-white disabled:opacity-60 inline-flex items-center justify-center gap-1.5 active:scale-95 transition-all duration-200 text-xs sm:text-sm font-medium shadow-sm border border-indigo-400/30 whitespace-nowrap"
           on:click={runFullPipelineSimulation}
           disabled={isScanningAcoustID ||
             isLookingUpMB ||
@@ -1860,44 +1820,99 @@
         >
           {#if isSimulatingPipeline}
             <span
-              class="loading loading-spinner loading-xs animate-spin inline-block w-4 h-4 border-2 border-current border-t-transparent rounded-full"
+              class="loading loading-spinner loading-xs animate-spin inline-block w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full"
             ></span> Simulating Pipeline...
           {:else}
             ⚡ Run Full Pipeline
           {/if}
         </button>
+      </div>
 
+      <!-- Row 2: Destructive & Persistence Actions -->
+      <div
+        class="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-800/70"
+      >
         <button
-          class="px-4 py-2 rounded-lg bg-cyan-600 text-white hover:bg-cyan-500 disabled:opacity-60 inline-flex items-center justify-center gap-2 active:scale-95 transition-all duration-200 text-sm font-medium"
-          on:click={approveAndImport}
-          disabled={approving || savingDraft || rejecting}
+          type="button"
+          class="px-3.5 py-2 rounded-lg bg-rose-700/80 hover:bg-rose-600 text-white disabled:opacity-60 inline-flex items-center justify-center gap-1.5 active:scale-95 transition-all duration-200 text-xs sm:text-sm font-medium whitespace-nowrap"
+          on:click={rejectAndDelete}
+          disabled={rejecting || approving || savingDraft}
+          title="Reject track candidate and delete physical file from disk"
         >
-          {#if approving}
-            <svg
-              class="animate-spin h-4 w-4"
-              xmlns="http://www.w3.org/2000/svg"
-              fill="none"
-              viewBox="0 0 24 24"
-            >
-              <circle
-                class="opacity-25"
-                cx="12"
-                cy="12"
-                r="10"
-                stroke="currentColor"
-                stroke-width="4"
-              ></circle>
-              <path
-                class="opacity-75"
-                fill="currentColor"
-                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-              ></path>
-            </svg>
-            Approving...
+          {#if rejecting}
+            <span
+              class="loading loading-spinner loading-xs animate-spin inline-block w-4 h-4 border-2 border-current border-t-transparent rounded-full"
+            ></span> Deleting...
           {:else}
-            Approve & Import
+            🗑️ Reject & Delete
           {/if}
         </button>
+
+        <div class="flex flex-wrap items-center gap-2 ml-auto">
+          <button
+            type="button"
+            class="px-3.5 py-2 rounded-lg bg-slate-800 text-slate-200 hover:bg-slate-700 disabled:opacity-60 active:scale-95 transition-all duration-200 text-xs sm:text-sm whitespace-nowrap"
+            on:click={closeModal}
+            disabled={savingDraft || approving || rejecting}
+          >
+            Cancel
+          </button>
+
+          <button
+            type="button"
+            class="px-3.5 py-2 rounded-lg bg-slate-700 text-slate-100 hover:bg-slate-600 disabled:opacity-60 active:scale-95 transition-all duration-200 text-xs sm:text-sm whitespace-nowrap"
+            on:click={undoLastChange}
+            disabled={savingDraft ||
+              approving ||
+              rejecting ||
+              metadataHistory.length < 2}
+            title="Undo last metadata edit"
+          >
+            Undo
+          </button>
+
+          <button
+            type="button"
+            class="px-3.5 py-2 rounded-lg bg-amber-600 text-white hover:bg-amber-500 disabled:opacity-60 active:scale-95 transition-all duration-200 text-xs sm:text-sm font-medium whitespace-nowrap"
+            on:click={() => saveDraft({ silent: false })}
+            disabled={savingDraft || approving || rejecting}
+          >
+            {savingDraft ? "Saving..." : "Save Draft"}
+          </button>
+
+          <button
+            type="button"
+            class="px-4 py-2 rounded-lg bg-cyan-600 text-white hover:bg-cyan-500 disabled:opacity-60 inline-flex items-center justify-center gap-2 active:scale-95 transition-all duration-200 text-xs sm:text-sm font-medium whitespace-nowrap"
+            on:click={approveAndImport}
+            disabled={approving || savingDraft || rejecting}
+          >
+            {#if approving}
+              <svg
+                class="animate-spin h-4 w-4"
+                xmlns="http://www.w3.org/2000/svg"
+                fill="none"
+                viewBox="0 0 24 24"
+              >
+                <circle
+                  class="opacity-25"
+                  cx="12"
+                  cy="12"
+                  r="10"
+                  stroke="currentColor"
+                  stroke-width="4"
+                ></circle>
+                <path
+                  class="opacity-75"
+                  fill="currentColor"
+                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+                ></path>
+              </svg>
+              Approving...
+            {:else}
+              Approve & Import
+            {/if}
+          </button>
+        </div>
       </div>
     </footer>
   </div>

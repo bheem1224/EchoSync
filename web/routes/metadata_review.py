@@ -212,37 +212,82 @@ def _resolve_task_file(task: ReviewTask) -> Path | None:
         except Exception:
             pass
 
-    # 3. Try download_dir and library_dir filename fallback (in case file was ejected or staged)
+    # Collect all legitimate storage/intake roots for fallback lookup & LFI jail protection
+    raw_allowed_dirs: list[Path | str] = []
+    for cfg_key in (
+        "storage.library_dir",
+        "library_dir",
+        "storage_locations.library",
+        "storage.download_dir",
+        "storage.downloads_dir",
+        "download_dir",
+        "downloads_dir",
+        "storage.poor_metadata_dir",
+        "poor_metadata_dir",
+        "storage.quarantine_dir",
+        "quarantine_dir",
+        "storage.staging_dir",
+        "storage.transfer_dir",
+        "storage.data_dir",
+        "slskd.download_path",
+        "soulseek.download_dir",
+    ):
+        val = config_manager.get(cfg_key)
+        if val:
+            raw_allowed_dirs.append(val)
+
+    for getter_name in ("get_library_dir", "get_downloads_dir", "get_data_dir"):
+        getter = getattr(config_manager, getter_name, None)
+        if callable(getter):
+            try:
+                val = getter()
+                if val:
+                    raw_allowed_dirs.append(val)
+            except Exception:
+                pass
+
+    for attr_name in ("library_path", "downloads_path", "data_dir"):
+        val = getattr(config_manager, attr_name, None)
+        if val:
+            raw_allowed_dirs.append(val)
+
+    allowed_dirs: list[Path] = []
+    seen_allowed: set[Path] = set()
+    for d in raw_allowed_dirs:
+        try:
+            p = Path(d).expanduser().resolve()
+            if p not in seen_allowed:
+                seen_allowed.add(p)
+                allowed_dirs.append(p)
+        except Exception:
+            pass
+
+    # 3. Try download_dir, library_dir, poor_metadata, quarantine filename fallback (in case file was ejected or staged)
     if not resolved:
-        dl_dir = config_manager.get("storage.download_dir") or config_manager.get("download_dir")
-        lib_dir = config_manager.get("storage.library_dir") or config_manager.get("library_dir")
         filename = Path(media_path).name
-        for base_dir in (dl_dir, lib_dir):
-            if base_dir:
-                candidate = Path(base_dir).resolve() / filename
+        fallback_bases = list(allowed_dirs)
+        for base_dir in list(allowed_dirs):
+            for sub in ("poor_metadata", "quarantine", ".staging"):
+                sub_p = base_dir / sub
+                if sub_p not in fallback_bases:
+                    fallback_bases.append(sub_p)
+        for base_dir in fallback_bases:
+            try:
+                candidate = base_dir / filename
                 if candidate.exists() and candidate.is_file():
-                    resolved = candidate
+                    resolved = candidate.resolve()
                     try:
-                        task.file_path = str(candidate)
+                        task.file_path = str(resolved)
                     except Exception:
                         pass
                     break
+            except Exception:
+                pass
 
     if not resolved or not resolved.exists() or not resolved.is_file():
         return None
 
     # Jail / LFI protection
-    allowed_dirs = []
-    _lib = config_manager.get("storage.library_dir") or config_manager.get("library_dir")
-    _dl = config_manager.get("storage.download_dir") or config_manager.get("download_dir")
-    _poor = config_manager.get("storage.poor_metadata_dir")
-    if _lib:
-        allowed_dirs.append(Path(_lib).resolve())
-    if _dl:
-        allowed_dirs.append(Path(_dl).resolve())
-    if _poor:
-        allowed_dirs.append(Path(_poor).resolve())
-
     is_safe = False
     for allowed in allowed_dirs:
         try:
@@ -253,6 +298,11 @@ def _resolve_task_file(task: ReviewTask) -> Path | None:
             pass
 
     if not is_safe:
+        logger.warning(
+            "Blocked review task #%s file outside allowed storage roots: %s",
+            getattr(task, "id", "?"),
+            resolved,
+        )
         return None
 
     return resolved

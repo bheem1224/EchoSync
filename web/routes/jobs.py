@@ -1,7 +1,6 @@
-import json
 from datetime import UTC
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from core.task_manager.task_queue import job_queue
@@ -210,32 +209,28 @@ async def run_job(request: Request, payload: JobRunRequest = None):
 
         # Check if job is already running
         if job.get("running"):
-            return Response(
-                json.dumps(
-                    {
-                        "error": f"job '{job_name}' is already running",
-                        "reason": "Job is currently executing. Please wait for it to complete.",
-                        "job": job_name,
-                        "started_at": job.get("last_started"),
-                    }
-                ),
-                status=409,
-                mimetype="application/json",
+            return JSONResponse(
+                content={
+                    "error": f"job '{job_name}' is already running",
+                    "reason": "Job is currently executing. Please wait for it to complete.",
+                    "job": job_name,
+                    "started_at": job.get("last_started"),
+                },
+                status_code=409,
             )
 
         if not job_queue.execute_job_now(job_name, params=params):
-            return Response(
-                json.dumps(
-                    {
-                        "error": f"job '{job_name}' could not be executed",
-                        "reason": "Job may be disabled or already running.",
-                    }
-                ),
-                status=409,
-                mimetype="application/json",
+            return JSONResponse(
+                content={
+                    "error": f"job '{job_name}' could not be executed",
+                    "reason": "Job may be disabled or already running.",
+                },
+                status_code=409,
             )
         logger.info(f"Job triggered: {job_name} with params={params}")
         return {"accepted": True, "job": job_name}
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error triggering job {job_name}: {e}")
         raise HTTPException(status_code=500, detail={"error": str(e)})
