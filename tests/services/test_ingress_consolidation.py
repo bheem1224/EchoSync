@@ -109,9 +109,9 @@ def test_auto_importer_uses_metadata_resolution_engine(isolated_dbs, tmp_path, m
         chromaprint="DUMMY_CHROMAPRINT_FOR_TESTING_PURPOSES_ONLY_1234567890",
         confidence_score=0.45,
         resolution_method="text_waterfall",
-        title="Unknown Title",
-        artist="Unknown Artist",
-        album="Unknown Album",
+        title="Ambiguous Title",
+        artist="Ambiguous Artist",
+        album="Ambiguous Album",
     )
 
     with patch.object(service.engine, "resolve_track", return_value=mock_low_result) as mock_resolve:
@@ -128,7 +128,7 @@ def test_auto_importer_uses_metadata_resolution_engine(isolated_dbs, tmp_path, m
             assert task.status == "pending"
             assert task.confidence_score == 0.45
             assert task.detected_metadata is not None
-            assert task.detected_metadata.get("title") == "Unknown Title"
+            assert task.detected_metadata.get("title") == "Ambiguous Title"
 
     # 2. Test high confidence resolution + auto_import=True -> imports and moves file
     high_conf_file = download_dir / "known_track.flac"
