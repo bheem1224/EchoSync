@@ -159,6 +159,62 @@ def test_jobs_route_conflict_returns_409_json(monkeypatch):
     assert "could not be executed" in res_blocked.json()["error"]
 
 
+def test_jobs_route_update_interval_and_cancel_use_task_queue(monkeypatch):
+    """Verify /interval and /cancel routes work without importing nonexistent core.job_queue."""
+    app = create_app()
+    client = TestClient(app)
+
+    from core.task_manager.task_queue import job_queue
+
+    monkeypatch.setattr("web.routes.jobs.update_job_interval", lambda name, interval: name == "download_status_poller")
+    res_ok = client.post(
+        "/api/v1/system/jobs/download_status_poller/interval",
+        json={"interval_seconds": 120},
+    )
+    assert res_ok.status_code == 200
+    assert res_ok.json() == {"accepted": True, "job": "download_status_poller", "interval": 120}
+
+    res_missing = client.post(
+        "/api/v1/system/jobs/nonexistent_job/interval",
+        json={"interval_seconds": 120},
+    )
+    assert res_missing.status_code == 404
+
+    monkeypatch.setattr(job_queue, "cancel_job", lambda name: name == "download_status_poller")
+    res_cancel = client.post("/api/v1/system/jobs/download_status_poller/cancel")
+    assert res_cancel.status_code == 200
+    assert res_cancel.json()["status"] == "success"
+
+
+def test_retry_aged_review_tasks_prunes_recent_missing_files_on_startup(tmp_path):
+    """Verify _retry_aged_review_tasks(force_check=False) prunes even recent (<7d) orphaned tasks up front."""
+    service = AutoImportService()
+    work_db = get_working_database()
+
+    missing_recent = tmp_path / "recent_ghost.flac"
+    one_hour_ago = utc_now() - timedelta(hours=1)
+
+    with work_db.session_scope() as session:
+        task = ReviewTask(
+            file_path=str(missing_recent),
+            status="pending",
+            confidence_score=0.25,
+            updated_at=one_hour_ago,
+            last_checked_at=one_hour_ago,
+            retry_count=0,
+        )
+        session.add(task)
+        session.commit()
+        task_id = task.id
+
+    service._retry_aged_review_tasks(force_check=False)
+
+    with work_db.session_scope() as session:
+        refreshed = session.query(ReviewTask).filter(ReviewTask.id == task_id).first()
+        assert refreshed is not None
+        assert refreshed.status == "ignored"
+
+
 def test_retry_aged_review_tasks_auto_dismisses_missing_files(tmp_path):
     """Ghost review tasks whose physical files no longer exist on disk are marked ignored."""
     service = AutoImportService()

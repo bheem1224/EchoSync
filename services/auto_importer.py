@@ -420,7 +420,11 @@ class AutoImportService:
         return None
 
     def _prune_missing_review_tasks(self) -> int:
-        """Mark pending ReviewTasks whose physical files no longer exist on disk as ignored."""
+        """Mark pending ReviewTasks whose physical files no longer exist on disk as ignored.
+
+        Uses echosync_core.find_missing_paths (Rayon-parallel, GIL-released) for a fast
+        bulk stat pass, with PathMapper fallback verification for any candidates reported missing.
+        """
         from time_utils import utc_now
 
         work_db = get_working_database()
@@ -428,8 +432,24 @@ class AutoImportService:
         try:
             with work_db.session_scope() as session:
                 pending_tasks = session.query(ReviewTask).filter(ReviewTask.status == "pending").all()
+                if not pending_tasks:
+                    return 0
+
+                candidate_indices: list[int]
+                try:
+                    import echosync_core
+
+                    if hasattr(echosync_core, "find_missing_paths"):
+                        raw_paths = [str(t.file_path or "") for t in pending_tasks]
+                        candidate_indices = list(echosync_core.find_missing_paths(raw_paths))
+                    else:
+                        candidate_indices = list(range(len(pending_tasks)))
+                except Exception:
+                    candidate_indices = list(range(len(pending_tasks)))
+
                 now = utc_now()
-                for task in pending_tasks:
+                for idx in candidate_indices:
+                    task = pending_tasks[idx]
                     if not self._resolve_existing_file(task.file_path):
                         task.status = "ignored"
                         task.last_checked_at = now
@@ -443,6 +463,9 @@ class AutoImportService:
 
     def _retry_aged_review_tasks(self, force_check: bool = False, **kwargs) -> None:
         """Proactively re-evaluate review queue items older than 7 days, or all pending items if force_check=True."""
+        # Fast startup pass: prune any orphaned review tasks whose physical files no longer exist on disk
+        self._prune_missing_review_tasks()
+
         work_db = get_working_database()
         from time_utils import utc_now
 

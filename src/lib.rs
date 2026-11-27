@@ -641,12 +641,37 @@ pub fn init_native_thread_pool(override_threads: Option<usize>) -> PyResult<usiz
     }
 }
 
+/// Return indices of paths that do not exist as regular files on disk (Rayon-parallel, GIL-released).
+#[pyfunction]
+fn find_missing_paths(py: Python<'_>, paths: Vec<String>) -> PyResult<Vec<usize>> {
+    use rayon::prelude::*;
+    use std::path::Path;
+
+    let missing = py.allow_threads(move || {
+        paths
+            .par_iter()
+            .enumerate()
+            .filter_map(|(idx, raw)| {
+                let trimmed = raw.trim();
+                if trimmed.is_empty() || !Path::new(trimmed).is_file() {
+                    Some(idx)
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<usize>>()
+    });
+
+    Ok(missing)
+}
+
 /// PyO3 Module Registration for echosync_core
 #[pymodule]
 fn echosync_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<CancellationToken>()?;
     m.add_function(wrap_pyfunction!(init_native_thread_pool, m)?)?;
     m.add_function(wrap_pyfunction!(scan_directory, m)?)?;
+    m.add_function(wrap_pyfunction!(find_missing_paths, m)?)?;
     m.add_function(wrap_pyfunction!(test_batch_process, m)?)?;
     m.add_function(wrap_pyfunction!(batch_process_directory, m)?)?;
     m.add_function(wrap_pyfunction!(extract_metadata, m)?)?;

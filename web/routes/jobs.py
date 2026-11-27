@@ -3,7 +3,7 @@ from datetime import UTC
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from core.task_manager.task_queue import job_queue
+from core.task_manager.task_queue import job_queue, update_job_interval
 from core.task_manager.task_queue import list_jobs as jq_list_jobs
 from core.tiered_logger import get_logger
 from web.auth import require_auth
@@ -237,7 +237,6 @@ async def run_job(request: Request, payload: JobRunRequest = None):
 
 
 @router.get("/{job_name}")
-@router.get("/{job_name}")
 def get_job(job_name: str):
     """Return status of a specific job by name/id."""
     try:
@@ -246,6 +245,8 @@ def get_job(job_name: str):
         if not job:
             raise HTTPException(status_code=404, detail={"error": f"job '{job_name}' not found"})
         return job
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error fetching job {job_name}: {e}")
         raise HTTPException(status_code=500, detail={"error": str(e)})
@@ -263,14 +264,14 @@ async def update_job_interval_route(job_name: str, payload: JobIntervalRequest):
         )
 
     try:
-        from core.job_queue import update_job_interval
-
         success = update_job_interval(job_name, float(new_interval))
 
         if not success:
             raise HTTPException(status_code=404, detail={"error": "job not found or update failed"})
 
         return {"accepted": True, "job": job_name, "interval": new_interval}
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error updating job {job_name} interval: {e}")
         raise HTTPException(status_code=500, detail={"error": str(e)})
@@ -280,8 +281,6 @@ async def update_job_interval_route(job_name: str, payload: JobIntervalRequest):
 def kill_job_route(job_name):
     """OS-Level Escape Hatch to kill a hung worker process."""
     try:
-        from core.job_queue import job_queue
-
         success = job_queue.kill_job(job_name)
         if not success:
             raise HTTPException(
@@ -289,6 +288,8 @@ def kill_job_route(job_name):
                 detail={"error": "job not running or could not be killed"},
             )
         return {"accepted": True, "job": job_name, "status": "killed"}
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error killing job {job_name}: {e}")
         raise HTTPException(status_code=500, detail={"error": str(e)})
@@ -298,8 +299,6 @@ def kill_job_route(job_name):
 async def cancel_queue_job(job_name: str, request: Request):
     """Cancel a running or scheduled job in the task manager using the new CancellationToken API."""
     try:
-        from core.job_queue import job_queue
-
         success = job_queue.cancel_job(job_name)
         if success:
             return {
@@ -336,8 +335,6 @@ def stream_queue_progress():
         try:
             import json
             import time
-
-            from core.job_queue import job_queue
 
             last_state = None
             last_heartbeat = time.time()
